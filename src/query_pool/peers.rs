@@ -18,6 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+// This basis of this file has been taken from the rust-libp2p codebase:
+// https://github.com/libp2p/rust-libp2p
+
 //! Peer selection strategies for queries in the form of iterator-like state machines.
 //!
 //! Using a peer iterator in a query involves performing the following steps

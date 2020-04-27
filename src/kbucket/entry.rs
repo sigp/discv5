@@ -18,10 +18,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+// This basis of this file has been taken from the rust-libp2p codebase:
+// https://github.com/libp2p/rust-libp2p
+
 //! The `Entry` API for quering and modifying the entries of a `KBucketsTable`
 //! representing the nodes participating in the Kademlia DHT.
 
-pub use super::bucket::{Node, NodeStatus, InsertResult, AppliedPending, MAX_NODES_PER_BUCKET};
+pub use super::bucket::{AppliedPending, InsertResult, Node, NodeStatus, MAX_NODES_PER_BUCKET};
 pub use super::key::*;
 
 use super::*;
@@ -31,13 +34,13 @@ pub struct EntryRefView<'a, TPeerId, TVal> {
     /// The node represented by the entry.
     pub node: NodeRefView<'a, TPeerId, TVal>,
     /// The status of the node identified by the key.
-    pub status: NodeStatus
+    pub status: NodeStatus,
 }
 
 /// An immutable by-reference view of a `Node`.
 pub struct NodeRefView<'a, TPeerId, TVal> {
     pub key: &'a Key<TPeerId>,
-    pub value: &'a TVal
+    pub value: &'a TVal,
 }
 
 /// A cloned, immutable view of an entry that is either present in a bucket
@@ -47,7 +50,7 @@ pub struct EntryView<TPeerId, TVal> {
     /// The node represented by the entry.
     pub node: Node<TPeerId, TVal>,
     /// The status of the node.
-    pub status: NodeStatus
+    pub status: NodeStatus,
 }
 
 impl<TPeerId, TVal> AsRef<Key<TPeerId>> for EntryView<TPeerId, TVal> {
@@ -93,7 +96,6 @@ where
             Entry::Absent(AbsentEntry::new(bucket, key))
         }
     }
-
 }
 
 /// An entry present in a bucket.
@@ -110,7 +112,9 @@ where
 
     /// Returns the value associated with the key.
     pub fn value(&mut self) -> &mut TVal {
-        &mut self.0.bucket
+        &mut self
+            .0
+            .bucket
             .get_mut(self.0.key)
             .expect("We can only build a ConnectedEntry if the entry is in the bucket; QED")
             .value
@@ -137,7 +141,8 @@ where
 
     /// Returns the value associated with the key.
     pub fn value(&mut self) -> &mut TVal {
-        self.0.bucket
+        self.0
+            .bucket
             .pending_mut()
             .expect("We can only build a ConnectedPendingEntry if the entry is pending; QED")
             .value_mut()
@@ -164,10 +169,12 @@ where
 
     /// Attempts to insert the entry into a bucket.
     pub fn insert(self, value: TVal, status: NodeStatus) -> InsertResult<TPeerId> {
-        self.0.bucket.insert(Node {
-            key: self.0.key.clone(),
-            value
-        }, status)
+        self.0.bucket.insert(
+            Node {
+                key: self.0.key.clone(),
+                value,
+            },
+            status,
+        )
     }
 }
-

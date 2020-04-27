@@ -18,6 +18,9 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+// This basis of this file has been taken from the rust-libp2p codebase:
+// https://github.com/libp2p/rust-libp2p
+
 //! The internal API for a single `KBucket` in a `KBucketsTable`.
 //!
 //! > **Note**: Uniqueness of entries w.r.t. a `Key` in a `KBucket` is not
