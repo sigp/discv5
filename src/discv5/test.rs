@@ -1,48 +1,35 @@
 #![cfg(test)]
 
-use crate::behaviour::RpcRequest;
+use crate::discv5::RpcRequest;
 use crate::kbucket::*;
 use crate::query_pool::QueryId;
 use crate::*;
 use crate::{Discv5, Discv5Event};
 use env_logger;
-use libp2p_core::{
-    identity, muxing::StreamMuxerBox, nodes::Substream, transport::boxed::Boxed,
-    transport::MemoryTransport, PeerId, Transport,
-};
-use libp2p_swarm::Swarm;
-use tokio::prelude::*;
-use tokio::runtime::Runtime;
+use futures::prelude::*;
 
 use crate::kbucket;
-use enr::{CombinedKey, Enr, EnrBuilder};
-use enr::{EnrKey, NodeId};
-use libp2p_secio::SecioConfig;
-use libp2p_yamux as yamux;
+use enr::NodeId;
+use enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
 use rand_core::{RngCore, SeedableRng};
 use rand_xorshift;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::convert::TryInto;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-type SwarmType =
-    Swarm<Boxed<(PeerId, StreamMuxerBox), io::Error>, Discv5<Substream<StreamMuxerBox>>>;
-
 fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
 }
 
-fn build_swarms(n: usize, base_port: u16) -> Vec<SwarmType> {
-    let mut swarms = Vec::new();
+fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
+    let mut nodes = Vec::new();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
     for port in base_port..base_port + n as u16 {
-        let keypair = identity::Keypair::generate_secp256k1();
-        let enr_key: CombinedKey = keypair.clone().try_into().unwrap();
+        let enr_key = CombinedKey::generate_secp256k1();
         let config = Discv5Config::default();
 
         let enr = EnrBuilder::new("v4")
@@ -51,59 +38,38 @@ fn build_swarms(n: usize, base_port: u16) -> Vec<SwarmType> {
             .build(&enr_key)
             .unwrap();
         // transport for building a swarm
-        let transport = MemoryTransport::default()
-            .upgrade(libp2p_core::upgrade::Version::V1)
-            .authenticate(SecioConfig::new(keypair.clone()))
-            .multiplex(yamux::Config::default())
-            .map(|(p, m), _| (p, StreamMuxerBox::new(m)))
-            .map_err(|e| panic!("Failed to create transport: {:?}", e))
-            .boxed();
         let socket_addr = enr.udp_socket().unwrap();
-        let discv5 = Discv5::new(enr, keypair.clone(), config, socket_addr).unwrap();
-        swarms.push(Swarm::new(
-            transport,
-            discv5,
-            keypair.public().into_peer_id(),
-        ));
+        let discv5 = Discv5::new(enr, enr_key, config, socket_addr).unwrap();
+
+        nodes.push(discv5);
     }
-    swarms
+    nodes
 }
 
 /// Build `n` swarms using passed keypairs.
-fn build_swarms_from_keypairs(keys: Vec<identity::Keypair>, base_port: u16) -> Vec<SwarmType> {
-    let mut swarms = Vec::new();
+fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Discv5> {
+    let mut nodes = Vec::new();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
-    // for port in base_port..base_port + keypairs.len() as u16 {
-    for (i, key) in keys.into_iter().enumerate() {
+    for (i, enr_key) in keys.into_iter().enumerate() {
         let port = base_port + i as u16;
 
-        let enr_key: CombinedKey = key.clone().try_into().unwrap();
         let config = Discv5ConfigBuilder::new().ip_limit(false).build();
-
         let enr = EnrBuilder::new("v4")
             .ip(ip.clone().into())
             .udp(port)
             .build(&enr_key)
             .unwrap();
 
-        // transport for building a swarm
-        let transport = MemoryTransport::default()
-            .upgrade(libp2p_core::upgrade::Version::V1)
-            .authenticate(SecioConfig::new(key.clone()))
-            .multiplex(yamux::Config::default())
-            .map(|(p, m), _| (p, StreamMuxerBox::new(m)))
-            .map_err(|e| panic!("Failed to create transport: {:?}", e))
-            .boxed();
         let socket_addr = enr.udp_socket().unwrap();
-        let discv5 = Discv5::new(enr, key.clone(), config, socket_addr).unwrap();
-        swarms.push(Swarm::new(transport, discv5, key.public().into_peer_id()));
+        let discv5 = Discv5::new(enr, enr_key, config, socket_addr).unwrap();
+        nodes.push(discv5);
     }
-    swarms
+    nodes
 }
 
 /// Generate `n` deterministic keypairs from a given seed.
-fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<identity::Keypair> {
+fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
     let mut keypairs = Vec::new();
     for i in 0..n {
         let sk = {
@@ -112,12 +78,12 @@ fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<identity::Keypair>
             loop {
                 // until a value is given within the curve order
                 rng.fill_bytes(&mut b);
-                if let Ok(k) = identity::secp256k1::SecretKey::from_bytes(&mut b) {
+                if let Ok(k) = secp256k1::SecretKey::parse(&mut b) {
                     break k;
                 }
             }
         };
-        let kp = identity::Keypair::Secp256k1(identity::secp256k1::Keypair::from(sk));
+        let kp = CombinedKey::from(sk);
         keypairs.push(kp);
     }
     keypairs
@@ -204,22 +170,22 @@ fn find_seed_spread_bucket() {
 /// The seed for the keypair generation is chosen such that all `num_nodes` nodes
 /// and the `target_node` are in the 256th k-bucket of the bootstrap node.
 /// This ensures that all nodes are found in a single FINDNODE query.
-#[test]
-fn test_discovery_star_topology() {
+#[tokio::test]
+async fn test_discovery_star_topology() {
     init();
     let total_nodes = 10;
     // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
     let seed = 1652;
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
-    let mut swarms = build_swarms_from_keypairs(keypairs, 11000);
+    let mut nodes = build_nodes_from_keypairs(keypairs, 11000);
     // Last node is bootstrap node in a star topology
-    let mut bootstrap_node = swarms.remove(0);
+    let mut bootstrap_node = nodes.remove(0);
     // target_node is not polled.
-    let target_node = swarms.pop().unwrap();
+    let target_node = nodes.pop().unwrap();
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
     println!("Target node: {}", target_node.local_enr().node_id());
-    for swarm in swarms.iter_mut() {
+    for swarm in nodes.iter_mut() {
         let key: kbucket::Key<NodeId> = swarm.local_enr().node_id().into();
         let distance = key
             .log2_distance(&bootstrap_node.local_enr().node_id().into())
@@ -235,35 +201,29 @@ fn test_discovery_star_topology() {
     }
     // Start a FINDNODE query of target
     let target_random_node_id = target_node.local_enr().node_id();
-    swarms.first_mut().unwrap().find_node(target_random_node_id);
-    swarms.push(bootstrap_node);
-    Runtime::new()
-        .unwrap()
-        .block_on(future::poll_fn(move || -> Result<_, io::Error> {
-            for swarm in swarms.iter_mut() {
-                loop {
-                    match swarm.poll().unwrap() {
-                        Async::Ready(Some(Discv5Event::FindNodeResult {
-                            closer_peers, ..
-                        })) => {
-                            println!(
-                                "Query found {} peers, Total peers {}",
-                                closer_peers.len(),
-                                total_nodes
-                            );
-                            assert!(closer_peers.len() == total_nodes);
-                            return Ok(Async::Ready(()));
-                        }
-                        Async::Ready(_) => (),
-                        Async::NotReady => break,
-                    }
+    nodes.first_mut().unwrap().find_node(target_random_node_id);
+    nodes.push(bootstrap_node);
+
+    async move {
+        for node in nodes.iter_mut() {
+            loop {
+                if let (Some(Discv5Event::FindNodeResult { closer_peers, .. }), _) =
+                    node.into_future().await
+                {
+                    println!(
+                        "Query found {} peers, Total peers {}",
+                        closer_peers.len(),
+                        total_nodes
+                    );
+                    assert!(closer_peers.len() == total_nodes);
+                    return;
                 }
             }
-            Ok(Async::NotReady)
-        }))
-        .unwrap();
+        }
+    };
 }
 
+/*
 #[test]
 fn test_findnode_query() {
     init();
@@ -574,3 +534,4 @@ fn test_predicate_search() {
         }))
         .unwrap();
 }
+*/
