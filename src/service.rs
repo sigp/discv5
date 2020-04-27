@@ -4,11 +4,15 @@
 //! messages. These messages are defined in the `Packet` module.
 
 use super::packet::{Packet, MAGIC_LENGTH};
-use futures::{prelude::*, task};
+use async_std::net::UdpSocket;
+use futures::prelude::*;
 use log::debug;
-use std::io;
-use std::net::SocketAddr;
-use tokio_udp::UdpSocket;
+use std::{
+    io,
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 
@@ -29,7 +33,22 @@ impl Discv5Service {
     /// Initializes the UDP socket, can fail when binding the socket.
     pub fn new(socket_addr: SocketAddr, whoareyou_magic: [u8; MAGIC_LENGTH]) -> io::Result<Self> {
         // set up the UDP socket
-        let socket = UdpSocket::bind(&socket_addr)?;
+        let socket = {
+            #[cfg(unix)]
+            fn platform_specific(s: &net2::UdpBuilder) -> io::Result<()> {
+                net2::unix::UnixUdpBuilderExt::reuse_port(s, true)?;
+                Ok(())
+            }
+            #[cfg(not(unix))]
+            fn platform_specific(_: &net2::UdpBuilder) -> io::Result<()> {
+                Ok(())
+            }
+            let builder = net2::UdpBuilder::new_v4()?;
+            builder.reuse_address(true)?;
+            platform_specific(&builder)?;
+            builder.bind(socket_addr)?
+        };
+        let socket = UdpSocket::from(socket);
 
         Ok(Discv5Service {
             socket,
@@ -45,48 +64,44 @@ impl Discv5Service {
     }
 
     /// Drive reading/writing to the UDP socket.
-    pub fn poll(&mut self) -> Async<(SocketAddr, Packet)> {
-        // send messages
-        while !self.send_queue.is_empty() {
-            let (dst, packet) = self.send_queue.remove(0);
+    pub async fn poll(&mut self) -> (SocketAddr, Packet) {
+        loop {
+            // send messages
+            while !self.send_queue.is_empty() {
+                let (dst, packet) = self.send_queue.remove(0);
 
-            match self.socket.poll_send_to(&packet.encode(), &dst) {
-                Ok(Async::Ready(bytes_written)) => {
-                    debug_assert_eq!(bytes_written, packet.encode().len());
-                }
-                Ok(Async::NotReady) => {
-                    // didn't write add back and break
-                    self.send_queue.insert(0, (dst, packet));
-                    // notify to try again
-                    task::current().notify();
-                    break;
-                }
-                Err(_) => {
-                    self.send_queue.clear();
-                    break;
+                match self.socket.send_to(&packet.encode(), &dst).await {
+                    Ok(bytes_written) => {
+                        debug_assert_eq!(bytes_written, packet.encode().len());
+                    }
+                    Err(_) => {
+                        self.send_queue.clear();
+                        break;
+                    }
                 }
             }
-        }
 
-        // handle incoming messages
-        loop {
-            match self.socket.poll_recv_from(&mut self.recv_buffer) {
-                Ok(Async::Ready((length, src))) => {
+            // handle incoming messages
+            match self.socket.recv_from(&mut self.recv_buffer).await {
+                Ok((length, src)) => {
                     match Packet::decode(&self.recv_buffer[..length], &self.whoareyou_magic) {
-                        Ok(p) => {
-                            return Async::Ready((src, p));
-                        }
+                        Ok(p) => return (src, p),
                         Err(e) => debug!("Could not decode packet: {:?}", e), // could not decode the packet, drop it
                     }
                 }
-                Ok(Async::NotReady) => {
-                    break;
-                }
-                Err(_) => {
-                    break;
-                } // wait for reconnection to poll again.
-            }
+                Err(_) => {}
+            };
         }
-        Async::NotReady
+    }
+}
+
+impl Stream for Discv5Service {
+    type Item = (SocketAddr, Packet);
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        match Box::pin(self.poll()).as_mut().poll(cx) {
+            Poll::Ready(v) => Poll::Ready(Some(v)),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }

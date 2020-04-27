@@ -27,6 +27,7 @@ use crate::Discv5Config;
 use async_std::prelude::*;
 use enr::{CombinedKey, Enr as RawEnr, EnrError, EnrKey, NodeId};
 use fnv::FnvHashMap;
+use futures::prelude::*;
 use log::{debug, error, info, trace, warn};
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
@@ -939,7 +940,7 @@ impl Stream for Discv5 {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         loop {
             // Process events from the session service
-            while let Poll::Ready(event) = self.service.poll_next_unpin(cx) {
+            while let Poll::Ready(Some(event)) = self.service.poll_next_unpin(cx) {
                 match event {
                     SessionEvent::Established(enr) => {
                         self.inject_session_established(enr);
@@ -984,7 +985,7 @@ impl Stream for Discv5 {
 
             // Drain queued events
             if let Some(event) = self.events.pop_front() {
-                return Poll::Ready(event);
+                return Poll::Ready(Some(event));
             }
 
             // Drain applied pending entries from the routing table.
@@ -993,7 +994,7 @@ impl Stream for Discv5 {
                     node_id: entry.inserted.into_preimage(),
                     replaced: entry.evicted.map(|n| n.key.into_preimage()),
                 };
-                return Poll::Ready(event);
+                return Poll::Ready(Some(event));
             }
 
             // Handle active queries
@@ -1035,14 +1036,14 @@ impl Stream for Discv5 {
                                 .filter_map(|p| self.find_enr(&p))
                                 .collect(),
                         };
-                        return Poll::Ready(event);
+                        return Poll::Ready(Some(event));
                     }
                 }
             } else {
                 // check for ping intervals
                 let mut to_send_ping = Vec::new();
                 for (node_id, interval) in self.connected_peers.iter_mut() {
-                    while let Ok(Poll::Ready(_)) = interval.poll_next_unpin(cx) {
+                    while let Poll::Ready(_) = Box::pin(interval.tick()).as_mut().poll(cx) {
                         to_send_ping.push(node_id.clone());
                     }
                 }

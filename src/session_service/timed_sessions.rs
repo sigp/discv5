@@ -5,10 +5,15 @@
 
 use crate::session::Session;
 use enr::NodeId;
-use futures::{Async, Poll, Stream};
-use std::collections::HashMap;
-use std::time::Duration;
-use tokio_timer::{delay_queue, DelayQueue};
+use futures::Stream;
+use log::error;
+use std::pin::Pin;
+use std::{
+    collections::HashMap,
+    task::{Context, Poll},
+    time::Duration,
+};
+use tokio::time::{delay_queue, DelayQueue};
 
 /// A collection of sessions and associated timeouts.
 ///
@@ -65,20 +70,24 @@ impl TimedSessions {
 
 impl Stream for TimedSessions {
     type Item = (NodeId, Session);
-    type Error = &'static str;
 
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        match self.timeouts.poll() {
-            Ok(Async::Ready(Some(node_id))) => {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        match self.timeouts.poll_expired(cx) {
+            Poll::Ready(Some(Ok(node_id))) => {
                 let node_id = node_id.into_inner();
-                match self.sessions.remove(&node_id) {
-                    Some((session, _)) => Ok(Async::Ready(Some((node_id, session)))),
-                    None => Err("Session no longer exists"),
+                if let Some((session, _)) = self.sessions.remove(&node_id) {
+                    Poll::Ready(Some((node_id, session)))
+                } else {
+                    error!("Session no longer exists");
+                    Poll::Pending
                 }
             }
-            Ok(Async::Ready(None)) => Ok(Async::Ready(None)),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(_) => Err("Session delay queue error"),
+            Poll::Ready(Some(Err(e))) => {
+                error!("Session timeout error: {:?}", e);
+                Poll::Pending
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
