@@ -1,12 +1,12 @@
 [package]
-name = "libp2p-discv5"
+name = "discv5"
 edition = "2018"
-version = "0.1.0"
-description = "Implementation of the devp2p discv5 discovery method"
+version = "0.1.0-alpha"
+description = "Implementation of the p2p discv5 discovery protocol"
 authors = ["Age Manning <Age@AgeManning.com>"]
 license = "MIT"
-repository = "https://github.com/libp2p/rust-libp2p"
-keywords = ["peer-to-peer", "libp2p", "networking", "discovery", "devp2p"]
+repository = "https://github.com/sigp/discv5"
+keywords = ["peer-to-peer", "libp2p", "networking", "discovery", "discv5"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
