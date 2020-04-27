@@ -43,6 +43,7 @@ pub struct QueryPool<TTarget, TNodeId, TResult> {
 }
 
 /// The observable states emitted by [`QueryPool::poll`].
+#[allow(clippy::type_complexity)]
 pub enum QueryPoolState<'a, TTarget, TNodeId, TResult> {
     /// The pool is idle, i.e. there are no queries to process.
     Idle,
@@ -127,8 +128,8 @@ where
     }
 
     /// Returns a mutable reference to a query with the given ID, if it is in the pool.
-    pub fn get_mut(&mut self, id: &QueryId) -> Option<&mut Query<TTarget, TNodeId, TResult>> {
-        self.queries.get_mut(id)
+    pub fn get_mut(&mut self, id: QueryId) -> Option<&mut Query<TTarget, TNodeId, TResult>> {
+        self.queries.get_mut(&id)
     }
 
     /// Polls the pool to advance the queries.
@@ -175,9 +176,9 @@ where
         }
 
         if self.queries.is_empty() {
-            return QueryPoolState::Idle;
+            QueryPoolState::Idle
         } else {
-            return QueryPoolState::Waiting(None);
+            QueryPoolState::Waiting(None)
         }
     }
 }
@@ -241,15 +242,14 @@ where
     /// Informs the query that the attempt to contact `peer` succeeded,
     /// possibly resulting in new peers that should be incorporated into
     /// the query, if applicable.
-    pub fn on_success<'a>(&mut self, peer: &TNodeId, new_peers: &'a Vec<TResult>)
+    pub fn on_success<'a>(&mut self, peer: &TNodeId, new_peers: &'a [TResult])
     where
         &'a TResult: Into<TNodeId>,
     {
         match &mut self.peer_iter {
-            QueryPeerIter::FindNode(iter) => iter.on_success(
-                peer,
-                new_peers.into_iter().map(|result| result.into()).collect(),
-            ),
+            QueryPeerIter::FindNode(iter) => {
+                iter.on_success(peer, new_peers.iter().map(|result| result.into()).collect())
+            }
             QueryPeerIter::Predicate(iter) => iter.on_success(peer, new_peers),
         }
     }

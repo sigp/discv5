@@ -82,15 +82,12 @@ impl Discv5Service {
             }
 
             // handle incoming messages
-            match self.socket.recv_from(&mut self.recv_buffer).await {
-                Ok((length, src)) => {
-                    match Packet::decode(&self.recv_buffer[..length], &self.whoareyou_magic) {
-                        Ok(p) => return (src, p),
-                        Err(e) => debug!("Could not decode packet: {:?}", e), // could not decode the packet, drop it
-                    }
+            if let Ok((length, src)) = self.socket.recv_from(&mut self.recv_buffer).await {
+                match Packet::decode(&self.recv_buffer[..length], &self.whoareyou_magic) {
+                    Ok(p) => return (src, p),
+                    Err(e) => debug!("Could not decode packet: {:?}", e), // could not decode the packet, drop it
                 }
-                Err(_) => {}
-            };
+            }
         }
     }
 }

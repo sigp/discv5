@@ -81,7 +81,7 @@ where
     where
         I: IntoIterator<Item = PredicateKey<TNodeId>>,
     {
-        let target_key = target.clone().into();
+        let target_key = target.into();
 
         // Initialise the closest peers to begin the query with.
         let closest_peers = BTreeMap::from_iter(
@@ -148,9 +148,9 @@ where
                     self.num_waiting -= 1;
                     let peer = e.get_mut();
                     peer.peers_returned += closer_peers.len();
-                    if peer.peers_returned >= self.config.num_results {
-                        peer.state = QueryPeerState::Succeeded;
-                    } else if self.iterations == peer.iteration {
+                    if peer.peers_returned >= self.config.num_results
+                        || self.iterations == peer.iteration
+                    {
                         // mark the peer as succeeded
                         peer.state = QueryPeerState::Succeeded;
                     } else {
@@ -162,9 +162,9 @@ where
                 QueryPeerState::Unresponsive => {
                     let peer = e.get_mut();
                     peer.peers_returned += closer_peers.len();
-                    if peer.peers_returned >= self.config.num_results {
-                        peer.state = QueryPeerState::Succeeded;
-                    } else if self.iterations == peer.iteration {
+                    if peer.peers_returned >= self.config.num_results
+                        || self.iterations == peer.iteration
+                    {
                         // mark the peer as succeeded
                         peer.state = QueryPeerState::Succeeded;
                     } else {
@@ -237,16 +237,12 @@ where
         let key: Key<TNodeId> = peer.clone().into();
         let distance = key.distance(&self.target_key);
 
-        match self.closest_peers.entry(distance) {
-            Entry::Vacant(_) => {}
-            Entry::Occupied(mut e) => match e.get().state {
-                QueryPeerState::Waiting(..) => {
-                    debug_assert!(self.num_waiting > 0);
-                    self.num_waiting -= 1;
-                    e.get_mut().state = QueryPeerState::Failed
-                }
-                _ => {}
-            },
+        if let Entry::Occupied(mut e) = self.closest_peers.entry(distance) {
+            if let QueryPeerState::Waiting(..) = e.get().state {
+                debug_assert!(self.num_waiting > 0);
+                self.num_waiting -= 1;
+                e.get_mut().state = QueryPeerState::Failed
+            }
         }
     }
 

@@ -192,7 +192,7 @@ impl Decodable for AuthHeader {
         }
 
         // Do not decode into libp2p public keys, this is done upstream
-        let ephemeral_pubkey = pubkey_bytes.clone();
+        let ephemeral_pubkey = pubkey_bytes;
 
         Ok(AuthHeader {
             auth_tag,

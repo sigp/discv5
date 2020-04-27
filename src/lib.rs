@@ -1,4 +1,4 @@
-//! The libp2p implemention of [Discovery V5](https://github.com/ethereum/devp2p/blob/master/discv5/discv5.md).
+//! An implementation of [Discovery V5](https://github.com/ethereum/devp2p/blob/master/discv5/discv5.md).
 //!
 //! # Overview
 //!
@@ -23,20 +23,14 @@
 //!  needed and get dropped after a timeout. This section manages the creation and maintenance of
 //!  sessions between nodes. It is realised by the [`SessionService`] struct.
 //!  * Behaviour - This section contains the protocol-level logic. In particular it manages the
-//!  routing table of known ENR's, topic registration/advertisement and performs various qeuries
+//!  routing table of known ENR's, topic registration/advertisement and performs various queries
 //!  such as peer discovery. This section is realised by the [`Discv5`] struct.
 //!
 //!  *Note* -  Currently only `secp256k1` keys are supported.
 //!
 //! # Usage
 //!
-//! [`Discv5`] implements the [`NetworkBehaviour`] trait and can therefore be composed as a
-//! behaviour on a [`Swarm`].  In order to start a [`Discv5`] service, an [`Enr`] is required. This
-//! identifies the node, attributes various values to our node for broadcasting in the discovery
-//! protocol. Although an IP can be specified in the ENR, the [`Discv5`] service requires a listen
-//! address to allow for listening on multiple interfaces, more specifically, the `0.0.0.0`
-//! address. The UDP port will be that of the ENR. If there is no port defined in the ENR, the
-//! service creation will fail.
+//! TODO
 //!
 //! A simple example of creating this service is as follows:
 //!

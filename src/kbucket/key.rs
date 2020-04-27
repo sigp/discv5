@@ -111,7 +111,7 @@ impl<T> Key<T> {
 impl From<NodeId> for Key<NodeId> {
     fn from(node_id: NodeId) -> Self {
         Key {
-            preimage: node_id.clone(),
+            preimage: node_id,
             hash: *GenericArray::from_slice(&node_id.raw()),
         }
     }

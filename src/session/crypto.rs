@@ -181,7 +181,7 @@ pub fn decrypt_authentication_header(
     // decrypt the auth-response
     let rlp_auth_response = decrypt_message(auth_resp_key, [0u8; 12], &header.auth_response, &[])?;
     let auth_response =
-        rlp::decode::<AuthResponse>(&rlp_auth_response).map_err(|e| Discv5Error::RLPError(e))?;
+        rlp::decode::<AuthResponse>(&rlp_auth_response).map_err(Discv5Error::RLPError)?;
     Ok(auth_response)
 }
 

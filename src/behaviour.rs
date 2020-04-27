@@ -109,7 +109,7 @@ impl Discv5 {
         config: Discv5Config,
         listen_socket: SocketAddr,
     ) -> Result<Self, Discv5Error> {
-        let node_id = local_enr.node_id().clone();
+        let node_id = local_enr.node_id();
 
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
@@ -156,7 +156,7 @@ impl Discv5 {
             return Err("Enr has no UDP socket to connect to");
         }
 
-        let key = kbucket::Key::from(enr.node_id().clone());
+        let key = kbucket::Key::from(enr.node_id());
 
         // should the ENR be inserted or updated to a value that would exceed the IP limit ban
         let ip_limit_ban = self.config.ip_limit
@@ -343,7 +343,7 @@ impl Discv5 {
     /// Processes an RPC response from a peer.
     fn handle_rpc_response(&mut self, node_id: NodeId, rpc_id: u64, res: rpc::Response) {
         // verify we know of the rpc_id
-        let req = RpcRequest(rpc_id, node_id.clone());
+        let req = RpcRequest(rpc_id, node_id);
         if let Some((query_id, request)) = self.active_rpc_requests.remove(&req) {
             if !res.match_request(&request) {
                 warn!(
@@ -501,7 +501,7 @@ impl Discv5 {
 
         match self.service.send_request_unknown_enr(src, node_id, message) {
             Ok(_) => {
-                let rpc_request = RpcRequest(id, node_id.clone());
+                let rpc_request = RpcRequest(id, *node_id);
                 self.active_rpc_requests.insert(rpc_request, (None, req));
             }
             _ => warn!("Requesting ENR failed. Node: {}", node_id),
@@ -593,7 +593,7 @@ impl Discv5 {
         query_info: QueryInfo,
         return_peer: &ReturnPeer<NodeId>,
     ) {
-        let node_id = return_peer.node_id.clone();
+        let node_id = return_peer.node_id;
         trace!(
             "Sending query. Iteration: {}, NodeId: {}",
             return_peer.iteration,
@@ -605,7 +605,7 @@ impl Discv5 {
             Err(e) => {
                 //dst node is local_key, report failure
                 error!("Send RPC: {}", e);
-                if let Some(query) = self.queries.get_mut(&query_id) {
+                if let Some(query) = self.queries.get_mut(query_id) {
                     query.on_failure(&node_id);
                 }
                 return;
@@ -635,14 +635,14 @@ impl Discv5 {
                 },
             ) {
                 Ok(_) => {
-                    let rpc_request = RpcRequest(id, node_id.clone());
+                    let rpc_request = RpcRequest(id, *node_id);
                     self.active_rpc_requests
                         .insert(rpc_request, (query_id, req));
                 }
                 Err(_) => {
                     warn!("Sending request to node: {} failed", &node_id);
                     if let Some(query_id) = query_id {
-                        if let Some(query) = self.queries.get_mut(&query_id) {
+                        if let Some(query) = self.queries.get_mut(query_id) {
                             query.on_failure(&node_id);
                         }
                     }
@@ -659,7 +659,7 @@ impl Discv5 {
     /// Returns an ENR if one is known for the given NodeId.
     fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
-        let key = kbucket::Key::from(node_id.clone());
+        let key = kbucket::Key::from(*node_id);
         if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.entry(&key) {
             return Some(entry.value().clone());
         }
@@ -733,7 +733,7 @@ impl Discv5 {
 
     /// Processes discovered peers from a query.
     fn discovered(&mut self, source: &NodeId, peers: Vec<Enr>, query_id: Option<QueryId>) {
-        let local_id = self.local_enr().node_id().clone();
+        let local_id = self.local_enr().node_id();
         let others_iter = peers.into_iter().filter(|p| p.node_id() != local_id);
 
         for peer in others_iter.clone() {
@@ -774,7 +774,7 @@ impl Discv5 {
 
         // if this is part of a query, update the query
         if let Some(query_id) = query_id {
-            if let Some(query) = self.queries.get_mut(&query_id) {
+            if let Some(query) = self.queries.get_mut(query_id) {
                 let mut peer_count = 0;
                 for peer in others_iter.clone() {
                     if query
@@ -789,7 +789,7 @@ impl Discv5 {
                     peer_count += 1;
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(source, &others_iter.collect())
+                query.on_success(source, &others_iter.collect::<Vec<_>>())
             }
         }
     }
@@ -801,7 +801,7 @@ impl Discv5 {
         enr: Option<Enr>,
         mut new_status: NodeStatus,
     ) {
-        let key = kbucket::Key::from(node_id.clone());
+        let key = kbucket::Key::from(node_id);
 
         if let Some(enr) = enr.clone() {
             // should the ENR be inserted or updated to a value that would exceed the IP limit ban
@@ -843,7 +843,7 @@ impl Discv5 {
                         match entry.insert(enr, new_status) {
                             kbucket::InsertResult::Inserted => {
                                 let event = Discv5Event::NodeInserted {
-                                    node_id: node_id.clone(),
+                                    node_id,
                                     replaced: None,
                                 };
                                 self.events.push_back(event);
@@ -866,7 +866,7 @@ impl Discv5 {
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
     fn inject_session_established(&mut self, enr: Enr) {
-        let node_id = enr.node_id().clone();
+        let node_id = enr.node_id();
         debug!("Session established with Node: {}", node_id);
         self.connection_updated(node_id.clone(), Some(enr), NodeStatus::Connected);
         // send an initial ping and start the ping interval
@@ -877,7 +877,7 @@ impl Discv5 {
 
     /// A session could not be established or an RPC request timed-out (after a few retries).
     fn rpc_failure(&mut self, node_id: NodeId, failed_rpc_id: RpcId) {
-        let req = RpcRequest(failed_rpc_id, node_id.clone());
+        let req = RpcRequest(failed_rpc_id, node_id);
 
         if let Some((query_id_option, request)) = self.active_rpc_requests.remove(&req) {
             match request {
@@ -902,7 +902,7 @@ impl Discv5 {
                         // there was no partially downloaded nodes inform the query of the failure
                         // if it's part of a query
                         if let Some(query_id) = query_id_option {
-                            if let Some(query) = self.queries.get_mut(&query_id) {
+                            if let Some(query) = self.queries.get_mut(query_id) {
                                 query.on_failure(&node_id);
                             }
                         } else {
@@ -913,7 +913,7 @@ impl Discv5 {
                 // for all other requests, if any are queries, mark them as failures.
                 _ => {
                     if let Some(query_id) = query_id_option {
-                        if let Some(query) = self.queries.get_mut(&query_id) {
+                        if let Some(query) = self.queries.get_mut(query_id) {
                             debug!(
                                 "Failed query request: {:?} for query: {:?} and node: {} ",
                                 request, query_id, node_id
@@ -1003,24 +1003,19 @@ impl Stream for Discv5 {
             let mut finished_query = None;
             // If a query is waiting for an rpc to send, store it here and stop looping.
             let mut waiting_query = None;
-            loop {
-                match self.queries.poll() {
-                    QueryPoolState::Finished(query) => {
-                        finished_query = Some(query);
-                        break;
-                    }
-                    QueryPoolState::Waiting(Some((query, return_peer))) => {
-                        waiting_query = Some((query.id(), query.target().clone(), return_peer));
-                        break;
-                    }
-                    QueryPoolState::Timeout(query) => {
-                        warn!("Query id: {:?} timed out", query.id());
-                        finished_query = Some(query);
-                        break;
-                    }
-                    QueryPoolState::Waiting(None) | QueryPoolState::Idle => break,
-                };
-            }
+            match self.queries.poll() {
+                QueryPoolState::Finished(query) => {
+                    finished_query = Some(query);
+                }
+                QueryPoolState::Waiting(Some((query, return_peer))) => {
+                    waiting_query = Some((query.id(), query.target().clone(), return_peer));
+                }
+                QueryPoolState::Timeout(query) => {
+                    warn!("Query id: {:?} timed out", query.id());
+                    finished_query = Some(query);
+                }
+                QueryPoolState::Waiting(None) | QueryPoolState::Idle => {}
+            };
 
             if let Some((query_id, target, return_peer)) = waiting_query {
                 self.send_rpc_query(query_id, target, &return_peer);
@@ -1063,7 +1058,7 @@ impl Stream for Discv5 {
 /// Returns `true` if `enr` can be inserted and `false` otherwise.
 /// `enr` can be inserted if the count of enrs in `others` in the same /24 subnet as `enr`
 /// is less than `limit`.
-fn ip_limiter(enr: &Enr, others: &Vec<&Enr>, limit: usize) -> bool {
+fn ip_limiter(enr: &Enr, others: &[&Enr], limit: usize) -> bool {
     let mut allowed = true;
     if let Some(ip) = enr.ip() {
         let count = others.iter().flat_map(|e| e.ip()).fold(0, |acc, x| {

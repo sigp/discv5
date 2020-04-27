@@ -182,11 +182,11 @@ impl Session {
             if let Some(remote_enr) = &self.remote_enr {
                 // verify the enr-seq number
                 if remote_enr.seq() < enr.seq() {
-                    self.remote_enr = Some(enr.clone());
+                    self.remote_enr = Some(enr);
                 } // ignore ENR's that have a lower seq number
             } else {
                 // update the ENR
-                self.remote_enr = Some(enr.clone());
+                self.remote_enr = Some(enr);
             }
         } else if self.remote_enr.is_none() {
             // didn't receive the remote's ENR
@@ -265,7 +265,7 @@ impl Session {
         let auth_tag: [u8; 12] = rand::random();
         let auth_header = AuthHeader::new(
             auth_tag,
-            id_nonce.clone(),
+            *id_nonce,
             ephem_pubkey.to_vec(),
             auth_response_ciphertext,
         );

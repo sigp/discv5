@@ -41,7 +41,7 @@ impl RequestKey {
         RequestKey(0)
     }
 
-    pub fn next(&self) -> RequestKey {
+    pub fn next(self) -> RequestKey {
         RequestKey(self.0.saturating_add(1))
     }
 }
@@ -133,8 +133,7 @@ impl TimedRequests {
     pub fn exists<F: FnMut(&Request) -> bool>(&self, mut filter: F) -> bool {
         self.requests
             .iter()
-            .find(|(_dst, v)| v.iter().find(|req| filter(&req.request)).is_some())
-            .is_some()
+            .any(|(_dst, v)| v.iter().any(|req| filter(&req.request)))
     }
 }
 

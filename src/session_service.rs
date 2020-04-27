@@ -263,7 +263,7 @@ impl SessionService {
         })?;
 
         let packet = session
-            .encrypt_message(self.tag(&dst_id), &message.clone().encode())
+            .encrypt_message(self.tag(&dst_id), &message.encode())
             .map_err(|e| {
                 error!("Failed to encrypt message");
                 e
@@ -543,7 +543,7 @@ impl SessionService {
             // spawn a WHOAREYOU event to check for highest known ENR
             let event = SessionEvent::WhoAreYouRequest {
                 src,
-                src_id: src_id.clone(),
+                src_id,
                 auth_tag,
             };
             events_ref.push_back(event);
@@ -572,7 +572,7 @@ impl SessionService {
             }
             let event = SessionEvent::WhoAreYouRequest {
                 src,
-                src_id: src_id.clone(),
+                src_id,
                 auth_tag,
             };
             self.events.push_back(event);
@@ -604,7 +604,7 @@ impl SessionService {
                 self.sessions.remove(&src_id);
                 let event = SessionEvent::WhoAreYouRequest {
                     src,
-                    src_id: src_id.clone(),
+                    src_id,
                     auth_tag,
                 };
                 self.events.push_back(event);
@@ -613,9 +613,10 @@ impl SessionService {
         };
 
         // Remove any associated request from pending_request
-        if let Some(_) = self
+        if self
             .pending_requests
             .remove(&src, |req| req.id() == Some(message.id))
+            .is_some()
         {
             trace!("Removing request id: {}", message.id);
         }
@@ -715,7 +716,7 @@ impl SessionService {
 
         while let Poll::Ready(Some((dst, mut request))) = self.pending_requests.poll_next_unpin(cx)
         {
-            let node_id = request.dst_id.clone();
+            let node_id = request.dst_id;
             if request.retries >= self.config.request_retries {
                 // the RPC has expired
                 // determine which kind of RPC has timed out
