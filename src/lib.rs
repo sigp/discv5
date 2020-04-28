@@ -1,3 +1,4 @@
+#![allow(clippy::needless_doctest_main)]
 //! An implementation of [Discovery V5](https://github.com/ethereum/devp2p/blob/master/discv5/discv5.md).
 //!
 //! # Overview
@@ -36,6 +37,7 @@
 //! discv5 service is as simple as initialising a [`Discv5`] struct and driving the stream.
 //!
 //! A simple example of creating this service is as follows:
+//!
 //!
 //! ```rust
 //! use enr::{Enr,EnrBuilder, CombinedKey};
