@@ -1,6 +1,6 @@
 name: build
 
-on: [push, pull_request]
+on: [pull_request]
 
 jobs:
   cargo-fmt:
@@ -26,4 +26,4 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Lint code for quality and style with Clippy
-      run: make lint
+      run: cargo clippy
