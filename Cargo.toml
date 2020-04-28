@@ -11,6 +11,8 @@ categories = ["network-programming", "asynchronous"]
 
 [dependencies]
 enr = { version = "0.1.0-alpha.5", features = ["libsecp256k1", "ed25519"] }
+tokio = { version = "0.2.19", features = ["time", "stream"] }
+zeroize = { version = "1.1.0", features = ["zeroize_derive"] }
 libsecp256k1 = "0.3.5"
 futures = "0.3.4"
 bigint = "4.4.1"
@@ -18,7 +20,6 @@ log = "0.4.8"
 rlp = "0.4.5"
 sha2 = "0.8.1"
 hkdf = "0.8.0"
-zeroize = { version = "1.1.0", features = ["zeroize_derive"] }
 openssl = "0.10.29"
 hex = "0.4.2"
 fnv = "1.0.6"
@@ -26,7 +27,6 @@ arrayvec = "0.5.1"
 digest = "0.8.1"
 rand = "0.7.3"
 async-std = "1.5.0"
-tokio = { version = "0.2.19", features = ["time"] }
 net2 = "0.2.33"
 smallvec = "1.4.0"
 

@@ -1,4 +1,4 @@
-//! The protocol behaviour of Discovery v5. See `lib.rs` for further details.
+//! The Discovery v5 protocol. See `lib.rs` for further details.
 //!
 //! Note: Discovered ENR's are not automatically added to the routing table. Only established
 //! sessions get added, ensuring only valid ENRs are added. Manual additions can be made using the
@@ -195,7 +195,7 @@ impl Discv5 {
         Ok(())
     }
 
-    /// Returns the number of connected peers the behaviour knows about.
+    /// Returns the number of connected peers the service knows about.
     pub fn connected_peers(&self) -> usize {
         self.connected_peers.len()
     }
@@ -1075,7 +1075,7 @@ fn ip_limiter(enr: &Enr, others: &[&Enr], limit: usize) -> bool {
     allowed
 }
 
-/// Event that can be produced by the `Discv5` behaviour.
+/// Event that can be produced by the `Discv5` service.
 #[derive(Debug)]
 pub enum Discv5Event {
     /// A node has been discovered from a FINDNODES request.
