@@ -3,17 +3,16 @@ use super::*;
 use crate::rpc::{Request, Response, RpcType};
 use enr::EnrBuilder;
 use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::prelude::*;
+use tokio::time::timeout;
 
 fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
 }
 
-#[test]
+#[tokio::test]
 // Tests the construction and sending of a simple message
-fn simple_session_message() {
+async fn simple_session_message() {
     init();
 
     let sender_port = 5000;
@@ -59,59 +58,44 @@ fn simple_session_message() {
     let receiver_send_message = send_message.clone();
 
     let _ = sender_service.send_request(&receiver_enr, send_message);
+    let sender = async move {
+        sender_service.collect::<Vec<_>>().await;
+    };
 
-    let sender = future::poll_fn(move || -> Poll<(), ()> {
+    let receiver = async move {
         loop {
-            match sender_service.poll() {
-                Async::Ready(_) => {}
-                Async::NotReady => return Ok(Async::NotReady),
-            };
-        }
-    });
-
-    let receiver = future::poll_fn(move || -> Poll<(), ()> {
-        loop {
-            let message = match receiver_service.poll() {
-                Async::Ready(message) => message,
-                Async::NotReady => return Ok(Async::NotReady),
-            };
-
-            match message {
-                SessionEvent::WhoAreYouRequest { src, auth_tag, .. } => {
-                    let seq = sender_enr.seq();
-                    let node_id = &sender_enr.node_id();
-                    receiver_service.send_whoareyou(
-                        src,
-                        node_id,
-                        seq,
-                        Some(sender_enr.clone()),
-                        auth_tag,
-                    );
+            if let Some(message) = receiver_service.next().await {
+                match message {
+                    SessionEvent::WhoAreYouRequest { src, auth_tag, .. } => {
+                        let seq = sender_enr.seq();
+                        let node_id = &sender_enr.node_id();
+                        receiver_service.send_whoareyou(
+                            src,
+                            node_id,
+                            seq,
+                            Some(sender_enr.clone()),
+                            auth_tag,
+                        );
+                    }
+                    SessionEvent::Message { message, .. } => {
+                        assert_eq!(*message, receiver_send_message);
+                        return;
+                    }
+                    _ => {}
                 }
-                SessionEvent::Message { message, .. } => {
-                    assert_eq!(*message, receiver_send_message);
-                    return Ok(Async::Ready(()));
-                }
-                _ => {}
             }
         }
-    });
+    };
 
-    let test_result = Arc::new(Mutex::new(true));
-    let thread_result = test_result.clone();
-    tokio::run(
-        sender
-            .select(receiver)
-            .timeout(Duration::from_millis(100))
-            .map_err(move |_| *thread_result.lock().unwrap() = false)
-            .map(|_| ()),
-    );
-    assert!(*test_result.lock().unwrap());
+    let future = futures::future::select(Box::pin(sender), Box::pin(receiver));
+    if let Err(_) = timeout(Duration::from_millis(100), future).await {
+        panic!("Test timed out");
+    }
 }
 
-#[test]
+#[tokio::test]
 // Tests sending multiple messages on an encrypted session
-fn multiple_messages() {
+async fn multiple_messages() {
     init();
     let sender_port = 5002;
     let receiver_port = 5003;
@@ -168,30 +152,24 @@ fn multiple_messages() {
 
     let mut message_count = 0;
 
-    let sender = future::poll_fn(move || -> Poll<(), ()> {
+    let sender = async move {
         loop {
-            match sender_service.poll() {
-                Async::Ready(SessionEvent::Established(_)) => {
+            match sender_service.next().await {
+                Some(SessionEvent::Established(_)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
                         let _ = sender_service.send_request(&receiver_enr, send_message.clone());
                     }
                 }
-                Async::Ready(_) => {}
-                Async::NotReady => return Ok(Async::NotReady),
+                _ => continue,
             };
         }
-    });
+    };
 
-    let receiver = future::poll_fn(move || -> Poll<(), ()> {
+    let receiver = async move {
         loop {
-            let message = match receiver_service.poll() {
-                Async::Ready(message) => message,
-                Async::NotReady => return Ok(Async::NotReady),
-            };
-
-            match message {
-                SessionEvent::WhoAreYouRequest { src, auth_tag, .. } => {
+            match receiver_service.next().await {
+                Some(SessionEvent::WhoAreYouRequest { src, auth_tag, .. }) => {
                     let seq = sender_enr.seq();
                     let node_id = &sender_enr.node_id();
                     receiver_service.send_whoareyou(
@@ -202,28 +180,22 @@ fn multiple_messages() {
                         auth_tag,
                     );
                 }
-                SessionEvent::Message { message, .. } => {
+                Some(SessionEvent::Message { message, .. }) => {
                     assert_eq!(*message, receiver_send_message);
                     message_count += 1;
                     // required to send a pong response to establish the session
                     let _ = receiver_service.send_request(&sender_enr, pong_response.clone());
                     if message_count == messages_to_send {
-                        return Ok(Async::Ready(()));
+                        return Poll::Ready(());
                     }
                 }
-                _ => {}
+                _ => continue,
             }
         }
-    });
+    };
 
-    let test_result = Arc::new(Mutex::new(true));
-    let thread_result = test_result.clone();
-    tokio::run(
-        sender
-            .select(receiver)
-            .timeout(Duration::from_millis(100))
-            .map_err(move |_| *thread_result.lock().unwrap() = false)
-            .map(|_| ()),
-    );
-    assert!(*test_result.lock().unwrap());
+    let future = futures::future::select(Box::pin(sender), Box::pin(receiver));
+    if let Err(_) = timeout(Duration::from_millis(100), future).await {
+        panic!("Test timed out");
+    }
 }

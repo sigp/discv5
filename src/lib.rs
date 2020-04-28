@@ -89,8 +89,8 @@ mod service;
 mod session;
 mod session_service;
 
+pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
-pub use discv5::{Discv5, Discv5Event};
 pub use error::Discv5Error;
 // re-export the ENR crate
 pub use enr;
