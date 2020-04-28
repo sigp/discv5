@@ -6,6 +6,7 @@ description = "Implementation of the p2p discv5 discovery protocol"
 authors = ["Age Manning <Age@AgeManning.com>"]
 license = "MIT"
 repository = "https://github.com/sigp/discv5"
+readme = "./README.md"
 keywords = ["peer-to-peer", "libp2p", "networking", "discovery", "discv5"]
 categories = ["network-programming", "asynchronous"]
 
