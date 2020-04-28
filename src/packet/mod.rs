@@ -334,7 +334,7 @@ impl From<DecoderError> for PacketError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libp2p_core::identity::Keypair;
+    use enr::{EnrKey, EnrPublicKey};
     use rand;
     use sha2::{Digest, Sha256};
     use simple_logger;
@@ -507,9 +507,7 @@ mod tests {
         // auth header data
         let auth_tag: [u8; AUTH_TAG_LENGTH] = rand::random();
         let id_nonce: [u8; ID_NONCE_LENGTH] = rand::random();
-        let ephemeral_pubkey = Keypair::generate_secp256k1()
-            .public()
-            .into_protobuf_encoding();
+        let ephemeral_pubkey = enr::CombinedKey::generate_secp256k1().public().encode();
         let auth_response: [u8; 32] = rand::random();
         let auth_response = auth_response.to_vec();
 

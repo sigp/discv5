@@ -1,0 +1,29 @@
+name: build
+
+on: [pull_request]
+
+jobs:
+  cargo-fmt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Get latest version of stable rust
+      run: rustup update stable
+    - name: Check formatting with cargofmt
+      run: cargo fmt --all -- --check
+  release-tests-ubuntu:
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+      - uses: actions/checkout@v2
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Run tests in release
+        run: cargo test --all --release --tests
+  clippy:
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+    - uses: actions/checkout@v1
+    - name: Lint code for quality and style with Clippy
+      run: cargo clippy

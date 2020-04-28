@@ -23,7 +23,7 @@ impl Digest for EcdhIdent {
 
     fn new() -> Self {
         EcdhIdent {
-            inner: GenericArray::clone_from_slice(&vec![0; 33]),
+            inner: GenericArray::clone_from_slice(&[0; 33]),
             index: 0,
         }
     }
@@ -56,13 +56,13 @@ impl Digest for EcdhIdent {
 
     fn result_reset(&mut self) -> GenericArray<u8, Self::OutputSize> {
         let result = self.inner;
-        self.inner = GenericArray::clone_from_slice(&vec![0; 33]);
+        self.inner = GenericArray::clone_from_slice(&[0; 33]);
         self.index = 0;
         result
     }
 
     fn reset(&mut self) {
-        self.inner = GenericArray::clone_from_slice(&vec![0; 33]);
+        self.inner = GenericArray::clone_from_slice(&[0; 33]);
         self.index = 0;
     }
 

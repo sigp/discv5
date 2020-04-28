@@ -26,10 +26,13 @@ use enr::{CombinedKey, Enr, EnrError, NodeId};
 use futures::prelude::*;
 use log::{debug, error, trace, warn};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::collections::VecDeque;
-use std::default::Default;
-use std::net::SocketAddr;
+use std::{
+    collections::{HashMap, VecDeque},
+    default::Default,
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 mod tests;
 mod timed_requests;
@@ -260,7 +263,7 @@ impl SessionService {
         })?;
 
         let packet = session
-            .encrypt_message(self.tag(&dst_id), &message.clone().encode())
+            .encrypt_message(self.tag(&dst_id), &message.encode())
             .map_err(|e| {
                 error!("Failed to encrypt message");
                 e
@@ -540,7 +543,7 @@ impl SessionService {
             // spawn a WHOAREYOU event to check for highest known ENR
             let event = SessionEvent::WhoAreYouRequest {
                 src,
-                src_id: src_id.clone(),
+                src_id,
                 auth_tag,
             };
             events_ref.push_back(event);
@@ -569,7 +572,7 @@ impl SessionService {
             }
             let event = SessionEvent::WhoAreYouRequest {
                 src,
-                src_id: src_id.clone(),
+                src_id,
                 auth_tag,
             };
             self.events.push_back(event);
@@ -601,7 +604,7 @@ impl SessionService {
                 self.sessions.remove(&src_id);
                 let event = SessionEvent::WhoAreYouRequest {
                     src,
-                    src_id: src_id.clone(),
+                    src_id,
                     auth_tag,
                 };
                 self.events.push_back(event);
@@ -610,9 +613,10 @@ impl SessionService {
         };
 
         // Remove any associated request from pending_request
-        if let Some(_) = self
+        if self
             .pending_requests
             .remove(&src, |req| req.id() == Some(message.id))
+            .is_some()
         {
             trace!("Removing request id: {}", message.id);
         }
@@ -701,7 +705,7 @@ impl SessionService {
     }
 
     /// The heartbeat which checks for timeouts and reports back failed RPC requests/sessions.
-    fn check_timeouts(&mut self) {
+    fn check_timeouts(&mut self, cx: &mut Context) {
         // remove expired requests/sessions
         // log pending request timeouts
         // TODO: Split into own task, to be called only when timeouts are required
@@ -710,8 +714,9 @@ impl SessionService {
         let pending_messages_ref = &mut self.pending_messages;
         let events_ref = &mut self.events;
 
-        while let Ok(Async::Ready(Some((dst, mut request)))) = self.pending_requests.poll() {
-            let node_id = request.dst_id.clone();
+        while let Poll::Ready(Some((dst, mut request))) = self.pending_requests.poll_next_unpin(cx)
+        {
+            let node_id = request.dst_id;
             if request.retries >= self.config.request_retries {
                 // the RPC has expired
                 // determine which kind of RPC has timed out
@@ -753,7 +758,7 @@ impl SessionService {
         // This is expensive, as it must loop through outgoing requests to check no request exists
         // for a given node id.
         let pending_requests_ref = &self.pending_requests;
-        while let Ok(Async::Ready(Some((node_id, session)))) = self.sessions.poll() {
+        while let Poll::Ready(Some((node_id, session))) = self.sessions.poll_next_unpin(cx) {
             if pending_requests_ref.exists(|req| req.dst_id == node_id) {
                 // add the session back in with the current request timeout
                 self.sessions
@@ -769,17 +774,21 @@ impl SessionService {
             }
         }
     }
+}
 
-    pub fn poll(&mut self) -> Async<SessionEvent> {
+impl Stream for SessionService {
+    type Item = SessionEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         loop {
             // process any events if necessary
             if let Some(event) = self.events.pop_front() {
-                return Async::Ready(event);
+                return Poll::Ready(Some(event));
             }
 
             // poll the discv5 service
-            match self.service.poll() {
-                Async::Ready((src, packet)) => {
+            match self.service.poll_next_unpin(cx) {
+                Poll::Ready(Some((src, packet))) => {
                     match packet {
                         Packet::WhoAreYou {
                             token,
@@ -807,13 +816,13 @@ impl SessionService {
                         Packet::RandomPacket { .. } => {} // this will not be decoded.
                     }
                 }
-                Async::NotReady => break,
+                Poll::Ready(None) | Poll::Pending => break,
             }
         }
 
         // check for timeouts
-        self.check_timeouts();
-        Async::NotReady
+        self.check_timeouts(cx);
+        Poll::Pending
     }
 }
 

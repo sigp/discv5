@@ -110,7 +110,7 @@ where
             known_closest_peers
                 .into_iter()
                 .map(|key| {
-                    let key: Key<TNodeId> = key.into();
+                    let key: Key<TNodeId> = key;
                     let distance = key.distance(&target_key);
                     let state = QueryPeerState::NotContacted;
                     (distance, QueryPeer::new(key, state))
@@ -165,9 +165,9 @@ where
                     self.num_waiting -= 1;
                     let peer = e.get_mut();
                     peer.peers_returned += closer_peers.len();
-                    if peer.peers_returned >= self.config.num_results {
-                        peer.state = QueryPeerState::Succeeded;
-                    } else if self.iterations == peer.iteration {
+                    if peer.peers_returned >= self.config.num_results
+                        || self.iterations == peer.iteration
+                    {
                         // mark the peer as succeeded
                         peer.state = QueryPeerState::Succeeded;
                     } else {
@@ -179,9 +179,9 @@ where
                 QueryPeerState::Unresponsive => {
                     let peer = e.get_mut();
                     peer.peers_returned += closer_peers.len();
-                    if peer.peers_returned >= self.config.num_results {
-                        peer.state = QueryPeerState::Succeeded;
-                    } else if self.iterations == peer.iteration {
+                    if peer.peers_returned >= self.config.num_results
+                        || self.iterations == peer.iteration
+                    {
                         // mark the peer as succeeded
                         peer.state = QueryPeerState::Succeeded;
                     } else {

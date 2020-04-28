@@ -23,8 +23,8 @@
 
 use bigint::U256;
 use enr::NodeId;
-use libp2p_core::PeerId;
-use multihash::Multihash;
+//use libp2p_core::PeerId;
+//use multihash::Multihash;
 use sha2::{
     digest::generic_array::{typenum::U32, GenericArray},
     Digest, Sha256,
@@ -64,7 +64,7 @@ impl<T> Key<T> {
     ///
     /// The preimage of type `T` is preserved. See [`Key::preimage`] and
     /// [`Key::into_preimage`].
-    pub fn new(preimage: T) -> Key<T>
+    pub fn _new(preimage: T) -> Key<T>
     where
         T: AsRef<[u8]>,
     {
@@ -108,26 +108,10 @@ impl<T> Key<T> {
     }
 }
 
-impl From<Multihash> for Key<Multihash> {
-    fn from(h: Multihash) -> Self {
-        let k = Key::new(h.clone().into_bytes());
-        Key {
-            preimage: h,
-            hash: k.hash,
-        }
-    }
-}
-
-impl From<PeerId> for Key<PeerId> {
-    fn from(peer_id: PeerId) -> Self {
-        Key::new(peer_id)
-    }
-}
-
 impl From<NodeId> for Key<NodeId> {
     fn from(node_id: NodeId) -> Self {
         Key {
-            preimage: node_id.clone(),
+            preimage: node_id,
             hash: *GenericArray::from_slice(&node_id.raw()),
         }
     }
@@ -142,15 +126,15 @@ mod tests {
     use super::*;
     use quickcheck::*;
 
-    impl Arbitrary for Key<PeerId> {
-        fn arbitrary<G: Gen>(_: &mut G) -> Key<PeerId> {
-            Key::from(PeerId::random())
+    impl Arbitrary for Key<NodeId> {
+        fn arbitrary<G: Gen>(_: &mut G) -> Key<NodeId> {
+            Key::from(NodeId::random())
         }
     }
 
     #[test]
     fn identity() {
-        fn prop(a: Key<PeerId>) -> bool {
+        fn prop(a: Key<NodeId>) -> bool {
             a.distance(&a) == Distance::default()
         }
         quickcheck(prop as fn(_) -> _)
@@ -158,7 +142,7 @@ mod tests {
 
     #[test]
     fn symmetry() {
-        fn prop(a: Key<PeerId>, b: Key<PeerId>) -> bool {
+        fn prop(a: Key<NodeId>, b: Key<NodeId>) -> bool {
             a.distance(&b) == b.distance(&a)
         }
         quickcheck(prop as fn(_, _) -> _)
@@ -166,7 +150,7 @@ mod tests {
 
     #[test]
     fn triangle_inequality() {
-        fn prop(a: Key<PeerId>, b: Key<PeerId>, c: Key<PeerId>) -> TestResult {
+        fn prop(a: Key<NodeId>, b: Key<NodeId>, c: Key<NodeId>) -> TestResult {
             let ab = a.distance(&b);
             let bc = b.distance(&c);
             let (ab_plus_bc, overflow) = ab.0.overflowing_add(bc.0);
@@ -181,10 +165,10 @@ mod tests {
 
     #[test]
     fn unidirectionality() {
-        fn prop(a: Key<PeerId>, b: Key<PeerId>) -> bool {
+        fn prop(a: Key<NodeId>, b: Key<NodeId>) -> bool {
             let d = a.distance(&b);
             (0..100).all(|_| {
-                let c = Key::from(PeerId::random());
+                let c = Key::from(NodeId::random());
                 a.distance(&c) != d || b == c
             })
         }

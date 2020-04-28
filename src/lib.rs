@@ -1,4 +1,5 @@
-//! The libp2p implemention of [Discovery V5](https://github.com/ethereum/devp2p/blob/master/discv5/discv5.md).
+#![allow(clippy::needless_doctest_main)]
+//! An implementation of [Discovery V5](https://github.com/ethereum/devp2p/blob/master/discv5/discv5.md).
 //!
 //! # Overview
 //!
@@ -23,33 +24,31 @@
 //!  needed and get dropped after a timeout. This section manages the creation and maintenance of
 //!  sessions between nodes. It is realised by the [`SessionService`] struct.
 //!  * Behaviour - This section contains the protocol-level logic. In particular it manages the
-//!  routing table of known ENR's, topic registration/advertisement and performs various qeuries
+//!  routing table of known ENR's, topic registration/advertisement and performs various queries
 //!  such as peer discovery. This section is realised by the [`Discv5`] struct.
 //!
 //!  *Note* -  Currently only `secp256k1` keys are supported.
 //!
+//!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
+//!
 //! # Usage
 //!
-//! [`Discv5`] implements the [`NetworkBehaviour`] trait and can therefore be composed as a
-//! behaviour on a [`Swarm`].  In order to start a [`Discv5`] service, an [`Enr`] is required. This
-//! identifies the node, attributes various values to our node for broadcasting in the discovery
-//! protocol. Although an IP can be specified in the ENR, the [`Discv5`] service requires a listen
-//! address to allow for listening on multiple interfaces, more specifically, the `0.0.0.0`
-//! address. The UDP port will be that of the ENR. If there is no port defined in the ENR, the
-//! service creation will fail.
+//! The [`Discv5`] service implements [`Stream`] which emits [`Discv5Event`] events. Running a
+//! discv5 service is as simple as initialising a [`Discv5`] struct and driving the stream.
 //!
 //! A simple example of creating this service is as follows:
 //!
-//! ```rust
-//! use libp2p_core::identity::Keypair;
-//! use enr::{Enr,EnrBuilder};
-//! use std::net::Ipv4Addr;
-//! use libp2p_discv5::{Discv5, Discv5Config};
-//! use std::convert::TryInto;
 //!
+//! ```rust
+//! use enr::{Enr,EnrBuilder, CombinedKey};
+//! use std::net::Ipv4Addr;
+//! use discv5::{Discv5, Discv5Config, Discv5Event};
+//! use futures::prelude::*;
+//!  
+//! #[tokio::main]
+//! async fn main() {
 //!   // generate a key for the node
-//!   let keypair = Keypair::generate_secp256k1();
-//!   let enr_key = keypair.clone().try_into().unwrap();
+//!   let enr_key = CombinedKey::generate_secp256k1();
 //!
 //!   // construct a local ENR
 //!   let enr = EnrBuilder::new("v4")
@@ -62,30 +61,48 @@
 //!     println!("Node Id: {}", enr.node_id());
 //!     println!("Base64 ENR: {}", enr.to_base64());
 //!
-//!     // listen on the udp socket of the enr
+//!     // listen on the UDP socket of the ENR
 //!     let listen_address = enr.udp_socket().unwrap();
 //!
 //!     // use default settings for the discv5 service
 //!     let config = Discv5Config::default();
 //!
-//!    // construct the discv5 behaviour
-//!    // the substream type is removed for demonstrative purposes
-//!    let discv5: Discv5<()> = Discv5::new(enr, keypair, config, listen_address).unwrap();
+//!    // construct the discv5 service
+//!    let mut discv5 = Discv5::new(enr, enr_key, config, listen_address).unwrap();
+//!
+//!    // add another node's ENR to connect to and join an existing DHT
+//!    discv5.add_enr("-IS4QKXYSAtVY5dwZneGdrMnuvjnhG3TQM8P8RHW1ZMbdOBsMfKQoZvEe9PqsYgKAb5afYVffn8iCxptuwUamV98d8IBgmlkgnY0gmlwhAAAAACJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCIyg".parse::<Enr<CombinedKey>>().unwrap());
+//!
+//!     // search peers closest to a target
+//!     let target_random_node_id = enr::NodeId::random();
+//!     discv5.find_node(target_random_node_id);
+//!
+//!    // poll the stream for the next FindNoeResult event
+//!    loop {
+//!         match discv5.next().await {
+//!             Some(Discv5Event::FindNodeResult { closer_peers, .. }) => {
+//!                 println!("Query completed. Found {} peers", closer_peers.len());
+//!                 break;
+//!             }
+//!             _ => {} // handle other discv5 events
+//!         }
+//!    }
+//! }
 //! ```
 //!
-//! To see a usage in a swarm environment, see the `discv5` example in `/examples`.
+//! To see a usage in a runtime environment, see the `find_nodes` example in `/examples`.
 //!
 //! [`Enr`]: enr::Enr
 //! [`Discv5`]: crate::Discv5
+//! [`Discv5Event`]: crate::Discv5Event.enum
 //! [`Discv5Service`]: crate::service::Discv5Service
-//! [`NetworkBehaviour`]: libp2p_core::swarm::NetworkBehaviour
 //! [`Packet`]: crate::service::Packet
 //! [`SessionService`]: crate::session_service::SessionService
 //! [`Session`]: crate::session::Session
-//! [`Swarm`]: libp2p_core::swarm::Swarm
+//! [`Stream`]: future::stream::Stream
 
-mod behaviour;
 mod config;
+mod discv5;
 mod error;
 mod kbucket;
 mod packet;
@@ -95,7 +112,7 @@ mod service;
 mod session;
 mod session_service;
 
-pub use behaviour::{Discv5, Discv5Event};
+pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
 pub use error::Discv5Error;
 // re-export the ENR crate
