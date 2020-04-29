@@ -24,7 +24,6 @@ use crate::rpc;
 use crate::service::MAX_PACKET_SIZE;
 use crate::session_service::{SessionEvent, SessionService};
 use crate::Discv5Config;
-use async_std::prelude::*;
 use enr::{CombinedKey, Enr as RawEnr, EnrError, EnrKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;

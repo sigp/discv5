@@ -4,15 +4,15 @@
 //! messages. These messages are defined in the `Packet` module.
 
 use super::packet::{Packet, MAGIC_LENGTH};
-use async_std::net::UdpSocket;
 use futures::prelude::*;
 use log::debug;
 use std::{
     io,
     net::SocketAddr,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
 };
+use tokio::net::UdpSocket;
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 
@@ -21,12 +21,12 @@ pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 pub struct Discv5Service {
     /// The UDP socket for interacting over UDP.
     socket: UdpSocket,
-    /// The buffer to accept inbound datagrams.
-    recv_buffer: [u8; MAX_PACKET_SIZE],
     /// List of discv5 packets to send.
     send_queue: Vec<(SocketAddr, Packet)>,
     /// WhoAreYou Magic Value. Used to decode raw WHOAREYOU packets.
     whoareyou_magic: [u8; MAGIC_LENGTH],
+    /// Waker to awake the thread on new messages.
+    waker: Option<Waker>,
 }
 
 impl Discv5Service {
@@ -48,46 +48,21 @@ impl Discv5Service {
             platform_specific(&builder)?;
             builder.bind(socket_addr)?
         };
-        let socket = UdpSocket::from(socket);
+        let socket = UdpSocket::from_std(socket)?;
 
         Ok(Discv5Service {
             socket,
-            recv_buffer: [0; MAX_PACKET_SIZE],
             send_queue: Vec::new(),
             whoareyou_magic,
+            waker: None,
         })
     }
 
     /// Add packets to the send queue.
     pub fn send(&mut self, to: SocketAddr, packet: Packet) {
         self.send_queue.push((to, packet));
-    }
-
-    /// Drive reading/writing to the UDP socket.
-    pub async fn poll(&mut self) -> (SocketAddr, Packet) {
-        loop {
-            // send messages
-            while !self.send_queue.is_empty() {
-                let (dst, packet) = self.send_queue.remove(0);
-
-                match self.socket.send_to(&packet.encode(), &dst).await {
-                    Ok(bytes_written) => {
-                        debug_assert_eq!(bytes_written, packet.encode().len());
-                    }
-                    Err(_) => {
-                        self.send_queue.clear();
-                        break;
-                    }
-                }
-            }
-
-            // handle incoming messages
-            if let Ok((length, src)) = self.socket.recv_from(&mut self.recv_buffer).await {
-                match Packet::decode(&self.recv_buffer[..length], &self.whoareyou_magic) {
-                    Ok(p) => return (src, p),
-                    Err(e) => debug!("Could not decode packet: {:?}", e), // could not decode the packet, drop it
-                }
-            }
+        if let Some(waker) = &self.waker {
+            waker.wake_by_ref()
         }
     }
 }
@@ -96,9 +71,57 @@ impl Stream for Discv5Service {
     type Item = (SocketAddr, Packet);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        match Box::pin(self.poll()).as_mut().poll(cx) {
-            Poll::Ready(v) => Poll::Ready(Some(v)),
-            Poll::Pending => Poll::Pending,
+        if let Some(waker) = &self.waker {
+            if waker.will_wake(cx.waker()) {
+                self.waker = Some(cx.waker().clone());
+            }
+        } else {
+            self.waker = Some(cx.waker().clone());
         }
+
+        // send messages
+        while !self.send_queue.is_empty() {
+            let (dst, packet) = self.send_queue.remove(0);
+
+            match self.socket.poll_send_to(cx, &packet.encode(), &dst) {
+                Poll::Ready(Ok(bytes_written)) => {
+                    debug_assert_eq!(bytes_written, packet.encode().len());
+                }
+                Poll::Pending => {
+                    // didn't write add back and break
+                    self.send_queue.insert(0, (dst, packet));
+                    // notify to try again
+                    cx.waker().wake_by_ref();
+                    break;
+                }
+                Poll::Ready(Err(_)) => {
+                    self.send_queue.clear();
+                    break;
+                }
+            }
+        }
+
+        // handle incoming messages
+        let mut recv_buffer = [0u8; MAX_PACKET_SIZE];
+        loop {
+            match self.socket.poll_recv_from(cx, &mut recv_buffer) {
+                Poll::Ready(Ok((length, src))) => {
+                    let whoareyou_magic = self.whoareyou_magic;
+                    match Packet::decode(&recv_buffer[..length], &whoareyou_magic) {
+                        Ok(p) => {
+                            return Poll::Ready(Some((src, p)));
+                        }
+                        Err(e) => debug!("Could not decode packet: {:?}", e), // could not decode the packet, drop it
+                    }
+                }
+                Poll::Pending => {
+                    break;
+                }
+                Poll::Ready(Err(_)) => {
+                    break;
+                } // wait for reconnection to poll again.
+            }
+        }
+        Poll::Pending
     }
 }
