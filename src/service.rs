@@ -23,6 +23,8 @@ pub struct Discv5Service {
     socket: UdpSocket,
     /// List of discv5 packets to send.
     send_queue: Vec<(SocketAddr, Packet)>,
+    /// The buffer to accept inbound datagrams.
+    recv_buffer: [u8; MAX_PACKET_SIZE],
     /// WhoAreYou Magic Value. Used to decode raw WHOAREYOU packets.
     whoareyou_magic: [u8; MAGIC_LENGTH],
     /// Waker to awake the thread on new messages.
@@ -53,6 +55,7 @@ impl Discv5Service {
         Ok(Discv5Service {
             socket,
             send_queue: Vec::new(),
+            recv_buffer: [0; MAX_PACKET_SIZE],
             whoareyou_magic,
             waker: None,
         })
@@ -70,44 +73,44 @@ impl Discv5Service {
 impl Stream for Discv5Service {
     type Item = (SocketAddr, Packet);
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        if let Some(waker) = &self.waker {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let s = self.get_mut();
+        if let Some(waker) = &s.waker {
             if waker.will_wake(cx.waker()) {
-                self.waker = Some(cx.waker().clone());
+                s.waker = Some(cx.waker().clone());
             }
         } else {
-            self.waker = Some(cx.waker().clone());
+            s.waker = Some(cx.waker().clone());
         }
 
         // send messages
-        while !self.send_queue.is_empty() {
-            let (dst, packet) = self.send_queue.remove(0);
+        while !s.send_queue.is_empty() {
+            let (dst, packet) = s.send_queue.remove(0);
 
-            match self.socket.poll_send_to(cx, &packet.encode(), &dst) {
+            match s.socket.poll_send_to(cx, &packet.encode(), &dst) {
                 Poll::Ready(Ok(bytes_written)) => {
                     debug_assert_eq!(bytes_written, packet.encode().len());
                 }
                 Poll::Pending => {
                     // didn't write add back and break
-                    self.send_queue.insert(0, (dst, packet));
+                    s.send_queue.insert(0, (dst, packet));
                     // notify to try again
                     cx.waker().wake_by_ref();
                     break;
                 }
                 Poll::Ready(Err(_)) => {
-                    self.send_queue.clear();
+                    s.send_queue.clear();
                     break;
                 }
             }
         }
 
         // handle incoming messages
-        let mut recv_buffer = [0u8; MAX_PACKET_SIZE];
         loop {
-            match self.socket.poll_recv_from(cx, &mut recv_buffer) {
+            match s.socket.poll_recv_from(cx, &mut s.recv_buffer) {
                 Poll::Ready(Ok((length, src))) => {
-                    let whoareyou_magic = self.whoareyou_magic;
-                    match Packet::decode(&recv_buffer[..length], &whoareyou_magic) {
+                    let whoareyou_magic = s.whoareyou_magic;
+                    match Packet::decode(&s.recv_buffer[..length], &whoareyou_magic) {
                         Ok(p) => {
                             return Poll::Ready(Some((src, p)));
                         }
