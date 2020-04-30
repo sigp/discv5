@@ -1080,9 +1080,9 @@ pub enum Discv5Event {
     /// A node has been discovered from a FINDNODES request.
     ///
     /// The ENR of the node is returned. Various properties can be derived from the ENR.
-    /// - `PeerId`: enr.peer_id()
-    /// - `Multiaddr`: enr.multiaddr()
     /// - `NodeId`: enr.node_id()
+    /// - `SeqNo`: enr.seq_no()
+    /// - `Ip`: enr.ip()
     Discovered(Enr),
     /// A new ENR was added to the routing table.
     EnrAdded { enr: Enr, replaced: Option<Enr> },
