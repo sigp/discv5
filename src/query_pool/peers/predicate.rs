@@ -5,7 +5,7 @@ use std::collections::btree_map::{BTreeMap, Entry};
 use std::iter::FromIterator;
 use std::time::{Duration, Instant};
 
-pub struct PredicateQuery<TTarget, TNodeId, TResult> {
+pub(crate) struct PredicateQuery<TTarget, TNodeId, TResult> {
     /// The target key we are looking for
     target_key: Key<TTarget>,
 
@@ -30,20 +30,20 @@ pub struct PredicateQuery<TTarget, TNodeId, TResult> {
 
 /// Configuration for a `Query`.
 #[derive(Debug, Clone)]
-pub struct PredicateQueryConfig {
+pub(crate) struct PredicateQueryConfig {
     /// Allowed level of parallelism.
     ///
     /// The `α` parameter in the Kademlia paper. The maximum number of peers that a query
     /// is allowed to wait for in parallel while iterating towards the closest
     /// nodes to a target. Defaults to `3`.
-    pub parallelism: usize,
+    pub(crate) parallelism: usize,
 
     /// Number of results to produce.
     ///
     /// The number of closest peers that a query must obtain successful results
     /// for before it terminates. Defaults to the maximum number of entries in a
     /// single k-bucket, i.e. the `k` parameter in the Kademlia paper.
-    pub num_results: usize,
+    pub(crate) num_results: usize,
 
     /// The timeout for a single peer.
     ///
@@ -51,11 +51,11 @@ pub struct PredicateQueryConfig {
     /// window, the iterator considers the peer unresponsive and will not wait for
     /// the peer when evaluating the termination conditions, until and unless a
     /// result is delivered. Defaults to `10` seconds.
-    pub peer_timeout: Duration,
+    pub(crate) peer_timeout: Duration,
 }
 
 impl PredicateQueryConfig {
-    pub fn new_from_config(config: &Discv5Config) -> Self {
+    pub(crate) fn new_from_config(config: &Discv5Config) -> Self {
         Self {
             parallelism: config.query_parallelism,
             num_results: MAX_NODES_PER_BUCKET,

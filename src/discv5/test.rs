@@ -289,7 +289,7 @@ async fn test_findnode_query() {
 
     let future = future::poll_fn(main);
 
-    if let Err(_) = timeout(Duration::from_millis(100), future).await {
+    if let Err(_) = timeout(Duration::from_millis(800), future).await {
         panic!("Future timed out");
     }
 }

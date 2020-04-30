@@ -62,6 +62,7 @@ impl Default for Discv5Config {
     }
 }
 
+#[derive(Debug)]
 pub struct Discv5ConfigBuilder {
     config: Discv5Config,
 }
@@ -144,7 +145,7 @@ impl Discv5ConfigBuilder {
 }
 
 impl std::fmt::Debug for Discv5Config {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut builder = f.debug_struct("Discv5Config");
         let _ = builder.field("request_timeout", &self.request_timeout);
         let _ = builder.field("query_timeout", &self.query_timeout);

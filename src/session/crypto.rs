@@ -28,7 +28,7 @@ type Key = [u8; KEY_LENGTH];
 /// Generates session and auth-response keys for a nonce and remote ENR. This currently only
 /// supports Secp256k1 signed ENR's. This returns four keys; initiator key, responder key, auth
 /// response key and the ephemeral public key.
-pub fn generate_session_keys(
+pub(crate) fn generate_session_keys(
     local_id: &NodeId,
     remote_enr: &Enr<CombinedKey>,
     id_nonce: &Nonce,
@@ -85,7 +85,7 @@ fn derive_key(
 }
 
 /// Derives the session keys for a public key type that matches the local keypair.
-pub fn derive_keys_from_pubkey(
+pub(crate) fn derive_keys_from_pubkey(
     local_key: &CombinedKey,
     local_id: &NodeId,
     remote_id: &NodeId,
@@ -115,7 +115,7 @@ pub fn derive_keys_from_pubkey(
 
 /// Generates a signature of a nonce given a keypair. This prefixes the `NONCE_PREFIX` to the
 /// signature.
-pub fn sign_nonce(
+pub(crate) fn sign_nonce(
     signing_key: &CombinedKey,
     nonce: &Nonce,
     ephem_pubkey: &[u8],
@@ -134,7 +134,7 @@ pub fn sign_nonce(
 }
 
 /// Verifies the authentication header nonce.
-pub fn verify_authentication_nonce(
+pub(crate) fn verify_authentication_nonce(
     remote_pubkey: &CombinedPublicKey,
     remote_ephem_pubkey: &[u8],
     nonce: &Nonce,
@@ -170,7 +170,7 @@ fn generate_signing_nonce(id_nonce: &Nonce, ephem_pubkey: &[u8]) -> Vec<u8> {
 
 /// Verifies the encoding and nonce signature given in the authentication header. If
 /// the header contains an updated ENR, it is returned.
-pub fn decrypt_authentication_header(
+pub(crate) fn decrypt_authentication_header(
     auth_resp_key: &Key,
     header: &AuthHeader,
 ) -> Result<AuthResponse, Discv5Error> {
@@ -186,7 +186,7 @@ pub fn decrypt_authentication_header(
 }
 
 /// Decrypt messages that are post-fixed with an authenticated MAC.
-pub fn decrypt_message(
+pub(crate) fn decrypt_message(
     key: &Key,
     nonce: AuthTag,
     message: &[u8],
@@ -216,7 +216,7 @@ pub fn decrypt_message(
 
 /// A wrapper around the underlying default AES_GCM implementation. This may be abstracted in the
 /// future.
-pub fn encrypt_message(
+pub(crate) fn encrypt_message(
     key: &Key,
     nonce: AuthTag,
     message: &[u8],

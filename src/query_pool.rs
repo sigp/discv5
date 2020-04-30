@@ -23,8 +23,8 @@
 
 mod peers;
 
-pub use peers::closest::{FindNodeQuery, FindNodeQueryConfig};
-pub use peers::predicate::{PredicateQuery, PredicateQueryConfig};
+pub(crate) use peers::closest::{FindNodeQuery, FindNodeQueryConfig};
+pub(crate) use peers::predicate::{PredicateQuery, PredicateQueryConfig};
 pub use peers::{QueryState, ReturnPeer};
 
 use crate::kbucket::{Key, PredicateKey};
@@ -98,7 +98,7 @@ where
     }
 
     /// Adds a query to the pool that returns peers that satisfy a predicate.
-    pub fn add_predicate_query<I>(
+    pub(crate) fn add_predicate_query<I>(
         &mut self,
         config: PredicateQueryConfig,
         target: TTarget,
@@ -133,7 +133,7 @@ where
     }
 
     /// Polls the pool to advance the queries.
-    pub fn poll(&mut self) -> QueryPoolState<TTarget, TNodeId, TResult> {
+    pub fn poll(&mut self) -> QueryPoolState<'_, TTarget, TNodeId, TResult> {
         let now = Instant::now();
         let mut finished = None;
         let mut waiting = None;

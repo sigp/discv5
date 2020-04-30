@@ -16,7 +16,7 @@ use std::{
 use tokio::time::{delay_queue, DelayQueue};
 
 /// A collection of requests that have an associated timeout.
-pub struct TimedRequests {
+pub(crate) struct TimedRequests {
     /// Pending raw requests with timeout keys for removing from a delay queue and to be identified during a timeout.
     /// These are indexed by SocketAddr as WHOAREYOU messages do not return a source node id to
     /// match against.
@@ -37,11 +37,11 @@ pub struct TimedRequests {
 struct RequestKey(usize);
 
 impl RequestKey {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         RequestKey(0)
     }
 
-    pub fn next(self) -> RequestKey {
+    pub(crate) fn next(self) -> RequestKey {
         RequestKey(self.0.saturating_add(1))
     }
 }
@@ -56,7 +56,7 @@ struct TimeoutIndex {
 }
 
 impl TimeoutIndex {
-    pub fn new(dst: SocketAddr, request_key: RequestKey) -> Self {
+    fn new(dst: SocketAddr, request_key: RequestKey) -> Self {
         TimeoutIndex { dst, request_key }
     }
 }
@@ -64,13 +64,17 @@ impl TimeoutIndex {
 /// A request with an attached delay queue key and request key. Allows for removing the delay
 /// timeout when being removed and for being removed from the collection being timed out.
 struct RequestTimeout {
-    pub request: Request,
-    pub delay_key: delay_queue::Key,
-    pub request_key: RequestKey,
+    request: Request,
+    delay_key: delay_queue::Key,
+    request_key: RequestKey,
 }
 
 impl RequestTimeout {
-    pub fn new(request: Request, delay_key: delay_queue::Key, request_key: RequestKey) -> Self {
+    pub(crate) fn new(
+        request: Request,
+        delay_key: delay_queue::Key,
+        request_key: RequestKey,
+    ) -> Self {
         RequestTimeout {
             request,
             delay_key,
@@ -86,7 +90,7 @@ impl Default for TimedRequests {
 }
 
 impl TimedRequests {
-    pub fn new(request_timeout: Duration) -> Self {
+    pub(crate) fn new(request_timeout: Duration) -> Self {
         TimedRequests {
             requests: HashMap::new(),
             timeouts: DelayQueue::new(),
@@ -97,7 +101,7 @@ impl TimedRequests {
 
     /// Removes a request based on the given filter. Returns `Some(Request)` if the request exists,
     /// otherwise returns None.
-    pub fn remove<F: FnMut(&Request) -> bool>(
+    pub(crate) fn remove<F: FnMut(&Request) -> bool>(
         &mut self,
         src: &SocketAddr,
         mut filter: F,
@@ -117,7 +121,7 @@ impl TimedRequests {
         }
     }
 
-    pub fn insert(&mut self, dst: SocketAddr, request: Request) {
+    pub(crate) fn insert(&mut self, dst: SocketAddr, request: Request) {
         // create a timeout for the request
         let timeout_index = TimeoutIndex::new(dst, self.current_key);
         let delay_key = self.timeouts.insert(timeout_index, self.request_timeout);
@@ -130,7 +134,7 @@ impl TimedRequests {
         self.current_key = self.current_key.next();
     }
 
-    pub fn exists<F: FnMut(&Request) -> bool>(&self, mut filter: F) -> bool {
+    pub(crate) fn exists<F: FnMut(&Request) -> bool>(&self, mut filter: F) -> bool {
         self.requests
             .iter()
             .any(|(_dst, v)| v.iter().any(|req| filter(&req.request)))
@@ -140,7 +144,7 @@ impl TimedRequests {
 impl Stream for TimedRequests {
     type Item = (SocketAddr, Request);
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.timeouts.poll_expired(cx) {
             Poll::Ready(Some(Ok(timeout_index))) => {
                 let timeout_index = timeout_index.get_ref();

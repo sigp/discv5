@@ -1,7 +1,10 @@
-//! The base UDP layer of the discv5 service.
+//! The base UDP layer of the Discv5 service.
 //!
-//! The `Discv5Service` opens a UDP socket and handles the encoding/decoding of raw Discv5
-//! messages. These messages are defined in the `Packet` module.
+//! The [`Transport`] opens a UDP socket and handles the encoding/decoding of raw Discv5
+//! messages. These messages are defined in the [`Packet`] module.
+//!
+//! [`Transport`]: transport/struct.Transport.html
+//! [`Packet`]: ../packet/index.html
 
 use super::packet::{Packet, MAGIC_LENGTH};
 use futures::prelude::*;
@@ -18,7 +21,7 @@ pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 
 /// The main service that handles the transport. Specifically the UDP sockets and packet
 /// encoding/decoding.
-pub struct Discv5Service {
+pub(crate) struct Transport {
     /// The UDP socket for interacting over UDP.
     socket: UdpSocket,
     /// List of discv5 packets to send.
@@ -31,9 +34,12 @@ pub struct Discv5Service {
     waker: Option<Waker>,
 }
 
-impl Discv5Service {
+impl Transport {
     /// Initializes the UDP socket, can fail when binding the socket.
-    pub fn new(socket_addr: SocketAddr, whoareyou_magic: [u8; MAGIC_LENGTH]) -> io::Result<Self> {
+    pub(crate) fn new(
+        socket_addr: SocketAddr,
+        whoareyou_magic: [u8; MAGIC_LENGTH],
+    ) -> io::Result<Self> {
         // set up the UDP socket
         let socket = {
             #[cfg(unix)]
@@ -52,7 +58,7 @@ impl Discv5Service {
         };
         let socket = UdpSocket::from_std(socket)?;
 
-        Ok(Discv5Service {
+        Ok(Transport {
             socket,
             send_queue: Vec::new(),
             recv_buffer: [0; MAX_PACKET_SIZE],
@@ -62,7 +68,7 @@ impl Discv5Service {
     }
 
     /// Add packets to the send queue.
-    pub fn send(&mut self, to: SocketAddr, packet: Packet) {
+    pub(crate) fn send(&mut self, to: SocketAddr, packet: Packet) {
         self.send_queue.push((to, packet));
         if let Some(waker) = &self.waker {
             waker.wake_by_ref()
@@ -70,10 +76,10 @@ impl Discv5Service {
     }
 }
 
-impl Stream for Discv5Service {
+impl Stream for Transport {
     type Item = (SocketAddr, Packet);
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let s = self.get_mut();
         if let Some(waker) = &s.waker {
             if waker.will_wake(cx.waker()) {

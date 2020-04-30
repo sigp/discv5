@@ -1,10 +1,13 @@
+#![warn(rust_2018_idioms)]
+#![deny(intra_doc_link_resolution_failure)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(clippy::needless_doctest_main)]
 //! An implementation of [Discovery V5](https://github.com/ethereum/devp2p/blob/master/discv5/discv5.md).
 //!
 //! # Overview
 //!
 //! Discovery v5 is a protocol designed for encrypted peer discovery and topic advertisement. Each peer/node
-//! on the network is identified via it's ['ENR'] ([Ethereum Name
+//! on the network is identified via it's ENR ([Ethereum Name
 //! Record](https://eips.ethereum.org/EIPS/eip-778)), which is essentially a signed key-value store
 //! containing the node's public key and optionally IP address and port.
 //!
@@ -16,14 +19,14 @@
 //!
 //! This protocol is split into three main sections/layers:
 //!
-//!  * Transport - The transport for this protocol is currently fixed to UDP and is realised by the
-//!  [`Discv5Service`] struct. It encodes/decodes [`Packet`]'s to and from the specified UDP
+//!  * Transport - The transport for this protocol is currently fixed to UDP and is realised by a
+//!  [`Transport`]. It encodes/decodes [Packet]'s to and from the specified UDP
 //!  socket.
 //!  * Session - The protocol's communication is encrypted with `AES_GCM`. All node communication
 //!  undergoes a handshake, which results in a [`Session`]. [`Session`]'s are established when
 //!  needed and get dropped after a timeout. This section manages the creation and maintenance of
 //!  sessions between nodes. It is realised by the [`SessionService`] struct.
-//!  * Behaviour - This section contains the protocol-level logic. In particular it manages the
+//!  * Application - This section contains the protocol-level logic. In particular it manages the
 //!  routing table of known ENR's, topic registration/advertisement and performs various queries
 //!  such as peer discovery. This section is realised by the [`Discv5`] struct.
 //!
@@ -31,13 +34,16 @@
 //!
 //!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 //!
+//!
 //! # Usage
 //!
-//! The [`Discv5`] service implements [`Stream`] which emits [`Discv5Event`] events. Running a
+//! The [`Discv5`] service implements `Stream` which emits [`Discv5Event`] events. Running a
 //! discv5 service is as simple as initialising a [`Discv5`] struct and driving the stream.
 //!
-//! A simple example of creating this service is as follows:
+//! The service can be configured via [`Discv5Config`] which can be created using the
+//! [`Discv5ConfigBuilder`].
 //!
+//! A simple example of creating this service is as follows:
 //!
 //! ```rust
 //! use enr::{Enr,EnrBuilder, CombinedKey};
@@ -78,9 +84,9 @@
 //!     discv5.find_node(target_random_node_id);
 //!
 //!    // poll the stream for the next FindNoeResult event
-//!    loop {
-//!         match discv5.next().await {
-//!             Some(Discv5Event::FindNodeResult { closer_peers, .. }) => {
+//!    while let Some(event) = discv5.next().await {
+//!        match event {
+//!             Discv5Event::FindNodeResult { closer_peers, .. } => {
 //!                 println!("Query completed. Found {} peers", closer_peers.len());
 //!                 break;
 //!             }
@@ -92,14 +98,14 @@
 //!
 //! To see a usage in a runtime environment, see the `find_nodes` example in `/examples`.
 //!
-//! [`Enr`]: enr::Enr
-//! [`Discv5`]: crate::Discv5
-//! [`Discv5Event`]: crate::Discv5Event.enum
-//! [`Discv5Service`]: crate::service::Discv5Service
-//! [`Packet`]: crate::service::Packet
-//! [`SessionService`]: crate::session_service::SessionService
-//! [`Session`]: crate::session::Session
-//! [`Stream`]: future::stream::Stream
+//! [`Discv5`]: struct.Discv5.html
+//! [`Discv5Event`]: enum.Discv5Event.html
+//! [`Discv5Config`]: config/struct.Discv5Config.html
+//! [`Discv5ConfigBuilder`]: config/struct.Discv5ConfigBuilder.html
+//! [`Transport`]: transport/struct.Transport.html
+//! [Packet]: packet/enum.Packet.html
+//! [`SessionService`]: session_service/struct.SessionService.html
+//! [`Session`]: session/struct.Session.html
 
 mod config;
 mod discv5;
@@ -108,9 +114,9 @@ mod kbucket;
 mod packet;
 mod query_pool;
 mod rpc;
-mod service;
 mod session;
 mod session_service;
+mod transport;
 
 pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
