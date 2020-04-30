@@ -15,7 +15,7 @@ exclude = [
 ]
 
 [dependencies]
-enr = { version = "0.1.0-alpha.6", features = ["libsecp256k1", "ed25519", "libp2p"] }
+enr = { version = "0.1.0-alpha.6", features = ["libsecp256k1", "ed25519"] }
 tokio = { version = "0.2.20", features = ["net", "stream", "time"] }
 zeroize = { version = "1.1.0", features = ["zeroize_derive"] }
 libsecp256k1 = "0.3.5"
