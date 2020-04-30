@@ -1,4 +1,4 @@
-//! The `Session` struct handles the stages of creating and establishing a handshake with a
+//! A [`Session`] handles the stages of creating and establishing a handshake with a
 //! peer.
 //!
 //! There are two ways a Session can get initialised.
@@ -7,7 +7,9 @@
 //! - A message was received from an unknown peer and we start the `Session` by sending a
 //! WHOAREYOU message.
 //!
-//! This `Session` module is responsible for generating, deriving and holding keys for sessions for known peers.
+//! This  module is responsible for generating, deriving and holding keys for sessions for known peers.
+//!
+//! [`Session`]: struct.Session.html
 
 use super::packet::{AuthHeader, AuthResponse, AuthTag, Nonce, Packet, Tag, MAGIC_LENGTH};
 use crate::Discv5Error;
@@ -26,7 +28,7 @@ const WHOAREYOU_STRING: &str = "WHOAREYOU";
 /// a session can be in, initializing (`WhoAreYouSent` or `RandomSent`), `Untrusted` (when the
 /// socket address of the ENR doesn't match the `last_seen_socket`) and `Established` (the session
 /// has been successfully established).
-pub struct Session {
+pub(crate) struct Session {
     /// The current state of the Session
     state: SessionState,
 
@@ -42,19 +44,19 @@ pub struct Session {
 }
 
 #[derive(Zeroize, PartialEq)]
-pub struct Keys {
+pub(crate) struct Keys {
     /// The Authentication response key.
-    pub auth_resp_key: [u8; 16],
+    auth_resp_key: [u8; 16],
 
     /// The encryption key.
-    pub encryption_key: [u8; 16],
+    encryption_key: [u8; 16],
 
     /// The decryption key.
-    pub decryption_key: [u8; 16],
+    decryption_key: [u8; 16],
 }
 
 /// A State
-pub enum TrustedState {
+enum TrustedState {
     /// The ENR socket address matches what is observed
     Trusted,
     /// The source socket address of the last message doesn't match the known ENR. In this state, the service will respond to requests, but does not treat the node as
@@ -64,7 +66,7 @@ pub enum TrustedState {
 
 #[derive(PartialEq)]
 /// The current state of the session. This enum holds the encryption keys for various states.
-pub enum SessionState {
+pub(crate) enum SessionState {
     /// A WHOAREYOU packet has been sent, and the Session is awaiting an Authentication response.
     WhoAreYouSent,
 
@@ -100,7 +102,7 @@ impl Session {
 
     /// Creates a new `Session` instance and generates a RANDOM packet to be sent along with this
     /// session being established. This session is set to `RandomSent` state.
-    pub fn new_random(tag: Tag, remote_enr: Enr<CombinedKey>) -> (Self, Packet) {
+    pub(crate) fn new_random(tag: Tag, remote_enr: Enr<CombinedKey>) -> (Self, Packet) {
         let random_packet = Packet::random(tag);
 
         let session = Session {
@@ -115,7 +117,7 @@ impl Session {
 
     /// Creates a new `Session` and generates an associated WHOAREYOU packet. The returned session is in the
     /// `WhoAreYouSent` state.
-    pub fn new_whoareyou(
+    pub(crate) fn new_whoareyou(
         node_id: &NodeId,
         enr_seq: u64,
         remote_enr: Option<Enr<CombinedKey>>,
@@ -157,7 +159,7 @@ impl Session {
     /// Generates session keys from an authentication header. If the IP of the ENR does not match the
     /// source IP address, we consider this session untrusted. The output returns a boolean which
     /// specifies if the Session is trusted or not.
-    pub fn establish_from_header(
+    pub(crate) fn establish_from_header(
         &mut self,
         local_key: &CombinedKey,
         local_id: &NodeId,
@@ -225,7 +227,7 @@ impl Session {
     /* Encryption Related Functions */
 
     /// Encrypts a message and produces an AuthMessage.
-    pub fn encrypt_with_header(
+    pub(crate) fn encrypt_with_header(
         &mut self,
         tag: Tag,
         local_key: &CombinedKey,
@@ -295,7 +297,7 @@ impl Session {
 
     /// Uses the current `Session` to encrypt a message. Encrypt packets with the current session
     /// key if we are awaiting a response from AuthMessage.
-    pub fn encrypt_message(&self, tag: Tag, message: &[u8]) -> Result<Packet, Discv5Error> {
+    pub(crate) fn encrypt_message(&self, tag: Tag, message: &[u8]) -> Result<Packet, Discv5Error> {
         //TODO: Establish a counter to prevent repeats of nonce
         let auth_tag: AuthTag = rand::random();
 
@@ -321,7 +323,7 @@ impl Session {
     /// Decrypts an encrypted message. If a Session is already established, the original decryption
     /// keys are tried first, upon failure, the new keys are attempted. If the new keys succeed,
     /// the session keys are updated along with the Session state.
-    pub fn decrypt_message(
+    pub(crate) fn decrypt_message(
         &mut self,
         nonce: AuthTag,
         message: &[u8],
@@ -391,7 +393,7 @@ impl Session {
 
     /* Session Helper Functions */
 
-    pub fn update_enr(&mut self, enr: Enr<CombinedKey>) -> bool {
+    pub(crate) fn update_enr(&mut self, enr: Enr<CombinedKey>) -> bool {
         if let Some(remote_enr) = &self.remote_enr {
             if remote_enr.seq() < enr.seq() {
                 self.remote_enr = Some(enr);
@@ -405,7 +407,7 @@ impl Session {
     /// Updates the trusted status of a Session. It can be promoted to an `established` state, or
     /// demoted to an `untrusted` state. This value returns true if the Session has been
     /// promoted.
-    pub fn update_trusted(&mut self) -> bool {
+    pub(crate) fn update_trusted(&mut self) -> bool {
         if let TrustedState::Untrusted = self.trusted {
             if let Some(remote_enr) = &self.remote_enr {
                 if Some(self.last_seen_socket) == remote_enr.udp_socket() {
@@ -424,19 +426,19 @@ impl Session {
     }
 
     /// The socket address of the last packer received from this node.
-    pub fn set_last_seen_socket(&mut self, socket: SocketAddr) {
+    pub(crate) fn set_last_seen_socket(&mut self, socket: SocketAddr) {
         self.last_seen_socket = socket;
     }
 
-    pub fn is_whoareyou_sent(&self) -> bool {
+    pub(crate) fn is_whoareyou_sent(&self) -> bool {
         SessionState::WhoAreYouSent == self.state
     }
 
-    pub fn is_random_sent(&self) -> bool {
+    pub(crate) fn is_random_sent(&self) -> bool {
         SessionState::RandomSent == self.state
     }
 
-    pub fn is_awaiting_response(&self) -> bool {
+    pub(crate) fn is_awaiting_response(&self) -> bool {
         if let SessionState::AwaitingResponse(_) = self.state {
             true
         } else {
@@ -444,11 +446,11 @@ impl Session {
         }
     }
 
-    pub fn remote_enr(&self) -> &Option<Enr<CombinedKey>> {
+    pub(crate) fn remote_enr(&self) -> &Option<Enr<CombinedKey>> {
         &self.remote_enr
     }
 
-    pub fn is_trusted(&self) -> bool {
+    pub(crate) fn is_trusted(&self) -> bool {
         if let TrustedState::Trusted = self.trusted {
             true
         } else {
@@ -458,7 +460,7 @@ impl Session {
 
     /// Returns true if the Session is trusted and has established session keys. This state means
     /// the session is capable of sending requests.
-    pub fn trusted_established(&self) -> bool {
+    pub(crate) fn trusted_established(&self) -> bool {
         let established = match &self.state {
             SessionState::WhoAreYouSent => false,
             SessionState::RandomSent => false,

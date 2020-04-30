@@ -21,10 +21,9 @@ use crate::query_pool::{
     FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, ReturnPeer,
 };
 use crate::rpc;
-use crate::service::MAX_PACKET_SIZE;
 use crate::session_service::{SessionEvent, SessionService};
+use crate::transport::MAX_PACKET_SIZE;
 use crate::Discv5Config;
-use async_std::prelude::*;
 use enr::{CombinedKey, Enr as RawEnr, EnrError, EnrKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
@@ -517,7 +516,7 @@ impl Discv5 {
         rpc_id: u64,
         distance: u64,
     ) {
-        let nodes: Vec<EntryRefView<NodeId, Enr>> = self
+        let nodes: Vec<EntryRefView<'_, NodeId, Enr>> = self
             .kbuckets
             .nodes_by_distance(distance)
             .into_iter()
@@ -937,7 +936,7 @@ impl Discv5 {
 impl Stream for Discv5 {
     type Item = Discv5Event;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             // Process events from the session service
             while let Poll::Ready(Some(event)) = self.service.poll_next_unpin(cx) {

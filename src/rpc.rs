@@ -6,19 +6,19 @@ use std::net::IpAddr;
 type TopicHash = [u8; 32];
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ProtocolMessage {
-    pub id: u64,
-    pub body: RpcType,
+pub(crate) struct ProtocolMessage {
+    pub(crate) id: u64,
+    pub(crate) body: RpcType,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum RpcType {
+pub(crate) enum RpcType {
     Request(Request),
     Response(Response),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Request {
+pub(crate) enum Request {
     Ping { enr_seq: u64 },
     FindNode { distance: u64 },
     Ticket { topic: TopicHash },
@@ -27,7 +27,7 @@ pub enum Request {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Response {
+pub(crate) enum Response {
     Ping {
         enr_seq: u64,
         ip: IpAddr,
@@ -48,7 +48,7 @@ pub enum Response {
 
 impl Response {
     /// Determines if the response is a valid response to the given request.
-    pub fn match_request(&self, req: &Request) -> bool {
+    pub(crate) fn match_request(&self, req: &Request) -> bool {
         match self {
             Response::Ping { .. } => {
                 if let Request::Ping { .. } = req {
@@ -81,7 +81,7 @@ impl Response {
 }
 
 impl std::fmt::Display for RpcType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RpcType::Request(request) => write!(f, "{:?}", request),
             RpcType::Response(response) => write!(f, "{}", response),
@@ -90,7 +90,7 @@ impl std::fmt::Display for RpcType {
 }
 
 impl std::fmt::Display for Response {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Response::Ping { enr_seq, ip, port } => write!(
                 f,
@@ -124,13 +124,13 @@ impl std::fmt::Display for Response {
 }
 
 impl std::fmt::Display for ProtocolMessage {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Message: Id: {}, Body: {}", self.id, self.body)
     }
 }
 
 impl ProtocolMessage {
-    pub fn msg_type(&self) -> u8 {
+    pub(crate) fn msg_type(&self) -> u8 {
         match &self.body {
             RpcType::Request(request) => match request {
                 Request::Ping { .. } => 1,
@@ -149,7 +149,7 @@ impl ProtocolMessage {
     }
 
     /// Encodes a ProtocolMessage to RLP-encoded bytes.
-    pub fn encode(self) -> Vec<u8> {
+    pub(crate) fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(10);
         let msg_type = self.msg_type();
         buf.push(msg_type);
@@ -250,7 +250,7 @@ impl ProtocolMessage {
         }
     }
 
-    pub fn decode(data: Vec<u8>) -> Result<Self, DecoderError> {
+    pub(crate) fn decode(data: Vec<u8>) -> Result<Self, DecoderError> {
         if data.len() < 3 {
             return Err(DecoderError::RlpIsTooShort);
         }

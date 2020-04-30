@@ -2,10 +2,12 @@
 //!
 //! The [discv5 wire specification](https://github.com/ethereum/devp2p/blob/master/discv5/discv5.md) provides further information on UDP message packets as implemented in this module.
 //!
-//! The `Packet` struct defines all raw UDP message variants and implements the encoding/decoding
+//! A [`Packet`] defines all raw UDP message variants and implements the encoding/decoding
 //! logic.
 //!
 //! Note, that all message encryption/decryption is handled outside of this module.
+//!
+//! [`Packet`]: enum.Packet.html
 
 mod auth_header;
 

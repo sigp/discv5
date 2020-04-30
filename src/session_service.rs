@@ -1,6 +1,6 @@
 //! Session management for the Discv5 Discovery service.
 //!
-//! The `SessionService` is responsible for establishing and maintaining sessions with
+//! The [`SessionService`] is responsible for establishing and maintaining sessions with
 //! connected/discovered nodes. Each node, identified by it's [`NodeId`] is associated with a
 //! [`Session`]. This service drives the handshakes for establishing the sessions and associated
 //! logic for sending/requesting initial connections/ENR's from unknown peers.
@@ -9,14 +9,14 @@
 //! session timeouts and received messages. Messages are encrypted and decrypted using the
 //! associated `Session` for each node.
 //!
-//! An ongoing connection is managed by the `Session` struct. A node that provides and ENR with an
+//! An ongoing connection is managed by [`Session`]. A node that provides and ENR with an
 //! IP address/port that doesn't match the source, is considered untrusted. Once the IP is updated
 //! to match the source, the `Session` is promoted to an established state. RPC requests are not sent
 //! to untrusted Sessions, only responses.
 //TODO: Document the event structure and WHOAREYOU requests to the protocol layer.
 //TODO: Limit packets per node to avoid DOS/Spam.
 
-use super::service::Discv5Service;
+use super::transport::Transport;
 use crate::config::Discv5Config;
 use crate::error::Discv5Error;
 use crate::packet::{AuthHeader, AuthTag, Magic, Nonce, Packet, Tag, TAG_LENGTH};
@@ -41,7 +41,7 @@ mod timed_sessions;
 use timed_requests::TimedRequests;
 use timed_sessions::TimedSessions;
 
-pub struct SessionService {
+pub(crate) struct SessionService {
     /// Queue of events produced by the session service.
     events: VecDeque<SessionEvent>,
 
@@ -68,14 +68,14 @@ pub struct SessionService {
     sessions: TimedSessions,
 
     /// The discovery v5 UDP service.
-    service: Discv5Service,
+    transport: Transport,
 }
 
 impl SessionService {
     /* Public Functions */
 
     /// A new Session service which instantiates the UDP socket.
-    pub fn new(
+    pub(crate) fn new(
         enr: Enr<CombinedKey>,
         key: enr::CombinedKey,
         listen_socket: SocketAddr,
@@ -98,24 +98,28 @@ impl SessionService {
             pending_requests: TimedRequests::new(config.request_timeout),
             pending_messages: HashMap::default(),
             sessions: TimedSessions::new(config.session_establish_timeout),
-            service: Discv5Service::new(listen_socket, magic)
+            transport: Transport::new(listen_socket, magic)
                 .map_err(|e| Discv5Error::Error(format!("{:?}", e)))?,
             config,
         })
     }
 
     /// The local ENR of the service.
-    pub fn enr(&self) -> &Enr<CombinedKey> {
+    pub(crate) fn enr(&self) -> &Enr<CombinedKey> {
         &self.enr
     }
 
     /// Generic function to modify a field in the local ENR.
-    pub fn enr_insert(&mut self, key: &str, value: Vec<u8>) -> Result<Option<Vec<u8>>, EnrError> {
+    pub(crate) fn enr_insert(
+        &mut self,
+        key: &str,
+        value: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, EnrError> {
         self.enr.insert(key, value, &self.key)
     }
 
     /// Updates the local ENR `SocketAddr` for either the TCP or UDP port.
-    pub fn update_local_enr_socket(
+    pub(crate) fn update_local_enr_socket(
         &mut self,
         socket: SocketAddr,
         is_tcp: bool,
@@ -136,7 +140,7 @@ impl SessionService {
     }
 
     /// Updates a session if a new ENR or an updated ENR is discovered.
-    pub fn update_enr(&mut self, enr: Enr<CombinedKey>) {
+    pub(crate) fn update_enr(&mut self, enr: Enr<CombinedKey>) {
         if let Some(session) = self.sessions.get_mut(&enr.node_id()) {
             // if an ENR is updated to an address that was not the last seen address of the
             // session, we demote the session to untrusted.
@@ -151,7 +155,7 @@ impl SessionService {
     /// addresses not related to the ENR.
     // To update an ENR for an unknown node, we request a FINDNODE with distance 0 to the IP
     // address that we know of.
-    pub fn send_request(
+    pub(crate) fn send_request(
         &mut self,
         dst_enr: &Enr<CombinedKey>,
         message: ProtocolMessage,
@@ -225,7 +229,7 @@ impl SessionService {
     /// therefore assumed to be valid.
     // An example of this is requesting an ENR update from a NODE who's IP address is incorrect.
     // We send this request as a response to a ping. Assume a session is valid.
-    pub fn send_request_unknown_enr(
+    pub(crate) fn send_request_unknown_enr(
         &mut self,
         dst: SocketAddr,
         dst_id: &NodeId,
@@ -250,7 +254,7 @@ impl SessionService {
 
     /// Sends an RPC Response. This differs from send request as responses do not require a
     /// known ENR to send messages and session's should already be established.
-    pub fn send_response(
+    pub(crate) fn send_response(
         &mut self,
         dst: SocketAddr,
         dst_id: &NodeId,
@@ -270,14 +274,13 @@ impl SessionService {
             })?;
 
         // send the response
-        // trace!("Sending Response: {:?} to {:?}", packet, dst);
-        self.service.send(dst, packet);
+        self.transport.send(dst, packet);
         Ok(())
     }
 
     /// This is called in response to a SessionMessage::WhoAreYou event. The protocol finds the
     /// highest known ENR then calls this function to send a WHOAREYOU packet.
-    pub fn send_whoareyou(
+    pub(crate) fn send_whoareyou(
         &mut self,
         dst: SocketAddr,
         node_id: &NodeId,
@@ -688,7 +691,7 @@ impl SessionService {
         Ok(())
     }
 
-    /// Wrapper around `service.send()` that adds all sent messages to the `pending_requests`. This
+    /// Wrapper around `transport.send()` that adds all sent messages to the `pending_requests`. This
     /// builds a request adds a timeout and sends the request.
     #[inline]
     fn process_request(
@@ -700,17 +703,17 @@ impl SessionService {
     ) {
         // construct the request
         let request = Request::new(dst_id, packet, message);
-        self.service.send(dst, request.packet.clone());
+        self.transport.send(dst, request.packet.clone());
         self.pending_requests.insert(dst.clone(), request);
     }
 
     /// The heartbeat which checks for timeouts and reports back failed RPC requests/sessions.
-    fn check_timeouts(&mut self, cx: &mut Context) {
+    fn check_timeouts(&mut self, cx: &mut Context<'_>) {
         // remove expired requests/sessions
         // log pending request timeouts
         // TODO: Split into own task, to be called only when timeouts are required
         let sessions_ref = &mut self.sessions;
-        let service_ref = &mut self.service;
+        let transport_ref = &mut self.transport;
         let pending_messages_ref = &mut self.pending_messages;
         let events_ref = &mut self.events;
 
@@ -746,7 +749,7 @@ impl SessionService {
                     "Resending message: {:?} to node: {}",
                     request.packet, node_id
                 );
-                service_ref.send(dst.clone(), request.packet.clone());
+                transport_ref.send(dst.clone(), request.packet.clone());
                 request.retries += 1;
                 self.pending_requests.insert(dst, request);
             }
@@ -779,15 +782,15 @@ impl SessionService {
 impl Stream for SessionService {
     type Item = SessionEvent;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
             // process any events if necessary
             if let Some(event) = self.events.pop_front() {
                 return Poll::Ready(Some(event));
             }
 
-            // poll the discv5 service
-            match self.service.poll_next_unpin(cx) {
+            // poll the discv5 transport
+            match self.transport.poll_next_unpin(cx) {
                 Poll::Ready(Some((src, packet))) => {
                     match packet {
                         Packet::WhoAreYou {
@@ -828,7 +831,7 @@ impl Stream for SessionService {
 
 #[derive(Debug)]
 /// The output from polling the `SessionSerivce`.
-pub enum SessionEvent {
+pub(crate) enum SessionEvent {
     /// A session has been established with a node.
     Established(Enr<CombinedKey>),
 
@@ -854,22 +857,22 @@ pub enum SessionEvent {
 
 #[derive(Debug)]
 /// A request to a node that we are waiting for a response.
-pub struct Request {
+pub(crate) struct Request {
     /// The destination NodeId.
-    pub dst_id: NodeId,
+    dst_id: NodeId,
 
     /// The raw discv5 packet sent.
-    pub packet: Packet,
+    packet: Packet,
 
     /// The unencrypted message. Required if need to re-encrypt and re-send.
-    pub message: Option<ProtocolMessage>,
+    message: Option<ProtocolMessage>,
 
     /// The number of times this request has been re-sent.
-    pub retries: u8,
+    retries: u8,
 }
 
 impl Request {
-    pub fn new(dst_id: NodeId, packet: Packet, message: Option<ProtocolMessage>) -> Self {
+    fn new(dst_id: NodeId, packet: Packet, message: Option<ProtocolMessage>) -> Self {
         Request {
             dst_id,
             packet,
@@ -878,7 +881,7 @@ impl Request {
         }
     }
 
-    pub fn id(&self) -> Option<u64> {
+    fn id(&self) -> Option<u64> {
         self.message.as_ref().map(|m| m.id)
     }
 }

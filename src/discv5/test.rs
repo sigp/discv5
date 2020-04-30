@@ -203,7 +203,7 @@ async fn test_discovery_star_topology() {
     nodes.first_mut().unwrap().find_node(target_random_node_id);
     nodes.push(bootstrap_node);
 
-    let main = |cx: &mut Context| loop {
+    let main = |cx: &mut Context| {
         for node in nodes.iter_mut() {
             loop {
                 match node.poll_next_unpin(cx) {
@@ -221,6 +221,7 @@ async fn test_discovery_star_topology() {
                 }
             }
         }
+        Poll::Pending
     };
     future::poll_fn(main).await
 }
@@ -259,7 +260,7 @@ async fn test_findnode_query() {
         .take(total_nodes - 1)
         .collect();
 
-    let main = |cx: &mut Context| loop {
+    let main = |cx: &mut Context| {
         for node in nodes.iter_mut() {
             loop {
                 match node.poll_next_unpin(cx) {
@@ -283,11 +284,12 @@ async fn test_findnode_query() {
                 }
             }
         }
+        Poll::Pending
     };
 
     let future = future::poll_fn(main);
 
-    if let Err(_) = timeout(Duration::from_millis(100), future).await {
+    if let Err(_) = timeout(Duration::from_millis(800), future).await {
         panic!("Future timed out");
     }
 }
@@ -341,8 +343,8 @@ async fn test_updating_connection_on_ping() {
 }
 
 // The kbuckets table can have maximum 10 nodes in the same /24 subnet across all buckets
-#[test]
-fn test_table_limits() {
+#[tokio::test]
+async fn test_table_limits() {
     // this seed generates 12 node id's that are distributed accross buckets such that no more than
     // 2 exist in a single bucket.
     let mut keypairs = generate_deterministic_keypair(12, 9487);
@@ -381,8 +383,8 @@ fn test_table_limits() {
 }
 
 // Each bucket can have maximum 2 nodes in the same /24 subnet
-#[test]
-fn test_bucket_limits() {
+#[tokio::test]
+async fn test_bucket_limits() {
     let enr_key = CombinedKey::generate_secp256k1();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
@@ -503,7 +505,7 @@ async fn test_predicate_search() {
         .find_enr_predicate(target_random_node_id, predicate, total_nodes);
     nodes.push(bootstrap_node);
 
-    let main = |cx: &mut Context| loop {
+    let main = |cx: &mut Context| {
         for node in nodes.iter_mut() {
             loop {
                 match node.poll_next_unpin(cx) {
@@ -513,19 +515,21 @@ async fn test_predicate_search() {
                             closer_peers.len(),
                             total_nodes,
                         );
+                        println!("Nodes expected to pass predicate search {}", num_nodes);
                         assert!(closer_peers.len() == num_nodes);
                         return Poll::Ready(());
                     }
                     Poll::Ready(_) => {}
-                    _ => break,
+                    Poll::Pending => break,
                 }
             }
         }
+        Poll::Pending
     };
 
     let future = future::poll_fn(main);
 
-    if let Err(_) = timeout(Duration::from_millis(100), future).await {
+    if let Err(_) = timeout(Duration::from_millis(500), future).await {
         panic!("Future timed out");
     }
 }

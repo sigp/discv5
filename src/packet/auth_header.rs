@@ -88,7 +88,7 @@ impl Encodable for AuthResponse {
 }
 
 impl Decodable for AuthResponse {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         if !rlp.is_list() {
             return Err(DecoderError::RlpExpectedToBeList);
         }
@@ -124,7 +124,7 @@ impl Encodable for AuthHeader {
 }
 
 impl Decodable for AuthHeader {
-    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         match rlp.item_count() {
             Ok(size) => {
                 if size != 5 {

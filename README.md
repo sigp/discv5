@@ -78,16 +78,17 @@ async fn main() {
     let target_random_node_id = enr::NodeId::random();
     discv5.find_node(target_random_node_id);
 
-   // poll the stream for the next FindNoeResult event
-   loop {
-        match discv5.next().await {
-            Some(Discv5Event::FindNodeResult { closer_peers, .. }) => {
-                println!("Query completed. Found {} peers", closer_peers.len());
-                break;
-            }
-            _ => {} // handle other discv5 events
-        }
-   }
+
+    // poll the stream for the next FindNoeResult event
+    while let Some(event) = discv5.next().await {
+        match event {
+             Discv5Event::FindNodeResult { closer_peers, .. } => {
+                 println!("Query completed. Found {} peers", closer_peers.len());
+                 break;
+             }
+             _ => {} // handle other discv5 events
+         }
+    }
 }
 ```
 
@@ -106,7 +107,7 @@ This protocol is split into three main sections/layers:
  undergoes a handshake, which results in a [`Session`]. [`Session`]'s are established when
  needed and get dropped after a timeout. This section manages the creation and maintenance of
  sessions between nodes. It is realised by the [`SessionService`] struct.
- * Behaviour - This section contains the protocol-level logic. In particular it manages the
+ * Application - This section contains the protocol-level logic. In particular it manages the
  routing table of known ENR's, topic registration/advertisement and performs various queries
  such as peer discovery. This section is realised by the [`Discv5`] struct.
 
