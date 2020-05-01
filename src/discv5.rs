@@ -272,6 +272,27 @@ impl Discv5 {
         self.start_predicate_query(node_id, predicate, num_nodes);
     }
 
+    /// Returns an ENR if one is known for the given NodeId.
+    pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
+        // check if we know this node id in our routing table
+        let key = kbucket::Key::from(*node_id);
+        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.entry(&key) {
+            return Some(entry.value().clone());
+        }
+        // check the untrusted addresses for ongoing queries
+        for query in self.queries.iter() {
+            if let Some(enr) = query
+                .target()
+                .untrusted_enrs
+                .iter()
+                .find(|v| v.node_id() == *node_id)
+            {
+                return Some(enr.clone());
+            }
+        }
+        None
+    }
+
     // private functions //
 
     /// Processes an RPC request from a peer. Requests respond to the received socket address,
@@ -653,27 +674,6 @@ impl Discv5 {
                 node_id
             );
         }
-    }
-
-    /// Returns an ENR if one is known for the given NodeId.
-    fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
-        // check if we know this node id in our routing table
-        let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.entry(&key) {
-            return Some(entry.value().clone());
-        }
-        // check the untrusted addresses for ongoing queries
-        for query in self.queries.iter() {
-            if let Some(enr) = query
-                .target()
-                .untrusted_enrs
-                .iter()
-                .find(|v| v.node_id() == *node_id)
-            {
-                return Some(enr.clone());
-            }
-        }
-        None
     }
 
     /// Internal function that starts a query.
