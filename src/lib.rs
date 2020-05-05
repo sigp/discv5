@@ -81,13 +81,13 @@
 //!
 //!     // search peers closest to a target
 //!     let target_random_node_id = enr::NodeId::random();
-//!     discv5.find_node(target_random_node_id);
+//!     let request_query_id = discv5.find_node(target_random_node_id);
 //!
 //!    // poll the stream for the next FindNoeResult event
 //!    while let Some(event) = discv5.next().await {
 //!        match event {
-//!             Discv5Event::FindNodeResult { closer_peers, .. } => {
-//!                 println!("Query completed. Found {} peers", closer_peers.len());
+//!             Discv5Event::FindNodeResult { closer_peers, query_id, .. } => {
+//!                 println!("Query with id {} completed. Found {} peers", query_id.0, closer_peers.len());
 //!                 break;
 //!             }
 //!             _ => {} // handle other discv5 events

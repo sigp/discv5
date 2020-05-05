@@ -257,8 +257,8 @@ impl Discv5 {
     ///
     /// This will eventually produce an event containing the nodes of the DHT closest to the
     /// requested `PeerId`.
-    pub fn find_node(&mut self, target_node: NodeId) {
-        self.start_findnode_query(target_node);
+    pub fn find_node(&mut self, target_node: NodeId) -> QueryId {
+        self.start_findnode_query(target_node)
     }
 
     /// Starts a `FIND_NODE` request.
@@ -682,7 +682,7 @@ impl Discv5 {
     }
 
     /// Internal function that starts a query.
-    fn start_findnode_query(&mut self, target_node: NodeId) {
+    fn start_findnode_query(&mut self, target_node: NodeId) -> QueryId {
         let target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
@@ -696,12 +696,8 @@ impl Discv5 {
 
         let known_closest_peers = self.kbuckets.closest_keys(&target_key);
         let query_config = FindNodeQueryConfig::new_from_config(&self.config);
-        self.queries.add_findnode_query(
-            query_config,
-            target,
-            known_closest_peers,
-            query_iterations,
-        );
+        self.queries
+            .add_findnode_query(query_config, target, known_closest_peers, query_iterations)
     }
 
     /// Internal function that starts a query.

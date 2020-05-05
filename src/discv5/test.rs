@@ -200,20 +200,26 @@ async fn test_discovery_star_topology() {
     }
     // Start a FINDNODE query of target
     let target_random_node_id = target_node.local_enr().node_id();
-    nodes.first_mut().unwrap().find_node(target_random_node_id);
+    let expected_query_id = nodes.first_mut().unwrap().find_node(target_random_node_id);
     nodes.push(bootstrap_node);
 
     let main = |cx: &mut Context| {
         for node in nodes.iter_mut() {
             loop {
                 match node.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Discv5Event::FindNodeResult { closer_peers, .. })) => {
+                    Poll::Ready(Some(Discv5Event::FindNodeResult {
+                        closer_peers,
+                        query_id,
+                        ..
+                    })) => {
                         println!(
-                            "Query found {} peers, Total peers {}",
+                            "Query with id {} found {} peers, Total peers {}",
+                            query_id.0,
                             closer_peers.len(),
                             total_nodes
                         );
-                        assert!(closer_peers.len() == total_nodes);
+                        assert_eq!(closer_peers.len(), total_nodes);
+                        assert_eq!(expected_query_id, query_id);
                         return Poll::Ready(());
                     }
                     Poll::Ready(_) => {}
@@ -248,7 +254,7 @@ async fn test_findnode_query() {
     let target_random_node_id = NodeId::random();
 
     // start a query on the last node
-    nodes
+    let expected_query_id = nodes
         .last_mut()
         .unwrap()
         .find_node(target_random_node_id.clone());
@@ -265,17 +271,22 @@ async fn test_findnode_query() {
             loop {
                 match node.poll_next_unpin(cx) {
                     Poll::Ready(Some(Discv5Event::FindNodeResult {
-                        key, closer_peers, ..
+                        key,
+                        closer_peers,
+                        query_id,
+                        ..
                     })) => {
                         // NOTE: The number of peers found is statistical, as we only ask
                         // peers for specific buckets, there is a chance our node doesn't
                         // exist if the first few buckets asked for.
                         assert_eq!(key, target_random_node_id);
                         println!(
-                            "Query found {} peers. Total peers were: {}",
+                            "Query with id {} found {} peers. Total peers were: {}",
+                            query_id.0,
                             closer_peers.len(),
                             expected_node_ids.len()
                         );
+                        assert_eq!(expected_query_id, query_id);
                         assert!(closer_peers.len() <= expected_node_ids.len());
                         return Poll::Ready(());
                     }
@@ -499,7 +510,7 @@ async fn test_predicate_search() {
 
     // Start a find enr predicate query
     let target_random_node_id = target_node.local_enr().node_id();
-    let request_query_id = nodes.first_mut().unwrap().find_enr_predicate(
+    let expected_query_id = nodes.first_mut().unwrap().find_enr_predicate(
         target_random_node_id,
         predicate,
         total_nodes,
@@ -523,7 +534,7 @@ async fn test_predicate_search() {
                         );
                         println!("Nodes expected to pass predicate search {}", num_nodes);
                         assert_eq!(closer_peers.len(), num_nodes);
-                        assert_eq!(query_id, request_query_id);
+                        assert_eq!(query_id, expected_query_id);
                         return Poll::Ready(());
                     }
                     Poll::Ready(_) => {}
