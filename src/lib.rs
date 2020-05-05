@@ -123,3 +123,4 @@ pub use config::{Discv5Config, Discv5ConfigBuilder};
 pub use error::Discv5Error;
 // re-export the ENR crate
 pub use enr;
+pub use query_pool::QueryId;

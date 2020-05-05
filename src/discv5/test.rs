@@ -499,24 +499,31 @@ async fn test_predicate_search() {
 
     // Start a find enr predicate query
     let target_random_node_id = target_node.local_enr().node_id();
-    nodes
-        .first_mut()
-        .unwrap()
-        .find_enr_predicate(target_random_node_id, predicate, total_nodes);
+    let request_query_id = nodes.first_mut().unwrap().find_enr_predicate(
+        target_random_node_id,
+        predicate,
+        total_nodes,
+    );
     nodes.push(bootstrap_node);
 
     let main = |cx: &mut Context| {
         for node in nodes.iter_mut() {
             loop {
                 match node.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Discv5Event::FindNodeResult { closer_peers, .. })) => {
+                    Poll::Ready(Some(Discv5Event::FindNodeResult {
+                        closer_peers,
+                        query_id,
+                        ..
+                    })) => {
                         println!(
-                            "Query found {} peers. Total peers were: {}",
+                            "Query with id {} found {} peers. Total peers were: {}",
+                            query_id.0,
                             closer_peers.len(),
                             total_nodes,
                         );
                         println!("Nodes expected to pass predicate search {}", num_nodes);
-                        assert!(closer_peers.len() == num_nodes);
+                        assert_eq!(closer_peers.len(), num_nodes);
+                        assert_eq!(query_id, request_query_id);
                         return Poll::Ready(());
                     }
                     Poll::Ready(_) => {}

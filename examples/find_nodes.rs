@@ -148,9 +148,13 @@ async fn main() {
 
             match discv5.poll_next_unpin(cx) {
                 Poll::Ready(Some(event)) => match event {
-                    Discv5Event::FindNodeResult { closer_peers, .. } => {
+                    Discv5Event::FindNodeResult {
+                        closer_peers,
+                        query_id,
+                        ..
+                    } => {
                         if !closer_peers.is_empty() {
-                            println!("Query Completed. Nodes found:");
+                            println!("Query with id {} Completed. Nodes found:", query_id.0);
                             for n in closer_peers {
                                 println!("Node: {}", n);
                             }
