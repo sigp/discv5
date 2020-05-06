@@ -257,19 +257,24 @@ impl Discv5 {
     ///
     /// This will eventually produce an event containing the nodes of the DHT closest to the
     /// requested `PeerId`.
-    pub fn find_node(&mut self, target_node: NodeId) {
-        self.start_findnode_query(target_node);
+    pub fn find_node(&mut self, target_node: NodeId) -> QueryId {
+        self.start_findnode_query(target_node)
     }
 
     /// Starts a `FIND_NODE` request.
     ///
     /// This will eventually produce an event containing <= `num` nodes which satisfy the
     /// `predicate` with passed `value`.
-    pub fn find_enr_predicate<F>(&mut self, node_id: NodeId, predicate: F, num_nodes: usize)
+    pub fn find_enr_predicate<F>(
+        &mut self,
+        node_id: NodeId,
+        predicate: F,
+        num_nodes: usize,
+    ) -> QueryId
     where
         F: Fn(&Enr) -> bool + Send + Clone + 'static,
     {
-        self.start_predicate_query(node_id, predicate, num_nodes);
+        self.start_predicate_query(node_id, predicate, num_nodes)
     }
 
     /// Returns an ENR if one is known for the given NodeId.
@@ -677,7 +682,7 @@ impl Discv5 {
     }
 
     /// Internal function that starts a query.
-    fn start_findnode_query(&mut self, target_node: NodeId) {
+    fn start_findnode_query(&mut self, target_node: NodeId) -> QueryId {
         let target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
@@ -691,16 +696,17 @@ impl Discv5 {
 
         let known_closest_peers = self.kbuckets.closest_keys(&target_key);
         let query_config = FindNodeQueryConfig::new_from_config(&self.config);
-        self.queries.add_findnode_query(
-            query_config,
-            target,
-            known_closest_peers,
-            query_iterations,
-        );
+        self.queries
+            .add_findnode_query(query_config, target, known_closest_peers, query_iterations)
     }
 
     /// Internal function that starts a query.
-    fn start_predicate_query<F>(&mut self, target_node: NodeId, predicate: F, num_nodes: usize)
+    fn start_predicate_query<F>(
+        &mut self,
+        target_node: NodeId,
+        predicate: F,
+        num_nodes: usize,
+    ) -> QueryId
     where
         F: Fn(&Enr) -> bool + Send + Clone + 'static,
     {
@@ -727,7 +733,7 @@ impl Discv5 {
             known_closest_peers,
             query_iterations,
             predicate,
-        );
+        )
     }
 
     /// Processes discovered peers from a query.
@@ -1019,6 +1025,7 @@ impl Stream for Discv5 {
             if let Some((query_id, target, return_peer)) = waiting_query {
                 self.send_rpc_query(query_id, target, &return_peer);
             } else if let Some(finished_query) = finished_query {
+                let query_id = finished_query.id();
                 let result = finished_query.into_result();
 
                 match result.target.query_type {
@@ -1029,6 +1036,7 @@ impl Stream for Discv5 {
                                 .closest_peers
                                 .filter_map(|p| self.find_enr(&p))
                                 .collect(),
+                            query_id,
                         };
                         return Poll::Ready(Some(event));
                     }
@@ -1099,5 +1107,7 @@ pub enum Discv5Event {
         key: NodeId,
         /// List of peers ordered from closest to furthest away.
         closer_peers: Vec<Enr>,
+        /// Id of the query this result fulfils
+        query_id: QueryId,
     },
 }
