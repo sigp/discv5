@@ -21,14 +21,19 @@
 // This basis of this file has been taken from the rust-libp2p codebase:
 // https://github.com/libp2p/rust-libp2p
 
-use bigint::U256;
 use enr::NodeId;
+use uint::construct_uint;
 //use libp2p_core::PeerId;
 //use multihash::Multihash;
 use sha2::{
     digest::generic_array::{typenum::U32, GenericArray},
     Digest, Sha256,
 };
+
+construct_uint! {
+    /// 256-bit unsigned integer.
+    pub(super) struct U256(4);
+}
 
 /// A `Key` is a cryptographic hash, identifying both the nodes participating in
 /// the Kademlia DHT, as well as records stored in the DHT.
@@ -119,7 +124,7 @@ impl From<NodeId> for Key<NodeId> {
 
 /// A distance between two `Key`s.
 #[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Debug)]
-pub struct Distance(pub(super) bigint::U256);
+pub struct Distance(pub(super) U256);
 
 #[cfg(test)]
 mod tests {
