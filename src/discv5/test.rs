@@ -16,10 +16,9 @@ use rand_xorshift;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr},
-    task::{Context, Poll},
     time::Duration,
 };
-use tokio::time::timeout;
+use tokio::time::delay_for;
 
 fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
@@ -203,33 +202,35 @@ async fn test_discovery_star_topology() {
     let expected_query_id = nodes.first_mut().unwrap().find_node(target_random_node_id);
     nodes.push(bootstrap_node);
 
-    let main = |cx: &mut Context| {
-        for node in nodes.iter_mut() {
-            loop {
-                match node.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Discv5Event::FindNodeResult {
-                        closer_peers,
-                        query_id,
-                        ..
-                    })) => {
-                        println!(
-                            "Query with id {} found {} peers, Total peers {}",
-                            query_id.0,
-                            closer_peers.len(),
-                            total_nodes
-                        );
-                        assert_eq!(closer_peers.len(), total_nodes);
-                        assert_eq!(expected_query_id, query_id);
-                        return Poll::Ready(());
-                    }
-                    Poll::Ready(_) => {}
-                    _ => break,
+    loop {
+        let done = futures::future::select_all(nodes.iter_mut().map(|disc| {
+            Box::pin(async move {
+                if let Some(Discv5Event::FindNodeResult {
+                    closer_peers,
+                    query_id,
+                    ..
+                }) = disc.next().await
+                {
+                    println!(
+                        "Query found {} peers, Total peers {}",
+                        closer_peers.len(),
+                        total_nodes
+                    );
+                    assert!(closer_peers.len() == total_nodes);
+                    assert!(expected_query_id == query_id);
+                    true
+                } else {
+                    false
                 }
-            }
+            })
+        }))
+        .await
+        .0;
+
+        if done {
+            return;
         }
-        Poll::Pending
-    };
-    future::poll_fn(main).await
+    }
 }
 
 #[tokio::test]
@@ -266,42 +267,50 @@ async fn test_findnode_query() {
         .take(total_nodes - 1)
         .collect();
 
-    let main = |cx: &mut Context| {
-        for node in nodes.iter_mut() {
-            loop {
-                match node.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Discv5Event::FindNodeResult {
+    let future = async move {
+        let expected_node_ids = &expected_node_ids;
+        loop {
+            let done = futures::future::select_all(nodes.iter_mut().map(|disc| {
+                Box::pin(async move {
+                    if let Some(Discv5Event::FindNodeResult {
                         key,
                         closer_peers,
                         query_id,
                         ..
-                    })) => {
+                    }) = disc.next().await
+                    {
                         // NOTE: The number of peers found is statistical, as we only ask
                         // peers for specific buckets, there is a chance our node doesn't
                         // exist if the first few buckets asked for.
                         assert_eq!(key, target_random_node_id);
                         println!(
                             "Query with id {} found {} peers. Total peers were: {}",
-                            query_id.0,
+                            *query_id,
                             closer_peers.len(),
                             expected_node_ids.len()
                         );
                         assert_eq!(expected_query_id, query_id);
                         assert!(closer_peers.len() <= expected_node_ids.len());
-                        return Poll::Ready(());
+                        true
+                    } else {
+                        false
                     }
-                    Poll::Ready(_) => {}
-                    _ => break,
-                }
+                })
+            }))
+            .await
+            .0;
+
+            if done {
+                return;
             }
         }
-        Poll::Pending
     };
 
-    let future = future::poll_fn(main);
-
-    if let Err(_) = timeout(Duration::from_millis(800), future).await {
-        panic!("Future timed out");
+    tokio::select! {
+        _ = future => {}
+        _ = delay_for(Duration::from_millis(800)) => {
+            panic!("Future timed out");
+        }
     }
 }
 
@@ -517,37 +526,44 @@ async fn test_predicate_search() {
     );
     nodes.push(bootstrap_node);
 
-    let main = |cx: &mut Context| {
-        for node in nodes.iter_mut() {
-            loop {
-                match node.poll_next_unpin(cx) {
-                    Poll::Ready(Some(Discv5Event::FindNodeResult {
+    let future = async {
+        loop {
+            let done = futures::future::select_all(nodes.iter_mut().map(|disc| {
+                Box::pin(async move {
+                    if let Some(Discv5Event::FindNodeResult {
                         closer_peers,
                         query_id,
                         ..
-                    })) => {
+                    }) = disc.next().await
+                    {
                         println!(
                             "Query with id {} found {} peers. Total peers were: {}",
-                            query_id.0,
+                            *query_id,
                             closer_peers.len(),
                             total_nodes,
                         );
                         println!("Nodes expected to pass predicate search {}", num_nodes);
-                        assert_eq!(closer_peers.len(), num_nodes);
-                        assert_eq!(query_id, expected_query_id);
-                        return Poll::Ready(());
+                        assert!(closer_peers.len() == num_nodes);
+                        assert!(expected_query_id == query_id);
+                        true
+                    } else {
+                        false
                     }
-                    Poll::Ready(_) => {}
-                    Poll::Pending => break,
-                }
+                })
+            }))
+            .await
+            .0;
+
+            if done {
+                return;
             }
         }
-        Poll::Pending
     };
 
-    let future = future::poll_fn(main);
-
-    if let Err(_) = timeout(Duration::from_millis(500), future).await {
-        panic!("Future timed out");
+    tokio::select! {
+        _ = future => {}
+        _ = delay_for(Duration::from_millis(500)) => {
+            panic!("Future timed out");
+        }
     }
 }

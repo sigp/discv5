@@ -187,6 +187,13 @@ where
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct QueryId(pub usize);
 
+impl std::ops::Deref for QueryId {
+    type Target = usize;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// A query in a `QueryPool`.
 pub struct Query<TTarget, TNodeId, TResult> {
     /// The unique ID of the query.

@@ -4,7 +4,7 @@ use crate::rpc::{Request, Response, RpcType};
 use enr::EnrBuilder;
 use std::net::IpAddr;
 use std::time::Duration;
-use tokio::time::timeout;
+use tokio::time::delay_for;
 
 fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
@@ -87,9 +87,12 @@ async fn simple_session_message() {
         }
     };
 
-    let future = futures::future::select(Box::pin(sender), Box::pin(receiver));
-    if let Err(_) = timeout(Duration::from_millis(100), future).await {
-        panic!("Test timed out");
+    tokio::select! {
+        _ = sender => {}
+        _ = receiver => {}
+        _ = delay_for(Duration::from_millis(100)) => {
+            panic!("Test timed out");
+        }
     }
 }
 
@@ -194,8 +197,11 @@ async fn multiple_messages() {
         }
     };
 
-    let future = futures::future::select(Box::pin(sender), Box::pin(receiver));
-    if let Err(_) = timeout(Duration::from_millis(100), future).await {
-        panic!("Test timed out");
+    tokio::select! {
+        _ = sender => {}
+        _ = receiver => {}
+        _ = delay_for(Duration::from_millis(100)) => {
+            panic!("Test timed out");
+        }
     }
 }

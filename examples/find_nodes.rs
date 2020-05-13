@@ -37,13 +37,11 @@
 
 use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config, Discv5Event};
 use futures::prelude::*;
+use hex_literal::*;
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    pin::Pin,
-    task::{Context, Poll},
     time::Duration,
 };
-use tokio::stream::Stream;
 
 #[tokio::main]
 async fn main() {
@@ -54,7 +52,7 @@ async fn main() {
         if let Some(address) = std::env::args().nth(1) {
             address.parse::<Ipv4Addr>().unwrap()
         } else {
-            "127.0.0.1".parse::<Ipv4Addr>().unwrap()
+            Ipv4Addr::new(127, 0, 0, 1)
         }
     };
 
@@ -67,10 +65,7 @@ async fn main() {
     };
 
     // A fixed key for testing
-    let raw_key = vec![
-        183, 28, 113, 166, 126, 17, 119, 173, 78, 144, 22, 149, 225, 180, 185, 238, 23, 174, 22,
-        198, 102, 141, 49, 62, 172, 47, 150, 219, 205, 163, 242, 145,
-    ];
+    let raw_key = hex!("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291");
     let secret_key = secp256k1::SecretKey::parse_slice(&raw_key).unwrap();
     let mut enr_key = CombinedKey::from(secret_key);
 
@@ -133,11 +128,9 @@ async fn main() {
     // construct a 30 second interval to search for new peers.
     let mut query_interval = tokio::time::interval(Duration::from_secs(30));
 
-    // Kick it off!
-    future::poll_fn(move |cx: &mut Context| -> std::task::Poll<()> {
-        loop {
-            // start a query if it's time to do so
-            if let Poll::Ready(Some(_)) = Pin::new(&mut query_interval).poll_next(cx) {
+    loop {
+        tokio::select! {
+            _ = query_interval.next() => {
                 // pick a random node target
                 let target_random_node_id = enr::NodeId::random();
                 println!("Connected Peers: {}", discv5.connected_peers());
@@ -145,16 +138,11 @@ async fn main() {
                 // execute a FINDNODE query
                 discv5.find_node(target_random_node_id);
             }
-
-            match discv5.poll_next_unpin(cx) {
-                Poll::Ready(Some(event)) => match event {
-                    Discv5Event::FindNodeResult {
-                        closer_peers,
-                        query_id,
-                        ..
-                    } => {
+            event = discv5.next() => {
+                if let Some(event) = event {
+                    if let Discv5Event::FindNodeResult { closer_peers, query_id,  .. } = event {
                         if !closer_peers.is_empty() {
-                            println!("Query with id {} Completed. Nodes found:", query_id.0);
+                            println!("Query with id {} Completed. Nodes found: {}", *query_id, closer_peers.len());
                             for n in closer_peers {
                                 println!("Node: {}", n);
                             }
@@ -162,11 +150,8 @@ async fn main() {
                             println!("Query Completed. No peers found.")
                         }
                     }
-                    _ => (),
-                },
-                Poll::Ready(None) | Poll::Pending => return Poll::Pending,
+                }
             }
         }
-    })
-    .await;
+    }
 }
