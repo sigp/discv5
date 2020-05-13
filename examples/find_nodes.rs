@@ -140,9 +140,9 @@ async fn main() {
             }
             event = discv5.next() => {
                 if let Some(event) = event {
-                    if let Discv5Event::FindNodeResult { closer_peers, .. } = event {
+                    if let Discv5Event::FindNodeResult { closer_peers, query_id,  .. } = event {
                         if !closer_peers.is_empty() {
-                            println!("Query Completed. Nodes found:");
+                            println!("Query with id {} Completed. Nodes found: {}", *query_id, closer_peers.len());
                             for n in closer_peers {
                                 println!("Node: {}", n);
                             }

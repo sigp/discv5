@@ -42,3 +42,6 @@ simple_logger = "1.6.0"
 tokio = { version = "0.2.20", features = ["time", "rt-threaded", "macros"] }
 rand_xorshift = "0.2.0"
 rand_core = "0.5.1"
+
+[package.metadata.docs.rs]
+rustdoc-args = [ "--document-private-items" ]

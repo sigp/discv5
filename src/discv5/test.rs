@@ -199,19 +199,25 @@ async fn test_discovery_star_topology() {
     }
     // Start a FINDNODE query of target
     let target_random_node_id = target_node.local_enr().node_id();
-    nodes.first_mut().unwrap().find_node(target_random_node_id);
+    let expected_query_id = nodes.first_mut().unwrap().find_node(target_random_node_id);
     nodes.push(bootstrap_node);
 
     loop {
         let done = futures::future::select_all(nodes.iter_mut().map(|disc| {
             Box::pin(async move {
-                if let Some(Discv5Event::FindNodeResult { closer_peers, .. }) = disc.next().await {
+                if let Some(Discv5Event::FindNodeResult {
+                    closer_peers,
+                    query_id,
+                    ..
+                }) = disc.next().await
+                {
                     println!(
                         "Query found {} peers, Total peers {}",
                         closer_peers.len(),
                         total_nodes
                     );
                     assert!(closer_peers.len() == total_nodes);
+                    assert!(expected_query_id == query_id);
                     true
                 } else {
                     false
@@ -249,7 +255,7 @@ async fn test_findnode_query() {
     let target_random_node_id = NodeId::random();
 
     // start a query on the last node
-    nodes
+    let expected_query_id = nodes
         .last_mut()
         .unwrap()
         .find_node(target_random_node_id.clone());
@@ -267,7 +273,10 @@ async fn test_findnode_query() {
             let done = futures::future::select_all(nodes.iter_mut().map(|disc| {
                 Box::pin(async move {
                     if let Some(Discv5Event::FindNodeResult {
-                        key, closer_peers, ..
+                        key,
+                        closer_peers,
+                        query_id,
+                        ..
                     }) = disc.next().await
                     {
                         // NOTE: The number of peers found is statistical, as we only ask
@@ -275,10 +284,12 @@ async fn test_findnode_query() {
                         // exist if the first few buckets asked for.
                         assert_eq!(key, target_random_node_id);
                         println!(
-                            "Query found {} peers. Total peers were: {}",
+                            "Query with id {} found {} peers. Total peers were: {}",
+                            *query_id,
                             closer_peers.len(),
                             expected_node_ids.len()
                         );
+                        assert_eq!(expected_query_id, query_id);
                         assert!(closer_peers.len() <= expected_node_ids.len());
                         true
                     } else {
@@ -508,26 +519,32 @@ async fn test_predicate_search() {
 
     // Start a find enr predicate query
     let target_random_node_id = target_node.local_enr().node_id();
-    nodes
-        .first_mut()
-        .unwrap()
-        .find_enr_predicate(target_random_node_id, predicate, total_nodes);
+    let expected_query_id = nodes.first_mut().unwrap().find_enr_predicate(
+        target_random_node_id,
+        predicate,
+        total_nodes,
+    );
     nodes.push(bootstrap_node);
 
     let future = async {
         loop {
             let done = futures::future::select_all(nodes.iter_mut().map(|disc| {
                 Box::pin(async move {
-                    if let Some(Discv5Event::FindNodeResult { closer_peers, .. }) =
-                        disc.next().await
+                    if let Some(Discv5Event::FindNodeResult {
+                        closer_peers,
+                        query_id,
+                        ..
+                    }) = disc.next().await
                     {
                         println!(
-                            "Query found {} peers. Total peers were: {}",
+                            "Query with id {} found {} peers. Total peers were: {}",
+                            *query_id,
                             closer_peers.len(),
                             total_nodes,
                         );
                         println!("Nodes expected to pass predicate search {}", num_nodes);
                         assert!(closer_peers.len() == num_nodes);
+                        assert!(expected_query_id == query_id);
                         true
                     } else {
                         false
