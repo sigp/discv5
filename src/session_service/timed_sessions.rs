@@ -42,9 +42,14 @@ impl TimedSessions {
     }
 
     pub(crate) fn insert_at(&mut self, node_id: NodeId, session: Session, duration: Duration) {
-        let delay = self.timeouts.insert(node_id.clone(), duration);
+        if self.contains(&node_id) {
+            // update the timeout
+            self.update_timeout(&node_id, duration);
+        } else {
+            let delay = self.timeouts.insert(node_id.clone(), duration);
 
-        self.sessions.insert(node_id, (session, delay));
+            self.sessions.insert(node_id, (session, delay));
+        }
     }
 
     pub(crate) fn get(&self, node_id: &NodeId) -> Option<&Session> {
@@ -53,6 +58,11 @@ impl TimedSessions {
 
     pub(crate) fn get_mut(&mut self, node_id: &NodeId) -> Option<&mut Session> {
         self.sessions.get_mut(node_id).map(|(v, _)| v)
+    }
+
+    /// Returns true if the key exists, false otherwise.
+    pub(crate) fn contains(&self, node_id: &NodeId) -> bool {
+        self.sessions.contains_key(node_id)
     }
 
     pub(crate) fn update_timeout(&mut self, node_id: &NodeId, timeout: Duration) {

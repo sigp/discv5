@@ -358,10 +358,10 @@ impl SessionService {
             warn!("Received a WHOAREYOU packet without having an established session.")
         })?;
 
-        // We should never receive a WHOAREYOU request, that matches an outgoing request AND have a
+        // We shouldn't receive a WHOAREYOU request, that matches an outgoing request AND have a
         // session that is in a WHOAREYOU_SENT state. If this is the case, drop the packet.
         if session.is_whoareyou_sent() {
-            error!("Received a WHOAREYOU packet whilst in a WHOAREYOU session state. Source: {}, node: {}", src, src_id);
+            warn!("Received a WHOAREYOU packet whilst in a WHOAREYOU session state. Source: {}, node: {}", src, src_id);
             return Ok(());
         }
 
