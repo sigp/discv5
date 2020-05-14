@@ -666,6 +666,7 @@ impl Discv5 {
                 }
                 Err(_) => {
                     warn!("Sending request to node: {} failed", &node_id);
+                    self.connected_peers.remove(node_id);
                     if let Some(query_id) = query_id {
                         if let Some(query) = self.queries.get_mut(query_id) {
                             query.on_failure(&node_id);
@@ -880,7 +881,8 @@ impl Discv5 {
         self.connected_peers.insert(node_id, interval);
     }
 
-    /// A session could not be established or an RPC request timed-out (after a few retries).
+    /// A session could not be established or an RPC request timed-out (after a few retries, if
+    /// specified).
     fn rpc_failure(&mut self, node_id: NodeId, failed_rpc_id: RpcId) {
         let req = RpcRequest(failed_rpc_id, node_id);
 
