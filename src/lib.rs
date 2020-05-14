@@ -111,7 +111,7 @@ mod config;
 mod discv5;
 mod error;
 mod kbucket;
-mod packet;
+pub mod packet;
 mod query_pool;
 mod rpc;
 mod session;
