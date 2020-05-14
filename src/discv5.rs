@@ -934,10 +934,11 @@ impl Discv5 {
             }
         }
 
-        // report the node as being disconnected
-        debug!("Session dropped with Node: {}", node_id);
         self.connection_updated(node_id.clone(), None, NodeStatus::Disconnected);
-        self.connected_peers.remove(&node_id);
+        if self.connected_peers.remove(&node_id).is_some() {
+            // report the node as being disconnected
+            debug!("Session dropped with Node: {}", node_id);
+        }
     }
 }
 
