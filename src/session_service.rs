@@ -649,6 +649,9 @@ impl SessionService {
             self.events.push_back(SessionEvent::Established(
                 session.remote_enr().clone().expect("ENR exists"),
             ));
+            // update the session timeout
+            self.sessions
+                .update_timeout(&src_id, self.config.session_timeout);
             let _ = self.flush_messages(src, &src_id);
         }
 
@@ -737,6 +740,7 @@ impl SessionService {
                     }
                     Packet::AuthMessage { .. } | Packet::Message { .. } => {
                         debug!("Message timed out with node: {}", node_id);
+                        sessions_ref.remove(&node_id);
                         events_ref.push_back(SessionEvent::RequestFailed(
                             node_id,
                             request.id().expect("Auth messages have an rpc id"),
