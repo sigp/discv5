@@ -43,7 +43,7 @@ mod test;
 
 type RpcId = u64;
 // The general key-type of ENR's are used to support multiple signing types.
-type Enr = RawEnr<CombinedKey>;
+pub type Enr = RawEnr<CombinedKey>;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct RpcRequest(RpcId, NodeId);
@@ -152,7 +152,12 @@ impl Discv5 {
         // only add ENR's that have a valid udp socket.
         if enr.udp_socket().is_none() {
             warn!("ENR attempted to be added without a UDP socket has been ignored");
-            return Err("Enr has no UDP socket to connect to");
+            return Err("ENR has no UDP socket to connect to");
+        }
+
+        if !(self.config.table_filter)(&enr) {
+            warn!("ENR attempted to be added which is banned by the configuration table filter.");
+            return Err("ENR banned by table filter");
         }
 
         let key = kbucket::Key::from(enr.node_id());
@@ -738,42 +743,46 @@ impl Discv5 {
     }
 
     /// Processes discovered peers from a query.
-    fn discovered(&mut self, source: &NodeId, peers: Vec<Enr>, query_id: Option<QueryId>) {
+    fn discovered(&mut self, source: &NodeId, enrs: Vec<Enr>, query_id: Option<QueryId>) {
         let local_id = self.local_enr().node_id();
-        let others_iter = peers.into_iter().filter(|p| p.node_id() != local_id);
+        let other_enr_iter = enrs.iter().filter(|p| p.node_id() != local_id);
 
-        for peer in others_iter.clone() {
+        for enr_ref in other_enr_iter.clone() {
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
-            self.events.push_back(Discv5Event::Discovered(peer.clone()));
+            self.events
+                .push_back(Discv5Event::Discovered(enr_ref.clone()));
 
-            let key = kbucket::Key::from(peer.node_id());
-            if !self.config.ip_limit
-                || self
-                    .kbuckets
-                    .check(&key, &peer, { |v, o, l| ip_limiter(v, &o, l) })
-            {
-                match self.kbuckets.entry(&key) {
-                    kbucket::Entry::Present(mut entry, _) => {
-                        if entry.value().seq() < peer.seq() {
-                            trace!("Enr updated: {}", peer);
-                            *entry.value() = peer.clone();
-                            self.service.update_enr(peer);
+            // ignore peers that don't pass the able filter
+            if (self.config.table_filter)(enr_ref) {
+                let key = kbucket::Key::from(enr_ref.node_id());
+                if !self.config.ip_limit
+                    || self
+                        .kbuckets
+                        .check(&key, enr_ref, { |v, o, l| ip_limiter(v, &o, l) })
+                {
+                    match self.kbuckets.entry(&key) {
+                        kbucket::Entry::Present(mut entry, _) => {
+                            if entry.value().seq() < enr_ref.seq() {
+                                trace!("Enr updated: {}", enr_ref);
+                                *entry.value() = enr_ref.clone();
+                                self.service.update_enr(enr_ref.clone());
+                            }
                         }
-                    }
-                    kbucket::Entry::Pending(mut entry, _) => {
-                        if entry.value().seq() < peer.seq() {
-                            trace!("Enr updated: {}", peer);
-                            *entry.value() = peer.clone();
-                            self.service.update_enr(peer);
+                        kbucket::Entry::Pending(mut entry, _) => {
+                            if entry.value().seq() < enr_ref.seq() {
+                                trace!("Enr updated: {}", enr_ref);
+                                *entry.value() = enr_ref.clone();
+                                self.service.update_enr(enr_ref.clone());
+                            }
                         }
+                        kbucket::Entry::Absent(_entry) => {
+                            // the service may have an untrusted session
+                            // update the service, which will inform this protocol if a session is
+                            // established or not.
+                            self.service.update_enr(enr_ref.clone());
+                        }
+                        _ => {}
                     }
-                    kbucket::Entry::Absent(_entry) => {
-                        // the service may have an untrusted session
-                        // update the service, which will inform this protocol if a session is
-                        // established or not.
-                        self.service.update_enr(peer);
-                    }
-                    _ => {}
                 }
             }
         }
@@ -782,20 +791,20 @@ impl Discv5 {
         if let Some(query_id) = query_id {
             if let Some(query) = self.queries.get_mut(query_id) {
                 let mut peer_count = 0;
-                for peer in others_iter.clone() {
+                for enr_ref in other_enr_iter.clone() {
                     if query
                         .target_mut()
                         .untrusted_enrs
                         .iter()
-                        .position(|e| e.node_id() == peer.node_id())
+                        .position(|e| e.node_id() == enr_ref.node_id())
                         .is_none()
                     {
-                        query.target_mut().untrusted_enrs.push(peer);
+                        query.target_mut().untrusted_enrs.push(enr_ref.clone());
                     }
                     peer_count += 1;
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(source, &others_iter.collect::<Vec<_>>())
+                query.on_success(source, &other_enr_iter.cloned().collect::<Vec<_>>())
             }
         }
     }
@@ -808,13 +817,17 @@ impl Discv5 {
         mut new_status: NodeStatus,
     ) {
         let key = kbucket::Key::from(node_id);
+        if let Some(enr) = enr.as_ref() {
+            // ignore peers that don't pass the table filter
+            if !(self.config.table_filter)(enr) {
+                return;
+            }
 
-        if let Some(enr) = enr.clone() {
             // should the ENR be inserted or updated to a value that would exceed the IP limit ban
             if self.config.ip_limit
                 && !self
                     .kbuckets
-                    .check(&key, &enr, { |v, o, l| ip_limiter(v, &o, l) })
+                    .check(&key, enr, { |v, o, l| ip_limiter(v, &o, l) })
             {
                 // if the node status is connected and it would exceed the ip ban, consider it
                 // disconnected to be pruned.
