@@ -1,3 +1,4 @@
+use crate::discv5::Enr;
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
@@ -39,6 +40,10 @@ pub struct Discv5Config {
     /// /24 subnet in the kbuckets table. This is to mitigate eclipse attacks. Default: false.
     pub ip_limit: bool,
 
+    /// A filter used to decide whether to insert nodes into our local routing table. Nodes can be
+    /// excluded if they do not pass this filter. The default is to accept all nodes.
+    pub table_filter: fn(&Enr) -> bool,
+
     /// The time between pings to ensure connectivity amongst connected nodes. Duration: 300
     /// seconds.
     pub ping_interval: Duration,
@@ -57,6 +62,7 @@ impl Default for Discv5Config {
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
+            table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
         }
     }
@@ -131,6 +137,11 @@ impl Discv5ConfigBuilder {
 
     pub fn ip_limit(&mut self, ip_limit: bool) -> &mut Self {
         self.config.ip_limit = ip_limit;
+        self
+    }
+
+    pub fn table_filter(&mut self, filter: fn(&Enr) -> bool) -> &mut Self {
+        self.config.table_filter = filter;
         self
     }
 
