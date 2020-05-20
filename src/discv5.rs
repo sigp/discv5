@@ -194,6 +194,15 @@ impl Discv5 {
         Ok(())
     }
 
+    /// Removes a `node_id` from the routing table.
+    ///
+    /// This allows applications, for whatever reason, to remove nodes from the local routing
+    /// table. Returns `true` if the node was in the table and `false` otherwise.
+    pub fn remove_node(&mut self, node_id: &NodeId) -> bool {
+        let key = &kbucket::Key::from(*node_id);
+        self.kbuckets.remove(key)
+    }
+
     /// Returns the number of connected peers the service knows about.
     pub fn connected_peers(&self) -> usize {
         self.connected_peers.len()

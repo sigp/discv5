@@ -362,6 +362,16 @@ where
         }
     }
 
+    /// Removes a node from the bucket.
+    pub fn remove(&mut self, key: &Key<TNodeId>) -> bool {
+        if let Some(position) = self.position(key) {
+            self.nodes.remove(position.0);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Returns the status of the node at the given position.
     pub fn status(&self, pos: Position) -> NodeStatus {
         if self.first_connected_pos.map_or(false, |i| pos.0 >= i) {

@@ -162,6 +162,20 @@ where
         }
     }
 
+    /// Removes a node from the routing table. Returns `true` of the node existed.
+    pub fn remove(&mut self, key: &Key<TNodeId>) -> bool {
+        let index = BucketIndex::new(&self.local_key.distance(key));
+        if let Some(i) = index {
+            let bucket = &mut self.buckets[i.get()];
+            if let Some(applied) = bucket.apply_pending() {
+                self.applied_pending.push_back(applied)
+            }
+            bucket.remove(key)
+        } else {
+            false
+        }
+    }
+
     /// Returns an `Entry` for the given key, representing the state of the entry
     /// in the routing table.
     pub fn entry<'a>(&'a mut self, key: &'a Key<TNodeId>) -> Entry<'a, TNodeId, TVal> {
