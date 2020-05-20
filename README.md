@@ -20,7 +20,7 @@ This is a rust implementation of the [Discovery v5](https://github.com/ethereum/
 peer discovery protocol.
 
 Discovery v5 is a protocol designed for encrypted peer discovery and topic advertisement. Each peer/node
-on the network is identified via it's 'ENR' ([Ethereum Name
+on the network is identified via it's `ENR` ([Ethereum Node
 Record](https://eips.ethereum.org/EIPS/eip-778)), which is essentially a signed key-value store
 containing the node's public key and optionally IP address and port.
 
@@ -101,15 +101,15 @@ To see a usage in a runtime environment, see the `find_nodes` example in `/examp
 This protocol is split into three main sections/layers:
 
  * Transport - The transport for this protocol is currently fixed to UDP and is realised by the
- [`Discv5Service`] struct. It encodes/decodes [`Packet`]'s to and from the specified UDP
+ `Discv5` struct. It encodes/decodes `Packet`'s to and from the specified UDP
  socket.
  * Session - The protocol's communication is encrypted with `AES_GCM`. All node communication
- undergoes a handshake, which results in a [`Session`]. [`Session`]'s are established when
+ undergoes a handshake, which results in a `Session`. `Session`'s are established when
  needed and get dropped after a timeout. This section manages the creation and maintenance of
- sessions between nodes. It is realised by the [`SessionService`] struct.
+ sessions between nodes. It is realised by the `Service` struct.
  * Application - This section contains the protocol-level logic. In particular it manages the
  routing table of known ENR's, topic registration/advertisement and performs various queries
- such as peer discovery. This section is realised by the [`Discv5`] struct.
+ such as peer discovery. This section is realised by the `Discv5` struct.
 
  *Note* -  Currently only `secp256k1` keys are supported.
 
