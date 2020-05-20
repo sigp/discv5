@@ -21,7 +21,7 @@ use crate::query_pool::{
     FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, ReturnPeer,
 };
 use crate::rpc;
-use crate::session_service::{SessionEvent, SessionService};
+use crate::service::{Service, ServiceEvent};
 use crate::transport::MAX_PACKET_SIZE;
 use crate::Discv5Config;
 use enr::{CombinedKey, Enr as RawEnr, EnrError, EnrKey, NodeId};
@@ -75,7 +75,7 @@ pub struct Discv5 {
     connected_peers: HashMap<NodeId, Interval>,
 
     /// Main discv5 UDP service that establishes sessions with peers.
-    service: SessionService,
+    service: Service,
 }
 
 /// For multiple responses to a FindNodes request, this struct keeps track of the request count
@@ -125,7 +125,7 @@ impl Discv5 {
         };
 
         // build the session service
-        let service = SessionService::new(local_enr, enr_key, listen_socket, config.clone())?;
+        let service = Service::new(local_enr, enr_key, listen_socket, config.clone())?;
 
         let query_timeout = config.query_timeout;
         Ok(Discv5 {
@@ -972,10 +972,10 @@ impl Stream for Discv5 {
             // Process events from the session service
             while let Poll::Ready(Some(event)) = self.service.poll_next_unpin(cx) {
                 match event {
-                    SessionEvent::Established(enr) => {
+                    ServiceEvent::Established(enr) => {
                         self.inject_session_established(enr);
                     }
-                    SessionEvent::Message {
+                    ServiceEvent::Message {
                         src_id,
                         src,
                         message,
@@ -987,7 +987,7 @@ impl Stream for Discv5 {
                             self.handle_rpc_response(src_id, message.id, res)
                         }
                     },
-                    SessionEvent::WhoAreYouRequest {
+                    ServiceEvent::WhoAreYouRequest {
                         src,
                         src_id,
                         auth_tag,
@@ -1007,7 +1007,7 @@ impl Stream for Discv5 {
                             self.service.send_whoareyou(src, &src_id, 0, None, auth_tag)
                         }
                     }
-                    SessionEvent::RequestFailed(node_id, rpc_id) => {
+                    ServiceEvent::RequestFailed(node_id, rpc_id) => {
                         self.rpc_failure(node_id, rpc_id);
                     }
                 }
