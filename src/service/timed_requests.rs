@@ -3,7 +3,7 @@
 //! A delay queue is used to keep track of when requests are expired and `Stream` is implemented on
 //! `TimedRequests` which provides expired requests when polled.
 
-use crate::session_service::Request;
+use crate::service::Request;
 use futures::Stream;
 use log::error;
 use std::pin::Pin;

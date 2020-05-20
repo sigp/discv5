@@ -35,14 +35,14 @@ async fn simple_session_message() {
         .build(&key2)
         .unwrap();
 
-    let mut sender_service = SessionService::new(
+    let mut sender_service = Service::new(
         sender_enr.clone(),
         key1,
         sender_enr.udp_socket().unwrap(),
         config.clone(),
     )
     .unwrap();
-    let mut receiver_service = SessionService::new(
+    let mut receiver_service = Service::new(
         receiver_enr.clone(),
         key2,
         receiver_enr.udp_socket().unwrap(),
@@ -66,7 +66,7 @@ async fn simple_session_message() {
         loop {
             if let Some(message) = receiver_service.next().await {
                 match message {
-                    SessionEvent::WhoAreYouRequest { src, auth_tag, .. } => {
+                    ServiceEvent::WhoAreYouRequest { src, auth_tag, .. } => {
                         let seq = sender_enr.seq();
                         let node_id = &sender_enr.node_id();
                         receiver_service.send_whoareyou(
@@ -77,7 +77,7 @@ async fn simple_session_message() {
                             auth_tag,
                         );
                     }
-                    SessionEvent::Message { message, .. } => {
+                    ServiceEvent::Message { message, .. } => {
                         assert_eq!(*message, receiver_send_message);
                         return;
                     }
@@ -117,14 +117,14 @@ async fn multiple_messages() {
         .build(&key2)
         .unwrap();
 
-    let mut sender_service = SessionService::new(
+    let mut sender_service = Service::new(
         sender_enr.clone(),
         key1,
         sender_enr.udp_socket().unwrap(),
         Discv5Config::default(),
     )
     .unwrap();
-    let mut receiver_service = SessionService::new(
+    let mut receiver_service = Service::new(
         receiver_enr.clone(),
         key2,
         receiver_enr.udp_socket().unwrap(),
@@ -158,7 +158,7 @@ async fn multiple_messages() {
     let sender = async move {
         loop {
             match sender_service.next().await {
-                Some(SessionEvent::Established(_)) => {
+                Some(ServiceEvent::Established(_)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
                         let _ = sender_service.send_request(&receiver_enr, send_message.clone());
@@ -172,7 +172,7 @@ async fn multiple_messages() {
     let receiver = async move {
         loop {
             match receiver_service.next().await {
-                Some(SessionEvent::WhoAreYouRequest { src, auth_tag, .. }) => {
+                Some(ServiceEvent::WhoAreYouRequest { src, auth_tag, .. }) => {
                     let seq = sender_enr.seq();
                     let node_id = &sender_enr.node_id();
                     receiver_service.send_whoareyou(
@@ -183,7 +183,7 @@ async fn multiple_messages() {
                         auth_tag,
                     );
                 }
-                Some(SessionEvent::Message { message, .. }) => {
+                Some(ServiceEvent::Message { message, .. }) => {
                     assert_eq!(*message, receiver_send_message);
                     message_count += 1;
                     // required to send a pong response to establish the session

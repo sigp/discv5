@@ -1,11 +1,11 @@
 //! Session management for the Discv5 Discovery service.
 //!
-//! The [`SessionService`] is responsible for establishing and maintaining sessions with
+//! The [`Service`] is responsible for establishing and maintaining sessions with
 //! connected/discovered nodes. Each node, identified by it's [`NodeId`] is associated with a
 //! [`Session`]. This service drives the handshakes for establishing the sessions and associated
 //! logic for sending/requesting initial connections/ENR's from unknown peers.
 //!
-//! The `SessionService` also manages the timeouts for each request and reports back RPC failures,
+//! The `Service` also manages the timeouts for each request and reports back RPC failures,
 //! session timeouts and received messages. Messages are encrypted and decrypted using the
 //! associated `Session` for each node.
 //!
@@ -41,9 +41,9 @@ mod timed_sessions;
 use timed_requests::TimedRequests;
 use timed_sessions::TimedSessions;
 
-pub(crate) struct SessionService {
+pub(crate) struct Service {
     /// Queue of events produced by the session service.
-    events: VecDeque<SessionEvent>,
+    events: VecDeque<ServiceEvent>,
 
     /// Configuration for the discv5 service.
     config: Discv5Config,
@@ -71,7 +71,7 @@ pub(crate) struct SessionService {
     transport: Transport,
 }
 
-impl SessionService {
+impl Service {
     /* Public Functions */
 
     /// A new Session service which instantiates the UDP socket.
@@ -91,7 +91,7 @@ impl SessionService {
             magic
         };
 
-        Ok(SessionService {
+        Ok(Service {
             events: VecDeque::new(),
             enr,
             key,
@@ -146,7 +146,7 @@ impl SessionService {
             // session, we demote the session to untrusted.
             if session.update_enr(enr.clone()) {
                 // A session have been promoted to established. Noftify the protocol
-                self.events.push_back(SessionEvent::Established(enr));
+                self.events.push_back(ServiceEvent::Established(enr));
             }
         }
     }
@@ -278,7 +278,7 @@ impl SessionService {
         Ok(())
     }
 
-    /// This is called in response to a SessionMessage::WhoAreYou event. The protocol finds the
+    /// This is called in response to a ServiceMessage::WhoAreYou event. The protocol finds the
     /// highest known ENR then calls this function to send a WHOAREYOU packet.
     pub(crate) fn send_whoareyou(
         &mut self,
@@ -493,7 +493,7 @@ impl SessionService {
                 // the session is trusted, notify the protocol
                 trace!("Session established with node: {}", src_id);
                 // session has been established, notify the protocol
-                self.events.push_back(SessionEvent::Established(
+                self.events.push_back(ServiceEvent::Established(
                     session
                         .remote_enr()
                         .clone()
@@ -544,7 +544,7 @@ impl SessionService {
             );
             debug!("Requesting a WHOAREYOU packet to be sent.");
             // spawn a WHOAREYOU event to check for highest known ENR
-            let event = SessionEvent::WhoAreYouRequest {
+            let event = ServiceEvent::WhoAreYouRequest {
                 src,
                 src_id,
                 auth_tag,
@@ -573,7 +573,7 @@ impl SessionService {
                     src, src_id
                 );
             }
-            let event = SessionEvent::WhoAreYouRequest {
+            let event = ServiceEvent::WhoAreYouRequest {
                 src,
                 src_id,
                 auth_tag,
@@ -605,7 +605,7 @@ impl SessionService {
                 // This means we need to drop the current session and re-establish.
                 debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", src_id);
                 self.sessions.remove(&src_id);
-                let event = SessionEvent::WhoAreYouRequest {
+                let event = ServiceEvent::WhoAreYouRequest {
                     src,
                     src_id,
                     auth_tag,
@@ -626,7 +626,7 @@ impl SessionService {
 
         // we have received a new message. Notify the behaviour.
         trace!("Message received: {} from: {}", message, src_id);
-        let event = SessionEvent::Message {
+        let event = ServiceEvent::Message {
             src_id,
             src,
             message: Box::new(message),
@@ -646,7 +646,7 @@ impl SessionService {
         {
             trace!("Session has been updated to ESTABLISHED. Node: {}", src_id);
             // session has been established, notify the protocol
-            self.events.push_back(SessionEvent::Established(
+            self.events.push_back(ServiceEvent::Established(
                 session.remote_enr().clone().expect("ENR exists"),
             ));
             // update the session timeout
@@ -731,7 +731,7 @@ impl SessionService {
                         // no response from peer, flush all pending messages
                         if let Some(pending_messages) = pending_messages_ref.remove(&node_id) {
                             for msg in pending_messages {
-                                events_ref.push_back(SessionEvent::RequestFailed(node_id, msg.id));
+                                events_ref.push_back(ServiceEvent::RequestFailed(node_id, msg.id));
                             }
                         }
                         // drop the session
@@ -741,7 +741,7 @@ impl SessionService {
                     Packet::AuthMessage { .. } | Packet::Message { .. } => {
                         debug!("Message timed out with node: {}", node_id);
                         sessions_ref.remove(&node_id);
-                        events_ref.push_back(SessionEvent::RequestFailed(
+                        events_ref.push_back(ServiceEvent::RequestFailed(
                             node_id,
                             request.id().expect("Auth messages have an rpc id"),
                         ));
@@ -774,7 +774,7 @@ impl SessionService {
                 // fail all pending requests for this node
                 if let Some(pending_messages) = pending_messages_ref.remove(&node_id) {
                     for msg in pending_messages {
-                        events_ref.push_back(SessionEvent::RequestFailed(node_id, msg.id));
+                        events_ref.push_back(ServiceEvent::RequestFailed(node_id, msg.id));
                     }
                 }
                 debug!("Session timed out for node: {}", node_id);
@@ -783,8 +783,8 @@ impl SessionService {
     }
 }
 
-impl Stream for SessionService {
-    type Item = SessionEvent;
+impl Stream for Service {
+    type Item = ServiceEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -835,7 +835,7 @@ impl Stream for SessionService {
 
 #[derive(Debug)]
 /// The output from polling the `SessionSerivce`.
-pub(crate) enum SessionEvent {
+pub(crate) enum ServiceEvent {
     /// A session has been established with a node.
     Established(Enr<CombinedKey>),
 

@@ -25,7 +25,7 @@
 //!  * Session - The protocol's communication is encrypted with `AES_GCM`. All node communication
 //!  undergoes a handshake, which results in a [`Session`]. [`Session`]'s are established when
 //!  needed and get dropped after a timeout. This section manages the creation and maintenance of
-//!  sessions between nodes. It is realised by the [`SessionService`] struct.
+//!  sessions between nodes. It is realised by the [`Service`] struct.
 //!  * Application - This section contains the protocol-level logic. In particular it manages the
 //!  routing table of known ENR's, topic registration/advertisement and performs various queries
 //!  such as peer discovery. This section is realised by the [`Discv5`] struct.
@@ -104,7 +104,7 @@
 //! [`Discv5ConfigBuilder`]: config/struct.Discv5ConfigBuilder.html
 //! [`Transport`]: transport/struct.Transport.html
 //! [Packet]: packet/enum.Packet.html
-//! [`SessionService`]: session_service/struct.SessionService.html
+//! [`Service`]: service/struct.Service.html
 //! [`Session`]: session/struct.Session.html
 
 mod config;
@@ -114,8 +114,8 @@ mod kbucket;
 pub mod packet;
 mod query_pool;
 mod rpc;
+pub mod service;
 mod session;
-mod session_service;
 mod transport;
 
 pub use crate::discv5::{Discv5, Discv5Event};
