@@ -110,6 +110,7 @@
 mod config;
 mod discv5;
 mod error;
+mod executor;
 mod kbucket;
 pub mod packet;
 mod query_pool;
@@ -121,6 +122,7 @@ mod transport;
 pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
 pub use error::Discv5Error;
+pub use executor::Executor;
 // re-export the ENR crate
 pub use enr;
 pub use query_pool::QueryId;
