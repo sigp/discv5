@@ -31,7 +31,7 @@ pub(crate) struct RecvHandler {
     whoareyou_magic: [u8; MAGIC_LENGTH],
     /// The channel to send the packet handler.
     handler: tokio::mpsc::Sender<InboundPacket>,
-    /// Exit channel to shutdown the handler.
+    /// Exit channel to shutdown the recv handler.
     exit: tokio::oneshot::Receiver,
 }
 

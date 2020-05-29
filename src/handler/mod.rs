@@ -13,8 +13,7 @@
 //! IP address/port that doesn't match the source, is considered untrusted. Once the IP is updated
 //! to match the source, the `Session` is promoted to an established state. RPC requests are not sent
 //! to untrusted Sessions, only responses.
-//TODO: Document the event structure and WHOAREYOU requests to the protocol layer.
-//TODO: Limit packets per node to avoid DOS/Spam.
+
 
 use super::transport::Transport;
 use crate::config::Discv5Config;
@@ -22,7 +21,8 @@ use crate::error::Discv5Error;
 use crate::packet::{AuthHeader, AuthTag, Magic, Nonce, Packet, Tag, TAG_LENGTH};
 use crate::rpc::ProtocolMessage;
 use crate::session::Session;
-use enr::{CombinedKey, Enr, EnrError, NodeId};
+use crate::Enr;
+use enr::{EnrError, NodeId};
 use futures::prelude::*;
 use log::{debug, error, trace, warn};
 use sha2::{Digest, Sha256};
@@ -41,47 +41,186 @@ mod timed_sessions;
 use timed_requests::TimedRequests;
 use timed_sessions::TimedSessions;
 
-pub(crate) struct Service {
-    /// Queue of events produced by the session service.
-    events: VecDeque<ServiceEvent>,
 
+/// A smaller configuration set held by the Handler.
+struct HandlerConfig {
+    request_retries: usize,
+    request_timeout: Duration,
+}
+
+impl From<Discv5Config> for HandlerConfig {
+    fn from(config: Discv5Config) -> Self {
+        request_retreis = config.request_retries,
+        request_timeout = config.request_timeout,
+    }
+}
+
+
+
+#[derive(Debug)]
+/// A request to a node that we are waiting for a response.
+pub(crate) struct PendingRequest {
+    /// The raw discv5 packet sent.
+    packet: Packet,
+
+    /// The unencrypted message. Required if need to re-encrypt and re-send.
+    request: Option<Request>,
+
+    /// The number of times this request has been re-sent.
+    retries: u8,
+}
+
+impl PendingRequest {
+    fn new(packet: Packet, message: Option<Request>) -> Self {
+        Request {
+            packet,
+            message,
+            retries: 1,
+        }
+    }
+
+    fn id(&self) -> Option<u64> {
+        self.request.as_ref().map(|m| m.0)
+    }
+}
+
+/// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
+/// connection types, such as multiaddrs.
+pub enum NodeContact {
+    /// We know the ENR of the node we are contacting.
+    Enr(Enr)
+    /// We don't have an ENR, but have enough information to start a handshake. 
+    ///
+    /// The handshake will request the ENR at the first opportunity.
+    NodeAddress(NodeAddress)
+}
+
+impl NodeContact {
+    pub fn is_enr(&self) -> bool {
+        match self {
+            Enr(_) => true
+                _ => false
+        }
+    }
+}
+
+pub struct NodeAddress {
+    /// The destination socket address.
+    socket_addr: SocketAddr,
+    /// The destination Node Id. 
+    node_id: NodeId
+}
+
+impl NodeAddress {
+    pub fn new(socket_addr: SocketAddr, node_id: NodeId) -> Self {
+        Self {
+            socket_addr,
+            node_id
+        }
+    }
+}
+
+type RequestId = u64;
+
+/// A reference for the application layer to send back when the handler requests any known
+/// ENR for the NodeContact.
+pub struct WhoAreYouRef(pub NodeContact, AuthTag);
+
+/// Events sent to the handler to be executed.
+pub enum HandlerRequest {
+    /// Sends a `ProtocolMessage` request to a `NodeContact`. A `NodeContact` is an abstract type
+    /// that allows for either an ENR to be sent or a `NodeAddress`.
+    ///
+    /// This permits us to send messages to nodes without knowing their ENR. In this case their ENR
+    /// will be requested during the handshake.
+    ///
+    /// A Request is flagged and permits responses through the packet filter.
+    ///
+    /// Note: To update an ENR for an unknown node, we request a FINDNODE with distance 0 to the
+    /// `NodeContact` we know of.
+    Request(NodeContact, Request),
+
+    /// Send a response to a received request. 
+    Response(NodeContact, Response),
+
+    /// A Random packet has been received and we have requested the application layer to inform
+    /// us what the highest known ENR is for this node. 
+    /// The `WhoAreYouRef` is sent out in the `HandlerResponse::WhoAreYou` event and should
+    /// be returned here to submit the application's response.
+    WhoAreYou(WhoAreYouRef, Option<Enr>)
+}
+
+#[derive(Debug)]
+/// The outputs provided by the `Handler`.
+pub(crate) enum HandlerResponse {
+    /// A session has been established with a node.
+    ///
+    /// A session is only considered established once we have received a signed Enr from the
+    /// node with received messages from it's `SocketAddr` matching its ENR fields.
+    Established(Enr),
+
+    /// A Request has been received.
+    Request(NodeAddress, Request),
+
+    /// A Response has been received.
+    Response(NodeAddress, Response),
+
+    /// An unknown source has requested information from us. Return the reference with the known
+    /// ENR of this node (if known). 
+    WhoAreYou(WhoAreYouRef),
+
+    /// An RPC request failed by the `NodeAddress` associated with the `RequestId`
+    RequestFailed(NodeAddress, RequestId),
+}
+
+
+pub(crate) struct Handler<T: Executor> {
     /// Configuration for the discv5 service.
-    config: Discv5Config,
-
+    config: HandlerConfig,
     /// The local ENR.
-    enr: Enr<CombinedKey>,
-
+    enr: Arc<RwLock<Enr>>,
     /// The key to sign the ENR and set up encrypted communication with peers.
     key: enr::CombinedKey,
-
     /// Pending raw requests. A list of raw messages we are awaiting a response from the remote.
     /// These are indexed by SocketAddr as WHOAREYOU messages do not return a source node id to
     /// match against.
-    pending_requests: TimedRequests,
-
-    /// Pending messages. Messages awaiting to be sent, once a handshake has been established.
-    pending_messages: HashMap<NodeId, Vec<ProtocolMessage>>,
-
+    pending_raw_requests: TimedRequests,
+    /// Pending request messages awaiting to be sent, once a handshake has been established. We
+    /// do not include responses here. If a Session has expired or does not exist, we drop the
+    /// response.
+    pending_request_messages: HashMap<NodeId, Vec<Request>>,
     /// Sessions that have been created for each node id. These can be established or
     /// awaiting response from remote nodes.
-    //TODO: Limit number of sessions
-    sessions: TimedSessions,
-
-    /// The discovery v5 UDP service.
-    transport: Transport,
+    sessions: Sessions,
+    /// The channel that receives requests from the application layer.
+    inbound_channel: tokio::mpsc::Receiver<HandlerRequest>,
+    /// The channel to send responses to the application layer.
+    outbound_channel: tokio::mpsc::Sender<HandlerResponse>,
+    /// The discovery v5 UDP socket tasks.
+    socket: Socket<T>,
+    /// Exit channel to shutdown the handler.
+    exit: tokio::oneshot::Receiver,
 }
 
 impl Service {
-    /* Public Functions */
 
-    /// A new Session service which instantiates the UDP socket.
-    pub(crate) fn new(
+    /// A new Session service which instantiates the UDP socket send/recv tasks.
+    pub(crate) fn spawn(
         enr: Enr<CombinedKey>,
         key: enr::CombinedKey,
         listen_socket: SocketAddr,
+        outbound_channel: tokio::mpsc::Sender<HandlerResponse>,
         config: Discv5Config,
-    ) -> Result<Self, Discv5Error> {
+    ) -> tokio::oneshot::Sender, tokio::mpsc::Sender<HandlerRequest> {
+
+        let (exit_sender, exit) = tokio::oneshot::channel();
+        // create the channel to receive messages from the application
+        let (handler_inbound_sender, inbound_channel) = tokio::mpsc::channel(10);
+
+        // Creates a SocketConfig to pass to the underlying UDP socket tasks.
+
         // generates the WHOAREYOU magic packet for the local node-id
+        // Will be removed in update
         let magic = {
             let mut hasher = Sha256::new();
             hasher.input(enr.node_id().raw());
@@ -91,33 +230,109 @@ impl Service {
             magic
         };
 
-        Ok(Service {
+        let socket_config = socket::SocketConfig {
+            executor: executor
+            socket_addr: listen_socket,
+            filter_config: config.filter_config,
+            whoareyou_magic: magic
+        };
+
+        let socket = socket::Socket::new(&socket_config);
+
+        let service = Service {
             events: VecDeque::new(),
+            config,
             enr,
             key,
-            pending_requests: TimedRequests::new(config.request_timeout),
-            pending_messages: HashMap::default(),
-            sessions: TimedSessions::new(config.session_establish_timeout),
-            transport: Transport::new(listen_socket, magic)
-                .map_err(|e| Discv5Error::Error(format!("{:?}", e)))?,
-            config,
-        })
+            pending_raw_requests: TimedRequests::new(config.request_timeout),
+            pending_request_messages: HashMap::default(),
+            sessions: Sessions::new(config.session_timeout, config.session_capacity),
+            inbound_channel,
+            outbound_channel,
+            socket,
+            exit,
+        };
+
+        config.executor.spawn(async move {
+            debug!("Handler Starting")
+            service.start().await;
+        });
+
+        exit_sender
     }
 
-    /// The local ENR of the service.
-    pub(crate) fn enr(&self) -> &Enr<CombinedKey> {
-        &self.enr
+
+    /// The main execution loop for the handler.
+    async fn run(&mut self) {
+
+        loop {
+            tokio::select! {
+                handler_request = self.inbound_channel => {
+                    match handler_request {
+                        HandlerRequest::Request(dst, request) => self.send_request(dst, request).await
+                        HandlerRequest::Response(dst, request) => self.send_request(dst, request).await
+                        HandlerRequest::WhoAreYou(wru_ref, enr) => self.send_whoareyou(wru_ref, enr).await
+                    }
+                }
+                
+
+
+            // poll the discv5 transport
+            match self.transport.poll_next_unpin(cx) {
+                Poll::Ready(Some((src, packet))) => {
+                    match packet {
+                        Packet::WhoAreYou {
+                            token,
+                            id_nonce,
+                            enr_seq,
+                            ..
+                        } => {
+                            let _ = self.handle_whoareyou(src, token, id_nonce, enr_seq);
+                        }
+                        Packet::AuthMessage {
+                            tag,
+                            auth_header,
+                            message,
+                        } => {
+                            let _ = self.handle_auth_message(src, tag, auth_header, &message);
+                        }
+                        Packet::Message {
+                            tag,
+                            auth_tag,
+                            message,
+                        } => {
+                            let src_id = self.src_id(&tag);
+                            let _ = self.handle_message(src, src_id, auth_tag, &message, tag);
+                        }
+                        Packet::RandomPacket { .. } => {} // this will not be decoded.
+                    }
+                }
+                Poll::Ready(None) | Poll::Pending => break,
+            }
+        }
+
+        // check for timeouts
+        self.check_timeouts(cx);
+        Poll::Pending
+    }
+}
+
+
+
+
+
+
+            }
+
+
+
+
+
+
     }
 
-    /// Generic function to modify a field in the local ENR.
-    pub(crate) fn enr_insert(
-        &mut self,
-        key: &str,
-        value: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, EnrError> {
-        self.enr.insert(key, value, &self.key)
-    }
-
+    /* Handler request message handling */
+    /*
     /// Updates the local ENR `SocketAddr` for either the TCP or UDP port.
     pub(crate) fn update_local_enr_socket(
         &mut self,
@@ -139,6 +354,7 @@ impl Service {
         }
     }
 
+
     /// Updates a session if a new ENR or an updated ENR is discovered.
     pub(crate) fn update_enr(&mut self, enr: Enr<CombinedKey>) {
         if let Some(session) = self.sessions.get_mut(&enr.node_id()) {
@@ -150,15 +366,13 @@ impl Service {
             }
         }
     }
+    */
 
-    /// Sends a `ProtocolMessage` request to a known ENR. It is possible to send requests to IP
-    /// addresses not related to the ENR.
-    // To update an ENR for an unknown node, we request a FINDNODE with distance 0 to the IP
-    // address that we know of.
-    pub(crate) fn send_request(
+    /// Sends a `Request` to a node. 
+    fn send_request(
         &mut self,
-        dst_enr: &Enr<CombinedKey>,
-        message: ProtocolMessage,
+        dst: NodeContact,
+        request: Request,
     ) -> Result<(), Discv5Error> {
         // check for an established session
         let dst_id = dst_enr.node_id();
@@ -225,11 +439,12 @@ impl Service {
         Ok(())
     }
 
+    /*
     /// Similar to `send_request` but for requests which an ENR may be unknown. A session is
     /// therefore assumed to be valid.
     // An example of this is requesting an ENR update from a NODE who's IP address is incorrect.
     // We send this request as a response to a ping. Assume a session is valid.
-    pub(crate) fn send_request_unknown_enr(
+    fn send_request_unknown_enr(
         &mut self,
         dst: SocketAddr,
         dst_id: &NodeId,
@@ -251,14 +466,14 @@ impl Service {
         self.process_request(dst, dst_id.clone(), packet, Some(message));
         Ok(())
     }
+    */
 
     /// Sends an RPC Response. This differs from send request as responses do not require a
     /// known ENR to send messages and session's should already be established.
-    pub(crate) fn send_response(
+    fn send_response(
         &mut self,
-        dst: SocketAddr,
-        dst_id: &NodeId,
-        message: ProtocolMessage,
+        dst: NodeContact,
+        response: Response
     ) -> Result<(), Discv5Error> {
         // session should be established
         let session = self.sessions.get(dst_id).ok_or_else(|| {
@@ -280,13 +495,10 @@ impl Service {
 
     /// This is called in response to a ServiceMessage::WhoAreYou event. The protocol finds the
     /// highest known ENR then calls this function to send a WHOAREYOU packet.
-    pub(crate) fn send_whoareyou(
+    fn send_whoareyou(
         &mut self,
-        dst: SocketAddr,
-        node_id: &NodeId,
-        enr_seq: u64,
+        wru_ref: WhoAreYouRef
         remote_enr: Option<Enr<CombinedKey>>,
-        auth_tag: AuthTag,
     ) {
         // If a WHOAREYOU is already sent or a session is already established, ignore this request.
         // However if a random packet was sent with a known ENR and this request has no known
@@ -308,7 +520,6 @@ impl Service {
         self.process_request(dst, node_id.clone(), packet, None);
     }
 
-    /* Internal Private Functions */
 
     /// Calculates the src `NodeId` given a tag.
     fn src_id(&self, tag: &Tag) -> NodeId {
@@ -329,6 +540,7 @@ impl Service {
         }
         tag
     }
+
 
     /* Packet Handling */
 
@@ -659,7 +871,6 @@ impl Service {
     }
 
     /// Encrypts and sends any messages that were waiting for a session to be established.
-    #[inline]
     fn flush_messages(&mut self, dst: SocketAddr, dst_id: &NodeId) -> Result<(), ()> {
         let mut requests_to_send = Vec::new();
         {
@@ -696,7 +907,6 @@ impl Service {
 
     /// Wrapper around `transport.send()` that adds all sent messages to the `pending_requests`. This
     /// builds a request adds a timeout and sends the request.
-    #[inline]
     fn process_request(
         &mut self,
         dst: SocketAddr,
@@ -759,6 +969,7 @@ impl Service {
             }
         }
 
+        /* Handle this logic on insert 
         // remove timed-out sessions - do not need to alert the protocol
         // Only drop a session if we are not expecting any responses.
         // TODO: Split into own task to be called only when a timeout expires
@@ -780,112 +991,6 @@ impl Service {
                 debug!("Session timed out for node: {}", node_id);
             }
         }
-    }
-}
-
-impl Stream for Service {
-    type Item = ServiceEvent;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            // process any events if necessary
-            if let Some(event) = self.events.pop_front() {
-                return Poll::Ready(Some(event));
-            }
-
-            // poll the discv5 transport
-            match self.transport.poll_next_unpin(cx) {
-                Poll::Ready(Some((src, packet))) => {
-                    match packet {
-                        Packet::WhoAreYou {
-                            token,
-                            id_nonce,
-                            enr_seq,
-                            ..
-                        } => {
-                            let _ = self.handle_whoareyou(src, token, id_nonce, enr_seq);
-                        }
-                        Packet::AuthMessage {
-                            tag,
-                            auth_header,
-                            message,
-                        } => {
-                            let _ = self.handle_auth_message(src, tag, auth_header, &message);
-                        }
-                        Packet::Message {
-                            tag,
-                            auth_tag,
-                            message,
-                        } => {
-                            let src_id = self.src_id(&tag);
-                            let _ = self.handle_message(src, src_id, auth_tag, &message, tag);
-                        }
-                        Packet::RandomPacket { .. } => {} // this will not be decoded.
-                    }
-                }
-                Poll::Ready(None) | Poll::Pending => break,
-            }
-        }
-
-        // check for timeouts
-        self.check_timeouts(cx);
-        Poll::Pending
-    }
-}
-
-#[derive(Debug)]
-/// The output from polling the `SessionSerivce`.
-pub(crate) enum ServiceEvent {
-    /// A session has been established with a node.
-    Established(Enr<CombinedKey>),
-
-    /// A message was received.
-    Message {
-        src_id: NodeId,
-        src: SocketAddr,
-        message: Box<ProtocolMessage>,
-    },
-
-    /// A WHOAREYOU packet needs to be sent. This requests the protocol layer to send back the
-    /// highest known ENR.
-    WhoAreYouRequest {
-        src: SocketAddr,
-        src_id: NodeId,
-        auth_tag: AuthTag,
-    },
-
-    /// An RPC request failed. The parameters are NodeId and the RPC-ID associated with the
-    /// request.
-    RequestFailed(NodeId, u64),
-}
-
-#[derive(Debug)]
-/// A request to a node that we are waiting for a response.
-pub(crate) struct Request {
-    /// The destination NodeId.
-    dst_id: NodeId,
-
-    /// The raw discv5 packet sent.
-    packet: Packet,
-
-    /// The unencrypted message. Required if need to re-encrypt and re-send.
-    message: Option<ProtocolMessage>,
-
-    /// The number of times this request has been re-sent.
-    retries: u8,
-}
-
-impl Request {
-    fn new(dst_id: NodeId, packet: Packet, message: Option<ProtocolMessage>) -> Self {
-        Request {
-            dst_id,
-            packet,
-            message,
-            retries: 1,
-        }
-    }
-
-    fn id(&self) -> Option<u64> {
-        self.message.as_ref().map(|m| m.id)
+        */
     }
 }

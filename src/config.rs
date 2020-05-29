@@ -20,11 +20,10 @@ pub struct Discv5Config {
     pub request_retries: u8,
 
     /// The session timeout for each node. Default: 1 day.
-    //TODO: Make this a function of messages sent, to ensure nonce replay
     pub session_timeout: Duration,
 
-    /// The timeout for a session to be established before being removed. Default: 15 seconds.
-    pub session_establish_timeout: Duration,
+    /// Established sessions.
+    pub session_cache_capacity: usize
 
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
     pub enr_update: bool,

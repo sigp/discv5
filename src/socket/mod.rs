@@ -1,26 +1,32 @@
-
 use tokio::mpsc;
-
 
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig<T: Executor> {
+    /// The executor to spawn the tasks.
+    pub executor: T,
+    /// The listening socke.
     pub socket_addr: SocketAddr,
+    /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
-    pub executor: T
+    /// The WhoAreYou magic packet.
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
 }
 
-/// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers. 
+/// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
 pub struct Socket {
+    send: mpsc::Sender<OutboundPacket>,
+    recv: mpsc::Receiver<InboundPacket>,
     sender_exit: tokio::oneshot::Sender,
     recv_exit: tokio::oneshot::Sender,
 }
 
 impl Socket {
-    /// Creates a UDP socket, spawns a send/recv task and returns the channels. 
+    /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
-    pub(crate) fn new(config: SocketConfig) -> (mpsc::Receiver<InboundPacket>, mpsc::Sender<OutboundPacket>, Self) {
-
+    pub(crate) fn new(
+        config: &SocketConfig,
+    ) -> Self,
+     {
         // set up the UDP socket
         let socket = {
             #[cfg(unix)]
@@ -46,12 +52,14 @@ impl Socket {
         let (recv_udp, send_udp) = socket.split();
 
         // spawn the recv handler
-        let recv_exit = RecvHandler::spawn(&config, handler_send, recv_udp);
+        let recv_exit = RecvHandler::spawn(config, handler_send, recv_udp);
         // spawn the sender handler
-        let (sender, sender_exit) = SendHandler::spawn(&config, send_udp);
+        let (sender, sender_exit) = SendHandler::spawn(config, send_udp);
 
-        let sock = Socket { sender_ext, recv_exit };
-        return (handler_recv, sender, sock);
+        return Socket {
+            sender_ext,
+            recv_exit,
+        };
     }
 }
 

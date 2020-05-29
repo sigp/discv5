@@ -5,16 +5,12 @@ use std::net::IpAddr;
 
 type TopicHash = [u8; 32];
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ProtocolMessage {
-    pub(crate) id: u64,
-    pub(crate) body: RpcType,
-}
+type RequestId = u64;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum RpcType {
-    Request(Request),
-    Response(Response),
+pub(crate) enum Message {
+    Request(RequestId, Request),
+    Response(RequestId, Response),
 }
 
 #[derive(Debug, Clone, PartialEq)]
