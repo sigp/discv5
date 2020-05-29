@@ -14,7 +14,7 @@ pub struct Sessions {
     /// Sessions that are attempted to be negotiated.
     establishing_sessions: LruCache<EstablishingSession>,
     /// Sessions that are established
-    established_sessions: LruCache<Session>,
+    sessions: LruCache<Session>,
 }
 
 impl Sessions {
@@ -28,10 +28,26 @@ impl Sessions {
                 std::time::Duration::from_secs(EST_SESSION_CACHE_TTL),
                 EST_SESSION_CACHE_SIZE,
             ),
-            established_sessions: LruCache::with_expiry_duration_and_capacity(
+            sessions: LruCache::with_expiry_duration_and_capacity(
                 established_ttl,
                 established_size,
             ),
         }
     }
+
+
+    /// Generates a new establishing session and returns the RANDOM packet required to send to
+    /// start the handshake.
+    pub fn new_random(tag: Tag, contact: NodeContact) -> Packet 
+
+
+
 }
+
+pub enum Session {
+    Establishing(EstablishingSession),
+    Untrusted(Session),
+    Established(Session),
+}
+
+// remove and notify_get_mut should send failed requests
