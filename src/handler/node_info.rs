@@ -12,11 +12,19 @@ pub enum NodeContact {
         /// An ENR compatible public key, required for handshaking with peers.
         public_key: CombinedPublicKey,
         /// The socket address and ModeId of the peer to connect to.
-        NodeAddress(NodeAddress)
+        node_address: NodeAddress,
     }
 }
 
 impl NodeContact {
+
+    pub fn node_id(&self) -> NodeId {
+        match self {
+            NodeContact::Enr(enr) => enr.node_id(),
+            NodeContact::Raw{ node_address, .. } => node_adress.node_id
+        }
+    }
+
     pub fn is_enr(&self) -> bool {
         match self {
             Enr(_) => true

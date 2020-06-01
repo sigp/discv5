@@ -22,6 +22,8 @@ const AUTH_TAG_LENGTH: usize = 12;
 pub const MAGIC_LENGTH: usize = 32;
 pub const ID_NONCE_LENGTH: usize = 32;
 
+const WHOAREYOU_STRING: &str = "WHOAREYOU";
+
 /// The authentication nonce (12 bytes).
 pub type AuthTag = [u8; AUTH_TAG_LENGTH];
 /// Packet Tag
@@ -91,6 +93,27 @@ impl Packet {
             tag,
             auth_tag: rand::random(),
             data,
+        }
+    }
+
+    /// Creates a WHOAREYOU packet.
+    pub fn whoareyou(node_id: NodeId, enr_seq: u64, auth_tag: AuthTag) -> Packet {
+        let magic = {
+            let mut hasher = Sha256::new();
+            hasher.input(node_id.raw());
+            hasher.input(WHOAREYOU_STRING.as_bytes());
+            let mut magic = [0u8; MAGIC_LENGTH];
+            magic.copy_from_slice(&hasher.result());
+            magic
+        };
+
+        let id_nonce: Nonce = rand::random();
+
+        Packet::WhoAreYou {
+            magic,
+            token: auth_tag,
+            id_nonce,
+            enr_seq,
         }
     }
 

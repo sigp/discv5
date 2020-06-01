@@ -35,13 +35,21 @@ impl Sessions {
         }
     }
 
+    /// Generates a new establishing session and returns the RANDOM packet required to send to
+    /// start the handshake.
+    pub fn new_random(&mut self, contact: NodeContact, request: Request) {
+        let node_id = contact.node_id();
+        let session = EstablishingSession::new_random(contact, request);
+        self.establishing_sessions.insert(node_id, session);
+    }
 
     /// Generates a new establishing session and returns the RANDOM packet required to send to
     /// start the handshake.
-    pub fn new_random(tag: Tag, contact: NodeContact) -> Packet 
-
-
-
+    pub fn new_whoareyou(&mut self, contact: NodeContact) -> Packet {
+        let node_id = contact.node_id();
+        let session = EstablishingSession::new_whoareyou(contact);
+        self.establishing_sessions.insert(node_id, session);
+    }
 }
 
 pub enum Session {

@@ -379,11 +379,9 @@ impl Service {
                 debug!("Starting session. Sending random packet to: {}", dst_id);
 
                 // create a new establishing session
-                let (session, packet) = EstablishingSession::random(self.tag(&dst_id), contact, request);
-                // send the packet
-                self.process_request(node_address, packet, None).await;
-                // add the session to known sessions.
-                self.sessions.insert(node_id, Session::Establishing(session));
+                self.sessions.new_random(contact, request);
+                // send a random packet
+                self.process_request(node_address, Packet::random(self.tag(&dst_id), None).await;
             }
             Session::Established(session) | Session::Untrusted(session) => {
                     // A session is already established
@@ -430,7 +428,6 @@ impl Service {
         wru_ref: WhoAreYouRef
         mut remote_enr: Option<Enr<CombinedKey>>,
     ) {
-
         let node_address = wru_ref.0;
         let auth_tag = wru.1;
 
@@ -439,9 +436,10 @@ impl Service {
         // ENR. Use the ENR of the previously established Session.
         match self.sessions.notify_get_mut(&node_address.node_id, &self.pending_requests) {
             Session::Random(random_session) => {
-                        // Upgrades the session to a WHOAREYOU session returning the WHOAREYOU
-                        // packet required to send
-                        let packet = random_session.upgrade_to_whoareyou(auth_tag, remote_enr);
+                        // Upgrades the session to a WHOAREYOU session
+                        random_session.whoareyou_sent();
+                        // WHOAREYOU packet to send
+                        let packet = Packet::whoareyou(node_address.node_id, enr_seq, auth_tag);
                         self.process_request(node_address, packet, None).await;
                     },
             Session::WhoAreYou(_) => {
@@ -455,9 +453,10 @@ impl Service {
             Session::NotFound =>  {
                 // Creates a new session in the WHOAREYOU Sent state.
                 let enr_seq = self.local_enr.read().seq;
-                let (session, packet) = EstablishingSession::new_whoareyou(node_address.node_id, enr_seq, remote_enr, auth_tag);
-                self.sessions.insert(node_id.clone(), Session::Establishing(session));
-                self.process_request(node_address, packet, None).await;
+                let packet = Packet::whoareyou(node_address.node_id, enr_seq, auth_tag);
+                let contact = remote_enr.map(|enr| enr.into());
+                self.sessions.new_whoareyou(contact);
+                self.process_request(node_address, whoareyou, None).await;
             }
         }
     }
@@ -517,7 +516,8 @@ impl Service {
         let node_address = NodeAddress { socket_addr: src, node_id: src_id };
 
         // Find the session associated with this and send the authentication response
-        match self.sessions.notify_get_mut(&node_address.node_id, &self.pending_requests) {
+        // either dropping the session or upgrading it to an AwaitingSession.
+        match self.sessions.notify_remove(&node_address.node_id, &self.pending_requests) {
             Session::NotFound => {
                 warn!("Received a WHOAREYOU packet without having an established session.");
                 return;
@@ -528,22 +528,22 @@ impl Service {
                 warn!("Received a WHOAREYOU packet whilst in a WHOAREYOU session state. Source: {}, node: {}", src, src_id);
                 return;
             }
-            Session::Random(establishing_session) => {
+            Session::Random(random_session) => {
                 // Generate an AuthResponse with the first pending message.
 
                 // update the last seen socket
-                establishing_session.set_last_seen_socket(src);
+                random_session.set_last_seen_socket(src);
 
                 // double check that the referenced request was a random packet
                 if !req.packet.is_random() {
-                    error!("Received a WhoAreYou packet to a Random Session that references a non-random packet: {} Node: {}", req.packet, src_id);
+                    warn!("Received a WhoAreYou packet to a Random Session that references a non-random packet: {} Node: {}", req.packet, src_id);
                     return;
                 }
 
         // Generate session keys and encrypt the earliest packet with the authentication header
         // An establishing session may have extra pending messages. We send these also, now that a
         // tentative session has been established.
-        let (auth_packet, request) = match establishing_session.encrypt_with_header(
+        let (auth_packet, request, awaiting_session) = match random_session.encrypt_with_header(
             tag,
             &self.key,
             updated_enr,
@@ -559,30 +559,18 @@ impl Service {
 
         // Send the authentication response
         debug!("Sending Authentication response to node: {}", node_address.node_id);
-        self.process_request(node_address.clone(), auth_packet, Some(message)).await;
+        self.process_request(node_address.clone(), auth_packet, Some(request)).await;
 
         // Process any further pending requests
-        for (packet, request) in establishing_session.drain_pending_requests() {
+        for (packet, request) in awaiting_session.drain_pending_requests() {
             debug!("Sending {} to node: {}", request,node_address.node_id);
             self.process_request(node_address.clone(), packet, Some(request)).await;
         }
         }
-        /*
-
-                // TODO: Put this in the encrypt_with header.. add messages back to queue on error
-                let messages = establishing_session.pending_messages;
-                // TODO: No longer the case for update
-                if messages.is_empty() {
-                    // This could happen for an established connection and another peer (from the
-                    // the same socketaddr) sends a WHOAREYOU packet
-                    debug!("No pending messages found for WHOAREYOU request.");
-                    return Err(());
-                }
-        */
         Session::Untrusted(session) | Session::Established(session) => {
             // Generate an auth response with the packet we previously sent
-                // update the last seen socket
-                session.set_last_seen_socket(src);
+            // update the last seen socket
+            session.set_last_seen_socket(src);
         // Generate session keys and encrypt the earliest packet with the authentication header
         let packet = match session.encrypt_with_header(
             tag,

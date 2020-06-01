@@ -23,185 +23,70 @@ use zeroize::Zeroize;
 mod crypto;
 mod ecdh_ident;
 
+const WHOAREYOU_STRING: &str = "WHOAREYOU";
 
 /// Manages active handshakes and connections between nodes in discv5. There are three main states
 /// a session can be in, initializing (`WhoAreYouSent` or `RandomSent`), `Untrusted` (when the
 /// socket address of the ENR doesn't match the `last_seen_socket`) and `Established` (the session
 /// has been successfully established).
-pub(crate) struct EstablishingSession {
+pub(crate) struct RandomSession {
     /// Requests awaiting the session to be established.
     pending_requests: VecDequeue<Request>
 
-    /// The state of the establishing session.
-    state: EstablishingSessionState
+    /// The node that this session connected to.
+    node_contact: NodeContact,
 
     /// Last seen IP address and port. This is used to determine if the session is trusted or not.
-    last_seen_socket: SocketAddr,
+    last_seen_socket: Option<SocketAddr>,
 }
 
-#[derive(PartialEq)]
-/// The current state of the session. This enum holds the encryption keys for various states.
-pub(crate) enum SessionState {
-
-    /// A RANDOM packet has been sent and the Session is awaiting a WHOAREYOU response. A
-    /// `NodeContact` is required for this state.
-    RandomSent(NodeContact),
-
-    /// A WHOAREYOU packet has been sent, and the Session is awaiting an Authentication response.
-    WhoAreYouSent(Option<NodeContact>),
-
-    /// An AuthMessage has been sent with a new set of generated keys. Once a response has been
-    /// received that we can decrypt, the session transitions to an established Session, replacing
-    AwaitingResponse(NodeContact, Keys),
-
-    /// An `AwaitingResponse` Session has received a WHOAREYOU. In this state, messages are sent
-    /// out with the established session keys and new encrypted messages are first attempted to
-    /// be decrypted with the established session keys, upon failure, the new keys are tried. If
-    /// the new keys are successful, the session keys are updated and the state progresses to
-    /// `Established`.
-    ReEstablishedAwaitingResponse {
-        contact: NodeContact,
-        /// The keys used in the current established session.
-        current_keys: Keys,
-        /// New keys generated from a recent WHOARYOU request.
-        new_keys: Keys,
-    },
-    /// We have established session keys and have now requested an ENR to be fully established.
-    AwaitingENR(Keys) 
-}
-
-impl EstablishingSession {
+impl RandomSession {
 
     /* Session Generation Functions */
 
     /// Creates a new `Session` instance and generates a RANDOM packet to be sent along with this
     /// session being established. This session is set to `RandomSent` state.
-    pub(crate) fn new_random(contact: NodeContact, request: Request) -> Self {
-
-        let session = EstablishingSession {
-            state: SessionState::RandomSent(contact),
+    pub(crate) fn new(node_contact: NodeContact, request: Request) -> Self {
+        RandomSession {
             pending_requests: vec![request],
-            last_seen_socket: "0.0.0.0:0".parse::<SocketAddr>().expect("Valid Socket"),
+            node_contact,
+            last_seen_socket: None,
         };
-
         (session, random_packet)
     }
 
-    /// Creates a new `Session` and generates an associated WHOAREYOU packet. The returned session is in the
-    /// `WhoAreYouSent` state.
-    pub(crate) fn new_whoareyou(
-        node_contact: Option<NodeContact>,
-    ) -> Self {
-        Session {
-            state: SessionState::WhoAreYouSent,
-            pending_requests: vec![],
-            last_seen_socket: "0.0.0.0:0".parse::<SocketAddr>().expect("Valid Socket"),
+    /// Converts a `RandomSession` into a `WhoAreYouSession`.
+    pub(crate) fn into_whoareyou(self) -> WhoAreYouSession { 
+        WhoAreYouSession {
+            pending_requests: self.pending_requests,
+            node_contact: Some(self.node_contract),
+            last_seen_socket: self.last_seen_socket,
         }
-    }
-
-    /* Update Session State Functions */
-
-    /// Updates a `Random` session state to `WhoAreYouSent`.
-    pub(crate) fn whoareyou_sent(&mut self) { 
-        self.state = match self.state {
-            SessionState::Random(contact) => SessionState::WhoAreYouSent(Some(contact)),
-            _ => {
-                crit!("Only a Random Session can be upgraded to a WHOAREYOU session")
-                return;
-            }
-        };
-    }
-
-    /// Generates session keys from an authentication header. If the IP of the ENR does not match the
-    /// source IP address, we consider this session untrusted. The output returns a boolean which
-    /// specifies if the Session is trusted or not.
-    pub(crate) fn establish_from_header(
-        &mut self,
-        local_key: &CombinedKey,
-        local_id: &NodeId,
-        remote_id: &NodeId,
-        id_nonce: Nonce,
-        auth_header: &AuthHeader,
-    ) -> Result<bool, Discv5Error> {
-        // generate session keys
-        let (decryption_key, encryption_key, auth_resp_key) = crypto::derive_keys_from_pubkey(
-            local_key,
-            local_id,
-            remote_id,
-            &id_nonce,
-            &auth_header.ephemeral_pubkey,
-        )?;
-
-        // decrypt the authentication header
-        let auth_response = crypto::decrypt_authentication_header(&auth_resp_key, auth_header)?;
-
-        // check and verify a potential ENR update
-        if let Some(enr) = auth_response.node_record {
-            if let Some(remote_enr) = &self.remote_enr {
-                // verify the enr-seq number
-                if remote_enr.seq() < enr.seq() {
-                    self.remote_enr = Some(enr);
-                } // ignore ENR's that have a lower seq number
-            } else {
-                // update the ENR
-                self.remote_enr = Some(enr);
-            }
-        } else if self.remote_enr.is_none() {
-            // didn't receive the remote's ENR
-            return Err(Discv5Error::InvalidEnr);
-        }
-
-        // ENR must exist here
-        let remote_public_key = self
-            .remote_enr
-            .as_ref()
-            .expect("ENR Must exist")
-            .public_key();
-        // verify the auth header nonce
-        if !crypto::verify_authentication_nonce(
-            &remote_public_key,
-            &auth_header.ephemeral_pubkey,
-            &id_nonce,
-            &auth_response.signature,
-        ) {
-            return Err(Discv5Error::InvalidSignature);
-        }
-
-        let keys = Keys {
-            auth_resp_key,
-            encryption_key,
-            decryption_key,
-        };
-
-        // session has been established
-        self.state = SessionState::Established(keys);
-
-        // output if the session is trusted or untrusted
-        Ok(self.update_trusted())
     }
 
     /* Encryption Related Functions */
 
-    /// Encrypts a message and produces an AuthMessage.
+    /// Consumes self and turns into an `AwaitingSession`.
     pub(crate) fn encrypt_with_header(
-        &mut self,
+        self,
         tag: Tag,
         local_key: &CombinedKey,
         updated_enr: Option<Enr<CombinedKey>>,
         local_node_id: &NodeId,
         id_nonce: &Nonce,
-        message: &[u8],
-    ) -> Result<Packet, Discv5Error> {
-        
+    ) -> Result<(Packet, Request, awaiting_session), Discv5Error> {
 
+        // There must be a message to send
+        if self.pending_messages.is_empty() {
+            Err(Discv5Error::Custom("No message to send in response to a WHOAREYOU"));
+        }
+        let request = self.pending_requests.remove(0);
 
         // generate the session keys
         let (encryption_key, decryption_key, auth_resp_key, ephem_pubkey) =
             crypto::generate_session_keys(
                 local_node_id,
-                self.remote_enr
-                    .as_ref()
-                    .expect("Should never be None at this point"),
+                &self.node_contact
                 id_nonce,
             )?;
 
@@ -233,25 +118,17 @@ impl EstablishingSession {
 
         // encrypt the message
         let message_ciphertext =
-            crypto::encrypt_message(&encryption_key, auth_tag, message, &tag[..])?;
+            crypto::encrypt_message(&encryption_key, auth_tag, request.clone(), &tag[..])?;
 
-        // update the session state
-        match std::mem::replace(&mut self.state, SessionState::Poisoned) {
-            SessionState::Established(current_keys) => {
-                self.state = SessionState::EstablishedAwaitingResponse {
-                    current_keys,
-                    new_keys: keys,
-                }
-            }
-            SessionState::Poisoned => unreachable!("Coding error if this is possible"),
-            _ => self.state = SessionState::AwaitingResponse(keys),
-        }
-
-        Ok(Packet::AuthMessage {
+        let packet = Packet::AuthMessage {
             tag,
             auth_header,
             message: message_ciphertext,
-        })
+        };
+
+        let awaiting_session: AwaitingSession = self.into()
+        Ok((packet, request, awaiting_session))
+
     }
 
     /// Uses the current `Session` to encrypt a message. Encrypt packets with the current session
