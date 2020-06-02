@@ -52,7 +52,7 @@ pub enum Packet {
         magic: [u8; MAGIC_LENGTH],
 
         /// The auth-tag of the request.
-        token: AuthTag, //potentially rename to auth-tag
+        auth_tag: AuthTag,
 
         /// The `id-nonce` to prevent handshake replays.
         id_nonce: Nonce,
@@ -96,8 +96,8 @@ impl Packet {
         }
     }
 
-    /// Creates a WHOAREYOU packet.
-    pub fn whoareyou(node_id: NodeId, enr_seq: u64, auth_tag: AuthTag) -> Packet {
+    /// Creates a WHOAREYOU packet and returns the associated generated nonce.
+    pub fn whoareyou(node_id: NodeId, enr_seq: u64, auth_tag: AuthTag) -> (Packet, nonce) {
         let magic = {
             let mut hasher = Sha256::new();
             hasher.input(node_id.raw());
@@ -109,12 +109,13 @@ impl Packet {
 
         let id_nonce: Nonce = rand::random();
 
-        Packet::WhoAreYou {
+        let packet = Packet::WhoAreYou {
             magic,
             token: auth_tag,
-            id_nonce,
+            id_nonce: id_nonce.clone(),
             enr_seq,
-        }
+        };
+        (packet, id_nonce)
     }
 
     /// The authentication tag for all packets except WHOAREYOU.

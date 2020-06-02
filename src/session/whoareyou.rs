@@ -14,9 +14,6 @@ pub(crate) struct WhoAreYouSession {
     pending_requests: VecDequeue<Request>,
 
     node_contact: Option<NodeContact>,
-
-    /// Last seen IP address and port. This is used to determine if the session is trusted or not.
-    last_seen_socket: Option<SocketAddr>,
 }
 
 impl WhoAreYouSession {
@@ -27,7 +24,7 @@ impl WhoAreYouSession {
     pub(crate) fn new_whoareyou(node_contact: Option<NodeContact>) -> Self {
         WhoAreYouSession {
             pending_requests: vec![],
-            last_seen_socket: None,
+            node_contact,
         }
     }
 
@@ -92,79 +89,11 @@ impl WhoAreYouSession {
             decryption_key,
         };
 
+        let 
         // session has been established
         self.state = SessionState::Established(keys);
 
         // output if the session is trusted or untrusted
         Ok(self.update_trusted())
-    }
-
-    /// Updates the trusted status of a Session. It can be promoted to an `established` state, or
-    /// demoted to an `untrusted` state. This value returns true if the Session has been
-    /// promoted.
-    pub(crate) fn update_trusted(&mut self) -> bool {
-        if let TrustedState::Untrusted = self.trusted {
-            if let Some(remote_enr) = &self.remote_enr {
-                if Some(self.last_seen_socket) == remote_enr.udp_socket() {
-                    self.trusted = TrustedState::Trusted;
-                    return true;
-                }
-            }
-        } else if let TrustedState::Trusted = self.trusted {
-            if let Some(remote_enr) = &self.remote_enr {
-                if Some(self.last_seen_socket) != remote_enr.udp_socket() {
-                    self.trusted = TrustedState::Untrusted;
-                }
-            }
-        }
-        false
-    }
-
-    /// The socket address of the last packer received from this node.
-    pub(crate) fn set_last_seen_socket(&mut self, socket: SocketAddr) {
-        self.last_seen_socket = socket;
-    }
-
-    pub(crate) fn is_whoareyou_sent(&self) -> bool {
-        SessionState::WhoAreYouSent == self.state
-    }
-
-    pub(crate) fn is_random_sent(&self) -> bool {
-        SessionState::RandomSent == self.state
-    }
-
-    pub(crate) fn is_awaiting_response(&self) -> bool {
-        if let SessionState::AwaitingResponse(_) = self.state {
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(crate) fn remote_enr(&self) -> &Option<Enr<CombinedKey>> {
-        &self.remote_enr
-    }
-
-    pub(crate) fn is_trusted(&self) -> bool {
-        if let TrustedState::Trusted = self.trusted {
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Returns true if the Session is trusted and has established session keys. This state means
-    /// the session is capable of sending requests.
-    pub(crate) fn trusted_established(&self) -> bool {
-        let established = match &self.state {
-            SessionState::WhoAreYouSent => false,
-            SessionState::RandomSent => false,
-            SessionState::AwaitingResponse(_) => false,
-            SessionState::Established(_) => true,
-            SessionState::EstablishedAwaitingResponse { .. } => true,
-            SessionState::Poisoned => unreachable!(),
-        };
-
-        self.is_trusted() && established
     }
 }

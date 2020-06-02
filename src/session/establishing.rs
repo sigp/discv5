@@ -116,11 +116,10 @@ impl EstablishingSession {
     /// source IP address, we consider this session untrusted. The output returns a boolean which
     /// specifies if the Session is trusted or not.
     pub(crate) fn establish_from_header(
-        &mut self,
         local_key: &CombinedKey,
         local_id: &NodeId,
         remote_id: &NodeId,
-        id_nonce: Nonce,
+        challenge: &Challenge,
         auth_header: &AuthHeader,
     ) -> Result<bool, Discv5Error> {
         // generate session keys
@@ -128,7 +127,7 @@ impl EstablishingSession {
             local_key,
             local_id,
             remote_id,
-            &id_nonce,
+            &challenge.nonce,
             &auth_header.ephemeral_pubkey,
         )?;
 
@@ -136,32 +135,32 @@ impl EstablishingSession {
         let auth_response = crypto::decrypt_authentication_header(&auth_resp_key, auth_header)?;
 
         // check and verify a potential ENR update
-        if let Some(enr) = auth_response.node_record {
-            if let Some(remote_enr) = &self.remote_enr {
-                // verify the enr-seq number
-                if remote_enr.seq() < enr.seq() {
-                    self.remote_enr = Some(enr);
-                } // ignore ENR's that have a lower seq number
-            } else {
-                // update the ENR
-                self.remote_enr = Some(enr);
-            }
-        } else if self.remote_enr.is_none() {
-            // didn't receive the remote's ENR
-            return Err(Discv5Error::InvalidEnr);
-        }
+        let session_enr = 
+            match (auth_response.node_record, challenge.remote_enr) { 
+                (Some(new_enr), Some(known_enr) => {
+                    if new_enr.seq() > known_enr.seq() {
+                        new_enr
+                    else {
+                        known_enr
+                    }
+                }
+                }
+                (Some(new_enr), None) => new_enr
+                (None, Some(known_enr) => known_enr
+                (None, None) => {
+                    warn!("Peer did not respond with their ENR. Session could not be established. Node: {}",remote_id);
+                    return Err(Discv5Error::SessionNotEstablished);
+                }
+        };
 
         // ENR must exist here
-        let remote_public_key = self
-            .remote_enr
-            .as_ref()
-            .expect("ENR Must exist")
-            .public_key();
+        let remote_public_key = session_enr.public_key();
+
         // verify the auth header nonce
         if !crypto::verify_authentication_nonce(
             &remote_public_key,
             &auth_header.ephemeral_pubkey,
-            &id_nonce,
+            &challenge.nonce,
             &auth_response.signature,
         ) {
             return Err(Discv5Error::InvalidSignature);
@@ -173,11 +172,7 @@ impl EstablishingSession {
             decryption_key,
         };
 
-        // session has been established
-        self.state = SessionState::Established(keys);
-
-        // output if the session is trusted or untrusted
-        Ok(self.update_trusted())
+        Session::new(keys);
     }
 
     /* Encryption Related Functions */

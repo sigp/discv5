@@ -48,12 +48,13 @@ pub type Enr = RawEnr<CombinedKey>;
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct RpcRequest(RpcId, NodeId);
 
-pub struct Discv5 {
-    /// Events yielded by this behaviour.
-    events: VecDeque<Discv5Event>,
-
+pub struct Discv5<T: Executor> {
     /// Configuration parameters for the Discv5 service
-    config: Discv5Config,
+    config: Discv5Config<T>,
+
+    local_enr: Arc<RwLock<Enr>>,
+
+    enr_key: CombinedKey,
 
     /// Storage of the ENR record for each node.
     kbuckets: KBucketsTable<NodeId, Enr>,
@@ -74,8 +75,11 @@ pub struct Discv5 {
     /// List of peers we have established sessions with and an interval for when to send a PING.
     connected_peers: HashMap<NodeId, Interval>,
 
-    /// Main discv5 UDP service that establishes sessions with peers.
-    service: Service,
+    handler_send: Option<tokio::mpsc::Sender<HandlerRequest>>,
+
+    handler_recv: Option<tokio::mpsc::Receiver<HandlerResponse>>,
+
+    handler_exit: Option<tokio::oneshot::Sender<()>>,
 }
 
 /// For multiple responses to a FindNodes request, this struct keeps track of the request count
@@ -96,7 +100,7 @@ impl Default for NodesResponse {
     }
 }
 
-impl Discv5 {
+impl<T: Executor> Discv5<T> {
     /// Builds the `Discv5` main struct.
     ///
     /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
@@ -105,8 +109,7 @@ impl Discv5 {
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
-        config: Discv5Config,
-        listen_socket: SocketAddr,
+        config: Discv5Config<T>,
     ) -> Result<Self, Discv5Error> {
         let node_id = local_enr.node_id();
 
@@ -124,21 +127,42 @@ impl Discv5 {
             None
         };
 
-        // build the session service
-        let service = Service::new(local_enr, enr_key, listen_socket, config.clone())?;
-
-        let query_timeout = config.query_timeout;
         Ok(Discv5 {
-            events: VecDeque::new(),
             config,
+            local_enr: Arc::new(RwLock::new(local_enr)),
+            enr_key,
             kbuckets: KBucketsTable::new(node_id.into(), Duration::from_secs(60)),
-            queries: QueryPool::new(query_timeout),
+            queries: QueryPool::new(config.query_timeout),
             active_rpc_requests: Default::default(),
             active_nodes_responses: HashMap::new(),
             ip_votes,
             connected_peers: Default::default(),
-            service,
+            handler: None,
         })
+    }
+
+    pub fn start(&mut self, listen_socket: SocketAddr) {
+        // build the session service
+        let (exit, handler_send, handler_recv) = Handler::spawn(
+            self.local_enr.clone(),
+            self.enr_key,
+            listen_socket,
+            self.config.clone(),
+        );
+
+        self.handler_exit = Some(exit);
+        self.handler_send = Some(handler_send);
+        self.handler_recv = Some(handler_recv);
+    }
+
+    pub fn shutdown(&mut self) {
+        if let Some(exit) = self.handler_exit {
+            exit.send();
+            self.handler_send = None;
+            self.handler_recv = None;
+        } else {
+            warn!("Handler not started, cannot shutdown");
+        }
     }
 
     /// Adds a known ENR of a peer participating in Discv5 to the
@@ -214,8 +238,8 @@ impl Discv5 {
     }
 
     /// Returns the local ENR of the node.
-    pub fn local_enr(&self) -> &Enr {
-        &self.service.enr()
+    pub fn local_enr(&self) -> Enr {
+        self.enr.read().clone()
     }
 
     /// Allows the application layer to update the local ENR's UDP socket. The second parameter
@@ -227,28 +251,34 @@ impl Discv5 {
                 // nothing to do, not updated
                 return false;
             }
-        } else if self.local_enr().udp_socket() == Some(socket_addr) {
-            // nothing to do, not updated
-            return false;
-        }
-        // a new socket addr has been supplied
-        if self
-            .service
-            .update_local_enr_socket(socket_addr, is_tcp)
-            .is_ok()
-        {
-            // notify peers of the update
-            self.ping_connected_peers();
-            true
+            match self.local_enr.write().set_tcp_socket(socket, &self.enr_key) {
+                Ok(_) => {}
+                Err(e) => {
+                    warn!("Could not update the ENR IP address. Error: {}", e);
+                    return false;
+                }
+            }
         } else {
-            false
+            if self.local_enr().udp_socket() == Some(socket_addr) {
+                // nothing to do, not updated
+                return false;
+            }
+            match self.local_enr.write().set_udp_socket(socket, &self.enr_key) {
+                Ok(_) => {}
+                Err(e) => {
+                    warn!("Could not update the ENR IP address. Error: {}", e);
+                    return false;
+                }
+            }
         }
+        // notify peers of the update
+        self.ping_connected_peers();
+        true
     }
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
     pub fn enr_insert(&mut self, key: &str, value: Vec<u8>) -> Result<Option<Vec<u8>>, EnrError> {
-        let result = self.service.enr_insert(key, value);
-
+        let result = self.enr.write().insert(key, value, &self.key);
         if result.is_ok() {
             self.ping_connected_peers();
         }
@@ -279,7 +309,7 @@ impl Discv5 {
     ///
     /// This will eventually produce an event containing <= `num` nodes which satisfy the
     /// `predicate` with passed `value`.
-    pub fn find_enr_predicate<F>(
+    pub fn find_node_predicate<F>(
         &mut self,
         node_id: NodeId,
         predicate: F,
@@ -774,21 +804,21 @@ impl Discv5 {
                             if entry.value().seq() < enr_ref.seq() {
                                 trace!("Enr updated: {}", enr_ref);
                                 *entry.value() = enr_ref.clone();
-                                self.service.update_enr(enr_ref.clone());
+                                self.service.update_enr(enr_ref.clone()).await;
                             }
                         }
                         kbucket::Entry::Pending(mut entry, _) => {
                             if entry.value().seq() < enr_ref.seq() {
                                 trace!("Enr updated: {}", enr_ref);
                                 *entry.value() = enr_ref.clone();
-                                self.service.update_enr(enr_ref.clone());
+                                self.service.update_enr(enr_ref.clone()).await;
                             }
                         }
                         kbucket::Entry::Absent(_entry) => {
                             // the service may have an untrusted session
                             // update the service, which will inform this protocol if a session is
                             // established or not.
-                            self.service.update_enr(enr_ref.clone());
+                            self.service.update_enr(enr_ref.clone()).await;
                         }
                         _ => {}
                     }
@@ -962,6 +992,8 @@ impl Discv5 {
             debug!("Session dropped with Node: {}", node_id);
         }
     }
+
+    pub async fn next_event() {}
 }
 
 impl Stream for Discv5 {

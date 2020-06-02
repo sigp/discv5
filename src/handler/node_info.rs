@@ -25,6 +25,13 @@ impl NodeContact {
         }
     }
 
+    pub fn seq_no(&self) -> Option<u64> {
+        match self {
+            NodeContact::Enr(enr) => Some(enr.seq_no()),
+            _ => None
+        }
+    }
+
     pub fn is_enr(&self) -> bool {
         match self {
             Enr(_) => true
@@ -36,6 +43,15 @@ impl NodeContact {
         match self {
             Enr(ref enr) => enr.udp_socket().map_err(|_| "ENR does not contain an IP and UDP port")?
             NodeAddress(ref node_address) => node_address.socket_addr.clone()
+        }
+    }
+
+    pub fn node_address(&self) -> Result<NodeAddress, &'static str> {
+        let node_id = self.node_id();
+        let socket_addr = self.udp_socket()?;
+        NodeAddress {
+            node_id,
+            socket_addr,
         }
     }
 }
