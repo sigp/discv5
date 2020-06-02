@@ -1,9 +1,14 @@
+use super::*;
+use crate::Enr;
+use enr::{CombinedPublicKey, NodeId};
+use std::net::SocketAddr;
+
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
 pub enum NodeContact {
     /// We know the ENR of the node we are contacting.
-    Enr(Enr)
-    /// We don't have an ENR, but have enough information to start a handshake. 
+    Enr(Enr),
+    /// We don't have an ENR, but have enough information to start a handshake.
     ///
     /// The handshake will request the ENR at the first opportunity.
     /// The public key can be derived from multiaddr's whose keys can be inlined. The `TryFrom`
@@ -13,36 +18,37 @@ pub enum NodeContact {
         public_key: CombinedPublicKey,
         /// The socket address and ModeId of the peer to connect to.
         node_address: NodeAddress,
-    }
+    },
 }
 
 impl NodeContact {
-
     pub fn node_id(&self) -> NodeId {
         match self {
             NodeContact::Enr(enr) => enr.node_id(),
-            NodeContact::Raw{ node_address, .. } => node_adress.node_id
+            NodeContact::Raw { node_address, .. } => node_address.node_id,
         }
     }
 
     pub fn seq_no(&self) -> Option<u64> {
         match self {
             NodeContact::Enr(enr) => Some(enr.seq_no()),
-            _ => None
+            _ => None,
         }
     }
 
     pub fn is_enr(&self) -> bool {
         match self {
-            Enr(_) => true
-                _ => false
+            NodeContact::Enr(_) => true,
+            _ => false,
         }
     }
 
     pub fn udp_socket(&self) -> Result<SocketAddr, &'static str> {
         match self {
-            Enr(ref enr) => enr.udp_socket().map_err(|_| "ENR does not contain an IP and UDP port")?
-            NodeAddress(ref node_address) => node_address.socket_addr.clone()
+            NodeContact::Enr(ref enr) => enr
+                .udp_socket()
+                .map_err(|_| "ENR does not contain an IP and UDP port")?,
+            NodeContact::Raw { node_address, .. } => node_address.socket_addr.clone(),
         }
     }
 
@@ -60,15 +66,15 @@ impl NodeContact {
 pub struct NodeAddress {
     /// The destination socket address.
     socket_addr: SocketAddr,
-    /// The destination Node Id. 
-    node_id: NodeId
+    /// The destination Node Id.
+    node_id: NodeId,
 }
 
 impl NodeAddress {
     pub fn new(socket_addr: SocketAddr, node_id: NodeId) -> Self {
         Self {
             socket_addr,
-            node_id
+            node_id,
         }
     }
 }

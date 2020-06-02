@@ -108,24 +108,24 @@
 //! [`Session`]: session/struct.Session.html
 
 mod config;
+mod crypto;
 mod discv5;
 mod error;
 mod executor;
+pub mod handler;
 mod kbucket;
 pub mod packet;
 mod query_pool;
 mod rpc;
-pub mod service;
-mod session;
-mod transport;
+mod socket;
 
-
-pub type Enr = enr::Enr<enr::CombinedKey>:
+pub type Enr = enr::Enr<enr::CombinedKey>;
 
 pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
 pub use error::Discv5Error;
 pub use executor::Executor;
+pub use handler::{Handler, HandlerRequest, HandlerResponse};
 // re-export the ENR crate
 pub use enr;
 pub use query_pool::QueryId;

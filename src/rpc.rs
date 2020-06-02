@@ -5,16 +5,28 @@ use std::net::IpAddr;
 
 type TopicHash = [u8; 32];
 
-type RequestId = u64;
+pub type RequestId = u64;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Message {
-    Request(RequestId, Request),
-    Response(RequestId, Response),
+    Request(Request),
+    Response(Response),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Request {
+pub struct Request {
+    id: RequestId,
+    kind: RequestKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Response {
+    id: RequestId,
+    kind: ResponseKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum RequestKind {
     Ping { enr_seq: u64 },
     FindNode { distance: u64 },
     Ticket { topic: TopicHash },
@@ -23,7 +35,7 @@ pub(crate) enum Request {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Response {
+pub(crate) enum ResponseKind {
     Ping {
         enr_seq: u64,
         ip: IpAddr,

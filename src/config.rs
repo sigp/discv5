@@ -23,7 +23,7 @@ pub struct Discv5Config {
     pub session_timeout: Duration,
 
     /// Established sessions.
-    pub session_cache_capacity: usize
+    pub session_cache_capacity: usize,
 
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
     pub enr_update: bool,

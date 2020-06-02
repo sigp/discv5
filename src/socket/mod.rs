@@ -1,4 +1,17 @@
-use tokio::mpsc;
+use crate::packet::*;
+use crate::Executor;
+use recv::*;
+use send::*;
+use std::net::SocketAddr;
+use tokio::sync::{mpsc, oneshot};
+
+mod filter;
+mod recv;
+mod send;
+
+pub use filter::FilterConfig;
+pub use recv::InboundPacket;
+pub use send::OutboundPacket;
 
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig<T: Executor> {
@@ -16,26 +29,23 @@ pub struct SocketConfig<T: Executor> {
 pub struct Socket {
     send: mpsc::Sender<OutboundPacket>,
     recv: mpsc::Receiver<InboundPacket>,
-    sender_exit: tokio::oneshot::Sender,
-    recv_exit: tokio::oneshot::Sender,
+    sender_exit: oneshot::Sender<()>,
+    recv_exit: oneshot::Sender<()>,
 }
 
 impl Socket {
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
-    pub(crate) fn new(
-        config: &SocketConfig,
-    ) -> Self,
-     {
+    pub(crate) fn new(config: &SocketConfig) -> Self {
         // set up the UDP socket
         let socket = {
             #[cfg(unix)]
-            fn platform_specific(s: &net2::UdpBuilder) -> io::Result<()> {
+            fn platform_specific(s: &net2::UdpBuilder) -> std::io::Result<()> {
                 net2::unix::UnixUdpBuilderExt::reuse_port(s, true)?;
                 Ok(())
             }
             #[cfg(not(unix))]
-            fn platform_specific(_: &net2::UdpBuilder) -> io::Result<()> {
+            fn platform_specific(_: &net2::UdpBuilder) -> std::io::Result<()> {
                 Ok(())
             }
             let builder = net2::UdpBuilder::new_v4()?;
@@ -43,10 +53,10 @@ impl Socket {
             platform_specific(&builder)?;
             builder.bind(config.socket_addr)?
         };
-        let socket = UdpSocket::from_std(socket)?;
+        let socket = tokio::net::UdpSocket::from_std(socket)?;
 
         // create the channel to receive decoded packets from the recv handler
-        let (handler_send, handler_recv) = tokio::mpsc::channel(30);
+        let (handler_send, handler_recv) = mpsc::channel(30);
 
         // split the UDP socket
         let (recv_udp, send_udp) = socket.split();
@@ -57,7 +67,7 @@ impl Socket {
         let (sender, sender_exit) = SendHandler::spawn(config, send_udp);
 
         return Socket {
-            sender_ext,
+            sender_exit,
             recv_exit,
         };
     }

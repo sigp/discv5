@@ -5,14 +5,16 @@
 //! There is no abstraction in this module as the specification explicitly defines a singular
 //! encryption and key-derivation algorithms. Future versions may abstract some of these to allow
 //! for different algorithms.
-use super::ecdh_ident::EcdhIdent;
 use crate::error::Discv5Error;
 use crate::packet::{AuthHeader, AuthResponse, AuthTag, Nonce};
+use ecdh_ident::EcdhIdent;
 use enr::{CombinedKey, CombinedPublicKey, Enr, NodeId};
 use hkdf::Hkdf;
 use openssl::symm::{decrypt_aead, encrypt_aead, Cipher};
 use secp256k1::Signature;
 use sha2::{Digest, Sha256};
+
+mod ecdh_ident;
 
 const NODE_ID_LENGTH: usize = 32;
 const INFO_LENGTH: usize = 26 + 2 * NODE_ID_LENGTH;

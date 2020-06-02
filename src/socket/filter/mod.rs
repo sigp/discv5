@@ -1,24 +1,28 @@
 //! A filter which decides whether to accept/reject incoming UDP packets.
-//!
+
+mod cache;
+mod config;
+
+use cache::ReceivedPacketCache;
+pub use config::FilterConfig;
+
 /// The packet filter which decides whether we accept or reject incoming packets.
 pub(crate) struct Filter {
-
     /// Configuration for the packet filter.
     config: FilterConfig,
 
     /// An ordered (by time) collection of recently seen packets by SocketAddr. The packet data is not
     /// stored here..
-    raw_packets_received: ReceivedPacketCache<SocketAddr>
+    raw_packets_received: ReceivedPacketCache<SocketAddr>,
 
     /// An ordered (by time) collection of seen packets that have passed the first filter check and
-    /// have an associated NodeId. 
-    packets_received: ReceivedPacketCache<(SocketAddr,NodeId>
+    /// have an associated NodeId.
+    packets_received: ReceivedPacketCache<(SocketAddr, NodeId)>,
 
     /// The list of waiting responses. These are used to allow incoming packets from sources
     /// that we are expected a response from bypassing the rate-limit filters.
     awaiting_responses: HashMap<SocketAddr, usize>,
 }
-
 
 impl Filter {
     pub fn new(config: FilterConfig) -> Filter {

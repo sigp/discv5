@@ -49,6 +49,11 @@ pub type Enr = RawEnr<CombinedKey>;
 struct RpcRequest(RpcId, NodeId);
 
 pub struct Discv5<T: Executor> {
+    /// List of events to be sent to the handler when ready.
+    handler_events: VecDequeue<HandlerRequest>,
+
+    discv5_events: VecDequeue<Discv5Event>,
+
     /// Configuration parameters for the Discv5 service
     config: Discv5Config<T>,
 
@@ -73,13 +78,15 @@ pub struct Discv5<T: Executor> {
     ip_votes: Option<IpVote>,
 
     /// List of peers we have established sessions with and an interval for when to send a PING.
-    connected_peers: HashMap<NodeId, Interval>,
+    connected_peers: HashMap<NodeId, Instant>,
 
     handler_send: Option<tokio::mpsc::Sender<HandlerRequest>>,
 
     handler_recv: Option<tokio::mpsc::Receiver<HandlerResponse>>,
 
     handler_exit: Option<tokio::oneshot::Sender<()>>,
+
+    ping_heart_heatbeat: Interval,
 }
 
 /// For multiple responses to a FindNodes request, this struct keeps track of the request count
@@ -143,16 +150,21 @@ impl<T: Executor> Discv5<T> {
 
     pub fn start(&mut self, listen_socket: SocketAddr) {
         // build the session service
-        let (exit, handler_send, handler_recv) = Handler::spawn(
-            self.local_enr.clone(),
-            self.enr_key,
-            listen_socket,
-            self.config.clone(),
-        );
+        if self.handler_exit.is_none() {
+            info!("Discv5 server started");
+            let (exit, handler_send, handler_recv) = Handler::spawn(
+                self.local_enr.clone(),
+                self.enr_key,
+                listen_socket,
+                self.config.clone(),
+            );
 
-        self.handler_exit = Some(exit);
-        self.handler_send = Some(handler_send);
-        self.handler_recv = Some(handler_recv);
+            self.handler_exit = Some(exit);
+            self.handler_send = Some(handler_send);
+            self.handler_recv = Some(handler_recv);
+        } else {
+            warn!("Discv5 server already started");
+        }
     }
 
     pub fn shutdown(&mut self) {
@@ -160,6 +172,7 @@ impl<T: Executor> Discv5<T> {
             exit.send();
             self.handler_send = None;
             self.handler_recv = None;
+            info!("Discv5 shutdown");
         } else {
             warn!("Handler not started, cannot shutdown");
         }
@@ -929,8 +942,8 @@ impl<T: Executor> Discv5<T> {
         self.connection_updated(node_id.clone(), Some(enr), NodeStatus::Connected);
         // send an initial ping and start the ping interval
         self.send_ping(&node_id);
-        let interval = tokio::time::interval(self.config.ping_interval);
-        self.connected_peers.insert(node_id, interval);
+        let instant = Instant::now() + self.config.ping_interval;
+        self.connected_peers.insert(node_id, instant);
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
@@ -993,127 +1006,119 @@ impl<T: Executor> Discv5<T> {
         }
     }
 
-    pub async fn next_event() {}
-}
-
-impl Stream for Discv5 {
-    type Item = Discv5Event;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    pub async fn next_event() -> Result<Discv5Event, &'static str> {
         loop {
-            // Process events from the session service
-            while let Poll::Ready(Some(event)) = self.service.poll_next_unpin(cx) {
-                match event {
-                    ServiceEvent::Established(enr) => {
-                        self.inject_session_established(enr);
+            if self.handler_recv.is_none() {
+                return Err("Discv5 is shutdown");
+            }
+
+            tokio::select! {
+                Some(event) => self.handler_recv.as_ref().unwrap().next(), if self.handler_recv.is_some() => {
+                    match event {
+                        HandlerResponse::Established(enr) => {
+                            self.inject_session_established(enr).await;
+                        }
+                        HandlerResponse::Request(request) {
+                                self.handle_rpc_request(req).await;;
+                            }
+                        HandlerResponse::Response(res) => {
+                                self.handle_rpc_response(res).await;
+                            }
+                        },
+                        HandlerResponse::WhoAreYouRequest(whoareyou_ref) => {
+                            // check what our latest known ENR is for this node.
+                            if let Some(known_enr) = self.find_enr(&src_id) {
+                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).await;
+                            } else {
+                                // do not know of this peer
+                                debug!("NodeId unknown, requesting ENR. NodeId: {}", src_id);
+                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, None)).await;
+                            }
+                        }
+                        HandlerEvent::RequestFailed(request_id, error) => {
+                            self.rpc_failure(request_id, error).await;
+                        }
+                }
+                out_event = self.next_event() => {
+                    return out_event;
+                }
+                query_event = self.query_event() => {
+                    match query_event {
+                        QueryEvent::Waiting(query_id, target, return_peer) => {
+                            self.send_rpc_query(query_id, target, return_peer).await;
+                        }
+                        QueryEvent::Finished(query) => {
+                    let query_id = query.id();
+                    let result = query.into_result();
+
+                    match result.target.query_type {
+                        QueryType::FindNode(node_id) => {
+                            return Discv5Event::FindNodeResult {
+                                key: node_id,
+                                closer_peers: result
+                                    .closest_peers
+                                    .filter_map(|p| self.find_enr(&p))
+                                    .collect(),
+                                query_id,
+                            };
+                        }
                     }
-                    ServiceEvent::Message {
-                        src_id,
-                        src,
-                        message,
-                    } => match message.body {
-                        rpc::RpcType::Request(req) => {
-                            self.handle_rpc_request(src, src_id, message.id, req);
-                        }
-                        rpc::RpcType::Response(res) => {
-                            self.handle_rpc_response(src_id, message.id, res)
-                        }
-                    },
-                    ServiceEvent::WhoAreYouRequest {
-                        src,
-                        src_id,
-                        auth_tag,
-                    } => {
-                        // check what our latest known ENR is for this node.
-                        if let Some(known_enr) = self.find_enr(&src_id) {
-                            self.service.send_whoareyou(
-                                src,
-                                &src_id,
-                                known_enr.seq(),
-                                Some(known_enr.clone()),
-                                auth_tag,
-                            );
-                        } else {
-                            // do not know of this peer
-                            debug!("NodeId unknown, requesting ENR. NodeId: {}", src_id);
-                            self.service.send_whoareyou(src, &src_id, 0, None, auth_tag)
+                    }
+                    }
+                }
+                _ = self.ping_heartbeat.next() => {
+                    // check for ping intervals
+                    for (node_id, instant) in self.connected_peers.iter_mut() {
+                        if instant.has_elapsed() {
+                            instant = Instant::now() + self.config.ping_interval;
+                            to_send_ping.push(node_id.clone());
                         }
                     }
-                    ServiceEvent::RequestFailed(node_id, rpc_id) => {
-                        self.rpc_failure(node_id, rpc_id);
+                    for id in to_send_ping.into_iter() {
+                        debug!("Sending PING to: {}", id);
+                        self.send_ping(&id).await;
                     }
                 }
             }
+        }
+    }
 
-            // Drain queued events
-            if let Some(event) = self.events.pop_front() {
-                return Poll::Ready(Some(event));
-            }
+    async fn next_event(&mut self) -> Discv5Event {
+        future::poll_fn(move |cx| Discv5::poll_next_event(Pin::new(self), cx)).await;
+    }
 
-            // Drain applied pending entries from the routing table.
-            if let Some(entry) = self.kbuckets.take_applied_pending() {
-                let event = Discv5Event::NodeInserted {
-                    node_id: entry.inserted.into_preimage(),
-                    replaced: entry.evicted.map(|n| n.key.into_preimage()),
-                };
-                return Poll::Ready(Some(event));
-            }
+    fn poll_next_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Discv5Event> {
+        // Drain queued events
+        if let Some(event) = self.events.pop_front() {
+            return Poll::Ready(event);
+        }
 
-            // Handle active queries
-
-            // If iterating finds a query that is finished, stores it here and stops looping.
-            let mut finished_query = None;
-            // If a query is waiting for an rpc to send, store it here and stop looping.
-            let mut waiting_query = None;
-            match self.queries.poll() {
-                QueryPoolState::Finished(query) => {
-                    finished_query = Some(query);
-                }
-                QueryPoolState::Waiting(Some((query, return_peer))) => {
-                    waiting_query = Some((query.id(), query.target().clone(), return_peer));
-                }
-                QueryPoolState::Timeout(query) => {
-                    warn!("Query id: {:?} timed out", query.id());
-                    finished_query = Some(query);
-                }
-                QueryPoolState::Waiting(None) | QueryPoolState::Idle => {}
+        // Drain applied pending entries from the routing table.
+        if let Some(entry) = self.kbuckets.take_applied_pending() {
+            let event = Discv5Event::NodeInserted {
+                node_id: entry.inserted.into_preimage(),
+                replaced: entry.evicted.map(|n| n.key.into_preimage()),
             };
+            return Poll::Ready(event);
+        }
+        Poll::Pending
+    }
 
-            if let Some((query_id, target, return_peer)) = waiting_query {
-                self.send_rpc_query(query_id, target, &return_peer);
-            } else if let Some(finished_query) = finished_query {
-                let query_id = finished_query.id();
-                let result = finished_query.into_result();
+    async fn query_event(&mut self) -> QueryEvent {
+        future::poll_fn(move |cx| Discv5::query_event(Pin::new(self), cx)).await;
+    }
 
-                match result.target.query_type {
-                    QueryType::FindNode(node_id) => {
-                        let event = Discv5Event::FindNodeResult {
-                            key: node_id,
-                            closer_peers: result
-                                .closest_peers
-                                .filter_map(|p| self.find_enr(&p))
-                                .collect(),
-                            query_id,
-                        };
-                        return Poll::Ready(Some(event));
-                    }
-                }
-            } else {
-                // check for ping intervals
-                let mut to_send_ping = Vec::new();
-                for (node_id, interval) in self.connected_peers.iter_mut() {
-                    while let Poll::Ready(_) = Box::pin(interval.tick()).as_mut().poll(cx) {
-                        to_send_ping.push(node_id.clone());
-                    }
-                }
-                to_send_ping.dedup();
-                for id in to_send_ping.into_iter() {
-                    debug!("Sending PING to: {}", id);
-                    self.send_ping(&id);
-                }
-
-                return Poll::Pending;
+    fn query_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<QueryEvent> {
+        match self.queries.poll() {
+            QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(query)),
+            QueryPoolState::Waiting(Some((query, return_peer))) => Poll::Ready(
+                QueryEvent::Waiting((query.id(), query.target().clone(), return_peer)),
+            ),
+            QueryPoolState::Timeout(query) => {
+                warn!("Query id: {:?} timed out", query.id());
+                Poll::Ready(QueryEvent::Finished(query))
             }
+            QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         }
     }
 }
