@@ -89,7 +89,7 @@ pub struct Discv5<T: Executor> {
 
     handler_exit: Option<oneshot::Sender<()>>,
 
-    ping_heart_heatbeat: Interval,
+    ping_heartbeat: Interval,
 }
 
 /// For multiple responses to a FindNodes request, this struct keeps track of the request count
@@ -110,7 +110,7 @@ impl Default for NodesResponse {
     }
 }
 
-impl<T: Executor> Discv5<T> {
+impl<T: Executor + Unpin> Discv5<T> {
     /// Builds the `Discv5` main struct.
     ///
     /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
@@ -147,6 +147,7 @@ impl<T: Executor> Discv5<T> {
             active_nodes_responses: HashMap::new(),
             ip_votes,
             connected_peers: Default::default(),
+            ping_heartbeat: tokio::time::interval(config.ping_interval),
             handler: None,
         })
     }
@@ -541,7 +542,8 @@ impl<T: Executor> Discv5<T> {
                             // request an ENR update
                             debug!("Requesting an ENR update from: {}", node_address);
                             let request_body = RequestBody::FindNode { distance: 0 };
-                            self.send_rpc_request(enr.into(), request_body, None).await;
+                            self.send_rpc_request(&enr.node_id(), request_body, None)
+                                .await;
                         }
                         self.connection_updated(
                             node_address.node_id,
@@ -1036,7 +1038,7 @@ impl<T: Executor> Discv5<T> {
                 query_event = self.query_event() => {
                     match query_event {
                         QueryEvent::Waiting(query_id, target, return_peer) => {
-                            self.send_rpc_query(query_id, target, return_peer).await;
+                            self.send_rpc_query(query_id, target, &return_peer).await;
                         }
                         QueryEvent::Finished(query) => {
                     let query_id = query.id();
@@ -1044,14 +1046,14 @@ impl<T: Executor> Discv5<T> {
 
                     match result.target.query_type {
                         QueryType::FindNode(node_id) => {
-                            return Discv5Event::FindNodeResult {
+                            return Ok(Discv5Event::FindNodeResult {
                                 key: node_id,
                                 closer_peers: result
                                     .closest_peers
                                     .filter_map(|p| self.find_enr(&p))
                                     .collect(),
                                 query_id,
-                            };
+                            });
                         }
                     }
                     }
@@ -1059,15 +1061,16 @@ impl<T: Executor> Discv5<T> {
                 }
                 _ = self.ping_heartbeat.next() => {
                     // check for ping intervals
+                    let mut to_send_ping = Vec::new();
                     for (node_id, instant) in self.connected_peers.iter_mut() {
-                        if instant.has_elapsed() {
-                            instant = Instant::now() + self.config.ping_interval;
+                        if instant.checked_duration_since(Instant::now()).is_none() {
+                            *instant = Instant::now() + self.config.ping_interval;
                             to_send_ping.push(node_id.clone());
                         }
                     }
                     for id in to_send_ping.into_iter() {
                         debug!("Sending PING to: {}", id);
-                        self.send_ping(&id).await;
+                        self.send_ping(&id);
                     }
                 }
             }
@@ -1075,7 +1078,7 @@ impl<T: Executor> Discv5<T> {
     }
 
     async fn next_event(&mut self) -> Discv5Event {
-        future::poll_fn(move |cx| Discv5::poll_next_event(Pin::new(self), cx)).await;
+        future::poll_fn(move |cx| Discv5::poll_next_event(Pin::new(self), cx)).await
     }
 
     fn poll_next_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Discv5Event> {
@@ -1096,10 +1099,10 @@ impl<T: Executor> Discv5<T> {
     }
 
     async fn query_event(&mut self) -> QueryEvent {
-        future::poll_fn(move |cx| Discv5::query_event(Pin::new(self), cx)).await;
+        future::poll_fn(move |cx| Discv5::poll_query_event(Pin::new(self), cx)).await
     }
 
-    fn query_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<QueryEvent> {
+    fn poll_query_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<QueryEvent> {
         match self.queries.poll() {
             QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(query)),
             QueryPoolState::Waiting(Some((query, return_peer))) => Poll::Ready(

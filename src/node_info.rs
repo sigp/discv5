@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
+#[derive(Clone, Debug)]
 pub enum NodeContact {
     /// We know the ENR of the node we are contacting.
     Enr(Enr),
@@ -59,6 +60,12 @@ impl NodeContact {
             node_id,
             socket_addr,
         }
+    }
+}
+
+impl From<Enr> for NodeContact {
+    fn from(enr: Enr) -> Self {
+        NodeContact::Enr(enr)
     }
 }
 

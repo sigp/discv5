@@ -40,10 +40,10 @@ impl SendHandler {
         };
 
         // start the handler
-        executor.spawn(async move {
+        executor.spawn(Box::pin(async move {
             debug!("Send handler starting");
             send_handler.start().await;
-        });
+        }));
         (handler_send, exit_send)
     }
 
@@ -54,7 +54,7 @@ impl SendHandler {
                 Some(packet) = self.handler_recv.recv() => {
                     self.send.send_to(&packet.packet.encode(), &packet.dst).await;
                 }
-                _ = self.exit => {
+                _ = &mut self.exit => {
                     debug!("Send handler shutdown");
                     break;
                 }

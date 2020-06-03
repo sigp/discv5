@@ -60,10 +60,10 @@ impl RecvHandler {
         };
 
         // start the handler
-        config.executor.spawn(async move {
+        config.executor.spawn(Box::pin(async move {
             debug!("Recv handler starting");
             recv_handler.start().await;
-        });
+        }));
         exit_sender
     }
 
@@ -74,7 +74,7 @@ impl RecvHandler {
                 Ok((length, src)) = self.recv.recv_from(&mut self.recv_buffer) => {
                     self.handle_inbound(src, length).await;
                 }
-                _ = self.exit => {
+                _ = &mut self.exit => {
                     debug!("Recv handler shutdown");
                     break;
                 }
