@@ -53,7 +53,7 @@ pub struct Discv5Config<T: Executor> {
 
     pub filter_config: FilterConfig,
 
-    pub executor: Box<dyn Executor>,
+    pub executor: T,
 }
 
 impl<T: Executor> Default for Discv5Config<T> {

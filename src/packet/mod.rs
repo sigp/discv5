@@ -13,8 +13,10 @@ mod auth_header;
 
 pub use auth_header::AuthHeader;
 pub use auth_header::AuthResponse;
+use enr::NodeId;
 use log::debug;
 use rlp::{Decodable, DecoderError, RlpStream};
+use sha2::{Digest, Sha256};
 use std::default::Default;
 
 pub const TAG_LENGTH: usize = 32;
@@ -97,7 +99,7 @@ impl Packet {
     }
 
     /// Creates a WHOAREYOU packet and returns the associated generated nonce.
-    pub fn whoareyou(node_id: NodeId, enr_seq: u64, auth_tag: AuthTag) -> (Packet, nonce) {
+    pub fn whoareyou(node_id: NodeId, enr_seq: u64, auth_tag: AuthTag) -> (Packet, Nonce) {
         let magic = {
             let mut hasher = Sha256::new();
             hasher.input(node_id.raw());

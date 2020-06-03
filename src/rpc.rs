@@ -15,18 +15,18 @@ pub(crate) enum Message {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Request {
-    id: RequestId,
-    kind: RequestKind,
+    pub id: RequestId,
+    pub body: RequestBody,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Response {
-    id: RequestId,
-    kind: ResponseKind,
+    pub id: RequestId,
+    pub body: ResponseBody,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum RequestKind {
+pub(crate) enum RequestBody {
     Ping { enr_seq: u64 },
     FindNode { distance: u64 },
     Ticket { topic: TopicHash },
@@ -35,7 +35,7 @@ pub(crate) enum RequestKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ResponseKind {
+pub(crate) enum ResponseBody {
     Ping {
         enr_seq: u64,
         ip: IpAddr,
@@ -52,6 +52,58 @@ pub(crate) enum ResponseKind {
     RegisterTopic {
         registered: bool,
     },
+}
+
+impl Request {
+    /// Encodes a Message to RLP-encoded bytes.
+    pub(crate) fn encode(self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(10);
+        let msg_type = self.msg_type();
+        buf.push(msg_type);
+        let id = &self.id;
+        match self.body {
+            Request::Ping { enr_seq } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(id);
+                s.append(&enr_seq);
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+            Request::FindNode { distance } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(id);
+                s.append(&distance);
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+            Request::Ticket { topic } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(id);
+                s.append(&topic.to_vec());
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+            Request::RegisterTopic { ticket } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(id);
+                s.append(&ticket.to_vec());
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+            Request::TopicQuery { topic } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(id);
+                s.append(&topic.to_vec());
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+        }
+    }
 }
 
 impl Response {
@@ -86,20 +138,79 @@ impl Response {
             }
         }
     }
+
+    /// Encodes a Message to RLP-encoded bytes.
+    pub(crate) fn encode(self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(10);
+        let msg_type = self.msg_type();
+        buf.push(msg_type);
+        let id = &self.id;
+        match self.body {
+            Response::Ping { enr_seq, ip, port } => {
+                let ip_bytes = match ip {
+                    IpAddr::V4(addr) => addr.octets().to_vec(),
+                    IpAddr::V6(addr) => addr.octets().to_vec(),
+                };
+                let mut s = RlpStream::new();
+                s.begin_list(4);
+                s.append(id);
+                s.append(&enr_seq);
+                s.append(&ip_bytes);
+                s.append(&port);
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+            Response::Nodes { total, nodes } => {
+                let mut s = RlpStream::new();
+                s.begin_list(3);
+                s.append(id);
+                s.append(&total);
+
+                if nodes.is_empty() {
+                    s.begin_list(0);
+                } else {
+                    s.begin_list(nodes.len());
+                    for node in nodes {
+                        s.append(&node);
+                    }
+                }
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+            Response::Ticket { ticket, wait_time } => {
+                let mut s = RlpStream::new();
+                s.begin_list(3);
+                s.append(id);
+                s.append(&ticket.to_vec());
+                s.append(&wait_time);
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+            Response::RegisterTopic { registered } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(id);
+                s.append(&registered);
+                buf.extend_from_slice(&s.drain());
+                buf
+            }
+        }
+    }
 }
 
-impl std::fmt::Display for RpcType {
+impl std::fmt::Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RpcType::Request(request) => write!(f, "{:?}", request),
-            RpcType::Response(response) => write!(f, "{}", response),
+            Message::Request(request) => write!(f, "{}", request),
+            Message::Response(response) => write!(f, "{}", response),
         }
     }
 }
 
 impl std::fmt::Display for Response {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
+        write!(f, "id: {}", self.id);
+        match self.body {
             Response::Ping { enr_seq, ip, port } => write!(
                 f,
                 "PING Response: Enr-seq: {}, Ip: {:?},  Port: {}",
@@ -131,23 +242,29 @@ impl std::fmt::Display for Response {
     }
 }
 
-impl std::fmt::Display for ProtocolMessage {
+impl std::fmt::Display for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Message: Id: {}, Body: {}", self.id, self.body)
+        write!(f, "id: {}", self.id);
+        match self.body {
+            Request::Ping { enr_seq } => write!(f, "PING Request: enr_seq: {}", enr_seq),
+            Request::FindNode { distance } => write!(f, "FINDNODE Request: distance: {}", distance),
+            Request::Ticket { topic } => write!(f, "TICKET Request: topic: {}", topic),
+            Request::TopicQuery { topic } => write!(f, "TOPICQUERY Request: topic: {}", topic),
+        }
     }
 }
 
-impl ProtocolMessage {
+impl Message {
     pub(crate) fn msg_type(&self) -> u8 {
-        match &self.body {
-            RpcType::Request(request) => match request {
+        match &self {
+            Self::Request(request) => match request.body {
                 Request::Ping { .. } => 1,
                 Request::FindNode { .. } => 3,
                 Request::Ticket { .. } => 5,
                 Request::RegisterTopic { .. } => 7,
                 Request::TopicQuery { .. } => 9,
             },
-            RpcType::Response(response) => match response {
+            Self::Response(response) => match response.body {
                 Response::Ping { .. } => 2,
                 Response::Nodes { .. } => 4,
                 Response::Ticket { .. } => 6,
@@ -156,14 +273,14 @@ impl ProtocolMessage {
         }
     }
 
-    /// Encodes a ProtocolMessage to RLP-encoded bytes.
+    /// Encodes a Message to RLP-encoded bytes.
     pub(crate) fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(10);
         let msg_type = self.msg_type();
         buf.push(msg_type);
         let id = &self.id;
         match self.body {
-            RpcType::Request(request) => match request {
+            Self::Request(request) => match request.body {
                 Request::Ping { enr_seq } => {
                     let mut s = RlpStream::new();
                     s.begin_list(2);
@@ -205,7 +322,7 @@ impl ProtocolMessage {
                     buf
                 }
             },
-            RpcType::Response(response) => match response {
+            Self::Response(response) => match response.body {
                 Response::Ping { enr_seq, ip, port } => {
                     let ip_bytes = match ip {
                         IpAddr::V4(addr) => addr.octets().to_vec(),
@@ -277,7 +394,7 @@ impl ProtocolMessage {
 
         let id = rlp.val_at::<u64>(0)?;
 
-        let body = match msg_type {
+        let message = match msg_type {
             1 => {
                 // PingRequest
                 if list_len != 2 {
@@ -287,8 +404,11 @@ impl ProtocolMessage {
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                RpcType::Request(Request::Ping {
-                    enr_seq: rlp.val_at::<u64>(1)?,
+                Message::Request(Request {
+                    id,
+                    body: RequestBody::Ping {
+                        enr_seq: rlp.val_at::<u64>(1)?,
+                    },
                 })
             }
             2 => {
@@ -318,10 +438,13 @@ impl ProtocolMessage {
                     }
                 };
                 let port = rlp.val_at::<u16>(3)?;
-                RpcType::Response(Response::Ping {
-                    enr_seq: rlp.val_at::<u64>(1)?,
-                    ip,
-                    port,
+                Message::Response(Response {
+                    id,
+                    body: ResponseBody::Ping {
+                        enr_seq: rlp.val_at::<u64>(1)?,
+                        ip,
+                        port,
+                    },
                 })
             }
             3 => {
@@ -333,8 +456,11 @@ impl ProtocolMessage {
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                RpcType::Request(Request::FindNode {
-                    distance: rlp.val_at::<u64>(1)?,
+                Message::Request(Request {
+                    id,
+                    body: RequestBody::FindNode {
+                        distance: rlp.val_at::<u64>(1)?,
+                    },
                 })
             }
             4 => {
@@ -356,9 +482,12 @@ impl ProtocolMessage {
                         enr_list_rlp.as_list::<Enr<CombinedKey>>()?
                     }
                 };
-                RpcType::Response(Response::Nodes {
-                    total: rlp.val_at::<u64>(1)?,
-                    nodes,
+                Message::Response(Response {
+                    id,
+                    body: ResponseBody::Nodes {
+                        total: rlp.val_at::<u64>(1)?,
+                        nodes,
+                    },
                 })
             }
             5 => {
@@ -380,7 +509,10 @@ impl ProtocolMessage {
                     topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
                     topic
                 };
-                RpcType::Request(Request::Ticket { topic })
+                Message::Request(Request {
+                    id,
+                    body: RequestBody::Ticket { topic },
+                })
             }
             6 => {
                 // TicketResponse
@@ -393,7 +525,10 @@ impl ProtocolMessage {
                 }
                 let ticket = rlp.val_at::<Vec<u8>>(1)?;
                 let wait_time = rlp.val_at::<u64>(2)?;
-                RpcType::Response(Response::Ticket { ticket, wait_time })
+                Message::Response(Response {
+                    id,
+                    body: ResponseBody::Ticket { ticket, wait_time },
+                })
             }
             7 => {
                 // RegisterTopicRequest
@@ -402,7 +537,10 @@ impl ProtocolMessage {
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
                 let ticket = rlp.val_at::<Vec<u8>>(1)?;
-                RpcType::Request(Request::RegisterTopic { ticket })
+                Message::Request(Request {
+                    id,
+                    body: RequestBody::RegisterTopic { ticket },
+                })
             }
             8 => {
                 // RegisterTopicResponse
@@ -410,8 +548,11 @@ impl ProtocolMessage {
                     debug!("RegisterTopic Response has an invalid RLP list length. Expected 2, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                RpcType::Response(Response::RegisterTopic {
-                    registered: rlp.val_at::<bool>(1)?,
+                Message::Response(Response {
+                    id,
+                    body: ResponseBody::RegisterTopic {
+                        registered: rlp.val_at::<bool>(1)?,
+                    },
                 })
             }
             9 => {
@@ -433,14 +574,17 @@ impl ProtocolMessage {
                     topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
                     topic
                 };
-                RpcType::Request(Request::TopicQuery { topic })
+                Message::Request(Request {
+                    id,
+                    body: RequestBody::TopicQuery { topic },
+                })
             }
             _ => {
                 return Err(DecoderError::Custom("Unknown RPC message type"));
             }
         };
 
-        Ok(ProtocolMessage { id, body })
+        Ok(message)
     }
 }
 
@@ -454,14 +598,15 @@ mod tests {
         // reference input
         let id = 1;
         let enr_seq = 1;
-        let body = RpcType::Request(Request::Ping { enr_seq });
+        let message = Message::Request(Request {
+            id,
+            body: Request::Ping { enr_seq },
+        });
 
         // expected hex output
         let expected_output = hex::decode("01c20101").unwrap();
 
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -469,14 +614,15 @@ mod tests {
         // reference input
         let id = 1;
         let distance = 256;
-        let body = RpcType::Request(Request::FindNode { distance });
+        let message = Message::Request(Request {
+            id,
+            body: Request::FindNode { distance },
+        });
 
         // expected hex output
         let expected_output = hex::decode("03c401820100").unwrap();
 
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -495,10 +641,11 @@ mod tests {
         let mut topic_hash = [0; 32];
         topic_hash.copy_from_slice(&hash_bytes);
 
-        let body = RpcType::Request(Request::Ticket { topic: topic_hash });
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        let message = Message::Request(Request {
+            id,
+            body: Request::Ticket { topic: topic_hash },
+        });
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -514,10 +661,11 @@ mod tests {
             hex::decode("07e201a0fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
                 .unwrap();
 
-        let body = RpcType::Request(Request::RegisterTopic { ticket });
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        let message = Message::Request(Request {
+            id,
+            body: Request::RegisterTicket { ticket },
+        });
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -536,10 +684,11 @@ mod tests {
         let mut topic_hash = [0; 32];
         topic_hash.copy_from_slice(&hash_bytes);
 
-        let body = RpcType::Request(Request::TopicQuery { topic: topic_hash });
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        let message = Message::Request(Request {
+            id,
+            body: Request::TopicQuery { topic: topic_hash },
+        });
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -549,14 +698,15 @@ mod tests {
         let enr_seq = 1;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let port = 5000;
-        let body = RpcType::Response(Response::Ping { enr_seq, ip, port });
+        let message = Message::Response(Response {
+            id,
+            body: Response::Ping { enr_seq, ip, port },
+        });
 
         // expected hex output
         let expected_output = hex::decode("02ca0101847f000001821388").unwrap();
 
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -565,14 +715,17 @@ mod tests {
         let id = 1;
         let total = 1;
 
-        let body = RpcType::Response(Response::Nodes {
-            total,
-            nodes: vec![],
-        });
         // expected hex output
         let expected_output = hex::decode("04c30101c0").unwrap();
-        let protocol_msg = ProtocolMessage { id, body };
-        assert_eq!(protocol_msg.encode(), expected_output);
+
+        let message = Message::Response(Response {
+            id,
+            body: Response::Nodes {
+                total,
+                nodes: vec![],
+            },
+        });
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -589,15 +742,17 @@ mod tests {
         .into();
 
         let enr = EnrBuilder::new("v4").build(&key).unwrap();
-        let body = RpcType::Response(Response::Nodes {
-            total,
-            nodes: vec![enr],
-        });
         // expected hex output
         let expected_output = hex::decode("04f87b0101f877f875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138").unwrap();
 
-        let protocol_msg = ProtocolMessage { id, body };
-        assert_eq!(protocol_msg.encode(), expected_output);
+        let message = Message::Response(Response {
+            id,
+            body: Response::Nodes {
+                total,
+                nodes: vec![enr],
+            },
+        });
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -609,17 +764,17 @@ mod tests {
 
         let enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
 
-        let body = RpcType::Response(Response::Nodes {
-            total,
-            nodes: vec![enr, enr2],
-        });
-
         // expected hex output
         let expected_output = hex::decode("04f8f20101f8eef875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138f875b840d7f1c39e376297f81d7297758c64cb37dcc5c3beea9f57f7ce9695d7d5a67553417d719539d6ae4b445946de4d99e680eb8063f29485b555d45b7df16a1850130182696482763489736563703235366b31a1030e2cb74241c0c4fc8e8166f1a79a05d5b0dd95813a74b094529f317d5c39d235").unwrap();
 
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        let message = Message::Response(Response {
+            id,
+            body: Response::Nodes {
+                total,
+                nodes: vec![enr, enr2],
+            },
+        });
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -629,14 +784,17 @@ mod tests {
         let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
         let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
 
-        let decoded = ProtocolMessage::decode(input).unwrap();
+        let decoded = Message::decode(input).unwrap();
 
-        match decoded.body {
-            RpcType::Response(Response::Nodes { total, nodes }) => {
-                assert_eq!(total, 1);
-                assert_eq!(nodes[0], expected_enr1);
-                assert_eq!(nodes[1], expected_enr2);
-            }
+        match decoded {
+            Message::Response(response) => match response.body {
+                Response::Nodes { total, nodes } => {
+                    assert_eq!(total, 1);
+                    assert_eq!(nodes[0], expected_enr1);
+                    assert_eq!(nodes[1], expected_enr2);
+                }
+                _ => panic!("Invalid decoding"),
+            },
             _ => panic!("Invalid decoding"),
         }
     }
@@ -647,7 +805,6 @@ mod tests {
         let id = 1;
         let ticket = [0; 32].to_vec(); // all 0's
         let wait_time = 5;
-        let body = RpcType::Response(Response::Ticket { ticket, wait_time });
 
         // expected hex output
         let expected_output = hex::decode(
@@ -655,9 +812,11 @@ mod tests {
         )
         .unwrap();
 
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        let message = Message::Response(Response {
+            id,
+            body: Response::Ticket { ticket, wait_time },
+        });
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
@@ -665,55 +824,55 @@ mod tests {
         // reference input
         let id = 1;
         let registered = true;
-        let body = RpcType::Response(Response::RegisterTopic { registered });
 
         // expected hex output
         let expected_output = hex::decode("08c20101").unwrap();
-
-        let protocol_msg = ProtocolMessage { id, body };
-
-        assert_eq!(protocol_msg.encode(), expected_output);
+        let message = Message::Response(Response {
+            id,
+            body: Response::RegisterTopic { registered },
+        });
+        assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
     fn encode_decode_ping_request() {
-        let request = ProtocolMessage {
-            id: 10,
-            body: RpcType::Request(Request::Ping { enr_seq: 15 }),
-        };
+        let request = Message::Request(Request {
+            id: 1,
+            body: Request::Ping { enr_seq: 15 },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_ping_response() {
-        let request = ProtocolMessage {
-            id: 10,
-            body: RpcType::Response(Response::Ping {
+        let request = Message::Response(Response {
+            id: 1,
+            body: Response::Ping {
                 enr_seq: 15,
                 ip: "127.0.0.1".parse().unwrap(),
                 port: 80,
-            }),
-        };
+            },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_find_node_request() {
-        let request = ProtocolMessage {
-            id: 10,
-            body: RpcType::Request(Request::FindNode { distance: 1337 }),
-        };
+        let request = Message::Request(Request {
+            id: 1,
+            body: Request::FindNode { distance: 1337 },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -737,86 +896,86 @@ mod tests {
             .unwrap();
 
         let enr_list = vec![enr1, enr2, enr3];
-        let request = ProtocolMessage {
-            id: 0,
-            body: RpcType::Response(Response::Nodes {
+        let request = Message::Response(Response {
+            id: 1,
+            body: Response::Nodes {
                 total: 1,
                 nodes: enr_list,
-            }),
-        };
+            },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_ticket_request() {
-        let request = ProtocolMessage {
-            id: 0,
-            body: RpcType::Request(Request::Ticket { topic: [17u8; 32] }),
-        };
+        let request = Message::Request(Request {
+            id: 1,
+            body: Request::Ticket { topic: [17u8; 32] },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_ticket_response() {
-        let request = ProtocolMessage {
+        let request = Message::Response(Response {
             id: 0,
-            body: RpcType::Response(Response::Ticket {
+            body: Response::Ticket {
                 ticket: vec![1, 2, 3, 4, 5],
                 wait_time: 5,
-            }),
-        };
+            },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_register_topic_request() {
-        let request = ProtocolMessage {
-            id: 0,
-            body: RpcType::Request(Request::RegisterTopic {
+        let request = Message::Request(Request {
+            id: 1,
+            body: Request::RegisterTopic {
                 ticket: vec![1, 2, 3, 4, 5],
-            }),
-        };
+            },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_register_topic_response() {
-        let request = ProtocolMessage {
+        let request = Message::Response(Response {
             id: 0,
-            body: RpcType::Response(Response::RegisterTopic { registered: true }),
-        };
+            body: Response::RegisterTopic { registered: true },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_topic_query_request() {
-        let request = ProtocolMessage {
-            id: 0,
-            body: RpcType::Request(Request::TopicQuery { topic: [17u8; 32] }),
-        };
+        let request = Message::Request(Request {
+            id: 1,
+            body: Request::TopicQuery { topic: [17u8; 32] },
+        });
 
         let encoded = request.clone().encode();
-        let decoded = ProtocolMessage::decode(encoded).unwrap();
+        let decoded = Message::decode(encoded).unwrap();
 
         assert_eq!(request, decoded);
     }

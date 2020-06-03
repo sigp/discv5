@@ -15,9 +15,9 @@ pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 /// The object sent back by the Recv handler.
 pub struct InboundPacket {
     /// The originating socket addr.
-    src: SocketAddr,
+    pub src: SocketAddr,
     /// The decoded packet.
-    packet: Packet,
+    pub packet: Packet,
 }
 
 /// Convenience objects for setting up the recv handler.
@@ -47,7 +47,7 @@ pub(crate) struct RecvHandler {
 
 impl RecvHandler {
     /// Spawns the `RecvHandler` on a provided executor.
-    pub(crate) fn spawn<T: Executor>(config: RecvHandlerConfig) -> oneshot::Sender {
+    pub(crate) fn spawn<T: Executor>(config: RecvHandlerConfig<T>) -> oneshot::Sender<()> {
         let (exit_sender, exit) = oneshot::channel();
 
         let mut recv_handler = RecvHandler {
@@ -71,8 +71,8 @@ impl RecvHandler {
     async fn start(&mut self) {
         loop {
             tokio::select! {
-                (length, src) = self.recv.recv_from(&mut self.recv_buffer) => {
-                    self.handle_inbound(src, length)
+                Ok((length, src)) = self.recv.recv_from(&mut self.recv_buffer) => {
+                    self.handle_inbound(src, length).await;
                 }
                 _ = self.exit => {
                     debug!("Recv handler shutdown");
@@ -87,7 +87,7 @@ impl RecvHandler {
     async fn handle_inbound(&mut self, src: SocketAddr, length: usize) {
         // Perform the first run of the filter. This checks for rate limits and black listed IP
         // addresses.
-        if !self.filter.initial_pass(src: &SocketAddr) {
+        if !self.filter.initial_pass(&src) {
             return;
         }
 
@@ -95,13 +95,13 @@ impl RecvHandler {
         let packet = match Packet::decode(&self.recv_buffer[..length], &self.whoareyou_magic) {
             Ok(p) => p,
             Err(e) => {
-                debug!("Packet decoding failed: {}", e); // could not decode the packet, drop it
+                debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it
                 return;
             }
         };
 
         // Perform packet-level filtering
-        if !self.filter.final_pass(src: &SocketAddr, packet: &Packet) {
+        if !self.filter.final_pass(&src, &packet) {
             return;
         }
 

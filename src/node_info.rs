@@ -63,11 +63,12 @@ impl NodeContact {
 }
 
 /// A representation of an unsigned contactable node.
+#[derive(PartialOrd, Hash, Eq, Ord, Clone, Debug)]
 pub struct NodeAddress {
     /// The destination socket address.
-    socket_addr: SocketAddr,
+    pub socket_addr: SocketAddr,
     /// The destination Node Id.
-    node_id: NodeId,
+    pub node_id: NodeId,
 }
 
 impl NodeAddress {
@@ -76,5 +77,11 @@ impl NodeAddress {
             socket_addr,
             node_id,
         }
+    }
+}
+
+impl std::fmt::Display for NodeAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Node: {}, addr: {:?}", self.node_id, self.socket_addr)
     }
 }

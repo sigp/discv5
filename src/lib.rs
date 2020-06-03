@@ -113,6 +113,7 @@ mod error;
 mod executor;
 pub mod handler;
 mod kbucket;
+mod node_info;
 pub mod packet;
 mod query_pool;
 mod rpc;

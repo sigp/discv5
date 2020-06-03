@@ -40,12 +40,12 @@ impl Filter {
     }
 
     /// The first check. This determines if a new UDP packet should be decoded or dropped.
-    pub fn initial_pass(src: &SocketAddr) -> bool {
+    pub fn initial_pass(&mut self, src: &SocketAddr) -> bool {
         // TODO: Add to the rate limit. Check rate limits, white and black listed addresses etc.
         true
     }
 
-    pub fn final_pass(src: &SocketAddr, packet: &Packet) {
+    pub fn final_pass(&mut self, src: &SocketAddr, packet: &Packet) -> bool {
         // TODO: Check the Node Id, see if it passes packet-level filtering
         true
     }

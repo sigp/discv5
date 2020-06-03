@@ -1,4 +1,9 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
+use crate::packet::*;
+use crate::Executor;
+use log::debug;
+use std::net::SocketAddr;
+use tokio::sync::{mpsc, oneshot};
 
 pub struct OutboundPacket {
     /// The originating socket addr.
@@ -12,41 +17,42 @@ pub(crate) struct SendHandler {
     /// The UDP send socket.
     send: tokio::net::udp::SendHalf,
     /// The channel to respond to send requests.
-    handler_recv: tokio::mpsc::Receiver<OutboundPacket>,
+    handler_recv: mpsc::Receiver<OutboundPacket>,
     /// Exit channel to shutdown the handler.
-    exit: tokio::oneshot::Receiver,
+    exit: oneshot::Receiver<()>,
 }
 
 impl SendHandler {
-
-    /// Spawns the `SendHandler` on a provided executor. 
+    /// Spawns the `SendHandler` on a provided executor.
     /// This returns the sending channel to process `OutboundPacket`'s and an exit channel to
     /// shutdown the handler.
-    pub(crate) fn spawn<T: Executor>(executor: T, send: tokio::net::udp::SendHalf) -> (tokio::mpsc::Sender, tokio::oneshot::Sender) {
-
-        let (exit_send, exit) = tokio::oneshot::channel();
-        let (handler_send, handler_recv) = tokio::mpsc::channel(30);
+    pub(crate) fn spawn<T: Executor>(
+        executor: T,
+        send: tokio::net::udp::SendHalf,
+    ) -> (mpsc::Sender<OutboundPacket>, oneshot::Sender<()>) {
+        let (exit_send, exit) = oneshot::channel();
+        let (handler_send, handler_recv) = mpsc::channel(30);
 
         let mut send_handler = SendHandler {
             send,
-            handler_recv
+            handler_recv,
             exit,
         };
 
-    // start the handler
-    executor.spawn(async move {
-        debug!("Send handler starting");
-        send_handler.start().await;
-    });
-    (handler_send, exit_send)
+        // start the handler
+        executor.spawn(async move {
+            debug!("Send handler starting");
+            send_handler.start().await;
+        });
+        (handler_send, exit_send)
     }
 
     /// The main future driving the send handler. This will shutdown when the exit future is fired.
     async fn start(&mut self) {
-        loop { 
+        loop {
             tokio::select! {
-                packet = self.handler_recv.recv() => {
-                    self.send.send_to(&packet.packet.encode(), packet.dst).await;
+                Some(packet) = self.handler_recv.recv() => {
+                    self.send.send_to(&packet.packet.encode(), &packet.dst).await;
                 }
                 _ = self.exit => {
                     debug!("Send handler shutdown");
@@ -56,4 +62,3 @@ impl SendHandler {
         }
     }
 }
-

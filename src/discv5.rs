@@ -18,6 +18,7 @@ use self::query_info::{QueryInfo, QueryType};
 use crate::error::Discv5Error;
 use crate::handler::{Handler, HandlerRequest, HandlerResponse};
 use crate::kbucket::{self, EntryRefView, KBucketsTable, NodeStatus};
+use crate::node_info::{NodeAddress, NodeContact};
 use crate::query_pool::{
     FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, ReturnPeer,
 };
@@ -30,14 +31,16 @@ use fnv::FnvHashMap;
 use futures::prelude::*;
 use log::{debug, error, info, trace, warn};
 use parking_lot::RwLock;
+use rpc::*;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
 
 mod ip_vote;
@@ -83,11 +86,11 @@ pub struct Discv5<T: Executor> {
     /// List of peers we have established sessions with and an interval for when to send a PING.
     connected_peers: HashMap<NodeId, Instant>,
 
-    handler_send: Option<tokio::mpsc::Sender<HandlerRequest>>,
+    handler_send: Option<mpsc::Sender<HandlerRequest>>,
 
-    handler_recv: Option<tokio::mpsc::Receiver<HandlerResponse>>,
+    handler_recv: Option<mpsc::Receiver<HandlerResponse>>,
 
-    handler_exit: Option<tokio::oneshot::Sender<()>>,
+    handler_exit: Option<oneshot::Sender<()>>,
 
     ping_heart_heatbeat: Interval,
 }
@@ -267,7 +270,11 @@ impl<T: Executor> Discv5<T> {
                 // nothing to do, not updated
                 return false;
             }
-            match self.local_enr.write().set_tcp_socket(socket, &self.enr_key) {
+            match self
+                .local_enr
+                .write()
+                .set_tcp_socket(socket_addr, &self.enr_key)
+            {
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Could not update the ENR IP address. Error: {}", e);
@@ -279,7 +286,11 @@ impl<T: Executor> Discv5<T> {
                 // nothing to do, not updated
                 return false;
             }
-            match self.local_enr.write().set_udp_socket(socket, &self.enr_key) {
+            match self
+                .local_enr
+                .write()
+                .set_udp_socket(socket_addr, &self.enr_key)
+            {
                 Ok(_) => {}
                 Err(e) => {
                     warn!("Could not update the ENR IP address. Error: {}", e);
@@ -362,39 +373,31 @@ impl<T: Executor> Discv5<T> {
 
     /// Processes an RPC request from a peer. Requests respond to the received socket address,
     /// rather than the IP of the known ENR.
-    fn handle_rpc_request(
-        &mut self,
-        src: SocketAddr,
-        node_id: NodeId,
-        rpc_id: u64,
-        req: rpc::Request,
-    ) {
+    async fn handle_rpc_request(&mut self, node_address: NodeAddress, req: rpc::Request) {
+        let id = req.id;
         match req {
-            rpc::Request::FindNode { distance } => {
+            RequestBody::FindNode { distance } => {
                 // if the distance is 0 send our local ENR
                 if distance == 0 {
-                    let response = rpc::ProtocolMessage {
-                        id: rpc_id,
-                        body: rpc::RpcType::Response(rpc::Response::Nodes {
+                    let response = rpc::Response(
+                        id,
+                        rpc::ResponseBody::Nodes {
                             total: 1,
                             nodes: vec![self.local_enr().clone()],
-                        }),
-                    };
-                    debug!("Sending our ENR to node: {}", node_id);
-                    let _ = self
-                        .service
-                        .send_response(src, &node_id, response)
-                        .map_err(|e| warn!("Failed to send a FINDNODES response. Error: {:?}", e));
+                        },
+                    );
+                    debug!("Sending our ENR to node: {}", node_address);
+                    self.handler_send.send(HandlerResponse(response)).await;
                 } else {
-                    self.send_nodes_response(src, node_id, rpc_id, distance);
+                    self.send_nodes_response(node_address, id, distance);
                 }
             }
-            rpc::Request::Ping { enr_seq } => {
+            RequestKind::Ping { enr_seq } => {
                 // check if we need to update the known ENR
                 match self.kbuckets.entry(&node_id.clone().into()) {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
-                            self.request_enr(&node_id, src);
+                            self.request_enr(&node_address).await;
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {

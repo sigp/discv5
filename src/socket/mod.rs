@@ -10,9 +10,9 @@ mod recv;
 mod send;
 
 pub use filter::FilterConfig;
-pub use recv::{InboundPacket, MAX_PACKET_SIZE};
+pub use recv::InboundPacket;
+pub(crate) use recv::MAX_PACKET_SIZE;
 pub use send::OutboundPacket;
-
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig<T: Executor> {
     /// The executor to spawn the tasks.
@@ -27,8 +27,8 @@ pub struct SocketConfig<T: Executor> {
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
 pub struct Socket {
-    send: mpsc::Sender<OutboundPacket>,
-    recv: mpsc::Receiver<InboundPacket>,
+    pub send: mpsc::Sender<OutboundPacket>,
+    pub recv: mpsc::Receiver<InboundPacket>,
     sender_exit: oneshot::Sender<()>,
     recv_exit: oneshot::Sender<()>,
 }
@@ -36,7 +36,7 @@ pub struct Socket {
 impl Socket {
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
-    pub(crate) fn new(config: &SocketConfig) -> Self {
+    pub(crate) fn new<T: Executor>(config: &SocketConfig<T>) -> Self {
         // set up the UDP socket
         let socket = {
             #[cfg(unix)]
@@ -73,7 +73,7 @@ impl Socket {
     }
 }
 
-impl<T> std::ops::Drop for Socket<T> {
+impl std::ops::Drop for Socket {
     // close the send/recv handlers
     fn drop(&mut self) {
         let _ = self.sender_exit.send(());

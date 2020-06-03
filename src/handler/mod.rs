@@ -34,10 +34,9 @@ use tokio::sync::{mpsc, oneshot};
 // mod tests;
 mod crypto;
 mod hashmap_delay;
-mod node_info;
 mod session;
 
-pub use node_info::{NodeAddress, NodeContact};
+pub use crate::node_info::{NodeAddress, NodeContact};
 
 use hashmap_delay::HashMapDelay;
 pub use session::Session;
@@ -69,10 +68,6 @@ pub enum HandlerRequest {
     /// The `WhoAreYouRef` is sent out in the `HandlerResponse::WhoAreYou` event and should
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
-
-    /// A new ENR has been discovered. Sending this will update any existing session with the
-    /// latest ENR.
-    UpdateEnr(Enr),
 }
 
 #[derive(Debug)]
@@ -117,12 +112,12 @@ pub struct Challenge {
 
 /// A smaller configuration set held by the Handler.
 pub struct HandlerConfig {
-    request_retries: usize,
+    request_retries: u8,
     request_timeout: Duration,
 }
 
-impl From<Discv5Config> for HandlerConfig {
-    fn from(config: Discv5Config) -> Self {
+impl<T: Executor> From<Discv5Config<T>> for HandlerConfig {
+    fn from(config: Discv5Config<T>) -> Self {
         HandlerConfig {
             request_retries: config.request_retries,
             request_timeout: config.request_timeout,
@@ -171,10 +166,11 @@ pub struct Handler {
     /// These are indexed by SocketAddr as WHOAREYOU messages do not return a source node id to
     /// match against.
     active_requests: HashMapDelay<NodeAddress, RequestCall>,
+    active_requests_auth: HashMap<AuthTag, NodeAddress>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<Request>>,
     /// Currently in-progress handshakes with peers.
-    active_challenges: LruCache<NodeAddress, Nonce>,
+    active_challenges: LruCache<NodeAddress, Challenge>,
     /// Established sessions with peers.
     sessions: LruCache<NodeAddress, Session>,
     /// The channel that receives requests from the application layer.
@@ -189,11 +185,11 @@ pub struct Handler {
 
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
-    pub(crate) fn spawn(
+    pub(crate) fn spawn<T: Executor>(
         enr: Arc<RwLock<Enr>>,
         key: enr::CombinedKey,
         listen_socket: SocketAddr,
-        config: Discv5Config,
+        config: Discv5Config<T>,
     ) -> (
         oneshot::Sender<()>,
         mpsc::Sender<HandlerRequest>,
@@ -210,7 +206,7 @@ impl Handler {
         // Will be removed in update
         let magic = {
             let mut hasher = Sha256::new();
-            hasher.input(enr.node_id().raw());
+            hasher.input(enr.read().node_id().raw());
             hasher.input(b"WHOAREYOU");
             let mut magic: Magic = Default::default();
             magic.copy_from_slice(&hasher.result());
@@ -230,11 +226,13 @@ impl Handler {
             config: config.into(),
             enr,
             key,
-            pending_requests: HashMapDelay::new(config.request_timeout),
-            sessions: LruCache::with_expirary_duration_and_capacity(
+            active_requests: HashMapDelay::new(config.request_timeout),
+            pending_requests: HashMap::new(),
+            sessions: LruCache::with_expiry_duration_and_capacity(
                 config.session_timeout,
-                config.session_capacity,
+                config.session_cache_capacity,
             ),
+            active_challenges: LruCache::with_expiry_duration(config.request_timeout * 2),
             inbound_channel,
             outbound_channel,
             socket,
@@ -250,7 +248,7 @@ impl Handler {
     }
 
     /// The main execution loop for the handler.
-    async fn run(&mut self) {
+    async fn start(&mut self) {
         loop {
             tokio::select! {
                 handler_request = self.inbound_channel => {
@@ -258,18 +256,17 @@ impl Handler {
                         HandlerRequest::Request(contact, request) => {
                            if let Err(request_error) =  self.send_request(contact, request).await {
                                // If the sending failed report to the application
-                               self.outbound_channel.send(HandlerResponse::RequestFailed(request.0), request_error).await;
+                               self.outbound_channel.send(HandlerResponse::RequestFailed(request.id, request_error)).await;
                            }
                         }
                         HandlerRequest::Response(dst, response) => self.send_response(dst, response).await,
-                        HandlerRequest::WhoAreYou(wru_ref, enr) => self.send_whoareyou(wru_ref, enr).await,
-                        HandlerRequest::UpdateEnr(enr) => self.update_enr(enr).await,
+                        HandlerRequest::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                     }
                 }
-                socket_packet = self.socket.recv => {
-                    self.process_inbound_packet().await;
+                inbound_packet = self.socket.recv => {
+                    self.process_inbound_packet(inbound_packet).await;
                 }
-                (node_address, pending_request) = self.pending_requests.next() => {
+                Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, pending_request).await;
                 }
             }
@@ -279,15 +276,15 @@ impl Handler {
     /// Processes an inbound decoded packet.
     async fn process_inbound_packet(&mut self, inbound_packet: socket::InboundPacket) {
         // TODO: Clean these up as NodeAddresses before handling with the new updates
-        match inbound_packet.1 {
+        match inbound_packet.packet {
             Packet::WhoAreYou {
-                token,
+                auth_tag,
                 id_nonce,
                 enr_seq,
                 ..
             } => {
                 let _ = self
-                    .handle_whoareyou(inbound_packet.0, token, id_nonce, enr_seq)
+                    .handle_challenge(inbound_packet.src, auth_tag, id_nonce, enr_seq)
                     .await;
             }
             Packet::AuthMessage {
@@ -296,7 +293,7 @@ impl Handler {
                 message,
             } => {
                 let _ = self
-                    .handle_auth_message(inbound_packet.0, tag, auth_header, &message)
+                    .handle_auth_message(inbound_packet.src, tag, auth_header, &message)
                     .await;
             }
             Packet::Message {
@@ -307,13 +304,29 @@ impl Handler {
                 let src_id = self.src_id(&tag);
                 let node_address = NodeAddress {
                     node_id: src_id,
-                    socket_addr: inbound_packet.0,
+                    socket_addr: inbound_packet.src,
                 };
                 let _ = self
                     .handle_message(node_address, auth_tag, &message, tag)
                     .await;
             }
             Packet::RandomPacket { .. } => {} // this will not be decoded.
+        }
+    }
+
+    async fn fail_session(&mut self, node_address: &NodeAddress) {
+        self.sessions.remove(&node_address);
+        for request in self
+            .pending_requests
+            .remove(&node_address)
+            .unwrap_or_else(|| Vec::new())
+        {
+            self.outbound_channel
+                .send(HandlerResponse::RequestFailed(
+                    request.id,
+                    RequestError::Timeout,
+                ))
+                .await;
         }
     }
 
@@ -325,20 +338,18 @@ impl Handler {
     ) {
         if request_call.retries >= self.config.request_retries {
             // The Request has expired, remove the session.
-            self.session.remove(&node_address);
-            for request in self.pending_requests(&node_address) {
-                self.outbound_channel
-                    .send(HandlerResponse::RequestFailed(
-                        request.id,
-                        RequestError::Timeout,
-                    ))
-                    .await;
-            }
+            let auth_tag = request_call
+                .packet
+                .auth_tag()
+                .expect("No challenge packets here");
+            // Remove from the auth_tag mapping also.
+            self.active_requests_auth.remove(auth_tag);
+            self.fail_session(&node_address);
         } else {
             // increment the request retry count and restart the timeout
             debug!(
-                "Resending message: {} to node: {}",
-                request_call.packet, node_address
+                "Resending message: {} to {}",
+                request_call.request, node_address
             );
             self.send(
                 node_address.socket_addr.clone(),
@@ -346,21 +357,6 @@ impl Handler {
             );
             request_call.retries += 1;
             self.active_requests.insert(node_address, request_call);
-        }
-    }
-
-    /// Updates a session if a new ENR or an updated ENR is discovered.
-    // TODO: Handle this properly
-    async fn update_enr(&mut self, enr: Enr) {
-        if let Some(session) = self.sessions.get_mut(&enr.node_id()) {
-            // if an ENR is updated to an address that was not the last seen address of the
-            // session, we demote the session to untrusted.
-            if session.update_enr(enr.clone()) {
-                // A session have been promoted to established. Notify the protocol
-                self.outbound_channel
-                    .send(HandlerResponse::Established(enr))
-                    .await;
-            }
         }
     }
 
@@ -372,7 +368,7 @@ impl Handler {
     ) -> Result<(), RequestError> {
         let node_address = contact
             .node_address()
-            .map_err(|e| RequestError::InvalidEnr(e))?;
+            .map_err(|e| RequestError::InvalidEnr(e.into()))?;
 
         // If there is already an active request for this node, add to pending requests
         if self.active_requests.get(&node_address).is_some() {
@@ -384,43 +380,48 @@ impl Handler {
                 .entry(node_address)
                 .or_insert_with(|| Vec::new())
                 .push(request);
-            return;
+            return Ok(());
         }
 
         let packet = {
-            if let Some(session) = self.sessions.get(node_address) {
+            if let Some(session) = self.sessions.get(&node_address) {
                 // Encrypt the message and send
                 session
-                    .encrypt_message(self.tag(&node_address.node_id), request.encode())
-                    .map_err(|e| RequestError::EncryptionFailed(e))?;
+                    .encrypt_message(self.tag(&node_address.node_id), &request.encode())
+                    .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?
             } else {
                 // No session exists, start a new handshake
                 debug!(
                     "Starting session. Sending random packet to: {}",
                     node_address
                 );
-                Packet::random(self.tag(node_address.node_id));
+                Packet::random(self.tag(&node_address.node_id))
             }
         };
 
         let call = RequestCall::new(contact, packet.clone(), request);
-        self.active_requests.insert(&node_address, call);
+        let auth_tag = call.packet.auth_tag().expect("No challenges here").clone();
+        self.active_requests_auth
+            .insert(auth_tag, node_address.clone());
+        self.active_requests.insert(node_address, call);
         self.send(node_address.socket_addr.clone(), packet).await;
+        Ok(())
     }
 
     /// Sends an RPC Response.
     async fn send_response(&mut self, node_address: NodeAddress, response: Response) {
         // Check for an established session
-        if let Some(session) = self.sessions.get(node_address) {
+        if let Some(session) = self.sessions.get(&node_address) {
             // Encrypt the message and send
-            let packet =
-                match session.encrypt_message(self.tag(&node_address.node_id), response.encode()) {
-                    Ok(packet) => packet,
-                    Err(e) => {
-                        warn!("Could not encrypt response: {}", e);
-                        return;
-                    }
-                };
+            let packet = match session
+                .encrypt_message(self.tag(&node_address.node_id), &response.encode())
+            {
+                Ok(packet) => packet,
+                Err(e) => {
+                    warn!("Could not encrypt response: {:?}", e);
+                    return;
+                }
+            };
             self.send(node_address.socket_addr, packet).await;
         } else {
             // Either the session is being established or has expired. We simply drop the
@@ -446,8 +447,8 @@ impl Handler {
         // Ignore this request if the session is already established
         if self.sessions.get(&node_address).is_some() {
             debug!(
-                "Session already established. WHOAREYOU not sent to node: {}",
-                wru_ref.0.node_id
+                "Session already established. WHOAREYOU not sent to {}",
+                wru_ref.0
             );
             return;
         }
@@ -457,7 +458,7 @@ impl Handler {
         // table (remote_enr is None) then we re-request the ENR to keep the session up to date.
 
         // send the challenge
-        let enr_seq = remote_enr.map(|enr| enr.seq_no()).unwrap_or_else(|| 0);
+        let enr_seq = remote_enr.map(|enr| enr.seq()).unwrap_or_else(|| 0);
         let (packet, nonce) = Packet::whoareyou(node_address.node_id, enr_seq, auth_tag);
         self.active_challenges
             .insert(node_address, Challenge { nonce, remote_enr });
@@ -494,12 +495,28 @@ impl Handler {
         token: AuthTag,
         id_nonce: Nonce,
         enr_seq: u64,
-    ) -> Result<(), ()> {
+    ) {
         // It must come from a source that we have an outgoing message to and match an
         // authentication tag
-        let request_call = self.active_requests.remove(&src, |req| req.packet.auth_tag() == Some(&token)).ok_or_else(|| {
-            debug!("Received a WHOAREYOU packet that references an unknown or expired request. source: {:?}, auth_tag: {}", src, hex::encode(token));
-        })?;
+        let request_call = {
+            match self.active_requests_auth.remove(&token) {
+                None => {
+                    debug!("Received a WHOAREYOU packet that references an unknown or expired request. source: {:?}, auth_tag: {}", src, hex::encode(token));
+                    return;
+                }
+                Some(address) => {
+                    if address.socket_addr != src {
+                        warn!("Invalid source responding to message. Dropping. Source: {:?}, expected: {}", src, address.socket_addr);
+                        self.active_requests_auth.insert(token, address);
+                        return;
+                    } else {
+                        self.active_requests
+                            .remove(&address)
+                            .expect("Active requests maps should be in sync")
+                    }
+                }
+            }
+        };
 
         debug!("Received a WHOAREYOU packet. Source: {}", src);
 
@@ -512,20 +529,12 @@ impl Handler {
             .node_address()
             .expect("Request call's are sanitized. Must have valid ENR");
 
-        if seen_node_address != node_address {
-            warn!("Received a WHOAREYOU packet matching a packet from unexpected source. Expected: {} Actual {}", seen_node_address, node_address);
-            // Don't drop the session here. If the true source doesn't respond, the session will
-            // expire.
-            return;
-        }
-
         if request_call.handshake_sent {
             warn!(
                 "Auth response already sent. Dropping session. Node: {}",
                 node_address.node_id
             );
-            self.failed_requests(node_address);
-            self.sessions.remove(node_address);
+            self.fail_session(&node_address);
             return;
         }
 
@@ -548,15 +557,14 @@ impl Handler {
             request_call.contact,
             &self.key,
             updated_enr,
-            &self.enr.node_id(),
+            &self.enr.read().node_id(),
             &id_nonce,
             &request_call.request,
         ) {
             Ok(v) => v,
             Err(e) => {
                 error!("Could not generate a session. Error: {:?}", e);
-                self.fail_requests(node_address);
-                self.sessions.remove(node_address);
+                self.fail_session(&node_address);
                 return;
             }
         };
