@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+
 pub struct FilterConfig {
     /// The maximum requests per second. The average will be maintained such that packets will
     /// be rejected if above this rate.

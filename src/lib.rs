@@ -108,7 +108,6 @@
 //! [`Session`]: session/struct.Session.html
 
 mod config;
-mod crypto;
 mod discv5;
 mod error;
 mod executor;
@@ -126,6 +125,7 @@ pub use config::{Discv5Config, Discv5ConfigBuilder};
 pub use error::Discv5Error;
 pub use executor::Executor;
 pub use handler::{Handler, HandlerRequest, HandlerResponse};
+pub use socket::FilterConfig;
 // re-export the ENR crate
 pub use enr;
 pub use query_pool::QueryId;

@@ -1,6 +1,5 @@
 use super::node_info::NodeContact;
 use super::*;
-use crate::crypto;
 use crate::packet::AuthResponse;
 use enr::{CombinedKey, NodeId};
 use zeroize::Zeroize;

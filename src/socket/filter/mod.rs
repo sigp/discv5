@@ -1,5 +1,10 @@
 //! A filter which decides whether to accept/reject incoming UDP packets.
 
+use crate::packet::Packet;
+use enr::NodeId;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+
 mod cache;
 mod config;
 

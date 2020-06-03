@@ -1,3 +1,6 @@
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
 pub struct ReceivedPacket<T> {
     /// The source that sent us the packet.
     pub contents: T,
@@ -5,19 +8,18 @@ pub struct ReceivedPacket<T> {
     pub received: Instant,
 }
 
-struct ReceivedPacketCache<T> {
-    /// The number of seconds to 
-    size: usize
-    inner: VecDeque<ReceivedPacket<T>>
+pub struct ReceivedPacketCache<T> {
+    /// The number of seconds to
+    size: usize,
+    inner: VecDeque<ReceivedPacket<T>>,
 }
 
 impl<T> ReceivedPacketCache<T> {
-
     /// Creates a new `ReceivedPacketCache` with a specified size in seconds to retain.
     pub fn new(size: usize) -> Self {
         Self {
             size: Duration::from_secs(size),
-            inner: VecDeque::with_capacity(100)
+            inner: VecDeque::with_capacity(100),
         }
     }
 
@@ -44,8 +46,6 @@ impl<T> std::ops::Deref for ReceivedPacketCache<T> {
 }
 
 impl<T> std::ops::DerefMut for ReceivedPacketCache<T> {
-    type Target = VecDeque<ReceivedPacket<T>>;
-
     fn deref_mut(&self) -> &Self::Target {
         &mut self.inner
     }

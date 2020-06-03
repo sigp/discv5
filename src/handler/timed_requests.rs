@@ -3,7 +3,7 @@
 //! A delay queue is used to keep track of when requests are expired and `Stream` is implemented on
 //! `TimedRequests` which provides expired requests when polled.
 
-use crate::service::Request;
+use super::RequestCall;
 use futures::Stream;
 use log::error;
 use std::pin::Pin;
@@ -16,11 +16,11 @@ use std::{
 use tokio::time::{delay_queue, DelayQueue};
 
 /// A collection of requests that have an associated timeout.
-pub(crate) struct TimedRequests {
+pub(crate) struct TimedRequests<T, V> {
     /// Pending raw requests with timeout keys for removing from a delay queue and to be identified during a timeout.
     /// These are indexed by SocketAddr as WHOAREYOU messages do not return a source node id to
     /// match against.
-    requests: HashMap<SocketAddr, Vec<RequestTimeout>>,
+    requests: HashMap<K, Vec<RequestTimeout<V>>>,
 
     /// A queue indicating when a request has timed out.
     timeouts: DelayQueue<TimeoutIndex>,
@@ -48,16 +48,16 @@ impl RequestKey {
 
 /// Indexes pending requests for timeouts.
 #[derive(Debug)]
-struct TimeoutIndex {
+struct TimeoutIndex<K> {
     /// The destination `SocketAddr` for pending requests hashmap lookup.
-    dst: SocketAddr,
+    key: K,
     /// A unique key to match a specific request for a socket addr.
     request_key: RequestKey,
 }
 
-impl TimeoutIndex {
-    fn new(dst: SocketAddr, request_key: RequestKey) -> Self {
-        TimeoutIndex { dst, request_key }
+impl<K> TimeoutIndex<K> {
+    fn new(key: K, request_key: RequestKey) -> Self {
+        TimeoutIndex { key, request_key }
     }
 }
 

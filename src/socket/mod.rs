@@ -10,7 +10,7 @@ mod recv;
 mod send;
 
 pub use filter::FilterConfig;
-pub use recv::InboundPacket;
+pub use recv::{InboundPacket, MAX_PACKET_SIZE};
 pub use send::OutboundPacket;
 
 /// Convenience objects for setting up the recv handler.

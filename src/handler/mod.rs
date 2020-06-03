@@ -28,23 +28,19 @@ use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::{
-    collections::{HashMap, VecDeque},
-    default::Default,
-    net::SocketAddr,
-    time::Duration,
-};
+use std::{collections::HashMap, default::Default, net::SocketAddr, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 // mod tests;
+mod crypto;
+mod hashmap_delay;
 mod node_info;
 mod session;
-mod timed_requests;
 
 pub use node_info::{NodeAddress, NodeContact};
 
+use hashmap_delay::HashMapDelay;
 pub use session::Session;
-use timed_requests::TimedRequests;
 
 /// Events sent to the handler to be executed.
 pub enum HandlerRequest {
@@ -81,7 +77,7 @@ pub enum HandlerRequest {
 
 #[derive(Debug)]
 /// The outputs provided by the `Handler`.
-pub(crate) enum HandlerResponse {
+pub enum HandlerResponse {
     /// A session has been established with a node.
     ///
     /// A session is only considered established once we have received a signed ENR from the
@@ -164,7 +160,7 @@ impl RequestCall {
     }
 }
 
-pub(crate) struct Handler {
+pub struct Handler {
     /// Configuration for the discv5 service.
     config: HandlerConfig,
     /// The local ENR.
@@ -174,7 +170,7 @@ pub(crate) struct Handler {
     /// Pending raw requests. A list of raw messages we are awaiting a response from the remote.
     /// These are indexed by SocketAddr as WHOAREYOU messages do not return a source node id to
     /// match against.
-    active_requests: TimedRequests,
+    active_requests: HashMapDelay<NodeAddress, RequestCall>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<Request>>,
     /// Currently in-progress handshakes with peers.
@@ -234,7 +230,7 @@ impl Handler {
             config: config.into(),
             enr,
             key,
-            pending_requests: TimedRequests::new(config.request_timeout),
+            pending_requests: HashMapDelay::new(config.request_timeout),
             sessions: LruCache::with_expirary_duration_and_capacity(
                 config.session_timeout,
                 config.session_capacity,
@@ -573,7 +569,7 @@ impl Handler {
         request_call.packet = auth_packet;
         request_call.handshake_sent = true;
         // re_insert the request_call
-        self.active_requests.insert(request.contact.node);
+        self.active_requests.insert(request_call.contact.node);
         self.send(node_address.socket_addr, auth_packet).await;
     }
 
@@ -626,7 +622,7 @@ impl Handler {
         }
     }
 
-    fn new_session(node_address: NodeAddress, session: Session) {
+    fn new_session(&mut self, node_address: NodeAddress, session: Session) {
         if let Some(current_session) = self.sessions.get_mut(node_address) {
             current_session.update(session);
         } else {
@@ -663,7 +659,7 @@ impl Handler {
 
             // attempt to decrypt and process the message.
             let message = match session.decrypt_message(auth_tag, message, &tag) {
-                Ok(m) => match ProtocolMessage::decode(m) {
+                Ok(m) => match Message::decode(m) {
                     Ok(p) => p,
                     Err(e) => {
                         warn!("Failed to decode message. Error: {:?}", e);
@@ -675,10 +671,10 @@ impl Handler {
                     // sending this message has dropped their session. In this case, this message is a
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
-                    debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", src_id);
+                    debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", node_address);
                     self.sessions.remove(&node_address);
                     // spawn a WHOAREYOU event to check for highest known ENR
-                    let whoareyou_ref = WhoAReYouRef {
+                    let whoareyou_ref = WhoAreYouRef {
                         node_address,
                         auth_tag,
                     };
@@ -700,7 +696,7 @@ impl Handler {
                 Message::Response(response) => {
                     if self
                         .active_requests
-                        .remove(&src, |req| req.id() == Some(message.id))
+                        .remove(&node_address, |req| req.id() == Some(message.id))
                         .is_some()
                     {
                         // report the response
@@ -729,13 +725,10 @@ impl Handler {
             }
         } else {
             // no session exists
-            debug!(
-                "Received a message without a session. From: {:?}, node: {}",
-                src, src_id
-            );
+            debug!("Received a message without a session. {}", node_address);
             debug!("Requesting a WHOAREYOU packet to be sent.");
             // spawn a WHOAREYOU event to check for highest known ENR
-            let whoareyou_ref = WhoAReYouRef {
+            let whoareyou_ref = WhoAreYouRef {
                 node_address,
                 auth_tag,
             };
@@ -746,8 +739,8 @@ impl Handler {
     }
 
     /// Sends a packet to the send handler to be encoded and sent.
-    async fn send(dst: SocketAddr, packet: Packet) {
-        let outbound_packet = OutboundPacket { dst, packet };
+    async fn send(&mut self, dst: SocketAddr, packet: Packet) {
+        let outbound_packet = socket::OutboundPacket { dst, packet };
         self.socket.send.send(outbound_packet).await;
     }
 }

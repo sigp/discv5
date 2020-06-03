@@ -16,20 +16,23 @@
 use self::ip_vote::IpVote;
 use self::query_info::{QueryInfo, QueryType};
 use crate::error::Discv5Error;
+use crate::handler::{Handler, HandlerRequest, HandlerResponse};
 use crate::kbucket::{self, EntryRefView, KBucketsTable, NodeStatus};
 use crate::query_pool::{
     FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, ReturnPeer,
 };
 use crate::rpc;
-use crate::service::{Service, ServiceEvent};
-use crate::transport::MAX_PACKET_SIZE;
+use crate::socket::MAX_PACKET_SIZE;
 use crate::Discv5Config;
+use crate::Executor;
 use enr::{CombinedKey, Enr as RawEnr, EnrError, EnrKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
 use log::{debug, error, info, trace, warn};
+use parking_lot::RwLock;
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use std::{
     pin::Pin,
@@ -50,9 +53,9 @@ struct RpcRequest(RpcId, NodeId);
 
 pub struct Discv5<T: Executor> {
     /// List of events to be sent to the handler when ready.
-    handler_events: VecDequeue<HandlerRequest>,
+    handler_events: VecDeque<HandlerRequest>,
 
-    discv5_events: VecDequeue<Discv5Event>,
+    discv5_events: VecDeque<Discv5Event>,
 
     /// Configuration parameters for the Discv5 service
     config: Discv5Config<T>,
