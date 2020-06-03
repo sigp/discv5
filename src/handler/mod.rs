@@ -83,7 +83,7 @@ pub enum HandlerResponse {
     Request(NodeAddress, Request),
 
     /// A Response has been received.
-    Response(Response),
+    Response(NodeAddress, Response),
 
     /// An unknown source has requested information from us. Return the reference with the known
     /// ENR of this node (if known). See the `HandlerRequest::WhoAreYou` variant.
@@ -95,6 +95,7 @@ pub enum HandlerResponse {
     RequestFailed(RequestId, RequestError),
 }
 
+#[derive(Debug)]
 pub enum RequestError {
     Timeout,
     InvalidEnr(String),
@@ -830,7 +831,7 @@ impl Handler {
                             // The request matches
                             // report the response
                             self.outbound_channel
-                                .send(HandlerResponse::Response(response))
+                                .send(HandlerResponse::Response(node_address, response))
                                 .await;
                             self.send_next_request(node_address);
                         }

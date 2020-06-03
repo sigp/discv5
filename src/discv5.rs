@@ -51,12 +51,9 @@ type RpcId = u64;
 // The general key-type of ENR's are used to support multiple signing types.
 pub type Enr = RawEnr<CombinedKey>;
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct RpcRequest(RpcId, NodeId);
-
 pub struct Discv5<T: Executor> {
     /// List of events to be sent to the handler when ready.
-    handler_events: VecDeque<HandlerRequest>,
+    handler_events: VecDeque<RequestBody>,
 
     discv5_events: VecDeque<Discv5Event>,
 
@@ -75,7 +72,7 @@ pub struct Discv5<T: Executor> {
 
     /// RPC requests that have been sent and are awaiting a response. Some requests are linked to a
     /// query.
-    active_rpc_requests: FnvHashMap<RpcRequest, (Option<QueryId>, rpc::Request)>,
+    active_rpc_requests: FnvHashMap<RequestId, (Option<QueryId>, RequestBody, NodeAddress)>,
 
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
@@ -373,75 +370,78 @@ impl<T: Executor> Discv5<T> {
 
     /// Processes an RPC request from a peer. Requests respond to the received socket address,
     /// rather than the IP of the known ENR.
-    async fn handle_rpc_request(&mut self, node_address: NodeAddress, req: rpc::Request) {
+    async fn handle_rpc_request(&mut self, node_address: NodeAddress, req: Request) {
         let id = req.id;
-        match req {
+        match req.body {
             RequestBody::FindNode { distance } => {
                 // if the distance is 0 send our local ENR
                 if distance == 0 {
-                    let response = rpc::Response(
+                    let response = Response {
                         id,
-                        rpc::ResponseBody::Nodes {
+                        body: ResponseBody::Nodes {
                             total: 1,
                             nodes: vec![self.local_enr().clone()],
                         },
-                    );
+                    };
                     debug!("Sending our ENR to node: {}", node_address);
-                    self.handler_send.send(HandlerResponse(response)).await;
+                    self.send_to_handler(HandlerRequest::Response(node_address, response))
+                        .await;
                 } else {
-                    self.send_nodes_response(node_address, id, distance);
+                    self.send_nodes_response(node_address, id, distance).await;
                 }
             }
-            RequestKind::Ping { enr_seq } => {
+            RequestBody::Ping { enr_seq } => {
                 // check if we need to update the known ENR
-                match self.kbuckets.entry(&node_id.clone().into()) {
+                match self.kbuckets.entry(&node_address.node_id.into()) {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
-                            self.request_enr(&node_address).await;
+                            self.request_enr(entry.value().clone().into());
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
-                            self.request_enr(&node_id, src);
+                            self.request_enr(entry.value().clone().into());
                         }
                     }
                     // don't know of the ENR, request the update
-                    _ => self.request_enr(&node_id, src),
+                    _ => {
+                        // The ENR is no longer in our table, we stop responding to PING's
+                        return;
+                    }
                 }
 
                 // build the PONG response
-                let response = rpc::ProtocolMessage {
-                    id: rpc_id,
-                    body: rpc::RpcType::Response(rpc::Response::Ping {
+                let src = node_address.socket_addr.clone();
+                let response = Response {
+                    id,
+                    body: ResponseBody::Ping {
                         enr_seq: self.local_enr().seq(),
                         ip: src.ip(),
                         port: src.port(),
-                    }),
+                    },
                 };
-                debug!("Sending PONG response to node: {}", node_id);
-                let _ = self
-                    .service
-                    .send_response(src, &node_id, response)
-                    .map_err(|e| warn!("Failed to send rpc request. Error: {:?}", e));
+                debug!("Sending PONG response to {}", node_address);
+                self.send_to_handler(HandlerRequest::Response(node_address, response))
+                    .await;
             }
             _ => {} //TODO: Implement all RPC methods
         }
     }
 
     /// Processes an RPC response from a peer.
-    fn handle_rpc_response(&mut self, node_id: NodeId, rpc_id: u64, res: rpc::Response) {
+    async fn handle_rpc_response(&mut self, response: Response) {
         // verify we know of the rpc_id
-        let req = RpcRequest(rpc_id, node_id);
-        if let Some((query_id, request)) = self.active_rpc_requests.remove(&req) {
-            if !res.match_request(&request) {
+        let id = response.id;
+        if let Some((query_id, request, node_address)) = self.active_rpc_requests.remove(&id) {
+            if !response.match_request(&request) {
                 warn!(
-                    "Node gave an incorrect response type. Ignoring response from node: {}",
-                    node_id
+                    "Node gave an incorrect response type. Ignoring response from: {}",
+                    node_address
                 );
                 return;
             }
-            match res {
-                rpc::Response::Nodes { total, mut nodes } => {
+            match response.body {
+                ResponseBody::Nodes { total, mut nodes } => {
                     // Currently a maximum of 16 peers can be returned. Datagrams have a max
                     // size of 1280 and ENR's have a max size of 300 bytes. There should be no
                     // more than 5 responses, to return 16 peers.
@@ -452,9 +452,9 @@ impl<T: Executor> Discv5<T> {
                     // filter out any nodes that are not of the correct distance
                     // TODO: If a swarm peer reputation is built - downvote the peer if all
                     // peers do not have the correct distance.
-                    let peer_key: kbucket::Key<NodeId> = node_id.clone().into();
+                    let peer_key: kbucket::Key<NodeId> = node_address.node_id.into();
                     let distance_requested = match request {
-                        rpc::Request::FindNode { distance } => distance,
+                        RequestBody::FindNode { distance } => distance,
                         _ => unreachable!(),
                     };
                     if distance_requested != 0 {
@@ -475,7 +475,7 @@ impl<T: Executor> Discv5<T> {
                     if total > 1 {
                         let mut current_response = self
                             .active_nodes_responses
-                            .remove(&node_id)
+                            .remove(&node_address.node_id)
                             .unwrap_or_default();
 
                         debug!(
@@ -488,9 +488,10 @@ impl<T: Executor> Discv5<T> {
                             current_response.count += 1;
 
                             current_response.received_nodes.append(&mut nodes);
-                            self.active_rpc_requests.insert(req, (query_id, request));
+                            self.active_rpc_requests
+                                .insert(id, (query_id, request, node_address));
                             self.active_nodes_responses
-                                .insert(node_id, current_response);
+                                .insert(node_address.node_id, current_response);
                             return;
                         }
 
@@ -502,36 +503,32 @@ impl<T: Executor> Discv5<T> {
                     }
 
                     debug!(
-                        "Received a nodes response of len: {}, total: {}, from node_id: {}",
+                        "Received a nodes response of len: {}, total: {}, from: {}",
                         nodes.len(),
                         total,
-                        node_id
+                        node_address
                     );
                     // note: If a peer sends an initial NODES response with a total > 1 then
                     // in a later response sends a response with a total of 1, all previous nodes
                     // will be ignored.
                     // ensure any mapping is removed in this rare case
-                    self.active_nodes_responses.remove(&node_id);
+                    self.active_nodes_responses.remove(&node_address.node_id);
 
-                    self.discovered(&node_id, nodes, query_id);
+                    self.discovered(&node_address.node_id, nodes, query_id);
                 }
-                rpc::Response::Ping { enr_seq, ip, port } => {
+                ResponseBody::Ping { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
                     let local_socket = self.local_enr().udp_socket();
                     if let Some(ref mut ip_votes) = self.ip_votes {
-                        ip_votes.insert(node_id.clone(), socket.clone());
+                        ip_votes.insert(node_address.node_id, socket.clone());
                         let majority_socket = ip_votes.majority();
                         if majority_socket.is_some() && majority_socket != local_socket {
                             let majority_socket = majority_socket.expect("is some");
                             info!("Local UDP socket updated to: {}", majority_socket);
-                            self.events
+                            self.discv5_events
                                 .push_back(Discv5Event::SocketUpdated(majority_socket));
-                            if self
-                                .service
-                                .update_local_enr_socket(majority_socket, false)
-                                .is_ok()
-                            {
+                            if self.update_local_enr_socket(majority_socket, false) {
                                 // alert known peers to our updated enr
                                 self.ping_connected_peers();
                             }
@@ -539,14 +536,18 @@ impl<T: Executor> Discv5<T> {
                     }
 
                     // check if we need to request a new ENR
-                    if let Some(enr) = self.find_enr(&node_id) {
+                    if let Some(enr) = self.find_enr(&node_address.node_id) {
                         if enr.seq() < enr_seq {
                             // request an ENR update
-                            debug!("Requesting an ENR update from node: {}", node_id);
-                            let req = rpc::Request::FindNode { distance: 0 };
-                            self.send_rpc_request(&node_id, req, None);
+                            debug!("Requesting an ENR update from: {}", node_address);
+                            let request_body = RequestBody::FindNode { distance: 0 };
+                            self.send_rpc_request(enr.into(), request_body, None).await;
                         }
-                        self.connection_updated(node_id.clone(), Some(enr), NodeStatus::Connected)
+                        self.connection_updated(
+                            node_address.node_id,
+                            Some(enr),
+                            NodeStatus::Connected,
+                        )
                     }
                 }
                 _ => {} //TODO: Implement all RPC methods
@@ -560,10 +561,10 @@ impl<T: Executor> Discv5<T> {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, node_id: &NodeId) {
-        let req = rpc::Request::Ping {
+        let req = RequestBody::Ping {
             enr_seq: self.local_enr().seq(),
         };
-        self.send_rpc_request(&node_id, req, None);
+        self.handler_events.push_back(req);
     }
 
     fn ping_connected_peers(&mut self) {
@@ -575,56 +576,57 @@ impl<T: Executor> Discv5<T> {
     }
 
     /// Request an external node's ENR.
-    // This logic doesn't fit into a standard request - We likely don't know the ENR,
-    // and would like to send this as a response, with request logic built in.
-    fn request_enr(&mut self, node_id: &NodeId, src: SocketAddr) {
+    async fn request_enr(&mut self, contact: NodeContact) {
         // Generate a random rpc_id which is matched per node id
         let id: u64 = rand::random();
-        let req = rpc::Request::FindNode { distance: 0 };
-        let message = rpc::ProtocolMessage {
+        let request = Request {
             id,
-            body: rpc::RpcType::Request(req.clone()),
+            body: RequestBody::FindNode { distance: 0 },
         };
-        debug!("Sending ENR request to node: {}", node_id);
 
-        match self.service.send_request_unknown_enr(src, node_id, message) {
-            Ok(_) => {
-                let rpc_request = RpcRequest(id, *node_id);
-                self.active_rpc_requests.insert(rpc_request, (None, req));
-            }
-            _ => warn!("Requesting ENR failed. Node: {}", node_id),
+        if let Ok(node_address) = contact.node_address() {
+            debug!("Sending ENR request to: {}", contact.node_id());
+
+            self.active_rpc_requests
+                .insert(id, (None, request.body, node_address));
+
+            self.send_to_handler(HandlerRequest::Request(contact, request))
+                .await;
+        }
+    }
+
+    async fn send_to_handler(&mut self, handler_request: HandlerRequest) {
+        if let Some(send) = self.handler_send {
+            send.send(handler_request).await;
+        } else {
+            warn!("Handler shutdown, request not sent");
         }
     }
 
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
     /// into multiple responses to ensure the response stays below the maximum packet size.
-    fn send_nodes_response(
-        &mut self,
-        dst: SocketAddr, // overwrites the ENR IP - we resend to the IP we received the request from
-        dst_id: NodeId,
-        rpc_id: u64,
-        distance: u64,
-    ) {
+    async fn send_nodes_response(&mut self, node_address: NodeAddress, rpc_id: u64, distance: u64) {
         let nodes: Vec<EntryRefView<'_, NodeId, Enr>> = self
             .kbuckets
             .nodes_by_distance(distance)
             .into_iter()
-            .filter(|entry| entry.node.key.preimage() != &dst_id)
+            .filter(|entry| entry.node.key.preimage() != &node_address.node_id)
             .collect();
         // if there are no nodes, send an empty response
         if nodes.is_empty() {
-            let response = rpc::ProtocolMessage {
+            let response = Response {
                 id: rpc_id,
-                body: rpc::RpcType::Response(rpc::Response::Nodes {
+                body: ResponseBody::Nodes {
                     total: 1u64,
                     nodes: Vec::new(),
-                }),
+                },
             };
-            trace!("Sending empty FINDNODES response to: {}", dst_id);
-            let _ = self
-                .service
-                .send_response(dst, &dst_id, response)
-                .map_err(|e| warn!("Failed to send a FINDNODES response. Error: {:?}", e));
+            trace!(
+                "Sending empty FINDNODES response to: {}",
+                node_address.node_id
+            );
+            self.send_to_handler(HandlerRequest::Response(node_address, response))
+                .await;
         } else {
             // build the NODES response
             let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
@@ -649,33 +651,31 @@ impl<T: Executor> Discv5<T> {
                 }
             }
 
-            let responses: Vec<rpc::ProtocolMessage> = to_send_nodes
+            let responses: Vec<Response> = to_send_nodes
                 .into_iter()
-                .map(|nodes| rpc::ProtocolMessage {
+                .map(|nodes| Response {
                     id: rpc_id,
-                    body: rpc::RpcType::Response(rpc::Response::Nodes {
+                    body: ResponseBody::Nodes {
                         total: (rpc_index + 1) as u64,
                         nodes,
-                    }),
+                    },
                 })
                 .collect();
 
             for response in responses {
                 trace!(
                     "Sending FINDNODES response to: {}. Response: {:?}",
-                    dst_id,
+                    node_address.node_id,
                     response.clone().encode()
                 );
-                let _ = self
-                    .service
-                    .send_response(dst, &dst_id, response)
-                    .map_err(|e| warn!("Failed to send a FINDNODES response. Error: {:?}", e));
+                self.send_to_handler(HandlerRequest::Response(node_address, response))
+                    .await;
             }
         }
     }
 
     /// Constructs and sends a request RPC to the session service given a `QueryInfo`.
-    fn send_rpc_query(
+    async fn send_rpc_query(
         &mut self,
         query_id: QueryId,
         query_info: QueryInfo,
@@ -700,48 +700,39 @@ impl<T: Executor> Discv5<T> {
             }
         };
 
-        self.send_rpc_request(&node_id, req, Some(query_id));
+        self.send_rpc_request(&node_id, req, Some(query_id)).await;
     }
 
     /// Sends generic RPC requests. Each request gets added to known outputs, awaiting a response.
-    fn send_rpc_request(&mut self, node_id: &NodeId, req: rpc::Request, query_id: Option<QueryId>) {
+    // TODO: Avoid looking up the ENR
+    // TODO: Add NodeContact
+    async fn send_rpc_request(
+        &mut self,
+        node_id: &NodeId,
+        body: RequestBody,
+        query_id: Option<QueryId>,
+    ) {
         // find the destination ENR
         if let Some(dst_enr) = self.find_enr(&node_id) {
             // Generate a random rpc_id which is matched per node id
-            let id: u64 = rand::random();
-
-            debug!(
-                "Sending RPC Request: {:?} to node: {}",
-                req,
-                dst_enr.node_id()
-            );
-            match self.service.send_request(
-                &dst_enr,
-                rpc::ProtocolMessage {
-                    id,
-                    body: rpc::RpcType::Request(req.clone()),
-                },
-            ) {
-                Ok(_) => {
-                    let rpc_request = RpcRequest(id, *node_id);
-                    self.active_rpc_requests
-                        .insert(rpc_request, (query_id, req));
-                }
-                Err(_) => {
-                    warn!("Sending request to node: {} failed", &node_id);
-                    self.connected_peers.remove(node_id);
-                    if let Some(query_id) = query_id {
-                        if let Some(query) = self.queries.get_mut(query_id) {
-                            query.on_failure(&node_id);
-                        }
-                    }
-                }
-            }
+            let request = Request {
+                id: rand::random(),
+                body,
+            };
+            debug!("Sending RPC {} to node: {}", request, dst_enr.node_id());
+            self.send_to_handler(HandlerRequest::Request(dst_enr.into(), request))
+                .await;
         } else {
             warn!(
                 "Request not sent. Failed to find ENR for Node: {:?}",
                 node_id
             );
+            if let Some(query_id) = query_id {
+                // If this part of query mark it as failed
+                if let Some(query) = self.queries.get_mut(query_id) {
+                    query.on_failure(&node_id);
+                }
+            }
         }
     }
 
@@ -823,22 +814,15 @@ impl<T: Executor> Discv5<T> {
                             if entry.value().seq() < enr_ref.seq() {
                                 trace!("Enr updated: {}", enr_ref);
                                 *entry.value() = enr_ref.clone();
-                                self.service.update_enr(enr_ref.clone()).await;
                             }
                         }
                         kbucket::Entry::Pending(mut entry, _) => {
                             if entry.value().seq() < enr_ref.seq() {
                                 trace!("Enr updated: {}", enr_ref);
                                 *entry.value() = enr_ref.clone();
-                                self.service.update_enr(enr_ref.clone()).await;
                             }
                         }
-                        kbucket::Entry::Absent(_entry) => {
-                            // the service may have an untrusted session
-                            // update the service, which will inform this protocol if a session is
-                            // established or not.
-                            self.service.update_enr(enr_ref.clone()).await;
-                        }
+                        kbucket::Entry::Absent(_entry) => {}
                         _ => {}
                     }
                 }
@@ -954,10 +938,10 @@ impl<T: Executor> Discv5<T> {
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
-    fn rpc_failure(&mut self, node_id: NodeId, failed_rpc_id: RpcId) {
-        let req = RpcRequest(failed_rpc_id, node_id);
-
-        if let Some((query_id_option, request)) = self.active_rpc_requests.remove(&req) {
+    fn rpc_failure(&mut self, id: RequestId) {
+        if let Some((query_id_option, request, node_address)) = self.active_rpc_requests.remove(&id)
+        {
+            let node_id = node_address.node_id;
             match request {
                 // if a failed FindNodes request, ensure we haven't partially received packets. If
                 // so, process the partially found nodes
@@ -965,8 +949,8 @@ impl<T: Executor> Discv5<T> {
                     if let Some(nodes_response) = self.active_nodes_responses.remove(&node_id) {
                         if !nodes_response.received_nodes.is_empty() {
                             warn!(
-                                "NODES Response failed, but was partially processed from Node: {}",
-                                node_id
+                                "NODES Response failed, but was partially processed from: {}",
+                                node_address
                             );
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
@@ -984,7 +968,7 @@ impl<T: Executor> Discv5<T> {
                                 query.on_failure(&node_id);
                             }
                         } else {
-                            debug!("Failed RPC request: {:?} for node: {} ", request, node_id);
+                            debug!("Failed RPC request: {}: {} ", request, node_address);
                         }
                     }
                 }
@@ -993,8 +977,8 @@ impl<T: Executor> Discv5<T> {
                     if let Some(query_id) = query_id_option {
                         if let Some(query) = self.queries.get_mut(query_id) {
                             debug!(
-                                "Failed query request: {:?} for query: {:?} and node: {} ",
-                                request, query_id, node_id
+                                "Failed query request: {} for query: {} and {} ",
+                                request, query_id, node_address
                             );
                             query.on_failure(&node_id);
                         }
@@ -1003,47 +987,48 @@ impl<T: Executor> Discv5<T> {
                     }
                 }
             }
-        }
 
-        self.connection_updated(node_id.clone(), None, NodeStatus::Disconnected);
-        if self.connected_peers.remove(&node_id).is_some() {
-            // report the node as being disconnected
-            debug!("Session dropped with Node: {}", node_id);
+            self.connection_updated(node_id, None, NodeStatus::Disconnected);
+            if self.connected_peers.remove(&node_id).is_some() {
+                // report the node as being disconnected
+                debug!("Session dropped with {}", node_address);
+            }
         }
     }
 
-    pub async fn next_event() -> Result<Discv5Event, &'static str> {
+    pub async fn next_event(&mut self) -> Result<Discv5Event, &'static str> {
         loop {
             if self.handler_recv.is_none() {
                 return Err("Discv5 is shutdown");
             }
 
             tokio::select! {
-                Some(event) => self.handler_recv.as_ref().unwrap().next(), if self.handler_recv.is_some() => {
+                Some(event) = self.handler_recv.as_ref().unwrap().next(), if self.handler_recv.is_some() => {
                     match event {
                         HandlerResponse::Established(enr) => {
-                            self.inject_session_established(enr).await;
+                            self.inject_session_established(enr);
                         }
-                        HandlerResponse::Request(request) {
-                                self.handle_rpc_request(req).await;;
+                        HandlerResponse::Request(node_address, request) => {
+                                self.handle_rpc_request(node_address, request).await;
                             }
-                        HandlerResponse::Response(res) => {
-                                self.handle_rpc_response(res).await;
+                        HandlerResponse::Response(_, response) => {
+                                self.handle_rpc_response(response).await;
                             }
-                        },
-                        HandlerResponse::WhoAreYouRequest(whoareyou_ref) => {
+                        HandlerResponse::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
-                            if let Some(known_enr) = self.find_enr(&src_id) {
-                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).await;
+                            if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
+                                self.send_to_handler(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).await;
                             } else {
                                 // do not know of this peer
-                                debug!("NodeId unknown, requesting ENR. NodeId: {}", src_id);
-                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, None)).await;
+                                debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
+                                self.send_to_handler(HandlerRequest::WhoAreYou(whoareyou_ref, None)).await;
                             }
                         }
-                        HandlerEvent::RequestFailed(request_id, error) => {
-                            self.rpc_failure(request_id, error).await;
+                        HandlerResponse::RequestFailed(request_id, error) => {
+                            trace!("RPC Request failed: id: {}, error {:?}", request_id, error);
+                            self.rpc_failure(request_id);
                         }
+                    }
                 }
                 out_event = self.next_event() => {
                     return out_event;
@@ -1127,6 +1112,11 @@ impl<T: Executor> Discv5<T> {
             QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         }
     }
+}
+
+enum QueryEvent {
+    Waiting(QueryId, QueryInfo, ReturnPeer<NodeId>),
+    Finished(crate::query_pool::Query<QueryInfo, NodeId, Enr>),
 }
 
 /// Takes an `enr` to insert and a list of other `enrs` to compare against.

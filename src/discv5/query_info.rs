@@ -1,6 +1,6 @@
 use crate::kbucket::Key;
 use crate::query_pool::ReturnPeer;
-use crate::rpc::Request;
+use crate::rpc::RequestBody;
 use enr::NodeId;
 use enr::{CombinedKey, Enr};
 use sha2::digest::generic_array::GenericArray;
@@ -32,12 +32,12 @@ impl QueryInfo {
     pub(crate) fn into_rpc_request(
         self,
         return_peer: &ReturnPeer<NodeId>,
-    ) -> Result<Request, &'static str> {
+    ) -> Result<RequestBody, &'static str> {
         let request = match &self.query_type {
             QueryType::FindNode(node_id) => {
                 let distance = findnode_log2distance(node_id, return_peer)
                     .ok_or_else(|| "Requested a node find itself")?;
-                Request::FindNode { distance }
+                RequestBody::FindNode { distance }
             }
         };
 

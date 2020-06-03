@@ -108,29 +108,29 @@ impl Request {
 
 impl Response {
     /// Determines if the response is a valid response to the given request.
-    pub(crate) fn match_request(&self, req: &Request) -> bool {
-        match self {
+    pub(crate) fn match_request(&self, req: &RequestBody) -> bool {
+        match self.body {
             Response::Ping { .. } => {
-                if let Request::Ping { .. } = req {
+                if let RequestBody::Ping { .. } = req {
                     true
                 } else {
                     false
                 }
             }
             Response::Nodes { .. } => match req {
-                Request::FindNode { .. } => true,
-                Request::TopicQuery { .. } => true,
+                RequestBody::FindNode { .. } => true,
+                RequestBody::TopicQuery { .. } => true,
                 _ => false,
             },
             Response::Ticket { .. } => {
-                if let Request::Ticket { .. } = req {
+                if let RequestBody::Ticket { .. } = req {
                     true
                 } else {
                     false
                 }
             }
             Response::RegisterTopic { .. } => {
-                if let Request::TopicQuery { .. } = req {
+                if let RequestBody::TopicQuery { .. } = req {
                     true
                 } else {
                     false
