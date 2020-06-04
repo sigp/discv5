@@ -16,7 +16,7 @@ pub(crate) struct Keys {
     decryption_key: [u8; 16],
 }
 
-pub struct Session {
+pub(crate) struct Session {
     keys: Keys,
     awaiting_keys: Option<Keys>,
     pub awaiting_enr: Option<RequestId>,
@@ -79,15 +79,15 @@ impl Session {
     /// source IP address, we consider this session untrusted. The output returns a boolean which
     /// specifies if the Session is trusted or not.
     pub(crate) fn establish_from_header(
-        local_key: &CombinedKey,
+        local_key: Arc<RwLock<CombinedKey>>,
         local_id: &NodeId,
         remote_id: &NodeId,
-        challenge: &Challenge,
+        challenge: Challenge,
         auth_header: &AuthHeader,
     ) -> Result<(Session, Enr), Discv5Error> {
         // generate session keys
         let (decryption_key, encryption_key, auth_resp_key) = crypto::derive_keys_from_pubkey(
-            local_key,
+            &local_key.read(),
             local_id,
             remote_id,
             &challenge.nonce,
@@ -143,7 +143,7 @@ impl Session {
     pub(crate) fn encrypt_with_header(
         tag: Tag,
         remote_contact: &NodeContact,
-        local_key: &CombinedKey,
+        local_key: Arc<RwLock<CombinedKey>>,
         updated_enr: Option<Enr>,
         local_node_id: &NodeId,
         id_nonce: &Nonce,
@@ -160,7 +160,7 @@ impl Session {
         };
 
         // construct the nonce signature
-        let sig = crypto::sign_nonce(local_key, id_nonce, &ephem_pubkey)
+        let sig = crypto::sign_nonce(&local_key.read(), id_nonce, &ephem_pubkey)
             .map_err(|_| Discv5Error::Custom("Could not sign WHOAREYOU nonce"))?;
 
         // generate the auth response to be encrypted

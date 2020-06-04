@@ -1,3 +1,5 @@
+fn main() {}
+/*
 //! Demonstrates how to run a basic Discovery v5 Service.
 //!
 //! This example creates a discv5 service which searches for peers every 30 seconds. On
@@ -155,3 +157,4 @@ async fn main() {
         }
     }
 }
+*/

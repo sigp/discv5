@@ -21,9 +21,9 @@ pub struct InboundPacket {
 }
 
 /// Convenience objects for setting up the recv handler.
-pub struct RecvHandlerConfig<T: Executor> {
-    pub filter_config: FilterConfig,
-    pub executor: T,
+pub struct RecvHandlerConfig<'a> {
+    pub filter_config: &'a FilterConfig,
+    pub executor: Box<dyn Executor>,
     pub recv: tokio::net::udp::RecvHalf,
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
 }
@@ -46,8 +46,8 @@ pub(crate) struct RecvHandler {
 
 impl RecvHandler {
     /// Spawns the `RecvHandler` on a provided executor.
-    pub(crate) fn spawn<T: Executor>(
-        config: RecvHandlerConfig<T>,
+    pub(crate) fn spawn(
+        config: RecvHandlerConfig<'_>,
     ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
 

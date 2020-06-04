@@ -2,9 +2,28 @@
 use std::future::Future;
 use std::pin::Pin;
 
-pub trait Executor: Clone + Sized {
+pub trait Executor: ExecutorClone {
     /// Run the given future in the background until it ends.
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
+}
+
+pub trait ExecutorClone {
+    fn clone_box(&self) -> Box<dyn Executor>;
+}
+
+impl<T> ExecutorClone for T
+where
+    T: 'static + Executor + Clone,
+{
+    fn clone_box(&self) -> Box<dyn Executor> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn Executor> {
+    fn clone(&self) -> Box<dyn Executor> {
+        self.clone_box()
+    }
 }
 
 #[derive(Clone)]

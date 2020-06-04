@@ -20,8 +20,8 @@ use crate::packet::{AuthHeader, AuthTag, Magic, Nonce, Packet, Tag, TAG_LENGTH};
 use crate::rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody};
 use crate::socket;
 use crate::socket::Socket;
-use crate::{Enr, Executor};
-use enr::NodeId;
+use crate::Enr;
+use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use log::{debug, error, warn};
 use lru_time_cache::LruCache;
@@ -39,7 +39,7 @@ mod session;
 pub use crate::node_info::{NodeAddress, NodeContact};
 
 use hashmap_delay::HashMapDelay;
-pub use session::Session;
+use session::Session;
 
 /// Events sent to the handler to be executed.
 #[derive(Debug, Clone, PartialEq)]
@@ -119,11 +119,11 @@ pub struct HandlerConfig {
     request_timeout: Duration,
 }
 
-impl From<Discv5Config> for HandlerConfig {
-    fn from(config: Discv5Config) -> Self {
+impl From<&Discv5Config> for HandlerConfig {
+    fn from(config: &Discv5Config) -> Self {
         HandlerConfig {
-            request_retries: config.request_retries,
-            request_timeout: config.request_timeout,
+            request_retries: config.request_retries.clone(),
+            request_timeout: config.request_timeout.clone(),
         }
     }
 }
@@ -168,7 +168,7 @@ pub struct Handler {
     /// The local ENR.
     enr: Arc<RwLock<Enr>>,
     /// The key to sign the ENR and set up encrypted communication with peers.
-    key: enr::CombinedKey,
+    key: Arc<RwLock<CombinedKey>>,
     /// Pending raw requests. A list of raw messages we are awaiting a response from the remote.
     /// These are indexed by SocketAddr as WHOAREYOU messages do not return a source node id to
     /// match against.
@@ -192,11 +192,11 @@ pub struct Handler {
 
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
-    pub(crate) fn spawn<T: Executor>(
+    pub(crate) fn spawn(
         enr: Arc<RwLock<Enr>>,
-        key: enr::CombinedKey,
+        key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
-        config: Discv5Config,
+        config: &Discv5Config,
     ) -> (
         oneshot::Sender<()>,
         mpsc::Sender<HandlerRequest>,
@@ -221,17 +221,17 @@ impl Handler {
         };
 
         let socket_config = socket::SocketConfig {
-            executor: config.executor.clone(),
+            executor: config.executor.clone().expect("Executor must exist"),
             socket_addr: listen_socket,
-            filter_config: config.filter_config,
+            filter_config: &config.filter_config,
             whoareyou_magic: magic,
         };
 
-        let socket = socket::Socket::new(&socket_config);
+        let socket = socket::Socket::new(socket_config);
 
         let node_id = enr.read().node_id();
 
-        let handler = Handler {
+        let mut handler = Handler {
             config: config.into(),
             node_id,
             enr,
@@ -250,10 +250,14 @@ impl Handler {
             exit,
         };
 
-        executor.spawn(Box::pin(async move {
-            debug!("Handler Starting");
-            handler.start().await;
-        }));
+        config
+            .executor
+            .clone()
+            .expect("Executor must be present")
+            .spawn(Box::pin(async move {
+                debug!("Handler Starting");
+                handler.start().await;
+            }));
 
         (exit_sender, inbound_send, outbound_recv)
     }
@@ -548,10 +552,6 @@ impl Handler {
 
         debug!("Received a WHOAREYOU packet. Source: {}", src);
 
-        let seen_node_address = NodeAddress {
-            socket_addr: src,
-            node_id: request_call.contact.node_id(),
-        };
         let node_address = request_call
             .contact
             .node_address()
@@ -583,7 +583,7 @@ impl Handler {
         let (auth_packet, mut session) = match Session::encrypt_with_header(
             tag,
             &request_call.contact,
-            &self.key,
+            self.key.clone(),
             updated_enr,
             &self.node_id,
             &id_nonce,
@@ -691,10 +691,10 @@ impl Handler {
 
         if let Some(challenge) = self.active_challenges.remove(&node_address) {
             match Session::establish_from_header(
-                &self.key,
+                self.key.clone(),
                 &self.node_id,
                 &src_id,
-                &challenge,
+                challenge,
                 &auth_header,
             ) {
                 Ok((session, enr)) => {
@@ -866,6 +866,6 @@ impl Handler {
     /// Sends a packet to the send handler to be encoded and sent.
     async fn send(&mut self, dst: SocketAddr, packet: Packet) {
         let outbound_packet = socket::OutboundPacket { dst, packet };
-        self.socket.send.send(outbound_packet).await;
+        let _ = self.socket.send.send(outbound_packet).await;
     }
 }

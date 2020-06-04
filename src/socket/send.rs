@@ -7,9 +7,9 @@ use tokio::sync::{mpsc, oneshot};
 
 pub struct OutboundPacket {
     /// The originating socket addr.
-    dst: SocketAddr,
+    pub dst: SocketAddr,
     /// The packet to be encoded.
-    packet: Packet,
+    pub packet: Packet,
 }
 
 /// The main task that handles inbound UDP packets.
@@ -26,8 +26,8 @@ impl SendHandler {
     /// Spawns the `SendHandler` on a provided executor.
     /// This returns the sending channel to process `OutboundPacket`'s and an exit channel to
     /// shutdown the handler.
-    pub(crate) fn spawn<T: Executor>(
-        executor: T,
+    pub(crate) fn spawn(
+        executor: Box<dyn Executor>,
         send: tokio::net::udp::SendHalf,
     ) -> (mpsc::Sender<OutboundPacket>, oneshot::Sender<()>) {
         let (exit_send, exit) = oneshot::channel();

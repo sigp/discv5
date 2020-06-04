@@ -26,7 +26,6 @@ use crate::rpc;
 use crate::socket::MAX_PACKET_SIZE;
 use crate::Discv5Config;
 use crate::Enr;
-use crate::Executor;
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
@@ -62,7 +61,7 @@ pub struct Discv5 {
 
     local_enr: Arc<RwLock<Enr>>,
 
-    enr_key: CombinedKey,
+    enr_key: Arc<RwLock<CombinedKey>>,
 
     /// Storage of the ENR record for each node.
     kbuckets: KBucketsTable<NodeId, Enr>,
@@ -143,7 +142,7 @@ impl Discv5 {
         let runtime = {
             if config.executor.is_none() {
                 let (executor, runtime) = crate::executor::TokioExecutor::new();
-                config.executor = Some(executor);
+                config.executor = Some(Box::new(executor));
                 Some(runtime)
             } else {
                 None
@@ -153,20 +152,20 @@ impl Discv5 {
         Ok(Discv5 {
             handler_events: VecDeque::new(),
             discv5_events: VecDeque::new(),
-            config,
+            ping_heartbeat: tokio::time::interval(config.ping_interval.clone()),
             local_enr: Arc::new(RwLock::new(local_enr)),
-            enr_key,
+            enr_key: Arc::new(RwLock::new(enr_key)),
             kbuckets: KBucketsTable::new(node_id.into(), Duration::from_secs(60)),
             queries: QueryPool::new(config.query_timeout),
             active_rpc_requests: Default::default(),
             active_nodes_responses: HashMap::new(),
             ip_votes,
             connected_peers: Default::default(),
-            ping_heartbeat: tokio::time::interval(config.ping_interval),
             handler_send: None,
             handler_recv: None,
             handler_exit: None,
             runtime,
+            config,
         })
     }
 
@@ -176,9 +175,9 @@ impl Discv5 {
             info!("Discv5 server started");
             let (exit, handler_send, handler_recv) = Handler::spawn(
                 self.local_enr.clone(),
-                self.enr_key,
+                self.enr_key.clone(),
                 listen_socket,
-                self.config.clone(),
+                &self.config,
             );
 
             self.handler_exit = Some(exit);
@@ -190,7 +189,7 @@ impl Discv5 {
     }
 
     pub fn shutdown(&mut self) {
-        if let Some(exit) = self.handler_exit {
+        if let Some(exit) = self.handler_exit.take() {
             exit.send(());
             self.handler_send = None;
             self.handler_recv = None;
@@ -289,7 +288,7 @@ impl Discv5 {
             match self
                 .local_enr
                 .write()
-                .set_tcp_socket(socket_addr, &self.enr_key)
+                .set_tcp_socket(socket_addr, &self.enr_key.read())
             {
                 Ok(_) => {}
                 Err(e) => {
@@ -305,7 +304,7 @@ impl Discv5 {
             match self
                 .local_enr
                 .write()
-                .set_udp_socket(socket_addr, &self.enr_key)
+                .set_udp_socket(socket_addr, &self.enr_key.read())
             {
                 Ok(_) => {}
                 Err(e) => {
@@ -321,7 +320,10 @@ impl Discv5 {
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
     pub fn enr_insert(&mut self, key: &str, value: Vec<u8>) -> Result<Option<Vec<u8>>, EnrError> {
-        let result = self.local_enr.write().insert(key, value, &self.enr_key);
+        let result = self
+            .local_enr
+            .write()
+            .insert(key, value, &self.enr_key.read());
         if result.is_ok() {
             self.ping_connected_peers();
         }
@@ -414,12 +416,14 @@ impl Discv5 {
                 match self.kbuckets.entry(&node_address.node_id.into()) {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
-                            self.request_enr(entry.value().clone().into());
+                            let enr = entry.value().clone();
+                            self.request_enr(enr.into());
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
-                            self.request_enr(entry.value().clone().into());
+                            let enr = entry.value().clone();
+                            self.request_enr(enr.into());
                         }
                     }
                     // don't know of the ENR, request the update
@@ -1028,16 +1032,15 @@ impl Discv5 {
                 Some(event) = self.handler_recv.as_mut().unwrap().next(), if self.handler_recv.is_some() => {
                     match event {
                         HandlerResponse::Established(enr) => {
-                          //  self.inject_session_established(enr);
+                            self.inject_session_established(enr);
                         }
                         HandlerResponse::Request(node_address, request) => {
-                           //     self.handle_rpc_request(node_address, request).await;
+                                self.handle_rpc_request(node_address, request).await;
                             }
                         HandlerResponse::Response(_, response) => {
-                            //    self.handle_rpc_response(response).await;
+                                self.handle_rpc_response(response).await;
                             }
                         HandlerResponse::WhoAreYou(whoareyou_ref) => {
-                            /*
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
                                 self.send_to_handler(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).await;
@@ -1046,7 +1049,6 @@ impl Discv5 {
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
                                 self.send_to_handler(HandlerRequest::WhoAreYou(whoareyou_ref, None)).await;
                             }
-                            */
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
                             trace!("RPC Request failed: id: {}, error {:?}", request_id, error);
@@ -1105,7 +1107,7 @@ impl Discv5 {
     async fn handler_event_poll(
         handler_events: &mut VecDeque<(NodeId, RequestBody)>,
     ) -> (NodeId, RequestBody) {
-        future::poll_fn(move |cx| {
+        future::poll_fn(move |_cx| {
             if let Some(event) = handler_events.pop_front() {
                 Poll::Ready(event)
             } else {
@@ -1119,7 +1121,7 @@ impl Discv5 {
         events: &mut VecDeque<Discv5Event>,
         kbuckets: &mut KBucketsTable<NodeId, Enr>,
     ) -> Discv5Event {
-        future::poll_fn(move |cx| {
+        future::poll_fn(move |_cx| {
             // Drain queued events
             if let Some(event) = events.pop_front() {
                 return Poll::Ready(event);
@@ -1139,7 +1141,7 @@ impl Discv5 {
     }
 
     async fn query_event_poll(queries: &mut QueryPool<QueryInfo, NodeId, Enr>) -> QueryEvent {
-        future::poll_fn(move |cx| match queries.poll() {
+        future::poll_fn(move |_cx| match queries.poll() {
             QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(query)),
             QueryPoolState::Waiting(Some((query, return_peer))) => Poll::Ready(
                 QueryEvent::Waiting(query.id(), query.target().clone(), return_peer),

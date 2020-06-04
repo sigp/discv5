@@ -377,7 +377,7 @@ mod tests {
         let nonce: Nonce = rand::random();
 
         let (key1, key2, key3, pk) =
-            generate_session_keys(&node1_enr.node_id(), &node2_enr.into(), &nonce).unwrap();
+            generate_session_keys(&node1_enr.node_id(), &node2_enr.clone().into(), &nonce).unwrap();
         let (key4, key5, key6) = derive_keys_from_pubkey(
             &node2_key,
             &node2_enr.node_id(),

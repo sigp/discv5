@@ -52,7 +52,7 @@ pub struct Discv5Config {
     pub executor: Option<Box<dyn Executor>>,
 }
 
-impl<T: Executor> Default for Discv5Config {
+impl Default for Discv5Config {
     fn default() -> Self {
         Self {
             request_timeout: Duration::from_secs(4),
@@ -60,7 +60,7 @@ impl<T: Executor> Default for Discv5Config {
             query_timeout: Duration::from_secs(60),
             request_retries: 1,
             session_timeout: Duration::from_secs(86400),
-            session_establish_timeout: Duration::from_secs(15),
+            session_cache_capacity: 100,
             enr_update: true,
             enr_peer_update_min: 10,
             query_parallelism: 3,
@@ -161,7 +161,7 @@ impl Discv5ConfigBuilder {
     }
 
     pub fn executor(&mut self, executor: Box<dyn Executor>) -> &mut Self {
-        self.executor = Some(executor);
+        self.config.executor = Some(executor);
         self
     }
 

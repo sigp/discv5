@@ -30,9 +30,9 @@ pub(crate) struct Filter {
 }
 
 impl Filter {
-    pub fn new(config: FilterConfig) -> Filter {
+    pub fn new(config: &FilterConfig) -> Filter {
         Filter {
-            config,
+            config: config.clone(),
             raw_packets_received: ReceivedPacketCache::new(config.max_requests_per_second),
             packets_received: ReceivedPacketCache::new(config.max_requests_per_second),
             awaiting_responses: HashMap::new(),

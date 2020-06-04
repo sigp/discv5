@@ -14,13 +14,13 @@ pub use recv::InboundPacket;
 pub(crate) use recv::MAX_PACKET_SIZE;
 pub use send::OutboundPacket;
 /// Convenience objects for setting up the recv handler.
-pub struct SocketConfig {
+pub struct SocketConfig<'a> {
     /// The executor to spawn the tasks.
-    pub executor: Option<Box<dyn Executor>>,
+    pub executor: Box<dyn Executor>,
     /// The listening socket.
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
-    pub filter_config: FilterConfig,
+    pub filter_config: &'a FilterConfig,
     /// The WhoAreYou magic packet.
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
 }
@@ -29,14 +29,14 @@ pub struct SocketConfig {
 pub struct Socket {
     pub send: mpsc::Sender<OutboundPacket>,
     pub recv: mpsc::Receiver<InboundPacket>,
-    sender_exit: oneshot::Sender<()>,
-    recv_exit: oneshot::Sender<()>,
+    sender_exit: Option<oneshot::Sender<()>>,
+    recv_exit: Option<oneshot::Sender<()>>,
 }
 
 impl Socket {
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
-    pub(crate) fn new(config: &SocketConfig) -> Self {
+    pub(crate) fn new(config: SocketConfig<'_>) -> Self {
         // set up the UDP socket
         let socket = {
             #[cfg(unix)]
@@ -65,7 +65,7 @@ impl Socket {
 
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {
-            filter_config: config.filter_config.clone(),
+            filter_config: &config.filter_config,
             executor: config.executor.clone(),
             recv: recv_udp,
             whoareyou_magic: config.whoareyou_magic,
@@ -73,13 +73,13 @@ impl Socket {
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);
         // spawn the sender handler
-        let (send, sender_exit) = SendHandler::spawn(config.executor, send_udp);
+        let (send, sender_exit) = SendHandler::spawn(config.executor.clone(), send_udp);
 
         return Socket {
             send,
             recv,
-            sender_exit,
-            recv_exit,
+            sender_exit: Some(sender_exit),
+            recv_exit: Some(recv_exit),
         };
     }
 }
@@ -87,7 +87,10 @@ impl Socket {
 impl std::ops::Drop for Socket {
     // close the send/recv handlers
     fn drop(&mut self) {
-        let _ = self.sender_exit.send(());
-        let _ = self.recv_exit.send(());
+        self.sender_exit
+            .take()
+            .expect("Exit always exists")
+            .send(());
+        self.recv_exit.take().expect("Exit always exists").send(());
     }
 }

@@ -8,7 +8,7 @@ type TopicHash = [u8; 32];
 pub type RequestId = u64;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Message {
+pub enum Message {
     Request(Request),
     Response(Response),
 }
@@ -26,7 +26,7 @@ pub struct Response {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum RequestBody {
+pub enum RequestBody {
     Ping { enr_seq: u64 },
     FindNode { distance: u64 },
     Ticket { topic: TopicHash },
@@ -35,7 +35,7 @@ pub(crate) enum RequestBody {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum ResponseBody {
+pub enum ResponseBody {
     Ping {
         enr_seq: u64,
         ip: IpAddr,
@@ -55,7 +55,7 @@ pub(crate) enum ResponseBody {
 }
 
 impl Request {
-    pub(crate) fn msg_type(&self) -> u8 {
+    pub fn msg_type(&self) -> u8 {
         match self.body {
             RequestBody::Ping { .. } => 1,
             RequestBody::FindNode { .. } => 3,
@@ -66,7 +66,7 @@ impl Request {
     }
 
     /// Encodes a Message to RLP-encoded bytes.
-    pub(crate) fn encode(self) -> Vec<u8> {
+    pub fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(10);
         let msg_type = self.msg_type();
         buf.push(msg_type);
@@ -117,7 +117,7 @@ impl Request {
 }
 
 impl Response {
-    pub(crate) fn msg_type(&self) -> u8 {
+    pub fn msg_type(&self) -> u8 {
         match &self.body {
             ResponseBody::Ping { .. } => 2,
             ResponseBody::Nodes { .. } => 4,
@@ -127,7 +127,7 @@ impl Response {
     }
 
     /// Determines if the response is a valid response to the given request.
-    pub(crate) fn match_request(&self, req: &RequestBody) -> bool {
+    pub fn match_request(&self, req: &RequestBody) -> bool {
         match self.body {
             ResponseBody::Ping { .. } => {
                 if let RequestBody::Ping { .. } = req {
@@ -159,7 +159,7 @@ impl Response {
     }
 
     /// Encodes a Message to RLP-encoded bytes.
-    pub(crate) fn encode(self) -> Vec<u8> {
+    pub fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(10);
         let msg_type = self.msg_type();
         buf.push(msg_type);
@@ -279,12 +279,15 @@ impl std::fmt::Display for RequestBody {
             }
             RequestBody::Ticket { topic } => write!(f, "TICKET: topic: {:?}", topic),
             RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
+            RequestBody::RegisterTopic { ticket } => {
+                write!(f, "TOPICQUERY: ticket: {}", hex::encode(ticket))
+            }
         }
     }
 }
 
 impl Message {
-    pub(crate) fn msg_type(&self) -> u8 {
+    pub fn msg_type(&self) -> u8 {
         match &self {
             Self::Request(request) => match request.body {
                 RequestBody::Ping { .. } => 1,
@@ -302,14 +305,14 @@ impl Message {
         }
     }
 
-    pub(crate) fn encode(&self) -> Vec<u8> {
+    pub fn encode(self) -> Vec<u8> {
         match self {
             Self::Request(request) => request.encode(),
             Self::Response(response) => response.encode(),
         }
     }
 
-    pub(crate) fn decode(data: Vec<u8>) -> Result<Self, DecoderError> {
+    pub fn decode(data: Vec<u8>) -> Result<Self, DecoderError> {
         if data.len() < 3 {
             return Err(DecoderError::RlpIsTooShort);
         }
