@@ -28,7 +28,7 @@ use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::{collections::HashMap, default::Default, net::SocketAddr, time::Duration};
+use std::{collections::HashMap, default::Default, net::SocketAddr};
 use tokio::sync::{mpsc, oneshot};
 
 // mod tests;
@@ -113,21 +113,6 @@ pub struct Challenge {
     remote_enr: Option<Enr>,
 }
 
-/// A smaller configuration set held by the Handler.
-pub struct HandlerConfig {
-    request_retries: u8,
-    request_timeout: Duration,
-}
-
-impl From<&Discv5Config> for HandlerConfig {
-    fn from(config: &Discv5Config) -> Self {
-        HandlerConfig {
-            request_retries: config.request_retries.clone(),
-            request_timeout: config.request_timeout.clone(),
-        }
-    }
-}
-
 #[derive(Debug)]
 /// A request to a node that we are waiting for a response.
 pub(crate) struct RequestCall {
@@ -160,7 +145,7 @@ impl RequestCall {
 
 pub struct Handler {
     /// Configuration for the discv5 service.
-    config: HandlerConfig,
+    request_retries: u8,
 
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
     /// during the operation of the server.
@@ -232,7 +217,7 @@ impl Handler {
         let node_id = enr.read().node_id();
 
         let mut handler = Handler {
-            config: config.into(),
+            request_retries: config.request_retries,
             node_id,
             enr,
             key,
@@ -272,7 +257,7 @@ impl Handler {
                            let id = request.id;
                            if let Err(request_error) =  self.send_request(contact, request).await {
                                // If the sending failed report to the application
-                               self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await;
+                               self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await.unwrap_or_else(|_| ());
                            }
                         }
                         HandlerRequest::Response(dst, response) => self.send_response(dst, response).await,
@@ -284,6 +269,9 @@ impl Handler {
                 }
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, pending_request).await;
+                }
+                _ = &mut self.exit => {
+                    return;
                 }
             }
         }
@@ -299,8 +287,7 @@ impl Handler {
                 enr_seq,
                 ..
             } => {
-                let _ = self
-                    .handle_challenge(inbound_packet.src, auth_tag, id_nonce, enr_seq)
+                self.handle_challenge(inbound_packet.src, auth_tag, id_nonce, enr_seq)
                     .await;
             }
             Packet::AuthMessage {
@@ -308,8 +295,7 @@ impl Handler {
                 auth_header,
                 message,
             } => {
-                let _ = self
-                    .handle_auth_message(inbound_packet.src, tag, auth_header, &message)
+                self.handle_auth_message(inbound_packet.src, tag, auth_header, &message)
                     .await;
             }
             Packet::Message {
@@ -322,8 +308,7 @@ impl Handler {
                     node_id: src_id,
                     socket_addr: inbound_packet.src,
                 };
-                let _ = self
-                    .handle_message(node_address, auth_tag, &message, tag)
+                self.handle_message(node_address, auth_tag, &message, tag)
                     .await;
             }
             Packet::RandomPacket { .. } => {} // this will not be decoded.
@@ -342,7 +327,8 @@ impl Handler {
                     request.1.id,
                     RequestError::Timeout,
                 ))
-                .await;
+                .await
+                .unwrap_or_else(|_| ());
         }
     }
 
@@ -352,7 +338,7 @@ impl Handler {
         node_address: NodeAddress,
         mut request_call: RequestCall,
     ) {
-        if request_call.retries >= self.config.request_retries {
+        if request_call.retries >= self.request_retries {
             // The Request has expired, remove the session.
             let auth_tag = request_call
                 .packet
@@ -360,7 +346,7 @@ impl Handler {
                 .expect("No challenge packets here");
             // Remove from the auth_tag mapping also.
             self.active_requests_auth.remove(auth_tag);
-            self.fail_session(&node_address);
+            self.fail_session(&node_address).await;
         } else {
             // increment the request retry count and restart the timeout
             debug!(
@@ -370,7 +356,8 @@ impl Handler {
             self.send(
                 node_address.socket_addr.clone(),
                 request_call.packet.clone(),
-            );
+            )
+            .await;
             request_call.retries += 1;
             self.active_requests.insert(node_address, request_call);
         }
@@ -562,7 +549,7 @@ impl Handler {
                 "Auth response already sent. Dropping session. Node: {}",
                 node_address.node_id
             );
-            self.fail_session(&node_address);
+            self.fail_session(&node_address).await;
             return;
         }
 
@@ -592,7 +579,7 @@ impl Handler {
             Ok(v) => v,
             Err(e) => {
                 error!("Could not generate a session. Error: {:?}", e);
-                self.fail_session(&node_address);
+                self.fail_session(&node_address).await;
                 return;
             }
         };
@@ -628,7 +615,8 @@ impl Handler {
                 if self.verify_enr(&enr, &node_address) {
                     self.outbound_channel
                         .send(HandlerResponse::Established(enr))
-                        .await;
+                        .await
+                        .unwrap_or_else(|_| ());
                 } else {
                     // IP's or NodeAddress don't match. Drop the session.
                     // TODO: Blacklist the peer
@@ -637,7 +625,7 @@ impl Handler {
                         enr.udp_socket(),
                         node_address
                     );
-                    self.fail_session(&node_address);
+                    self.fail_session(&node_address).await;
                     return;
                 }
             }
@@ -650,7 +638,9 @@ impl Handler {
                 };
 
                 session.awaiting_enr = Some(id);
-                self.send_request(contact, request).await;
+                self.send_request(contact, request)
+                    .await
+                    .unwrap_or_else(|_| ());
             }
         }
         self.new_session(node_address, session);
@@ -705,9 +695,11 @@ impl Handler {
                         // Notify the application
                         self.outbound_channel
                             .send(HandlerResponse::Established(enr))
-                            .await;
+                            .await
+                            .unwrap_or_else(|_| ());
                         self.new_session(node_address.clone(), session);
-                        self.handle_message(node_address, auth_header.auth_tag, message, tag);
+                        self.handle_message(node_address, auth_header.auth_tag, message, tag)
+                            .await;
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         // TODO: Blacklist the peer
@@ -716,7 +708,7 @@ impl Handler {
                             enr.udp_socket(),
                             node_address
                         );
-                        self.fail_session(&node_address);
+                        self.fail_session(&node_address).await;
                     }
                 }
                 Err(e) => {
@@ -724,7 +716,7 @@ impl Handler {
                         "Invalid Authentication header. Dropping session. Error: {:?}",
                         e
                     );
-                    self.fail_session(&node_address);
+                    self.fail_session(&node_address).await;
                     return;
                 }
             }
@@ -748,7 +740,9 @@ impl Handler {
                     if entry.get().is_empty() {
                         entry.remove();
                     }
-                    self.send_request(request.0, request.1);
+                    self.send_request(request.0, request.1)
+                        .await
+                        .unwrap_or_else(|_| ());
                 }
                 _ => {}
             }
@@ -788,12 +782,13 @@ impl Handler {
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
                     debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", node_address);
-                    self.fail_session(&node_address);
+                    self.fail_session(&node_address).await;
                     // spawn a WHOAREYOU event to check for highest known ENR
                     let whoareyou_ref = WhoAreYouRef(node_address, auth_tag);
                     self.outbound_channel
                         .send(HandlerResponse::WhoAreYou(whoareyou_ref))
-                        .await;
+                        .await
+                        .unwrap_or_else(|_| ());
                     return;
                 }
             };
@@ -804,7 +799,8 @@ impl Handler {
                     // report the request to the application
                     self.outbound_channel
                         .send(HandlerResponse::Request(node_address, request))
-                        .await;
+                        .await
+                        .unwrap_or_else(|_| ());
                 }
                 Message::Response(response) => {
                     // Sessions could be awaiting an ENR response. Check if this response matches
@@ -819,7 +815,8 @@ impl Handler {
                                             // Notify the application
                                             self.outbound_channel
                                                 .send(HandlerResponse::Established(enr))
-                                                .await;
+                                                .await
+                                                .unwrap_or_else(|_| ());
                                             return;
                                         }
                                     }
@@ -827,7 +824,7 @@ impl Handler {
                                 _ => {}
                             }
                             debug!("Session failed invalid ENR response");
-                            self.fail_session(&node_address);
+                            self.fail_session(&node_address).await;
                             return;
                         }
                     }
@@ -843,8 +840,9 @@ impl Handler {
                             // report the response
                             self.outbound_channel
                                 .send(HandlerResponse::Response(node_address.clone(), response))
-                                .await;
-                            self.send_next_request(node_address);
+                                .await
+                                .unwrap_or_else(|_| ());
+                            self.send_next_request(node_address).await;
                         }
                     } else {
                         debug!("Late response from node: {}", node_address);
@@ -859,13 +857,18 @@ impl Handler {
             let whoareyou_ref = WhoAreYouRef(node_address, auth_tag);
             self.outbound_channel
                 .send(HandlerResponse::WhoAreYou(whoareyou_ref))
-                .await;
+                .await
+                .unwrap_or_else(|_| ());
         }
     }
 
     /// Sends a packet to the send handler to be encoded and sent.
     async fn send(&mut self, dst: SocketAddr, packet: Packet) {
         let outbound_packet = socket::OutboundPacket { dst, packet };
-        let _ = self.socket.send.send(outbound_packet).await;
+        self.socket
+            .send
+            .send(outbound_packet)
+            .await
+            .unwrap_or_else(|_| ());
     }
 }

@@ -9,7 +9,7 @@ pub struct ReceivedPacket<T> {
 }
 
 pub struct ReceivedPacketCache<T> {
-    /// The number of seconds to
+    /// The size of the cache.
     size: usize,
     inner: VecDeque<ReceivedPacket<T>>,
 }
@@ -25,8 +25,6 @@ impl<T> ReceivedPacketCache<T> {
 
     /// Remove expired packets. We only keep, one second of data in the cache.
     pub fn reset(&mut self) {
-        let now = Instant::now();
-
         while let Some(packet) = self.inner.pop_front() {
             if packet.received > Instant::now() - Duration::from_secs(1) {
                 // add the packet back and end

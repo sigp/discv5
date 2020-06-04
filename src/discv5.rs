@@ -44,9 +44,6 @@ mod ip_vote;
 mod query_info;
 // mod test;
 
-type RpcId = u64;
-// The general key-type of ENR's are used to support multiple signing types.
-
 // TODO: ENR's for connected peer should be maintained.
 // The event queues should be removed and replaced by a server event loop with a wrapper for public
 // functions to use structured concurrency.
@@ -90,7 +87,7 @@ pub struct Discv5 {
 
     ping_heartbeat: Interval,
 
-    runtime: Option<tokio::runtime::Runtime>,
+    _runtime: Option<tokio::runtime::Runtime>,
 }
 
 /// For multiple responses to a FindNodes request, this struct keeps track of the request count
@@ -164,7 +161,7 @@ impl Discv5 {
             handler_send: None,
             handler_recv: None,
             handler_exit: None,
-            runtime,
+            _runtime: runtime,
             config,
         })
     }
@@ -190,7 +187,7 @@ impl Discv5 {
 
     pub fn shutdown(&mut self) {
         if let Some(exit) = self.handler_exit.take() {
-            exit.send(());
+            let _ = exit.send(());
             self.handler_send = None;
             self.handler_recv = None;
             info!("Discv5 shutdown");
@@ -417,13 +414,13 @@ impl Discv5 {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            self.request_enr(enr.into());
+                            self.request_enr(enr.into()).await;
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            self.request_enr(enr.into());
+                            self.request_enr(enr.into()).await;
                         }
                     }
                     // don't know of the ENR, request the update
@@ -623,7 +620,7 @@ impl Discv5 {
 
     async fn send_to_handler(&mut self, handler_request: HandlerRequest) {
         if let Some(send) = self.handler_send.as_mut() {
-            send.send(handler_request).await;
+            send.send(handler_request).await.unwrap_or_else(|_| ());
         } else {
             warn!("Handler shutdown, request not sent");
         }
@@ -1052,7 +1049,7 @@ impl Discv5 {
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
                             trace!("RPC Request failed: id: {}, error {:?}", request_id, error);
-                            //self.rpc_failure(request_id);
+                            self.rpc_failure(request_id);
                         }
                     }
                 }

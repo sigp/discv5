@@ -90,7 +90,12 @@ impl std::ops::Drop for Socket {
         self.sender_exit
             .take()
             .expect("Exit always exists")
-            .send(());
-        self.recv_exit.take().expect("Exit always exists").send(());
+            .send(())
+            .unwrap_or_else(|_| ());
+        self.recv_exit
+            .take()
+            .expect("Exit always exists")
+            .send(())
+            .unwrap_or_else(|_| ());
     }
 }

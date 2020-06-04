@@ -112,6 +112,6 @@ impl RecvHandler {
         let inbound = InboundPacket { src, packet };
 
         // send the filtered decoded packet to the handler.
-        self.handler.send(inbound).await;
+        self.handler.send(inbound).await.unwrap_or_else(|_| ());
     }
 }

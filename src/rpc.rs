@@ -285,26 +285,8 @@ impl std::fmt::Display for RequestBody {
         }
     }
 }
-
+#[allow(dead_code)]
 impl Message {
-    pub fn msg_type(&self) -> u8 {
-        match &self {
-            Self::Request(request) => match request.body {
-                RequestBody::Ping { .. } => 1,
-                RequestBody::FindNode { .. } => 3,
-                RequestBody::Ticket { .. } => 5,
-                RequestBody::RegisterTopic { .. } => 7,
-                RequestBody::TopicQuery { .. } => 9,
-            },
-            Self::Response(response) => match response.body {
-                ResponseBody::Ping { .. } => 2,
-                ResponseBody::Nodes { .. } => 4,
-                ResponseBody::Ticket { .. } => 6,
-                ResponseBody::RegisterTopic { .. } => 8,
-            },
-        }
-    }
-
     pub fn encode(self) -> Vec<u8> {
         match self {
             Self::Request(request) => request.encode(),

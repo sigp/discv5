@@ -101,7 +101,7 @@ where
     /// Gets a mutable reference to an entry if it exists.
     ///
     /// Returns None if the entry does not exist.
-    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+    pub fn _get_mut(&mut self, key: &K) -> Option<&mut V> {
         self.entries.get_mut(key).map(|entry| &mut entry.value)
     }
 
@@ -111,7 +111,7 @@ where
     }
 
     /// Returns the length of the mapping.
-    pub fn len(&self) -> usize {
+    pub fn _len(&self) -> usize {
         self.entries.len()
     }
 
@@ -129,7 +129,7 @@ where
     /// Retains only the elements specified by the predicate.
     ///
     /// In other words, remove all pairs `(k, v)` such that `f(&k,&mut v)` returns false.
-    pub fn retain<F: FnMut(&K, &mut V) -> bool>(&mut self, mut f: F) {
+    pub fn _retain<F: FnMut(&K, &mut V) -> bool>(&mut self, mut f: F) {
         let expiration = &mut self.expirations;
         self.entries.retain(|key, entry| {
             let result = f(key, &mut entry.value);
@@ -141,7 +141,7 @@ where
     }
 
     /// Removes all entries from the map.
-    pub fn clear(&mut self) {
+    pub fn _clear(&mut self) {
         self.entries.clear();
         self.expirations.clear();
     }
