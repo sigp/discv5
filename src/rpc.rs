@@ -55,6 +55,16 @@ pub(crate) enum ResponseBody {
 }
 
 impl Request {
+    pub(crate) fn msg_type(&self) -> u8 {
+        match self.body {
+            RequestBody::Ping { .. } => 1,
+            RequestBody::FindNode { .. } => 3,
+            RequestBody::Ticket { .. } => 5,
+            RequestBody::RegisterTopic { .. } => 7,
+            RequestBody::TopicQuery { .. } => 9,
+        }
+    }
+
     /// Encodes a Message to RLP-encoded bytes.
     pub(crate) fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(10);
@@ -62,7 +72,7 @@ impl Request {
         buf.push(msg_type);
         let id = &self.id;
         match self.body {
-            Request::Ping { enr_seq } => {
+            RequestBody::Ping { enr_seq } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(id);
@@ -70,7 +80,7 @@ impl Request {
                 buf.extend_from_slice(&s.drain());
                 buf
             }
-            Request::FindNode { distance } => {
+            RequestBody::FindNode { distance } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(id);
@@ -78,7 +88,7 @@ impl Request {
                 buf.extend_from_slice(&s.drain());
                 buf
             }
-            Request::Ticket { topic } => {
+            RequestBody::Ticket { topic } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(id);
@@ -86,7 +96,7 @@ impl Request {
                 buf.extend_from_slice(&s.drain());
                 buf
             }
-            Request::RegisterTopic { ticket } => {
+            RequestBody::RegisterTopic { ticket } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(id);
@@ -94,7 +104,7 @@ impl Request {
                 buf.extend_from_slice(&s.drain());
                 buf
             }
-            Request::TopicQuery { topic } => {
+            RequestBody::TopicQuery { topic } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(id);
@@ -107,29 +117,38 @@ impl Request {
 }
 
 impl Response {
+    pub(crate) fn msg_type(&self) -> u8 {
+        match &self.body {
+            ResponseBody::Ping { .. } => 2,
+            ResponseBody::Nodes { .. } => 4,
+            ResponseBody::Ticket { .. } => 6,
+            ResponseBody::RegisterTopic { .. } => 8,
+        }
+    }
+
     /// Determines if the response is a valid response to the given request.
     pub(crate) fn match_request(&self, req: &RequestBody) -> bool {
         match self.body {
-            Response::Ping { .. } => {
+            ResponseBody::Ping { .. } => {
                 if let RequestBody::Ping { .. } = req {
                     true
                 } else {
                     false
                 }
             }
-            Response::Nodes { .. } => match req {
+            ResponseBody::Nodes { .. } => match req {
                 RequestBody::FindNode { .. } => true,
                 RequestBody::TopicQuery { .. } => true,
                 _ => false,
             },
-            Response::Ticket { .. } => {
+            ResponseBody::Ticket { .. } => {
                 if let RequestBody::Ticket { .. } = req {
                     true
                 } else {
                     false
                 }
             }
-            Response::RegisterTopic { .. } => {
+            ResponseBody::RegisterTopic { .. } => {
                 if let RequestBody::TopicQuery { .. } = req {
                     true
                 } else {
@@ -146,7 +165,7 @@ impl Response {
         buf.push(msg_type);
         let id = &self.id;
         match self.body {
-            Response::Ping { enr_seq, ip, port } => {
+            ResponseBody::Ping { enr_seq, ip, port } => {
                 let ip_bytes = match ip {
                     IpAddr::V4(addr) => addr.octets().to_vec(),
                     IpAddr::V6(addr) => addr.octets().to_vec(),
@@ -160,7 +179,7 @@ impl Response {
                 buf.extend_from_slice(&s.drain());
                 buf
             }
-            Response::Nodes { total, nodes } => {
+            ResponseBody::Nodes { total, nodes } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
                 s.append(id);
@@ -177,7 +196,7 @@ impl Response {
                 buf.extend_from_slice(&s.drain());
                 buf
             }
-            Response::Ticket { ticket, wait_time } => {
+            ResponseBody::Ticket { ticket, wait_time } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
                 s.append(id);
@@ -186,7 +205,7 @@ impl Response {
                 buf.extend_from_slice(&s.drain());
                 buf
             }
-            Response::RegisterTopic { registered } => {
+            ResponseBody::RegisterTopic { registered } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(id);
@@ -209,15 +228,20 @@ impl std::fmt::Display for Message {
 
 impl std::fmt::Display for Response {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "id: {}", self.id);
-        match self.body {
-            Response::Ping { enr_seq, ip, port } => write!(
+        write!(f, "Response: id: {}: {}", self.id, self.body)
+    }
+}
+
+impl std::fmt::Display for ResponseBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseBody::Ping { enr_seq, ip, port } => write!(
                 f,
-                "PING Response: Enr-seq: {}, Ip: {:?},  Port: {}",
+                "PONG: Enr-seq: {}, Ip: {:?},  Port: {}",
                 enr_seq, ip, port
             ),
-            Response::Nodes { total, nodes } => {
-                let _ = write!(f, "NODES Response: total: {}, Nodes: [", total);
+            ResponseBody::Nodes { total, nodes } => {
+                let _ = write!(f, "NODES: total: {}, Nodes: [", total);
                 let mut first = true;
                 for id in nodes {
                     if !first {
@@ -230,13 +254,11 @@ impl std::fmt::Display for Response {
 
                 write!(f, "]")
             }
-            Response::Ticket { ticket, wait_time } => write!(
-                f,
-                "TICKET Response: Ticket: {:?}, Wait time: {}",
-                ticket, wait_time
-            ),
-            Response::RegisterTopic { registered } => {
-                write!(f, "REGTOPIC Response: Registered: {}", registered)
+            ResponseBody::Ticket { ticket, wait_time } => {
+                write!(f, "TICKET: Ticket: {:?}, Wait time: {}", ticket, wait_time)
+            }
+            ResponseBody::RegisterTopic { registered } => {
+                write!(f, "REGTOPIC: Registered: {}", registered)
             }
         }
     }
@@ -244,12 +266,19 @@ impl std::fmt::Display for Response {
 
 impl std::fmt::Display for Request {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "id: {}", self.id);
-        match self.body {
-            Request::Ping { enr_seq } => write!(f, "PING Request: enr_seq: {}", enr_seq),
-            Request::FindNode { distance } => write!(f, "FINDNODE Request: distance: {}", distance),
-            Request::Ticket { topic } => write!(f, "TICKET Request: topic: {}", topic),
-            Request::TopicQuery { topic } => write!(f, "TOPICQUERY Request: topic: {}", topic),
+        write!(f, "Request: id: {}: {}", self.id, self.body)
+    }
+}
+
+impl std::fmt::Display for RequestBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestBody::Ping { enr_seq } => write!(f, "PING: enr_seq: {}", enr_seq),
+            RequestBody::FindNode { distance } => {
+                write!(f, "FINDNODE Request: distance: {}", distance)
+            }
+            RequestBody::Ticket { topic } => write!(f, "TICKET: topic: {:?}", topic),
+            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
         }
     }
 }
@@ -258,120 +287,25 @@ impl Message {
     pub(crate) fn msg_type(&self) -> u8 {
         match &self {
             Self::Request(request) => match request.body {
-                Request::Ping { .. } => 1,
-                Request::FindNode { .. } => 3,
-                Request::Ticket { .. } => 5,
-                Request::RegisterTopic { .. } => 7,
-                Request::TopicQuery { .. } => 9,
+                RequestBody::Ping { .. } => 1,
+                RequestBody::FindNode { .. } => 3,
+                RequestBody::Ticket { .. } => 5,
+                RequestBody::RegisterTopic { .. } => 7,
+                RequestBody::TopicQuery { .. } => 9,
             },
             Self::Response(response) => match response.body {
-                Response::Ping { .. } => 2,
-                Response::Nodes { .. } => 4,
-                Response::Ticket { .. } => 6,
-                Response::RegisterTopic { .. } => 8,
+                ResponseBody::Ping { .. } => 2,
+                ResponseBody::Nodes { .. } => 4,
+                ResponseBody::Ticket { .. } => 6,
+                ResponseBody::RegisterTopic { .. } => 8,
             },
         }
     }
 
-    /// Encodes a Message to RLP-encoded bytes.
-    pub(crate) fn encode(self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(10);
-        let msg_type = self.msg_type();
-        buf.push(msg_type);
-        let id = &self.id;
-        match self.body {
-            Self::Request(request) => match request.body {
-                Request::Ping { enr_seq } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(2);
-                    s.append(id);
-                    s.append(&enr_seq);
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-                Request::FindNode { distance } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(2);
-                    s.append(id);
-                    s.append(&distance);
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-                Request::Ticket { topic } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(2);
-                    s.append(id);
-                    s.append(&topic.to_vec());
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-                Request::RegisterTopic { ticket } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(2);
-                    s.append(id);
-                    s.append(&ticket.to_vec());
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-                Request::TopicQuery { topic } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(2);
-                    s.append(id);
-                    s.append(&topic.to_vec());
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-            },
-            Self::Response(response) => match response.body {
-                Response::Ping { enr_seq, ip, port } => {
-                    let ip_bytes = match ip {
-                        IpAddr::V4(addr) => addr.octets().to_vec(),
-                        IpAddr::V6(addr) => addr.octets().to_vec(),
-                    };
-                    let mut s = RlpStream::new();
-                    s.begin_list(4);
-                    s.append(id);
-                    s.append(&enr_seq);
-                    s.append(&ip_bytes);
-                    s.append(&port);
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-                Response::Nodes { total, nodes } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(3);
-                    s.append(id);
-                    s.append(&total);
-
-                    if nodes.is_empty() {
-                        s.begin_list(0);
-                    } else {
-                        s.begin_list(nodes.len());
-                        for node in nodes {
-                            s.append(&node);
-                        }
-                    }
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-                Response::Ticket { ticket, wait_time } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(3);
-                    s.append(id);
-                    s.append(&ticket.to_vec());
-                    s.append(&wait_time);
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-                Response::RegisterTopic { registered } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(2);
-                    s.append(id);
-                    s.append(&registered);
-                    buf.extend_from_slice(&s.drain());
-                    buf
-                }
-            },
+    pub(crate) fn encode(&self) -> Vec<u8> {
+        match self {
+            Self::Request(request) => request.encode(),
+            Self::Response(response) => response.encode(),
         }
     }
 
@@ -600,7 +534,7 @@ mod tests {
         let enr_seq = 1;
         let message = Message::Request(Request {
             id,
-            body: Request::Ping { enr_seq },
+            body: RequestBody::Ping { enr_seq },
         });
 
         // expected hex output
@@ -616,7 +550,7 @@ mod tests {
         let distance = 256;
         let message = Message::Request(Request {
             id,
-            body: Request::FindNode { distance },
+            body: RequestBody::FindNode { distance },
         });
 
         // expected hex output
@@ -643,7 +577,7 @@ mod tests {
 
         let message = Message::Request(Request {
             id,
-            body: Request::Ticket { topic: topic_hash },
+            body: RequestBody::Ticket { topic: topic_hash },
         });
         assert_eq!(message.encode(), expected_output);
     }
@@ -663,7 +597,7 @@ mod tests {
 
         let message = Message::Request(Request {
             id,
-            body: Request::RegisterTicket { ticket },
+            body: RequestBody::RegisterTopic { ticket },
         });
         assert_eq!(message.encode(), expected_output);
     }
@@ -686,7 +620,7 @@ mod tests {
 
         let message = Message::Request(Request {
             id,
-            body: Request::TopicQuery { topic: topic_hash },
+            body: RequestBody::TopicQuery { topic: topic_hash },
         });
         assert_eq!(message.encode(), expected_output);
     }
@@ -700,7 +634,7 @@ mod tests {
         let port = 5000;
         let message = Message::Response(Response {
             id,
-            body: Response::Ping { enr_seq, ip, port },
+            body: ResponseBody::Ping { enr_seq, ip, port },
         });
 
         // expected hex output
@@ -720,7 +654,7 @@ mod tests {
 
         let message = Message::Response(Response {
             id,
-            body: Response::Nodes {
+            body: ResponseBody::Nodes {
                 total,
                 nodes: vec![],
             },
@@ -747,7 +681,7 @@ mod tests {
 
         let message = Message::Response(Response {
             id,
-            body: Response::Nodes {
+            body: ResponseBody::Nodes {
                 total,
                 nodes: vec![enr],
             },
@@ -769,7 +703,7 @@ mod tests {
 
         let message = Message::Response(Response {
             id,
-            body: Response::Nodes {
+            body: ResponseBody::Nodes {
                 total,
                 nodes: vec![enr, enr2],
             },
@@ -788,7 +722,7 @@ mod tests {
 
         match decoded {
             Message::Response(response) => match response.body {
-                Response::Nodes { total, nodes } => {
+                ResponseBody::Nodes { total, nodes } => {
                     assert_eq!(total, 1);
                     assert_eq!(nodes[0], expected_enr1);
                     assert_eq!(nodes[1], expected_enr2);
@@ -814,7 +748,7 @@ mod tests {
 
         let message = Message::Response(Response {
             id,
-            body: Response::Ticket { ticket, wait_time },
+            body: ResponseBody::Ticket { ticket, wait_time },
         });
         assert_eq!(message.encode(), expected_output);
     }
@@ -829,7 +763,7 @@ mod tests {
         let expected_output = hex::decode("08c20101").unwrap();
         let message = Message::Response(Response {
             id,
-            body: Response::RegisterTopic { registered },
+            body: ResponseBody::RegisterTopic { registered },
         });
         assert_eq!(message.encode(), expected_output);
     }
@@ -838,7 +772,7 @@ mod tests {
     fn encode_decode_ping_request() {
         let request = Message::Request(Request {
             id: 1,
-            body: Request::Ping { enr_seq: 15 },
+            body: RequestBody::Ping { enr_seq: 15 },
         });
 
         let encoded = request.clone().encode();
@@ -851,7 +785,7 @@ mod tests {
     fn encode_decode_ping_response() {
         let request = Message::Response(Response {
             id: 1,
-            body: Response::Ping {
+            body: ResponseBody::Ping {
                 enr_seq: 15,
                 ip: "127.0.0.1".parse().unwrap(),
                 port: 80,
@@ -868,7 +802,7 @@ mod tests {
     fn encode_decode_find_node_request() {
         let request = Message::Request(Request {
             id: 1,
-            body: Request::FindNode { distance: 1337 },
+            body: RequestBody::FindNode { distance: 1337 },
         });
 
         let encoded = request.clone().encode();
@@ -898,7 +832,7 @@ mod tests {
         let enr_list = vec![enr1, enr2, enr3];
         let request = Message::Response(Response {
             id: 1,
-            body: Response::Nodes {
+            body: ResponseBody::Nodes {
                 total: 1,
                 nodes: enr_list,
             },
@@ -914,7 +848,7 @@ mod tests {
     fn encode_decode_ticket_request() {
         let request = Message::Request(Request {
             id: 1,
-            body: Request::Ticket { topic: [17u8; 32] },
+            body: RequestBody::Ticket { topic: [17u8; 32] },
         });
 
         let encoded = request.clone().encode();
@@ -927,7 +861,7 @@ mod tests {
     fn encode_decode_ticket_response() {
         let request = Message::Response(Response {
             id: 0,
-            body: Response::Ticket {
+            body: ResponseBody::Ticket {
                 ticket: vec![1, 2, 3, 4, 5],
                 wait_time: 5,
             },
@@ -943,7 +877,7 @@ mod tests {
     fn encode_decode_register_topic_request() {
         let request = Message::Request(Request {
             id: 1,
-            body: Request::RegisterTopic {
+            body: RequestBody::RegisterTopic {
                 ticket: vec![1, 2, 3, 4, 5],
             },
         });
@@ -958,7 +892,7 @@ mod tests {
     fn encode_decode_register_topic_response() {
         let request = Message::Response(Response {
             id: 0,
-            body: Response::RegisterTopic { registered: true },
+            body: ResponseBody::RegisterTopic { registered: true },
         });
 
         let encoded = request.clone().encode();
@@ -971,7 +905,7 @@ mod tests {
     fn encode_decode_topic_query_request() {
         let request = Message::Request(Request {
             id: 1,
-            body: Request::TopicQuery { topic: [17u8; 32] },
+            body: RequestBody::TopicQuery { topic: [17u8; 32] },
         });
 
         let encoded = request.clone().encode();

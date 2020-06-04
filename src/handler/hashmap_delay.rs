@@ -65,7 +65,7 @@ where
 
     /// Inserts an entry that will expire at a given instant.
     pub fn insert_at(&mut self, key: K, value: V, entry_duration: Duration) {
-        if self.contains(&key) {
+        if self.contains_key(&key) {
             // update the timeout
             self.update_timeout(&key, value, entry_duration);
         } else {

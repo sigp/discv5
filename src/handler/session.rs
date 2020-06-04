@@ -23,9 +23,8 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(contact: NodeContact, keys: Keys) -> Self {
+    pub fn new(keys: Keys) -> Self {
         Session {
-            contact,
             keys,
             awaiting_keys: None,
             awaiting_enr: None,
@@ -62,12 +61,10 @@ impl Session {
         message: &[u8],
         aad: &[u8],
     ) -> Result<Vec<u8>, Discv5Error> {
-        let node_id = self.contact.node_id();
         // try with the new keys
-        if let Some(new_keys) = self.new_keys.take() {
-            let result =
-                crypto::decrypt_message(&self.new_keys.decryption_key, nonce, message, aad);
-            if result.ok() {
+        if let Some(new_keys) = self.awaiting_keys.take() {
+            let result = crypto::decrypt_message(&new_keys.decryption_key, nonce, message, aad);
+            if result.is_ok() {
                 self.keys = new_keys;
                 return result;
             }
@@ -77,10 +74,6 @@ impl Session {
     }
 
     /* Session Helper Functions */
-
-    pub(crate) fn update_enr(&mut self, enr: Enr) -> bool {
-        self.contact.update_enr(enr);
-    }
 
     /// Generates session keys from an authentication header. If the IP of the ENR does not match the
     /// source IP address, we consider this session untrusted. The output returns a boolean which
@@ -143,9 +136,7 @@ impl Session {
             decryption_key,
         };
 
-        let contact = session_enr.into();
-
-        (Session::new(keys), session_enr)
+        Ok((Session::new(keys), session_enr))
     }
 
     /// Encrypts a message and produces an AuthMessage.
@@ -200,6 +191,6 @@ impl Session {
 
         let session = Session::new(keys);
 
-        Ok(packet, session);
+        Ok((packet, session))
     }
 }

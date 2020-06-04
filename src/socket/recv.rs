@@ -26,7 +26,6 @@ pub struct RecvHandlerConfig<T: Executor> {
     pub executor: T,
     pub recv: tokio::net::udp::RecvHalf,
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
-    pub handler: mpsc::Sender<InboundPacket>,
 }
 
 /// The main task that handles inbound UDP packets.
@@ -47,15 +46,20 @@ pub(crate) struct RecvHandler {
 
 impl RecvHandler {
     /// Spawns the `RecvHandler` on a provided executor.
-    pub(crate) fn spawn<T: Executor>(config: RecvHandlerConfig<T>) -> oneshot::Sender<()> {
+    pub(crate) fn spawn<T: Executor>(
+        config: RecvHandlerConfig<T>,
+    ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
+
+        // create the channel to send decoded packets to the handler
+        let (handler, handler_recv) = mpsc::channel(30);
 
         let mut recv_handler = RecvHandler {
             recv: config.recv,
             filter: Filter::new(config.filter_config),
             recv_buffer: [0; MAX_PACKET_SIZE],
             whoareyou_magic: config.whoareyou_magic,
-            handler: config.handler,
+            handler,
             exit,
         };
 
@@ -64,7 +68,7 @@ impl RecvHandler {
             debug!("Recv handler starting");
             recv_handler.start().await;
         }));
-        exit_sender
+        (handler_recv, exit_sender)
     }
 
     /// The main future driving the recv handler. This will shutdown when the exit future is fired.

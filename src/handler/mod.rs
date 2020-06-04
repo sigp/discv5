@@ -42,6 +42,7 @@ use hashmap_delay::HashMapDelay;
 pub use session::Session;
 
 /// Events sent to the handler to be executed.
+#[derive(Debug, Clone, PartialEq)]
 pub enum HandlerRequest {
     /// Sends a `Request` to a `NodeContact`. A `NodeContact` is an abstract type
     /// that allows for either an ENR to be sent or a `Raw` type which represents an `SocketAddr`,
@@ -70,8 +71,8 @@ pub enum HandlerRequest {
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 }
 
-#[derive(Debug)]
 /// The outputs provided by the `Handler`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum HandlerResponse {
     /// A session has been established with a node.
     ///
@@ -95,7 +96,7 @@ pub enum HandlerResponse {
     RequestFailed(RequestId, RequestError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RequestError {
     Timeout,
     InvalidEnr(String),
@@ -104,6 +105,7 @@ pub enum RequestError {
 
 /// A reference for the application layer to send back when the handler requests any known
 /// ENR for the NodeContact.
+#[derive(Debug, Clone, PartialEq)]
 pub struct WhoAreYouRef(pub NodeAddress, AuthTag);
 
 pub struct Challenge {
@@ -117,8 +119,8 @@ pub struct HandlerConfig {
     request_timeout: Duration,
 }
 
-impl<T: Executor> From<Discv5Config<T>> for HandlerConfig {
-    fn from(config: Discv5Config<T>) -> Self {
+impl From<Discv5Config> for HandlerConfig {
+    fn from(config: Discv5Config) -> Self {
         HandlerConfig {
             request_retries: config.request_retries,
             request_timeout: config.request_timeout,
@@ -142,11 +144,11 @@ pub(crate) struct RequestCall {
 
 impl RequestCall {
     fn new(contact: NodeContact, packet: Packet, request: Request) -> Self {
-        Request {
+        RequestCall {
             contact,
             packet,
             request,
-            handshakes: 0,
+            handshake_sent: false,
             retries: 1,
         }
     }
@@ -159,6 +161,10 @@ impl RequestCall {
 pub struct Handler {
     /// Configuration for the discv5 service.
     config: HandlerConfig,
+
+    /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
+    /// during the operation of the server.
+    node_id: NodeId,
     /// The local ENR.
     enr: Arc<RwLock<Enr>>,
     /// The key to sign the ENR and set up encrypted communication with peers.
@@ -190,7 +196,7 @@ impl Handler {
         enr: Arc<RwLock<Enr>>,
         key: enr::CombinedKey,
         listen_socket: SocketAddr,
-        config: Discv5Config<T>,
+        config: Discv5Config,
     ) -> (
         oneshot::Sender<()>,
         mpsc::Sender<HandlerRequest>,
@@ -215,7 +221,7 @@ impl Handler {
         };
 
         let socket_config = socket::SocketConfig {
-            executor: config.executor,
+            executor: config.executor.clone(),
             socket_addr: listen_socket,
             filter_config: config.filter_config,
             whoareyou_magic: magic,
@@ -223,8 +229,11 @@ impl Handler {
 
         let socket = socket::Socket::new(&socket_config);
 
+        let node_id = enr.read().node_id();
+
         let handler = Handler {
             config: config.into(),
+            node_id,
             enr,
             key,
             active_requests: HashMapDelay::new(config.request_timeout),
@@ -241,7 +250,7 @@ impl Handler {
             exit,
         };
 
-        config.executor.spawn(Box::pin(async move {
+        executor.spawn(Box::pin(async move {
             debug!("Handler Starting");
             handler.start().await;
         }));
@@ -470,7 +479,7 @@ impl Handler {
 
     /// Calculates the src `NodeId` given a tag.
     fn src_id(&self, tag: &Tag) -> NodeId {
-        let hash = Sha256::digest(&self.enr.node_id().raw());
+        let hash = Sha256::digest(&self.node_id.raw());
         let mut src_id: [u8; 32] = Default::default();
         for i in 0..32 {
             src_id[i] = hash[i] ^ tag[i];
@@ -483,7 +492,7 @@ impl Handler {
         let hash = Sha256::digest(&dst_id.raw());
         let mut tag: Tag = Default::default();
         for i in 0..TAG_LENGTH {
-            tag[i] = hash[i] ^ self.enr.node_id().raw()[i];
+            tag[i] = hash[i] ^ self.node_id.raw()[i];
         }
         tag
     }
@@ -492,7 +501,7 @@ impl Handler {
     fn insert_active_request(&mut self, request_call: RequestCall) {
         let auth_tag = request_call
             .packet
-            .auth_tag
+            .auth_tag()
             .expect("Can only add non-challenge requests")
             .clone();
         let node_address = request_call
@@ -569,8 +578,6 @@ impl Handler {
         let src_id = request_call.contact.node_id();
         let tag = self.tag(&src_id);
 
-        let local_node_id = self.enr.read().node_id();
-
         // Generate a new session and authentication packet
         // TODO: Remove tags in the update
         let (auth_packet, mut session) = match Session::encrypt_with_header(
@@ -578,7 +585,7 @@ impl Handler {
             &request_call.contact,
             &self.key,
             updated_enr,
-            &local_node_id,
+            &self.node_id,
             &id_nonce,
             &(request_call.request.clone().encode()),
         ) {
@@ -683,10 +690,9 @@ impl Handler {
         };
 
         if let Some(challenge) = self.active_challenges.remove(&node_address) {
-            let node_id = self.enr.read().node_id();
             match Session::establish_from_header(
                 &self.key,
-                &node_id,
+                &self.node_id,
                 &src_id,
                 &challenge,
                 &auth_header,
@@ -736,7 +742,7 @@ impl Handler {
 
         if self.active_requests.get(&node_address).is_none() {
             match self.pending_requests.entry(node_address) {
-                std::collections::hash_map::Entry::Occupied(entry) => {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
                     // If it exists, there must be a request here
                     let request = entry.get_mut().remove(0);
                     if entry.get().is_empty() {
@@ -750,10 +756,10 @@ impl Handler {
     }
 
     fn new_session(&mut self, node_address: NodeAddress, session: Session) {
-        if let Some(current_session) = self.sessions.get_mut(node_address) {
+        if let Some(current_session) = self.sessions.get_mut(&node_address) {
             current_session.update(session);
         } else {
-            self.session.insert(node_address, session);
+            self.sessions.insert(node_address, session);
         }
     }
 

@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NodeContact {
     /// We know the ENR of the node we are contacting.
     Enr(Enr),
@@ -32,8 +32,15 @@ impl NodeContact {
 
     pub fn seq_no(&self) -> Option<u64> {
         match self {
-            NodeContact::Enr(enr) => Some(enr.seq_no()),
+            NodeContact::Enr(enr) => Some(enr.seq()),
             _ => None,
+        }
+    }
+
+    pub fn public_key(&self) -> CombinedPublicKey {
+        match self {
+            NodeContact::Enr(ref enr) => enr.public_key(),
+            NodeContact::Raw { public_key, .. } => public_key.clone(),
         }
     }
 
@@ -48,8 +55,8 @@ impl NodeContact {
         match self {
             NodeContact::Enr(ref enr) => enr
                 .udp_socket()
-                .map_err(|_| "ENR does not contain an IP and UDP port")?,
-            NodeContact::Raw { node_address, .. } => node_address.socket_addr.clone(),
+                .ok_or_else(|| "ENR does not contain an IP and UDP port"),
+            NodeContact::Raw { node_address, .. } => Ok(node_address.socket_addr.clone()),
         }
     }
 

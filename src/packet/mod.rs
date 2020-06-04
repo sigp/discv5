@@ -113,7 +113,7 @@ impl Packet {
 
         let packet = Packet::WhoAreYou {
             magic,
-            token: auth_tag,
+            auth_tag,
             id_nonce: id_nonce.clone(),
             enr_seq,
         };
@@ -166,7 +166,7 @@ impl Packet {
             }
             Packet::WhoAreYou {
                 magic,
-                token,
+                auth_tag,
                 id_nonce,
                 enr_seq,
             } => {
@@ -176,7 +176,7 @@ impl Packet {
                 let list = {
                     let mut s = RlpStream::new();
                     s.begin_list(3);
-                    s.append(&token.to_vec());
+                    s.append(&auth_tag.to_vec());
                     s.append(&id_nonce.to_vec());
                     s.append(enr_seq);
                     s.drain()
@@ -243,12 +243,12 @@ impl Packet {
         let mut id_nonce: [u8; ID_NONCE_LENGTH] = Default::default();
         id_nonce.clone_from_slice(&id_nonce_bytes);
 
-        let mut token: AuthTag = Default::default();
-        token.clone_from_slice(&token_bytes);
+        let mut auth_tag: AuthTag = Default::default();
+        auth_tag.clone_from_slice(&token_bytes);
 
         Ok(Packet::WhoAreYou {
             magic,
-            token,
+            auth_tag,
             id_nonce,
             enr_seq,
         })
@@ -400,7 +400,7 @@ mod tests {
     fn ref_test_encode_whoareyou_packet() {
         // reference input
         let magic = [1u8; MAGIC_LENGTH]; // all 1's.
-        let token = [2u8; AUTH_TAG_LENGTH]; // all 2's
+        let auth_tag = [2u8; AUTH_TAG_LENGTH]; // all 2's
         let id_nonce = [3u8; ID_NONCE_LENGTH]; // all 3's
         let enr_seq = 1;
 
@@ -409,7 +409,7 @@ mod tests {
 
         let packet = Packet::WhoAreYou {
             magic,
-            token,
+            auth_tag,
             id_nonce,
             enr_seq,
         };
@@ -510,12 +510,12 @@ mod tests {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let magic = hash256_to_fixed_array("magic");
         let id_nonce: [u8; ID_NONCE_LENGTH] = rand::random();
-        let token: [u8; AUTH_TAG_LENGTH] = rand::random();
+        let auth_tag: [u8; AUTH_TAG_LENGTH] = rand::random();
         let enr_seq: u64 = rand::random();
 
         let packet = Packet::WhoAreYou {
             magic,
-            token,
+            auth_tag,
             id_nonce,
             enr_seq,
         };

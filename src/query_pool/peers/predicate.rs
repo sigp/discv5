@@ -55,7 +55,7 @@ pub(crate) struct PredicateQueryConfig {
 }
 
 impl PredicateQueryConfig {
-    pub(crate) fn new_from_config<T: crate::Executor>(config: &Discv5Config<T>) -> Self {
+    pub(crate) fn new_from_config(config: &Discv5Config) -> Self {
         Self {
             parallelism: config.query_parallelism,
             num_results: MAX_NODES_PER_BUCKET,

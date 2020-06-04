@@ -33,8 +33,8 @@ impl Filter {
     pub fn new(config: FilterConfig) -> Filter {
         Filter {
             config,
-            raw_packets_received: ReceivedPacketCache::new(),
-            packets_received: ReceivedPacketCache::new(),
+            raw_packets_received: ReceivedPacketCache::new(config.max_requests_per_second),
+            packets_received: ReceivedPacketCache::new(config.max_requests_per_second),
             awaiting_responses: HashMap::new(),
         }
     }

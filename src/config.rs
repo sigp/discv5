@@ -1,12 +1,10 @@
 use crate::{Enr, Executor, FilterConfig};
-use std::future::Future;
-use std::pin::Pin;
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
 /// Configuration parameters that define the performance of the gossipsub network.
 #[derive(Clone)]
-pub struct Discv5Config<T: Executor> {
+pub struct Discv5Config {
     /// The request timeout for each UDP request. Default: 4 seconds.
     pub request_timeout: Duration,
 
@@ -51,24 +49,11 @@ pub struct Discv5Config<T: Executor> {
 
     pub filter_config: FilterConfig,
 
-    pub executor: T,
+    pub executor: Option<Box<dyn Executor>>,
 }
 
-impl<T: Executor> Default for Discv5Config<T> {
+impl<T: Executor> Default for Discv5Config {
     fn default() -> Self {
-        let default_executor = tokio::runtime::Builder::new()
-            .threaded_scheduler()
-            .enable_all()
-            .build();
-        struct TokioExecutor(tokio::runtime::Runtime);
-        impl Executor for TokioExecutor {
-            fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-                self.0.spawn(future)
-            }
-        }
-
-        let executor = TokioExecutor(default_executor);
-
         Self {
             request_timeout: Duration::from_secs(4),
             query_peer_timeout: Duration::from_secs(2),
@@ -83,17 +68,17 @@ impl<T: Executor> Default for Discv5Config<T> {
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
             filter_config: FilterConfig::default(),
-            executor,
+            executor: None,
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Discv5ConfigBuilder<T: Executor> {
-    config: Discv5Config<T>,
+pub struct Discv5ConfigBuilder {
+    config: Discv5Config,
 }
 
-impl<T: Executor> Default for Discv5ConfigBuilder<T> {
+impl Default for Discv5ConfigBuilder {
     fn default() -> Self {
         Self {
             config: Discv5Config::default(),
@@ -101,7 +86,7 @@ impl<T: Executor> Default for Discv5ConfigBuilder<T> {
     }
 }
 
-impl<T: Executor> Discv5ConfigBuilder<T> {
+impl Discv5ConfigBuilder {
     // set default values
     pub fn new() -> Self {
         Discv5ConfigBuilder::default()
@@ -175,17 +160,17 @@ impl<T: Executor> Discv5ConfigBuilder<T> {
         self
     }
 
-    pub fn executor(&mut self, executor: T) -> &mut Self {
-        self.executor = executor;
+    pub fn executor(&mut self, executor: Box<dyn Executor>) -> &mut Self {
+        self.executor = Some(executor);
         self
     }
 
-    pub fn build(&self) -> Discv5Config<T> {
+    pub fn build(&self) -> Discv5Config {
         self.config.clone()
     }
 }
 
-impl<T: Executor> std::fmt::Debug for Discv5Config<T> {
+impl std::fmt::Debug for Discv5Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut builder = f.debug_struct("Discv5Config");
         let _ = builder.field("request_timeout", &self.request_timeout);
