@@ -1,6 +1,4 @@
-use crate::discv5::Enr;
-use crate::Executor;
-use crate::FilterConfig;
+use crate::{Enr, Executor, FilterConfig};
 use std::future::Future;
 use std::pin::Pin;
 ///! A set of configuration parameters to tune the discovery protocol.

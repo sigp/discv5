@@ -25,8 +25,9 @@ use crate::query_pool::{
 use crate::rpc;
 use crate::socket::MAX_PACKET_SIZE;
 use crate::Discv5Config;
+use crate::Enr;
 use crate::Executor;
-use enr::{CombinedKey, Enr as RawEnr, EnrError, EnrKey, NodeId};
+use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
 use log::{debug, error, info, trace, warn};
@@ -45,15 +46,17 @@ use tokio::time::Interval;
 
 mod ip_vote;
 mod query_info;
-mod test;
+// mod test;
 
 type RpcId = u64;
 // The general key-type of ENR's are used to support multiple signing types.
-pub type Enr = RawEnr<CombinedKey>;
 
+// TODO: ENR's for connected peer should be maintained.
+// The event queues should be removed and replaced by a server event loop with a wrapper for public
+// functions to use structured concurrency.
 pub struct Discv5<T: Executor> {
     /// List of events to be sent to the handler when ready.
-    handler_events: VecDeque<RequestBody>,
+    handler_events: VecDeque<(NodeId, RequestBody)>,
 
     discv5_events: VecDeque<Discv5Event>,
 
@@ -562,11 +565,13 @@ impl<T: Executor + Unpin> Discv5<T> {
     // Send RPC Requests //
 
     /// Sends a PING request to a node.
+    // TODO: Clean up connected peers. Keep track of ENR
     fn send_ping(&mut self, node_id: &NodeId) {
         let req = RequestBody::Ping {
             enr_seq: self.local_enr().seq(),
         };
-        self.handler_events.push_back(req);
+        // TODO: Type a HandlerEvent
+        self.handler_events.push_back((node_id, req));
     }
 
     fn ping_connected_peers(&mut self) {
@@ -1032,8 +1037,8 @@ impl<T: Executor + Unpin> Discv5<T> {
                         }
                     }
                 }
-                out_event = self.next_event() => {
-                    return out_event;
+                out_event = self.internal_event() => {
+                    return Ok(out_event);
                 }
                 query_event = self.query_event() => {
                     match query_event {
@@ -1077,13 +1082,16 @@ impl<T: Executor + Unpin> Discv5<T> {
         }
     }
 
-    async fn next_event(&mut self) -> Discv5Event {
-        future::poll_fn(move |cx| Discv5::poll_next_event(Pin::new(self), cx)).await
+    async fn internal_event(&mut self) -> Discv5Event {
+        if let Some((node_id, rpc_body)) = self.handler_events.pop_front() {
+            self.send_rpc_request(&node_id, rpc_body, None).await;
+        }
+        future::poll_fn(move |cx| Discv5::poll_internal_event(Pin::new(self), cx)).await
     }
 
-    fn poll_next_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Discv5Event> {
+    fn poll_internal_event(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Discv5Event> {
         // Drain queued events
-        if let Some(event) = self.events.pop_front() {
+        if let Some(event) = self.discv5_events.pop_front() {
             return Poll::Ready(event);
         }
 
