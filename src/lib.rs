@@ -117,6 +117,7 @@ mod node_info;
 pub mod packet;
 mod query_pool;
 mod rpc;
+mod service;
 mod socket;
 
 pub type Enr = enr::Enr<enr::CombinedKey>;

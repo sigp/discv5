@@ -1,9 +1,21 @@
 //! The Discovery v5 protocol. See `lib.rs` for further details.
 //!
+//! Note: Discovered ENR's are not automatically added to the routing table. Only established
+//! sessions get added, ensuring only valid ENRs are added. Manual additions can be made using the
+//! `add_enr()` function.
+//!
+//! Response to queries return `PeerId`. Only the trusted (a session has been established with)
+//! `PeerId`'s are returned, as ENR's for these `PeerId`'s are stored in the routing table and as
+//! such should have an address to connect to. Untrusted `PeerId`'s can be obtained from the
+//! `Service::Discovered` event, which is fired as peers get discovered.
+//!
+//! Note that although the ENR crate does support Ed25519 keys, these are currently not
+//! supported as the ECDH procedure isn't specified in the specification. Therefore, only
+//! secp256k1 keys are supported currently.
 
 use self::ip_vote::IpVote;
 use self::query_info::{QueryInfo, QueryType};
-use crate::error::Discv5Error;
+use crate::error::ServiceError;
 use crate::handler::{Handler, HandlerRequest, HandlerResponse};
 use crate::kbucket::{self, EntryRefView, KBucketsTable, NodeStatus};
 use crate::node_info::{NodeAddress, NodeContact};
@@ -12,7 +24,7 @@ use crate::query_pool::{
 };
 use crate::rpc;
 use crate::socket::MAX_PACKET_SIZE;
-use crate::Discv5Config;
+use crate::ServiceConfig;
 use crate::Enr;
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use fnv::FnvHashMap;
@@ -28,45 +40,218 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
 
-pub struct Discv5 {
-    service: Service,
+mod ip_vote;
+mod query_info;
+// mod test;
+
+// TODO: ENR's for connected peer should be maintained.
+// The event queues should be removed and replaced by a server event loop with a wrapper for public
+// functions to use structured concurrency.
+pub struct Service {
+    /// List of events to be sent to the handler when ready.
+    handler_events: VecDeque<(NodeId, RequestBody)>,
+
+    discv5_events: VecDeque<ServiceEvent>,
+
+    /// Configuration parameters for the Service service
+    config: ServiceConfig,
+
+    local_enr: Arc<RwLock<Enr>>,
+
+    enr_key: Arc<RwLock<CombinedKey>>,
+
+    /// Storage of the ENR record for each node.
+    kbuckets: KBucketsTable<NodeId, Enr>,
+
+    /// All the iterative queries we are currently performing.
+    queries: QueryPool<QueryInfo, NodeId, Enr>,
+
+    /// RPC requests that have been sent and are awaiting a response. Some requests are linked to a
+    /// query.
+    active_rpc_requests: FnvHashMap<RequestId, (Option<QueryId>, RequestBody, NodeAddress)>,
+
+    /// Keeps track of the number of responses received from a NODES response.
+    active_nodes_responses: HashMap<NodeId, NodesResponse>,
+
+    /// A map of votes nodes have made about our external IP address. We accept the majority.
+    ip_votes: Option<IpVote>,
+
+    /// List of peers we have established sessions with and an interval for when to send a PING.
+    connected_peers: HashMap<NodeId, Instant>,
+
+    handler_send: Option<mpsc::Sender<HandlerRequest>>,
+
+    handler_recv: Option<mpsc::Receiver<HandlerResponse>>,
+
+    handler_exit: Option<oneshot::Sender<()>>,
+
+    ping_heartbeat: Interval,
+
+    _runtime: Option<tokio::runtime::Runtime>,
 }
 
-impl Drop for Discv5 {
-    fn drop(&mut self) {
-        self.shutdown()
+/// For multiple responses to a FindNodes request, this struct keeps track of the request count
+/// and the nodes that have been received.
+struct NodesResponse {
+    /// The response count.
+    count: usize,
+    /// The filtered nodes that have been received.
+    received_nodes: Vec<Enr>,
+}
+
+impl Default for NodesResponse {
+    fn default() -> Self {
+        NodesResponse {
+            count: 1,
+            received_nodes: Vec::new(),
+        }
     }
 }
 
-impl Discv5 {
-    /// Builds the `Discv5` main struct.
+impl Service {
+    /// Builds the `Service` main struct.
+    ///
+    /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
+    /// as IP addresses and ports which we wish to broadcast to other nodes via this discovery
+    /// mechanism. The `listen_socket` determines which UDP socket address the behaviour will listen on.
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
-        config: Discv5Config,
-    ) -> Result<Self, Discv5Error> {
-        Discv5 {
-            service: Service::new(local_enr, enr_key, config),
+        mut config: ServiceConfig,
+    ) -> Result<Self, ServiceError> {
+        let node_id = local_enr.node_id();
+
+        // ensure the keypair matches the one that signed the enr.
+        if local_enr.public_key() != enr_key.public() {
+            return Err(ServiceError::Custom(
+                "Service: Provided keypair does not match the provided ENR",
+            ));
         }
+
+        // process behaviour-level configuration parameters
+        let ip_votes = if config.enr_update {
+            Some(IpVote::new(config.enr_peer_update_min))
+        } else {
+            None
+        };
+
+        // if an executor is not provided create one and store locally
+        let runtime = {
+            if config.executor.is_none() {
+                let (executor, runtime) = crate::executor::TokioExecutor::new();
+                config.executor = Some(Box::new(executor));
+                Some(runtime)
+            } else {
+                None
+            }
+        };
+
+        Ok(Service {
+            handler_events: VecDeque::new(),
+            discv5_events: VecDeque::new(),
+            ping_heartbeat: tokio::time::interval(config.ping_interval.clone()),
+            local_enr: Arc::new(RwLock::new(local_enr)),
+            enr_key: Arc::new(RwLock::new(enr_key)),
+            kbuckets: KBucketsTable::new(node_id.into(), Duration::from_secs(60)),
+            queries: QueryPool::new(config.query_timeout),
+            active_rpc_requests: Default::default(),
+            active_nodes_responses: HashMap::new(),
+            ip_votes,
+            connected_peers: Default::default(),
+            handler_send: None,
+            handler_recv: None,
+            handler_exit: None,
+            _runtime: runtime,
+            config,
+        })
     }
 
     pub fn start(&mut self, listen_socket: SocketAddr) {
-        self.service.start();
+        // build the session service
+        if self.handler_exit.is_none() {
+            info!("Service server started");
+            let (exit, handler_send, handler_recv) = Handler::spawn(
+                self.local_enr.clone(),
+                self.enr_key.clone(),
+                listen_socket,
+                &self.config,
+            );
+
+            self.handler_exit = Some(exit);
+            self.handler_send = Some(handler_send);
+            self.handler_recv = Some(handler_recv);
+        } else {
+            warn!("Service server already started");
+        }
     }
 
     pub fn shutdown(&mut self) {
-        self.service.shutdown();
+        if let Some(exit) = self.handler_exit.take() {
+            let _ = exit.send(());
+            self.handler_send = None;
+            self.handler_recv = None;
+            info!("Service shutdown");
+        } else {
+            warn!("Handler not started, cannot shutdown");
+        }
     }
 
-    /// Adds a known ENR of a peer participating in Discv5 to the
+    /// Adds a known ENR of a peer participating in Service to the
     /// routing table.
     ///
     /// This allows pre-populating the Kademlia routing table with known
     /// addresses, so that they can be used immediately in following DHT
     /// operations involving one of these peers, without having to dial
     /// them upfront.
-    pub async fn add_enr(&mut self, enr: Enr) -> Result<(), &'static str> {
-        self.service.add_enr(enr).await
+    pub fn add_enr(&mut self, enr: Enr) -> Result<(), &'static str> {
+        // only add ENR's that have a valid udp socket.
+        if enr.udp_socket().is_none() {
+            warn!("ENR attempted to be added without a UDP socket has been ignored");
+            return Err("ENR has no UDP socket to connect to");
+        }
+
+        if !(self.config.table_filter)(&enr) {
+            warn!("ENR attempted to be added which is banned by the configuration table filter.");
+            return Err("ENR banned by table filter");
+        }
+
+        let key = kbucket::Key::from(enr.node_id());
+
+        // should the ENR be inserted or updated to a value that would exceed the IP limit ban
+        let ip_limit_ban = self.config.ip_limit
+            && !self
+                .kbuckets
+                .check(&key, &enr, { |v, o, l| ip_limiter(v, &o, l) });
+
+        match self.kbuckets.entry(&key) {
+            kbucket::Entry::Present(mut entry, _) => {
+                // still update an ENR, regardless of the IP limit ban
+                *entry.value() = enr;
+            }
+            kbucket::Entry::Pending(mut entry, _) => {
+                *entry.value() = enr;
+            }
+            kbucket::Entry::Absent(entry) => {
+                if !ip_limit_ban {
+                    match entry.insert(enr.clone(), NodeStatus::Disconnected) {
+                        kbucket::InsertResult::Inserted => {
+                            let event = ServiceEvent::EnrAdded {
+                                enr,
+                                replaced: None,
+                            };
+                            self.discv5_events.push_back(event);
+                        }
+                        kbucket::InsertResult::Full => (),
+                        kbucket::InsertResult::Pending { disconnected } => {
+                            // Try and establish a connection
+                            self.send_ping(&disconnected.into_preimage());
+                        }
+                    }
+                }
+            }
+            kbucket::Entry::SelfEntry => {}
+        };
+        Ok(())
     }
 
     /// Removes a `node_id` from the routing table.
@@ -74,16 +259,13 @@ impl Discv5 {
     /// This allows applications, for whatever reason, to remove nodes from the local routing
     /// table. Returns `true` if the node was in the table and `false` otherwise.
     pub fn remove_node(&mut self, node_id: &NodeId) -> bool {
-        self.service.remove_node(node_id);
+        let key = &kbucket::Key::from(*node_id);
+        self.kbuckets.remove(key)
     }
 
     /// Returns the number of connected peers the service knows about.
     pub fn connected_peers(&self) -> usize {
-        self.service.connected_peers(&self)
-    }
-
-    pub fn active_sessions(&self) -> usize {
-        self.service.active_sessions()
+        self.connected_peers.len()
     }
 
     /// Returns the local ENR of the node.
@@ -365,7 +547,7 @@ impl Discv5 {
                             let majority_socket = majority_socket.expect("is some");
                             info!("Local UDP socket updated to: {}", majority_socket);
                             self.discv5_events
-                                .push_back(Discv5Event::SocketUpdated(majority_socket));
+                                .push_back(ServiceEvent::SocketUpdated(majority_socket));
                             if self.update_local_enr_socket(majority_socket, false) {
                                 // alert known peers to our updated enr
                                 self.ping_connected_peers();
@@ -640,7 +822,7 @@ impl Discv5 {
         for enr_ref in other_enr_iter.clone() {
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             self.discv5_events
-                .push_back(Discv5Event::Discovered(enr_ref.clone()));
+                .push_back(ServiceEvent::Discovered(enr_ref.clone()));
 
             // ignore peers that don't pass the able filter
             if (self.config.table_filter)(enr_ref) {
@@ -744,7 +926,7 @@ impl Discv5 {
                     if let Some(enr) = enr {
                         match entry.insert(enr, new_status) {
                             kbucket::InsertResult::Inserted => {
-                                let event = Discv5Event::NodeInserted {
+                                let event = ServiceEvent::NodeInserted {
                                     node_id,
                                     replaced: None,
                                 };
@@ -837,10 +1019,10 @@ impl Discv5 {
         }
     }
 
-    pub async fn next_event(&mut self) -> Result<Discv5Event, &'static str> {
+    pub async fn next_event(&mut self) -> Result<ServiceEvent, &'static str> {
         loop {
             if self.handler_recv.is_none() {
-                return Err("Discv5 is shutdown");
+                return Err("Service is shutdown");
             }
 
             tokio::select! {
@@ -871,13 +1053,13 @@ impl Discv5 {
                         }
                     }
                 }
-                out_event = Discv5::discv5_event_poll(&mut self.discv5_events, &mut self.kbuckets) => {
+                out_event = Service::discv5_event_poll(&mut self.discv5_events, &mut self.kbuckets) => {
                     return Ok(out_event);
                 }
-                (node_id, request) = Discv5::handler_event_poll(&mut self.handler_events) => {
+                (node_id, request) = Service::handler_event_poll(&mut self.handler_events) => {
                     self.send_rpc_request(&node_id, request, None).await
                 }
-                query_event = Discv5::query_event_poll(&mut self.queries) => {
+                query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
                         QueryEvent::Waiting(query_id, target, return_peer) => {
                             self.send_rpc_query(query_id, target, &return_peer).await;
@@ -888,7 +1070,7 @@ impl Discv5 {
 
                     match result.target.query_type {
                         QueryType::FindNode(node_id) => {
-                            return Ok(Discv5Event::FindNodeResult {
+                            return Ok(ServiceEvent::FindNodeResult {
                                 key: node_id,
                                 closer_peers: result
                                     .closest_peers
@@ -933,9 +1115,9 @@ impl Discv5 {
     }
 
     async fn discv5_event_poll(
-        events: &mut VecDeque<Discv5Event>,
+        events: &mut VecDeque<ServiceEvent>,
         kbuckets: &mut KBucketsTable<NodeId, Enr>,
-    ) -> Discv5Event {
+    ) -> ServiceEvent {
         future::poll_fn(move |_cx| {
             // Drain queued events
             if let Some(event) = events.pop_front() {
@@ -944,7 +1126,7 @@ impl Discv5 {
 
             // Drain applied pending entries from the routing table.
             if let Some(entry) = kbuckets.take_applied_pending() {
-                let event = Discv5Event::NodeInserted {
+                let event = ServiceEvent::NodeInserted {
                     node_id: entry.inserted.into_preimage(),
                     replaced: entry.evicted.map(|n| n.key.into_preimage()),
                 };
@@ -995,11 +1177,11 @@ fn ip_limiter(enr: &Enr, others: &[&Enr], limit: usize) -> bool {
         }
     };
     allowed
-}
+}l
 
-/// Event that can be produced by the `Discv5` service.
+/// Event that can be produced by the `Service` service.
 #[derive(Debug)]
-pub enum Discv5Event {
+pub enum ServiceEvent {
     /// A node has been discovered from a FINDNODES request.
     ///
     /// The ENR of the node is returned. Various properties can be derived from the ENR.
