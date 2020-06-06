@@ -248,7 +248,7 @@ where
             return;
         }
 
-        let key: Key<TNodeId> = peer.clone().into();
+        let key: Key<TNodeId> = peer.into();
         let distance = key.distance(&self.target_key);
 
         match self.closest_peers.entry(distance) {

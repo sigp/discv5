@@ -70,7 +70,7 @@ pub enum QueryState<TNodeId> {
 /// The returned peer given as output when the query is in a `[QueryState::Waiting]` state.
 pub struct ReturnPeer<TNodeId> {
     /// The key used to identify the peer.
-    pub node_id: TNodeId,
+    pub key: TNodeId,
 
     /// The current request iteration of this peer.
     pub iteration: usize,

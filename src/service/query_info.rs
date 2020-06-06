@@ -18,6 +18,9 @@ pub struct QueryInfo {
 
     /// Temporary ENRs used when trying to reach nodes.
     pub untrusted_enrs: SmallVec<[Enr<CombinedKey>; 16]>,
+
+    /// A callback channel for the service that requested the query.
+    pub callback: oneshot::Sender<Vec<Enr>>,
 }
 
 /// Additional information about the query.
