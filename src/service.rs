@@ -25,7 +25,6 @@ use crate::query_pool::{
 use crate::rpc;
 use crate::socket::MAX_PACKET_SIZE;
 use crate::Enr;
-use crate::ServiceConfig;
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
@@ -39,10 +38,33 @@ use std::task::Poll;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
+use crate::Discv5Event;
 
 mod ip_vote;
 mod query_info;
 // mod test;
+
+
+/// The types of requests to send to the Discv5 service.
+pub enum ServiceRequest {
+    StartQuery(QueryType, oneshot::Sender<Vec<Enr>>),
+    FindEnr(NodeContact, oneshot::Sender<Option<Enr>>),
+    RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
+}
+
+pub enum QueryType {
+    FindNode {
+        target_node: NodeId,
+    },
+    Predicate {
+        target_node: NodeId,
+        target_peer_no: usize,
+        predicate: Box<dyn Fn(&Enr) -> bool>,
+    },
+}
+
+
+
 
 // TODO: ENR's for connected peer should be maintained.
 pub struct Service {

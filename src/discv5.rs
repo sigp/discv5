@@ -1,16 +1,15 @@
 //! The Discovery v5 protocol. See `lib.rs` for further details.
 //!
 
-use self::ip_vote::IpVote;
-use self::query_info::{QueryInfo, QueryType};
 use crate::error::Discv5Error;
 use crate::handler::{Handler, HandlerRequest, HandlerResponse};
-use crate::kbucket::{self, EntryRefView, KBucketsTable, NodeStatus};
+use crate::kbucket::{self, ip_limiter, EntryRefView, KBucketsTable, NodeStatus};
 use crate::node_info::{NodeAddress, NodeContact};
 use crate::query_pool::{
     FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, ReturnPeer,
 };
 use crate::rpc;
+use crate::service::{QueryType, Service, ServiceRequest};
 use crate::socket::MAX_PACKET_SIZE;
 use crate::Discv5Config;
 use crate::Enr;
@@ -28,35 +27,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
 
-/// The types of requests to send to the Discv5 service.
-pub enum ServiceRequest {
-    StartQuery(QueryType, oneshot::Sender<Vec<Enr>>),
-    FindEnr(NodeContact, oneshot::Sender<Option<Enr>>),
-    RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>)
-}
-
-pub enum QueryType<F> {
-    where
-        F: Fn(&Enr) -> bool + Send + Clone + 'static,
-
-    FindNode {
-        target_node: NodeId
-    }
-    Predicate {
-        target_node: NodeId,
-        target_peer_no: usize,
-        predicate: F
-    }
-}
-
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
 pub struct Discv5 {
     config: Discv5Config,
     /// The channel to make requests from the main service.
     service_channel: Option<mpsc::Sender<ServiceRequest>>,
-    service_exit: Option<oneshot::Sender<()>,
-    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>,
+    service_exit: Option<oneshot::Sender<()>>,
+    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
     /// Stores a default runtime if none is given in the configuration.
@@ -68,13 +46,10 @@ impl Discv5 {
         local_enr: Enr,
         enr_key: CombinedKey,
         config: Discv5Config,
-    ) -> Result<Self, Discv5Error> {
-
+    ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
-            return Err(ServiceError::Custom(
-                "Service: Provided keypair does not match the provided ENR",
-            ));
+            return Err("Provided keypair does not match the provided ENR");
         }
 
         // if an executor is not provided create one and store locally
@@ -90,7 +65,10 @@ impl Discv5 {
 
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));
-        let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(node_id.into(), Duration::from_secs(60))));
+        let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
+            local_enr.node_id().into(),
+            Duration::from_secs(60),
+        )));
 
         Discv5 {
             config,
@@ -99,13 +77,12 @@ impl Discv5 {
             kbuckets,
             local_enr,
             enr_key,
-            runtime
+            runtime,
         }
     }
 
-    /// Starts the required tasks and begins listening on a given UDP SocketAddr. 
+    /// Starts the required tasks and begins listening on a given UDP SocketAddr.
     pub fn start(&mut self, listen_socket: SocketAddr) {
-
         if self.service_channel.is_some() {
             warn!("Service is already started");
             return;
@@ -125,13 +102,12 @@ impl Discv5 {
 
     /// Terminates the service.
     pub fn shutdown(&mut self) {
-        if let Some(exit) = self.service_exit.take() { 
-           if let Err(e) =  exit.send(()) {
-               error!("Could not send exit request to Discv5 service");
-           }
-           self.service_channel = None;
-        }
-        else {
+        if let Some(exit) = self.service_exit.take() {
+            if let Err(e) = exit.send(()) {
+                error!("Could not send exit request to Discv5 service");
+            }
+            self.service_channel = None;
+        } else {
             warn!("Service is already shutdown");
         }
     }
@@ -174,18 +150,11 @@ impl Discv5 {
             kbucket::Entry::Absent(entry) => {
                 if !ip_limit_ban {
                     match entry.insert(enr.clone(), NodeStatus::Disconnected) {
-                        kbucket::InsertResult::Inserted => {
-                            let event = ServiceEvent::EnrAdded {
-                                enr,
-                                replaced: None,
-                            };
-                            self.discv5_events.push_back(event);
+                        kbucket::InsertResult::Inserted => {}
+                        kbucket::InsertResult::Full => {
+                            return Err("Table full");
                         }
-                        kbucket::InsertResult::Full => (),
-                        kbucket::InsertResult::Pending { disconnected } => {
-                            // Try and establish a connection
-                            self.send_ping(&disconnected.into_preimage()).await;
-                        }
+                        kbucket::InsertResult::Pending { disconnected } => {}
                     }
                 }
             }
@@ -269,7 +238,7 @@ impl Discv5 {
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
     /// Only `ed25519` and `secp256k1` key types are currently supported.
-    pub async fn request_enr(&mut self, multiaddr: Into<MultiAddr>) -> Result<Enr, String> {
+    pub async fn request_enr(&mut self, multiaddr: Into<MultiAddr>) -> Result<Enr, RequestError> {
         // Sanitize the multiaddr
 
         // The multiaddr must support the udp protocol and be of an appropriate key type.
@@ -278,10 +247,14 @@ impl Discv5 {
         let node_contact = NodeContact::try_from(multiaddr.into());
 
         let (callback_send, callback_recv) = oneshot::channel();
-        self.service.request_enr(node_contact).await;
+
+        let event = ServiceRequest::FindEnr(node_contact, callback_send);
+        if let Err(_) = self.send_event(event).await {
+            return Err(RequestError::SerivceNotStarted);
+        }
         callback_recv
             .await
-            .map_err(|e| format!("Channel interrupt: {}", e))?
+            .map_err(|e| RequestError::ChannelFailed(e))?
     }
 
     /// Runs an iterative `FIND_NODE` request.
@@ -325,8 +298,17 @@ impl Discv5 {
     }
 
     /// Creates an event stream channel which can be polled to receive Discv5 events.
-    pub fn event_stream(&mut self) -> mpsc::Receiver<Discv5Event> {
+    pub async fn event_stream(&mut self) -> mpsc::Receiver<Discv5Event> {
         self.service.get_event_stream()
+    }
+
+    async fn send_event(&mut self, event: ServiceRequest) -> Result<(), String> {
+        if let Some(channel) = self.service_channel.as_mut() {
+            channel.send(event).await.map_err(|e| e.to_string())?;
+            Ok(())
+        } else {
+            return Err(String::from("Service has not started"));
+        }
     }
 }
 
