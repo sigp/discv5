@@ -3,6 +3,9 @@ use crate::Enr;
 use enr::{CombinedPublicKey, NodeId};
 use std::net::SocketAddr;
 
+use libp2p_core::{identity::PublicKey, multiaddr::Protocol, Multiaddr};
+use multihash::Multihash;
+
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
 #[derive(Debug, Clone, PartialEq)]
@@ -13,11 +16,11 @@ pub enum NodeContact {
     ///
     /// The handshake will request the ENR at the first opportunity.
     /// The public key can be derived from multiaddr's whose keys can be inlined. The `TryFrom`
-    /// implementation for `String` and `MultiAddr`.
+    /// implementation for `String` and `MultiAddr`. This is gated behind the `libp2p` feature.
     Raw {
         /// An ENR compatible public key, required for handshaking with peers.
         public_key: CombinedPublicKey,
-        /// The socket address and ModeId of the peer to connect to.
+        /// The socket address and `NodeId` of the peer to connect to.
         node_address: NodeAddress,
     },
 }
@@ -73,6 +76,66 @@ impl NodeContact {
 impl From<Enr> for NodeContact {
     fn from(enr: Enr) -> Self {
         NodeContact::Enr(enr)
+    }
+}
+
+impl std::convert::TryFrom<Multiaddr> for NodeContact {
+    type Error = &'static str;
+
+    fn try_from(multiaddr: Multiaddr) -> Result<Self, Self::Error> {
+        // The multiaddr must contain either the ip4 or ip6 protocols, the UDP protocol and the P@P
+        // protocol with either secp256k1 or ed25519 keys.
+
+        // perform a single pass and try to fill all required protocols from the multiaddr
+        let mut ip_addr = None;
+        let mut udp_port = None;
+        let mut p2p = None;
+
+        for protocol in multiaddr.into_iter() {
+            match protocol {
+                Protocol::Udp(port) => udp_port = Some(port),
+                Protocol::Ip4(addr) => ip_addr = Some(addr.into()),
+                Protocol::Ip6(addr) => ip_addr = Some(addr.into()),
+                Protocol::P2p(multihash) => p2p = Some(multihash),
+                _ => {}
+            }
+        }
+
+        let udp_port = udp_port.ok_or_else(|| "A UDP port must be specified in the multiaddr")?;
+        let ip_addr = ip_addr.ok_or_else(|| "An IP address must be specified in the multiaddr")?;
+        let multihash = p2p.ok_or_else(|| "The p2p protocol must be specified in the multiaddr")?;
+
+        // verify the correct key type
+        if multihash.code() != Multihash::Code::Identity {
+            return Err("The key type is unsupported");
+        }
+
+        let public_key = match PublicKey::from_protobuf_encoding(multihash.as_bytes())
+            .map_err(|_| "Invalid public key")?
+        {
+            PublicKey::Secp256k1(pk) => pk.into(),
+            PublicKey::Ed25519(pk) => pk.into(),
+            _ => return Err("The key type is not supported"),
+        };
+
+        return NodeContact::Raw {
+            publick_key: public_key.clone(),
+            node_address: NodeAddress {
+                socket_addr: SocketAddr::from(ip_addr.unwrap(), udp_port.unwrap()),
+                node_id: public_key.into(),
+            },
+        };
+    }
+}
+
+impl std::fmt::Display for NodeContact {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NodeContact::Enr(enr) => {
+                write!(f, "Node: {}, addr: {:?}", enr.node_id(), enr.udp_socket())
+            }
+            NodeContact::Raw { node_address } => write!(f, "{}", node_address),
+        }
     }
 }
 

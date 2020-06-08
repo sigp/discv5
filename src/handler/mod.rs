@@ -15,7 +15,7 @@
 //! to untrusted Sessions, only responses.
 
 use crate::config::Discv5Config;
-use crate::error::Discv5Error;
+use crate::error::{Discv5Error, RequestError};
 use crate::packet::{AuthHeader, AuthTag, Magic, Nonce, Packet, Tag, TAG_LENGTH};
 use crate::rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody};
 use crate::socket;
@@ -94,13 +94,6 @@ pub enum HandlerResponse {
     ///
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RequestError {
-    Timeout,
-    InvalidEnr(String),
-    EncryptionFailed(String),
 }
 
 /// A reference for the application layer to send back when the handler requests any known

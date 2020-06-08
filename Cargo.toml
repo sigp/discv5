@@ -35,6 +35,8 @@ net2 = "0.2.34"
 smallvec = "1.4.0"
 parking_lot = "0.10.2"
 lru_time_cache = "0.10.0"
+libp2p-core = "0.19.1"
+multihash = "0.11.2"
 
 [dev-dependencies]
 quickcheck = "0.9.2"

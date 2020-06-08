@@ -15,7 +15,7 @@
 
 use self::ip_vote::IpVote;
 use self::query_info::{QueryInfo, QueryType};
-use crate::error::ServiceError;
+use crate::error::Discv5Error;
 use crate::handler::{Handler, HandlerRequest, HandlerResponse};
 use crate::kbucket::{self, EntryRefView, KBucketsTable, NodeStatus};
 use crate::node_info::{NodeAddress, NodeContact};
@@ -38,7 +38,7 @@ use std::task::Poll;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
-use crate::Discv5Event;
+use crate::{Discv5Event, Discv5Config};
 
 mod ip_vote;
 mod query_info;
@@ -47,12 +47,12 @@ mod query_info;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
-    StartQuery(QueryType, oneshot::Sender<Vec<Enr>>),
+    StartQuery(QueryKind, oneshot::Sender<Vec<Enr>>),
     FindEnr(NodeContact, oneshot::Sender<Option<Enr>>),
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
-pub enum QueryType {
+pub enum QueryKind {
     FindNode {
         target_node: NodeId,
     },
@@ -78,7 +78,7 @@ pub struct Service {
     enr_key: Arc<RwLock<CombinedKey>>,
 
     /// Storage of the ENR record for each node.
-    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>,
+    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
 
     /// All the iterative queries we are currently performing.
     queries: QueryPool<QueryInfo, NodeId, Enr>,
@@ -88,7 +88,7 @@ pub struct Service {
     active_rpc_requests: FnvHashMap<RequestId, ActiveRequest>,
 
     /// Keeps track of the number of responses received from a NODES response.
-    active_nodes_responses: HashMap<NodeAddress, NodesResponse>,
+    active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
     ip_votes: Option<IpVote>,
@@ -100,9 +100,9 @@ pub struct Service {
     handler_recv: mpsc::Receiver<HandlerResponse>,
 
     /// The exit channel to shutdown the handler.
-    handler_exit: Option<oneshot::Sender<()>>,
+    handler_exit: oneshot::Sender<()>,
 
-    discv5_recv: mspc::Receiver<ServiceRequest>,
+    discv5_recv: mpsc::Receiver<ServiceRequest>,
 
     exit: oneshot::Receiver<()>,
     /// An interval to check and ping all nodes in the routing table.
@@ -119,8 +119,9 @@ struct ActiveRequest {
     pub request_body: RequestBody,
     /// The query ID if the request was related to a query.
     pub query_id: Option<QueryId>,
-    /// Channel callback if this request was from a user level request.
-    pub callback_id: Option<u64>,
+    /// Channel callback if this request was from a user level request. The only kind is for an ENR
+    /// request.
+    pub callback: Option<oneshot::Sender<Option<Enr>>>,
 }
 
 impl ActiveRequest {
@@ -156,12 +157,12 @@ impl Service {
     pub fn spawn(
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
-        kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>,
+        kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         mut config: Discv5Config,
         listen_socket: SocketAddr,
     ) -> (oneshot::Sender<()>, mpsc::Sender<ServiceRequest>) {
 
-        let node_id = local_enr.node_id();
+        let node_id = local_enr.read().node_id();
 
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
@@ -172,10 +173,10 @@ impl Service {
 
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
-            self.local_enr.clone(),
-            self.enr_key.clone(),
+            local_enr.clone(),
+            enr_key.clone(),
             listen_socket,
-            &self.config,
+            &config,
         );
 
         // create the required channels
@@ -186,12 +187,11 @@ impl Service {
         let mut service = Service {
             local_enr,
             enr_key,
-            kbuckets:
+            kbuckets,
             queries: QueryPool::new(config.query_timeout.clone()),
             active_rpc_requests: Default::default(),
             active_nodes_responses: HashMap::new(),
             ip_votes,
-            connected_peers: Default::default(),
             handler_send,
             handler_recv,
             handler_exit,
@@ -199,7 +199,7 @@ impl Service {
             discv5_recv,
             event_stream: None,
             exit,
-            config.clone(),
+            config: config.clone(),
         };
 
         config
@@ -208,7 +208,7 @@ impl Service {
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
                 info!("Discv5 Service started");
-                handler.start().await;
+                service.start().await;
             }));
 
         (exit_send, discv5_send)
@@ -219,25 +219,25 @@ impl Service {
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
-                    let _ = exit.send(());
+                    let _ = self.handler_exit.send(());
                     info!("Discv5 Service shutdown");
                 }
                 Some(service_request) = &mut self.discv5_recv => {
                     match service_request {
-                        StartQuery(query, callback) => {
+                        ServiceRequest::StartQuery(query, callback) => {
                             match query {
-                                QueryType::FindNode { target_node } => {
+                                QueryKind::FindNode { target_node } => {
                                     self.start_findnode_query(target_node, callback);
                                 }
-                                QueryType::Predicate { target_node, target_peer_no, predicate } => {
+                                QueryKind::Predicate { target_node, target_peer_no, predicate } => {
                                     self.start_predicate_query(target_node, target_peer_no, predicate, callback);
                                 }
                             }
                         }
-                        FindEnr(node_contact, callback) => {
+                        ServiceRequest::FindEnr(node_contact, callback) => {
                             self.request_enr(node_contact, Some(callback)).await;
                         }
-                        RequestEventStream(callback) => {
+                        ServiceRequest::RequestEventStream(callback) => {
                             let (event_stream, event_stream_recv) = mpsc::channel(30);
                             self.event_stream = Some(event_stream);
                             if let Err(e) = callback.send(event_stream_recv) {
@@ -260,11 +260,11 @@ impl Service {
                         HandlerResponse::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                self.send_to_handler(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).await;
+                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).await.unwrap_or_else(|_| ());
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                self.send_to_handler(HandlerRequest::WhoAreYou(whoareyou_ref, None)).await;
+                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, None)).await.unwrap_or_else(|_| ());
                             }
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
@@ -284,20 +284,22 @@ impl Service {
                         // Note: Currently the distinction between a timed-out query and a finished
                         // query is superfluous, however it may be useful in future versions.
                         QueryEvent::Finished(query) => {
-                                if let Err(e) = query.target.callback.send(Ok(qeuery.into_result())).await {
-                                    warn!("Callback dropped for query {}. Results dropped", query_id);
+                                if let Err(e) = query.target().callback.send(Ok(query.into_result())).await {
+                                    warn!("Callback dropped for query {}. Results dropped", *query.id());
                                 }
                         }
                         QueryEvent::TimedOut(query) => {
-                                if let Err(e) = query.target.callback.send(Ok(qeuery.into_result())).await {
-                                    warn!("Callback dropped for query {}. Results dropped", query_id);
+                                if let Err(e) = query.target().callback.send(Ok(query.into_result())).await {
+                                    warn!("Callback dropped for query {}. Results dropped", *query.id());
                                 }
                         }
                     }
                 }
                 _ = self.ping_heartbeat.next() => {
                     self.ping_connected_peers().await;
+                }
             }
+        }
     }
 
 
@@ -325,7 +327,7 @@ impl Service {
         &mut self,
         target_node: NodeId,
         num_nodes: usize,
-        predicate: F,
+        predicate: Box<dyn Fn(&Enr) -> bool>,
         callback: oneshot::Sender<Vec<Enr>>,
     ) 
     where
@@ -358,6 +360,27 @@ impl Service {
         )
     }
 
+    /// Returns an ENR if one is known for the given NodeId.
+    pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
+        // check if we know this node id in our routing table
+        let key = kbucket::Key::from(*node_id);
+        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.entry(&key) {
+            return Some(entry.value().clone());
+        }
+        // check the untrusted addresses for ongoing queries
+        for query in self.queries.iter() {
+            if let Some(enr) = query
+                .target()
+                .untrusted_enrs
+                .iter()
+                .find(|v| v.node_id() == *node_id)
+            {
+                return Some(enr.clone());
+            }
+        }
+        None
+    }
+
     /// Processes an RPC request from a peer. Requests respond to the received socket address,
     /// rather than the IP of the known ENR.
     async fn handle_rpc_request(&mut self, node_address: NodeAddress, req: Request) {
@@ -370,19 +393,19 @@ impl Service {
                         id,
                         body: ResponseBody::Nodes {
                             total: 1,
-                            nodes: vec![self.local_enr().clone()],
+                            nodes: vec![self.local_enr.read().clone()],
                         },
                     };
                     debug!("Sending our ENR to node: {}", node_address);
-                    self.handler_send(HandlerRequest::Response(node_address, response))
-                        .await.unwrap_or_else(|| ());
+                    self.handler_send.send(HandlerRequest::Response(node_address, response))
+                        .await.unwrap_or_else(|_| ());
                 } else {
                     self.send_nodes_response(node_address, id, distance).await;
                 }
             }
             RequestBody::Ping { enr_seq } => {
                 // check if we need to update the known ENR
-                match self.kbuckets.entry(&node_address.node_id.into()) {
+                match self.kbuckets.write().entry(&node_address.node_id.into()) {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
@@ -407,14 +430,14 @@ impl Service {
                 let response = Response {
                     id,
                     body: ResponseBody::Ping {
-                        enr_seq: self.local_enr().seq(),
+                        enr_seq: self.local_enr.read().seq(),
                         ip: src.ip(),
                         port: src.port(),
                     },
                 };
                 debug!("Sending PONG response to {}", node_address);
-                self.handler_send(HandlerRequest::Response(node_address, response))
-                    .await.unwrap_or_else(|| ());
+                self.handler_send.send(HandlerRequest::Response(node_address, response))
+                    .await.unwrap_or_else(|_| ());
             }
             _ => {} //TODO: Implement all RPC methods
         }
@@ -426,10 +449,11 @@ impl Service {
         let id = response.id;
 
         if let Some(active_request) = self.active_rpc_requests.remove(&id) {
-            if !response.match_request(&request) {
+            let node_id = active_request.contact.node_id();
+            if !response.match_request(&active_request.request_body) {
                 warn!(
                     "Node gave an incorrect response type. Ignoring response from: {}",
-                    node_address
+                    active_request.contact
                 );
                 return;
             }
@@ -442,35 +466,33 @@ impl Service {
                         warn!("NodesResponse has a total larger than 5, nodes will be truncated");
                     }
 
-                    let distance_requested = match request {
+                    let distance_requested = match active_request.request_body {
                         RequestBody::FindNode { distance } => distance,
                         _ => unreachable!(),
                     };
 
                     // This could be an ENR request from the outer service. If so respond to the
                     // callback and End.
-                    if let Some(id) = active_request.callback_id {
+                    if let Some(callback) = active_request.callback.take() {
                         // Currently only support requesting for ENR's. Verify this is the case.
-                        if distance_request != 0 {
-                            crit!("Retrieved a callback request that wasn't for a peer's ENR");
+                        if distance_requested != 0 {
+                            error!("Retrieved a callback request that wasn't for a peer's ENR");
                             return;
                         }
-                        if let Some(callback) = self.active_callbacks.remove(id) {
-                            // This must be for asking for an ENR
-                            if let nodes.len() > 1 {
-                                warn!("Peer returned more than one ENR for itself. {}", node_address);
-                            }
-                            callback.send(nodes.pop()).await.unwrap_or_else(|| ());
-                            return;
+                        // This must be for asking for an ENR
+                        if nodes.len() > 1 {
+                            warn!("Peer returned more than one ENR for itself. {}", active_request.contact);
                         }
+                        callback.send(nodes.pop()).unwrap_or_else(|_| ());
+                        return;
                     }
 
                     // Filter out any nodes that are not of the correct distance
                     // TODO: Blacklist and remove peers that have the incorrect distance
-                    let peer_key: kbucket::Key<NodeId> = node_address.node_id.into();
-                    let distance_requested = match request {
+                    let peer_key: kbucket::Key<NodeId> = node_id.into();
+                    let distance_requested = match active_request.request_body {
                         RequestBody::FindNode { distance } => distance,
-                        _ => unreachable!(),
+                        _ => todo!(),
                     };
                     if distance_requested != 0 {
                         nodes.retain(|enr| {
@@ -490,7 +512,7 @@ impl Service {
                     if total > 1 {
                         let mut current_response = self
                             .active_nodes_responses
-                            .remove(&node_address.node_id)
+                            .remove(&node_id)
                             .unwrap_or_default();
 
                         debug!(
@@ -504,9 +526,9 @@ impl Service {
 
                             current_response.received_nodes.append(&mut nodes);
                             self.active_nodes_responses
-                                .insert(node_address.node_id, current_response);
+                                .insert(node_id, current_response);
                             self.active_rpc_requests
-                                .insert(id, (query_id, request, node_address));
+                                .insert(id, active_request);
                             return;
                         }
 
@@ -521,46 +543,51 @@ impl Service {
                         "Received a nodes response of len: {}, total: {}, from: {}",
                         nodes.len(),
                         total,
-                        node_address
+                        active_request.contact
                     );
                     // note: If a peer sends an initial NODES response with a total > 1 then
                     // in a later response sends a response with a total of 1, all previous nodes
                     // will be ignored.
                     // ensure any mapping is removed in this rare case
-                    self.active_nodes_responses.remove(&node_address.node_id);
+                    self.active_nodes_responses.remove(&node_id);
 
-                    self.discovered(&node_address.node_id, nodes, query_id);
+                    self.discovered(&node_id, nodes, active_request.query_id);
                 }
                 ResponseBody::Ping { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
-                    let local_socket = self.local_enr().udp_socket();
+                    let local_socket = self.local_enr.read().udp_socket();
                     if let Some(ref mut ip_votes) = self.ip_votes {
-                        ip_votes.insert(node_address.node_id, socket.clone());
-                        let majority_socket = ip_votes.majority();
-                        if majority_socket.is_some() && majority_socket != local_socket {
-                            let majority_socket = majority_socket.expect("is some");
+                        ip_votes.insert(node_id, socket.clone());
+                        if let Some(majority_socket) = ip_votes.majority() {
+                        if Some(majority_socket) != local_socket {
                             info!("Local UDP socket updated to: {}", majority_socket);
-                            self.discv5_events
-                                .push_back(ServiceEvent::SocketUpdated(majority_socket));
-                            if self.update_local_enr_socket(majority_socket, false) {
+                            self.send_event(Discv5Event::SocketUpdated(majority_socket));
+                                // Update the UDP socket
+                                if self.local_enr.write().set_udp_socket(majority_socket, &self.enr_key.read()).is_ok() {
                                 // alert known peers to our updated enr
-                                self.ping_connected_peers();
+                                self.ping_connected_peers().await;
                             }
+                        }
                         }
                     }
 
                     // check if we need to request a new ENR
-                    if let Some(enr) = self.find_enr(&node_address.node_id) {
+                    if let Some(enr) = self.find_enr(&node_id) {
                         if enr.seq() < enr_seq {
                             // request an ENR update
-                            debug!("Requesting an ENR update from: {}", node_address);
+                            debug!("Requesting an ENR update from: {}", active_request.contact);
                             let request_body = RequestBody::FindNode { distance: 0 };
-                            self.send_rpc_request(&enr.node_id(), request_body, None)
-                                .await;
+                            let active_request = ActiveRequest{
+                                contact: active_request.contact,
+                                request_body,
+                                query_id: None,
+                                callback: None,
+                            };
+                            self.send_rpc_request(active_request).await;
                         }
                         self.connection_updated(
-                            node_address.node_id,
+                            node_id,
                             Some(enr),
                             NodeStatus::Connected,
                         )
@@ -584,7 +611,7 @@ impl Service {
             contact: enr.into(),
             request_body,
             query_id: None,
-            callback_id: None,
+            callback: None,
         };
         self.send_rpc_request(active_request).await;
     }
@@ -592,31 +619,25 @@ impl Service {
     async fn ping_connected_peers(&mut self) {
         // maintain the ping interval
         let connected_peers = self.kbuckets.write().iter().filter_map(|entry| {
-            if entry.status = NodeStatus::Connected {
+            if entry.status == NodeStatus::Connected {
                 Some(entry.node.value)
                 } else { None }
-        }).collect::Vec<_>();
+        }).collect::<Vec<_>>();
 
         for enr in connected_peers {
-            self.send_ping(enr).await;
+            self.send_ping(enr.clone()).await;
         }
     }
 
     /// Request an external node's ENR.
-    async fn request_enr(&mut self, contact: NodeContact, callback: Option<oneshot::channel<Option<Enr>>) {
-        let request = RequestBody::FindNode { distance: 0 };
+    async fn request_enr(&mut self, contact: NodeContact, callback: Option<oneshot::Sender<Option<Enr>>>) {
+        let request_body = RequestBody::FindNode { distance: 0 };
         let mut active_request = ActiveRequest {
-            node_address,
-            request,
-            None,
-            None,
-        }
-
-        // if this is an external request, add the callback to the active request
-        if let Some(callback) = callback {
-            self.active_callbacks.insert(id, callback);
-            active_request.callback_id = id;
-        }
+            contact,
+            request_body,
+            query_id: None,
+            callback,
+        };
         self.send_rpc_request(active_request).await;
     }
 
@@ -624,7 +645,7 @@ impl Service {
     /// into multiple responses to ensure the response stays below the maximum packet size.
     async fn send_nodes_response(&mut self, node_address: NodeAddress, rpc_id: u64, distance: u64) {
         let nodes: Vec<EntryRefView<'_, NodeId, Enr>> = self
-            .kbuckets
+            .kbuckets.read()
             .nodes_by_distance(distance)
             .into_iter()
             .filter(|entry| entry.node.key.preimage() != &node_address.node_id)
@@ -642,8 +663,8 @@ impl Service {
                 "Sending empty FINDNODES response to: {}",
                 node_address.node_id
             );
-            self.handler_send(HandlerRequest::Response(node_address, response))
-                .await.unwrap_or_else(|| ());
+            self.handler_send.send(HandlerRequest::Response(node_address, response))
+                .await.unwrap_or_else(|_| ());
         } else {
             // build the NODES response
             let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
@@ -685,8 +706,8 @@ impl Service {
                     node_address,
                     response
                 );
-                self.handler_send(HandlerRequest::Response(node_address.clone(), response))
-                    .await.unwrap_or_else(|| ());
+                self.handler_send.send(HandlerRequest::Response(node_address.clone(), response))
+                    .await.unwrap_or_else(|_| ());
             }
         }
     }
@@ -723,11 +744,11 @@ impl Service {
             contact: enr.clone().into(),
             request_body,
             query_id: Some(query_id),
-            None,
-        }
+            callback: None,
+        };
         self.send_rpc_request(active_request).await;
         } else {
-            error!("Query {} requested ENR not in it's untrusted list", query_id);
+            error!("Query {} requested ENR not in it's untrusted list", *query_id);
         }
     }
 

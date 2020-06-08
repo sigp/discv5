@@ -1,31 +1,20 @@
 //! The Discovery v5 protocol. See `lib.rs` for further details.
 //!
 
-use crate::error::Discv5Error;
-use crate::handler::{Handler, HandlerRequest, HandlerResponse};
-use crate::kbucket::{self, ip_limiter, EntryRefView, KBucketsTable, NodeStatus};
-use crate::node_info::{NodeAddress, NodeContact};
-use crate::query_pool::{
-    FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, ReturnPeer,
-};
-use crate::rpc;
-use crate::service::{QueryType, Service, ServiceRequest};
-use crate::socket::MAX_PACKET_SIZE;
+use crate::error::{QueryError, RequestError};
+use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
+use crate::node_info::NodeContact;
+use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::Discv5Config;
 use crate::Enr;
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
-use fnv::FnvHashMap;
 use futures::prelude::*;
-use log::{debug, error, info, trace, warn};
+use log::{error, warn};
 use parking_lot::RwLock;
-use rpc::*;
-use std::collections::{HashMap, VecDeque};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::task::Poll;
-use std::time::{Duration, Instant};
+use std::{convert::TryFrom, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::Interval;
+
+use libp2p_core::Multiaddr;
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
@@ -238,23 +227,30 @@ impl Discv5 {
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
     /// Only `ed25519` and `secp256k1` key types are currently supported.
-    pub async fn request_enr(&mut self, multiaddr: Into<MultiAddr>) -> Result<Enr, RequestError> {
+    pub async fn request_enr(
+        &mut self,
+        multiaddr: impl std::convert::TryInto<Multiaddr>,
+    ) -> Result<Option<Enr>, RequestError> {
         // Sanitize the multiaddr
 
         // The multiaddr must support the udp protocol and be of an appropriate key type.
         // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
         // `NodeContact`.
-        let node_contact = NodeContact::try_from(multiaddr.into());
+        let multiaddr: Multiaddr = multiaddr
+            .try_into()
+            .map_err(|e| RequestError::InvalidMultiaddr("Could not convert to multiaddr".into()))?;
+        let node_contact: NodeContact = NodeContact::try_from(multiaddr)
+            .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
 
         let (callback_send, callback_recv) = oneshot::channel();
 
         let event = ServiceRequest::FindEnr(node_contact, callback_send);
         if let Err(_) = self.send_event(event).await {
-            return Err(RequestError::SerivceNotStarted);
+            return Err(RequestError::ServiceNotStarted);
         }
-        callback_recv
+        Ok(callback_recv
             .await
-            .map_err(|e| RequestError::ChannelFailed(e))?
+            .map_err(|e| RequestError::ChannelFailed(e.to_string()))?)
     }
 
     /// Runs an iterative `FIND_NODE` request.
@@ -264,42 +260,62 @@ impl Discv5 {
     pub async fn find_node(&mut self, target_node: NodeId) -> Result<Vec<Enr>, QueryError> {
         let (callback_send, callback_recv) = oneshot::channel();
 
-        self.service
-            .start_findnode_query(target_node, callback_send)
-            .await;
+        let query_kind = QueryKind::FindNode { target_node };
 
-        callback_recv
+        let event = ServiceRequest::StartQuery(query_kind, callback_send);
+
+        if let Err(_) = self.send_event(event).await {
+            return Err(QueryError::ServiceNotStarted);
+        }
+
+        Ok(callback_recv
             .await
-            .map_err(|e| QueryError::ChannelError(e))?
+            .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
     }
 
     /// Starts a `FIND_NODE` request.
     ///
     /// This will return less than or equal to `num_nodes` ENRs which satisfy the
     /// `predicate`.
-    pub fn find_node_predicate<F>(
+    pub async fn find_node_predicate<F>(
         &mut self,
         target_node: NodeId,
         predicate: F,
-        num_nodes: usize,
+        target_peer_no: usize,
     ) -> Result<Vec<Enr>, QueryError>
     where
         F: Fn(&Enr) -> bool + Send + Clone + 'static,
     {
         let (callback_send, callback_recv) = oneshot::channel();
 
-        self.service
-            .start_findnode_predicate_query(target_node, callback_send)
-            .await;
+        let query_kind = QueryKind::Predicate {
+            target_node,
+            predicate: Box::new(predicate),
+            target_peer_no,
+        };
 
-        callback_recv
+        let event = ServiceRequest::StartQuery(query_kind, callback_send);
+
+        if let Err(_) = self.send_event(event).await {
+            return Err(QueryError::ServiceNotStarted);
+        }
+
+        Ok(callback_recv
             .await
-            .map_err(|e| QueryError::ChannelError(e))?
+            .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
     }
 
     /// Creates an event stream channel which can be polled to receive Discv5 events.
-    pub async fn event_stream(&mut self) -> mpsc::Receiver<Discv5Event> {
-        self.service.get_event_stream()
+    pub async fn event_stream(&mut self) -> Result<mpsc::Receiver<Discv5Event>, String> {
+        let (callback_send, callback_recv) = oneshot::channel();
+
+        let event = ServiceRequest::RequestEventStream(callback_send);
+
+        self.send_event(event).await?;
+
+        Ok(callback_recv
+            .await
+            .map_err(|_| String::from("Service channel closed"))?)
     }
 
     async fn send_event(&mut self, event: ServiceRequest) -> Result<(), String> {
