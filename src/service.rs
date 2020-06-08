@@ -20,7 +20,7 @@ use crate::handler::{Handler, HandlerRequest, HandlerResponse};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
 use crate::node_info::{NodeAddress, NodeContact};
 use crate::query_pool::{
-    FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState,
+    FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
 };
 use crate::rpc;
 use crate::socket::MAX_PACKET_SIZE;
@@ -119,12 +119,6 @@ struct ActiveRequest {
     pub callback: Option<oneshot::Sender<Option<Enr>>>,
 }
 
-impl ActiveRequest {
-    pub fn is_query(&self) -> bool {
-        self.query_id.is_some()
-    }
-}
-
 /// For multiple responses to a FindNodes request, this keeps track of the request count
 /// and the nodes that have been received.
 struct NodesResponse {
@@ -153,11 +147,10 @@ impl Service {
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
-        mut config: Discv5Config,
+        config: Discv5Config,
+        active_sessions: Arc<std::sync::atomic::AtomicUsize>,
         listen_socket: SocketAddr,
     ) -> (oneshot::Sender<()>, mpsc::Sender<ServiceRequest>) {
-        let node_id = local_enr.read().node_id();
-
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
             Some(IpVote::new(config.enr_peer_update_min))
@@ -166,8 +159,13 @@ impl Service {
         };
 
         // build the session service
-        let (handler_exit, handler_send, handler_recv) =
-            Handler::spawn(local_enr.clone(), enr_key.clone(), listen_socket, &config);
+        let (handler_exit, handler_send, handler_recv) = Handler::spawn(
+            local_enr.clone(),
+            enr_key.clone(),
+            listen_socket,
+            active_sessions,
+            &config,
+        );
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
@@ -209,7 +207,7 @@ impl Service {
             tokio::select! {
                 _ = &mut self.exit => {
                     if let Some(exit) = self.handler_exit.take() {
-                        exit.send(());
+                        let _ = exit.send(());
                         info!("Discv5 Service shutdown");
                     }
                 }
@@ -231,7 +229,7 @@ impl Service {
                         ServiceRequest::RequestEventStream(callback) => {
                             let (event_stream, event_stream_recv) = mpsc::channel(30);
                             self.event_stream = Some(event_stream);
-                            if let Err(e) = callback.send(event_stream_recv) {
+                            if let Err(_) = callback.send(event_stream_recv) {
                                 error!("Failed to return the event stream channel");
                             }
                         }
@@ -240,7 +238,7 @@ impl Service {
                 Some(event) = &mut self.handler_recv.next() => {
                     match event {
                         HandlerResponse::Established(enr) => {
-                            self.inject_session_established(enr);
+                            self.inject_session_established(enr).await;
                         }
                         HandlerResponse::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, request).await;
@@ -260,7 +258,7 @@ impl Service {
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
                             trace!("RPC Request failed: id: {}, error {:?}", request_id, error);
-                            self.rpc_failure(request_id, error);
+                            self.rpc_failure(request_id, error).await;
                         }
                     }
                 }
@@ -287,7 +285,7 @@ impl Service {
                                     error!("ENR not present in queries results");
                                 }
                             }
-                                if let Err(e) = result.target.callback.send(found_enrs) {
+                                if let Err(_) = result.target.callback.send(found_enrs) {
                                     warn!("Callback dropped for query {}. Results dropped", *id);
                                 }
                         }
@@ -312,8 +310,11 @@ impl Service {
         // FINDNODE requires multiple iterations as it requests a specific distance.
         let query_iterations = target.iterations();
 
-        let target_key: kbucket::Key<NodeId> = (&target).into();
-        let known_closest_peers = self.kbuckets.read().closest_keys(&target_key);
+        let target_key: kbucket::Key<NodeId> = target.key();
+        let known_closest_peers: Vec<kbucket::Key<NodeId>> = {
+            let mut kbuckets = self.kbuckets.write();
+            kbuckets.closest_keys(&target_key).collect()
+        };
         let query_config = FindNodeQueryConfig::new_from_config(&self.config);
         self.queries.add_findnode_query(
             query_config,
@@ -341,12 +342,14 @@ impl Service {
         // FINDNODE requires multiple iterations as it requests a specific distance.
         let query_iterations = target.iterations();
 
-        let target_key: kbucket::Key<NodeId> = (&target).into();
+        let target_key: kbucket::Key<NodeId> = target.key();
 
-        let known_closest_peers = self
-            .kbuckets
-            .read()
-            .closest_keys_predicate(&target_key, &predicate);
+        let known_closest_peers: Vec<kbucket::PredicateKey<NodeId>> = {
+            let mut kbuckets = self.kbuckets.write();
+            kbuckets
+                .closest_keys_predicate(&target_key, &predicate)
+                .collect()
+        };
 
         let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
         query_config.num_results = num_nodes;
@@ -363,7 +366,7 @@ impl Service {
     pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.read().entry(&key) {
+        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
             return Some(entry.value().clone());
         }
         // check the untrusted addresses for ongoing queries
@@ -601,6 +604,7 @@ impl Service {
                             self.send_rpc_request(active_request).await;
                         }
                         self.connection_updated(node_id, Some(enr), NodeStatus::Connected)
+                            .await;
                     }
                 }
                 _ => {} //TODO: Implement all RPC methods
@@ -849,7 +853,7 @@ impl Service {
     }
 
     /// Update the connection status of a node in the routing table.
-    fn connection_updated(
+    async fn connection_updated(
         &mut self,
         node_id: NodeId,
         enr: Option<Enr>,
@@ -875,6 +879,8 @@ impl Service {
             }
         }
 
+        let mut event_to_send = None;
+        let mut ping_peer = None;
         match self.kbuckets.write().entry(&key) {
             kbucket::Entry::Present(mut entry, old_status) => {
                 if let Some(enr) = enr {
@@ -884,7 +890,6 @@ impl Service {
                     entry.update(new_status);
                 }
             }
-
             kbucket::Entry::Pending(mut entry, old_status) => {
                 if let Some(enr) = enr {
                     *entry.value() = enr;
@@ -893,7 +898,6 @@ impl Service {
                     entry.update(new_status);
                 }
             }
-
             kbucket::Entry::Absent(entry) => {
                 if new_status == NodeStatus::Connected {
                     // Note: If an ENR is not provided, no record is added
@@ -905,17 +909,26 @@ impl Service {
                                     node_id,
                                     replaced: None,
                                 };
-                                self.send_event(event);
+                                event_to_send = Some(event);
                             }
                             kbucket::InsertResult::Full => (),
                             kbucket::InsertResult::Pending { disconnected } => {
-                                self.send_ping(enr);
+                                ping_peer = Some(disconnected.preimage().clone());
                             }
                         }
                     }
                 }
             }
             _ => {}
+        }
+
+        if let Some(event) = event_to_send {
+            self.send_event(event);
+        }
+        if let Some(node_id) = ping_peer {
+            if let Some(enr) = self.find_enr(&node_id) {
+                self.send_ping(enr).await;
+            }
         }
     }
 
@@ -924,14 +937,15 @@ impl Service {
     async fn inject_session_established(&mut self, enr: Enr) {
         let node_id = enr.node_id();
         debug!("Session established with Node: {}", node_id);
-        self.connection_updated(node_id.clone(), Some(enr.clone()), NodeStatus::Connected);
+        self.connection_updated(node_id.clone(), Some(enr.clone()), NodeStatus::Connected)
+            .await;
         // send an initial ping and start the ping interval
         self.send_ping(enr).await;
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
-    fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
+    async fn rpc_failure(&mut self, id: RequestId, _error: RequestError) {
         if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
@@ -993,7 +1007,8 @@ impl Service {
                 }
             }
 
-            self.connection_updated(node_id, None, NodeStatus::Disconnected);
+            self.connection_updated(node_id, None, NodeStatus::Disconnected)
+                .await;
         }
     }
 

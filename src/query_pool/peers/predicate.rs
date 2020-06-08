@@ -5,7 +5,7 @@ use std::collections::btree_map::{BTreeMap, Entry};
 use std::iter::FromIterator;
 use std::time::{Duration, Instant};
 
-pub(crate) struct PredicateQuery<TTarget, TNodeId, TResult> {
+pub(crate) struct PredicateQuery<TNodeId, TResult> {
     /// The target key we are looking for
     target_key: Key<TNodeId>,
 
@@ -26,8 +26,6 @@ pub(crate) struct PredicateQuery<TTarget, TNodeId, TResult> {
 
     /// The configuration of the query.
     config: PredicateQueryConfig,
-
-    phantom_data: std::marker::PhantomData<TTarget>,
 }
 
 /// Configuration for a `Query`.
@@ -66,17 +64,15 @@ impl PredicateQueryConfig {
     }
 }
 
-impl<'b, TTarget, TNodeId, TResult> PredicateQuery<TTarget, TNodeId, TResult>
+impl<TNodeId, TResult> PredicateQuery<TNodeId, TResult>
 where
-    TTarget: 'b,
-    &'b TTarget: Into<Key<TNodeId>> + Clone,
     TNodeId: Into<Key<TNodeId>> + Eq + Clone,
     TResult: Into<TNodeId> + Clone,
 {
     /// Creates a new query with the given configuration.
     pub fn with_config<I>(
         config: PredicateQueryConfig,
-        target: &'b TTarget,
+        target_key: Key<TNodeId>,
         known_closest_peers: I,
         iterations: usize,
         predicate: impl Fn(&TResult) -> bool + Send + 'static,
@@ -84,8 +80,6 @@ where
     where
         I: IntoIterator<Item = PredicateKey<TNodeId>>,
     {
-        let target_key = target.into();
-
         // Initialise the closest peers to begin the query with.
         let closest_peers = BTreeMap::from_iter(
             known_closest_peers
@@ -112,7 +106,6 @@ where
             iterations,
             num_waiting: 0,
             predicate: Box::new(predicate),
-            phantom_data: std::marker::PhantomData,
         }
     }
 

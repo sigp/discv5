@@ -28,7 +28,12 @@ use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::{collections::HashMap, default::Default, net::SocketAddr};
+use std::{
+    collections::HashMap,
+    default::Default,
+    net::SocketAddr,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use tokio::sync::{mpsc, oneshot};
 
 // mod tests;
@@ -152,6 +157,7 @@ pub struct Handler {
     /// match against.
     active_requests: HashMapDelay<NodeAddress, RequestCall>,
     active_requests_auth: HashMap<AuthTag, NodeAddress>,
+    active_sessions: Arc<AtomicUsize>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
     /// Currently in-progress handshakes with peers.
@@ -174,6 +180,7 @@ impl Handler {
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
+        active_sessions: Arc<AtomicUsize>,
         config: &Discv5Config,
     ) -> (
         oneshot::Sender<()>,
@@ -216,6 +223,7 @@ impl Handler {
             key,
             active_requests: HashMapDelay::new(config.request_timeout),
             active_requests_auth: HashMap::new(),
+            active_sessions,
             pending_requests: HashMap::new(),
             sessions: LruCache::with_expiry_duration_and_capacity(
                 config.session_timeout,
@@ -305,23 +313,6 @@ impl Handler {
                     .await;
             }
             Packet::RandomPacket { .. } => {} // this will not be decoded.
-        }
-    }
-
-    async fn fail_session(&mut self, node_address: &NodeAddress) {
-        self.sessions.remove(&node_address);
-        for request in self
-            .pending_requests
-            .remove(&node_address)
-            .unwrap_or_else(|| Vec::new())
-        {
-            self.outbound_channel
-                .send(HandlerResponse::RequestFailed(
-                    request.1.id,
-                    RequestError::Timeout,
-                ))
-                .await
-                .unwrap_or_else(|_| ());
         }
     }
 
@@ -459,42 +450,6 @@ impl Handler {
         self.send(node_address.socket_addr, packet).await;
         self.active_challenges
             .insert(node_address, Challenge { nonce, remote_enr });
-    }
-
-    /// Calculates the src `NodeId` given a tag.
-    fn src_id(&self, tag: &Tag) -> NodeId {
-        let hash = Sha256::digest(&self.node_id.raw());
-        let mut src_id: [u8; 32] = Default::default();
-        for i in 0..32 {
-            src_id[i] = hash[i] ^ tag[i];
-        }
-        NodeId::new(&src_id)
-    }
-
-    /// Calculates the tag given a `NodeId`.
-    fn tag(&self, dst_id: &NodeId) -> Tag {
-        let hash = Sha256::digest(&dst_id.raw());
-        let mut tag: Tag = Default::default();
-        for i in 0..TAG_LENGTH {
-            tag[i] = hash[i] ^ self.node_id.raw()[i];
-        }
-        tag
-    }
-
-    /// Inserts a request and associated auth_tag mapping.
-    fn insert_active_request(&mut self, request_call: RequestCall) {
-        let auth_tag = request_call
-            .packet
-            .auth_tag()
-            .expect("Can only add non-challenge requests")
-            .clone();
-        let node_address = request_call
-            .contact
-            .node_address()
-            .expect("Can only add requests with a valid destination");
-        self.active_requests
-            .insert(node_address.clone(), request_call);
-        self.active_requests_auth.insert(auth_tag, node_address);
     }
 
     /* Packet Handling */
@@ -742,14 +697,6 @@ impl Handler {
         }
     }
 
-    fn new_session(&mut self, node_address: NodeAddress, session: Session) {
-        if let Some(current_session) = self.sessions.get_mut(&node_address) {
-            current_session.update(session);
-        } else {
-            self.sessions.insert(node_address, session);
-        }
-    }
-
     /// Handle a standard message that does not contain an authentication header.
     async fn handle_message(
         &mut self,
@@ -850,6 +797,71 @@ impl Handler {
             let whoareyou_ref = WhoAreYouRef(node_address, auth_tag);
             self.outbound_channel
                 .send(HandlerResponse::WhoAreYou(whoareyou_ref))
+                .await
+                .unwrap_or_else(|_| ());
+        }
+    }
+
+    /// Calculates the src `NodeId` given a tag.
+    fn src_id(&self, tag: &Tag) -> NodeId {
+        let hash = Sha256::digest(&self.node_id.raw());
+        let mut src_id: [u8; 32] = Default::default();
+        for i in 0..32 {
+            src_id[i] = hash[i] ^ tag[i];
+        }
+        NodeId::new(&src_id)
+    }
+
+    /// Calculates the tag given a `NodeId`.
+    fn tag(&self, dst_id: &NodeId) -> Tag {
+        let hash = Sha256::digest(&dst_id.raw());
+        let mut tag: Tag = Default::default();
+        for i in 0..TAG_LENGTH {
+            tag[i] = hash[i] ^ self.node_id.raw()[i];
+        }
+        tag
+    }
+
+    /// Inserts a request and associated auth_tag mapping.
+    fn insert_active_request(&mut self, request_call: RequestCall) {
+        let auth_tag = request_call
+            .packet
+            .auth_tag()
+            .expect("Can only add non-challenge requests")
+            .clone();
+        let node_address = request_call
+            .contact
+            .node_address()
+            .expect("Can only add requests with a valid destination");
+        self.active_requests
+            .insert(node_address.clone(), request_call);
+        self.active_requests_auth.insert(auth_tag, node_address);
+    }
+
+    fn new_session(&mut self, node_address: NodeAddress, session: Session) {
+        if let Some(current_session) = self.sessions.get_mut(&node_address) {
+            current_session.update(session);
+        } else {
+            self.sessions.insert(node_address, session);
+            self.active_sessions
+                .store(self.sessions.len(), Ordering::Relaxed);
+        }
+    }
+
+    async fn fail_session(&mut self, node_address: &NodeAddress) {
+        self.sessions.remove(&node_address);
+        self.active_sessions
+            .store(self.sessions.len(), Ordering::Relaxed);
+        for request in self
+            .pending_requests
+            .remove(&node_address)
+            .unwrap_or_else(|| Vec::new())
+        {
+            self.outbound_channel
+                .send(HandlerResponse::RequestFailed(
+                    request.1.id,
+                    RequestError::Timeout,
+                ))
                 .await
                 .unwrap_or_else(|_| ());
         }

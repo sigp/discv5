@@ -10,13 +10,22 @@ use crate::Enr;
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use log::{error, warn};
 use parking_lot::RwLock;
-use std::{convert::TryFrom, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    convert::TryFrom,
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::sync::{mpsc, oneshot};
 
 use libp2p_core::Multiaddr;
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
+// TODO: Add blacklist and whitelist
 pub struct Discv5 {
     config: Discv5Config,
     /// The channel to make requests from the main service.
@@ -25,6 +34,7 @@ pub struct Discv5 {
     kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
+    active_sessions: Arc<AtomicUsize>,
     /// Stores a default runtime if none is given in the configuration.
     _runtime: Option<tokio::runtime::Runtime>,
 }
@@ -33,7 +43,7 @@ impl Discv5 {
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
-        config: Discv5Config,
+        mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
@@ -41,7 +51,7 @@ impl Discv5 {
         }
 
         // if an executor is not provided create one and store locally
-        let runtime = {
+        let _runtime = {
             if config.executor.is_none() {
                 let (executor, runtime) = crate::executor::TokioExecutor::new();
                 config.executor = Some(Box::new(executor));
@@ -54,19 +64,20 @@ impl Discv5 {
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));
         let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
-            local_enr.node_id().into(),
+            local_enr.read().node_id().into(),
             Duration::from_secs(60),
         )));
 
-        Discv5 {
+        Ok(Discv5 {
             config,
             service_channel: None,
             service_exit: None,
             kbuckets,
             local_enr,
             enr_key,
-            runtime,
-        }
+            active_sessions: Arc::new(AtomicUsize::new(0)),
+            _runtime,
+        })
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
@@ -82,6 +93,7 @@ impl Discv5 {
             self.enr_key.clone(),
             self.kbuckets.clone(),
             self.config.clone(),
+            self.active_sessions.clone(),
             listen_socket,
         );
         self.service_exit = Some(service_exit);
@@ -91,7 +103,7 @@ impl Discv5 {
     /// Terminates the service.
     pub fn shutdown(&mut self) {
         if let Some(exit) = self.service_exit.take() {
-            if let Err(e) = exit.send(()) {
+            if let Err(_) = exit.send(()) {
                 error!("Could not send exit request to Discv5 service");
             }
             self.service_channel = None;
@@ -125,9 +137,10 @@ impl Discv5 {
         let ip_limit_ban = self.config.ip_limit
             && !self
                 .kbuckets
+                .read()
                 .check(&key, &enr, { |v, o, l| ip_limiter(v, &o, l) });
 
-        match self.kbuckets.entry(&key) {
+        match self.kbuckets.write().entry(&key) {
             kbucket::Entry::Present(mut entry, _) => {
                 // still update an ENR, regardless of the IP limit ban
                 *entry.value() = enr;
@@ -142,7 +155,7 @@ impl Discv5 {
                         kbucket::InsertResult::Full => {
                             return Err("Table full");
                         }
-                        kbucket::InsertResult::Pending { disconnected } => {}
+                        kbucket::InsertResult::Pending { .. } => {}
                     }
                 }
             }
@@ -157,70 +170,81 @@ impl Discv5 {
     /// table. Returns `true` if the node was in the table and `false` otherwise.
     pub fn remove_node(&mut self, node_id: &NodeId) -> bool {
         let key = &kbucket::Key::from(*node_id);
-        self.kbuckets.remove(key)
+        self.kbuckets.write().remove(key)
     }
 
     /// Returns the number of connected peers that exist in the routing table.
     pub fn connected_peers(&self) -> usize {
-        self.service.connected_peers(&self)
+        self.kbuckets
+            .write()
+            .iter()
+            .filter(|entry| entry.status == NodeStatus::Connected)
+            .count()
     }
 
     /// The number of active Discv5 session handshakes stored in the cache.
     pub fn active_sessions(&self) -> usize {
-        self.service.active_sessions()
+        self.active_sessions.load(Ordering::Relaxed)
     }
 
     /// Returns the local ENR of the node.
     pub fn local_enr(&self) -> Enr {
-        self.service.local_enr()
+        self.local_enr.read().clone()
     }
 
     /// Returns an ENR if one is known for the given NodeId.
     pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.entry(&key) {
+        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
             return Some(entry.value().clone());
-        }
-        // check the untrusted addresses for ongoing queries
-        for query in self.queries.iter() {
-            if let Some(enr) = query
-                .target()
-                .untrusted_enrs
-                .iter()
-                .find(|v| v.node_id() == *node_id)
-            {
-                return Some(enr.clone());
-            }
         }
         None
     }
 
     /// Updates the local ENR TCP/UDP socket.
     pub fn update_local_enr_socket(&mut self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
-        self.service.update_local_enr_socket()
+        let local_socket = self.local_enr.read().udp_socket();
+        if local_socket != Some(socket_addr) {
+            if is_tcp {
+                self.local_enr
+                    .write()
+                    .set_tcp_socket(socket_addr, &self.enr_key.read())
+                    .is_ok()
+            } else {
+                self.local_enr
+                    .write()
+                    .set_udp_socket(socket_addr, &self.enr_key.read())
+                    .is_ok()
+            }
+        } else {
+            false
+        }
     }
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
     pub fn enr_insert(&mut self, key: &str, value: Vec<u8>) -> Result<Option<Vec<u8>>, EnrError> {
-        let result = self
-            .local_enr
+        self.local_enr
             .write()
-            .insert(key, value, &self.enr_key.read());
-        if result.is_ok() {
-            self.ping_connected_peers();
-        }
-        result
+            .insert(key, value, &self.enr_key.read())
     }
 
     /// Returns an iterator over all ENR node IDs of nodes currently contained in the routing table.
-    pub fn table_entries_id(&mut self) -> impl Iterator<Item = &NodeId> {
-        self.kbuckets.iter().map(|entry| entry.node.key.preimage())
+    pub fn table_entries_id(&mut self) -> Vec<NodeId> {
+        self.kbuckets
+            .write()
+            .iter()
+            .map(|entry| entry.node.key.preimage().clone())
+            .collect()
     }
 
     /// Returns an iterator over all the ENR's of nodes currently contained in the routing table.
-    pub fn table_entries_enr(&mut self) -> impl Iterator<Item = &Enr> {
-        self.kbuckets.iter().map(|entry| entry.node.value)
+    pub fn table_entries_enr(&mut self) -> Vec<Enr> {
+        self.kbuckets
+            .write()
+            .iter()
+            .map(|entry| entry.node.value.clone())
+            .collect()
     }
 
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
@@ -237,7 +261,7 @@ impl Discv5 {
         // `NodeContact`.
         let multiaddr: Multiaddr = multiaddr
             .try_into()
-            .map_err(|e| RequestError::InvalidMultiaddr("Could not convert to multiaddr".into()))?;
+            .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr".into()))?;
         let node_contact: NodeContact = NodeContact::try_from(multiaddr)
             .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
 
@@ -331,8 +355,8 @@ impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
         // wait for the runtime to exit if one exists
-        if let Some(runtime) = self._runtime {
-            runtime.shutdown_on_idle(Duration::from_secs(1))
+        if let Some(runtime) = self._runtime.take() {
+            runtime.shutdown_timeout(Duration::from_secs(1))
         }
     }
 }

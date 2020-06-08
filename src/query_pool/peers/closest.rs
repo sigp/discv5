@@ -29,7 +29,7 @@ use std::iter::FromIterator;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
-pub struct FindNodeQuery<TTarget, TNodeId> {
+pub struct FindNodeQuery<TNodeId> {
     /// The target key we are looking for
     target_key: Key<TNodeId>,
 
@@ -47,8 +47,6 @@ pub struct FindNodeQuery<TTarget, TNodeId> {
 
     /// The configuration of the query.
     config: FindNodeQueryConfig,
-
-    phantom_data: std::marker::PhantomData<TTarget>,
 }
 
 /// Configuration for a `Query`.
@@ -87,24 +85,20 @@ impl FindNodeQueryConfig {
     }
 }
 
-impl<'a, TTarget, TNodeId> FindNodeQuery<TTarget, TNodeId>
+impl<TNodeId> FindNodeQuery<TNodeId>
 where
-    TTarget: 'a,
-    &'a TTarget: Into<Key<TNodeId>>,
     TNodeId: Into<Key<TNodeId>> + Eq + Clone,
 {
     /// Creates a new query with the given configuration.
     pub fn with_config<I>(
         config: FindNodeQueryConfig,
-        target: &'a TTarget,
+        target_key: Key<TNodeId>,
         known_closest_peers: I,
         iterations: usize,
     ) -> Self
     where
         I: IntoIterator<Item = Key<TNodeId>>,
     {
-        let target_key = target.into();
-
         // Initialise the closest peers to begin the query with.
         let closest_peers = BTreeMap::from_iter(
             known_closest_peers
@@ -128,7 +122,6 @@ where
             closest_peers,
             iterations,
             num_waiting: 0,
-            phantom_data: std::marker::PhantomData,
         }
     }
 

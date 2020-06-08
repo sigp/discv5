@@ -4,7 +4,6 @@ use enr::{CombinedPublicKey, NodeId};
 use std::net::SocketAddr;
 
 use libp2p_core::{identity::PublicKey, multiaddr::Protocol, Multiaddr};
-use multihash::Multihash;
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
@@ -106,25 +105,33 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
         let multihash = p2p.ok_or_else(|| "The p2p protocol must be specified in the multiaddr")?;
 
         // verify the correct key type
-        if multihash.code() != Multihash::Code::Identity {
+        if multihash.algorithm() != multihash::Code::Identity {
             return Err("The key type is unsupported");
         }
 
-        let public_key = match PublicKey::from_protobuf_encoding(multihash.as_bytes())
-            .map_err(|_| "Invalid public key")?
-        {
-            PublicKey::Secp256k1(pk) => pk.into(),
-            PublicKey::Ed25519(pk) => pk.into(),
-            _ => return Err("The key type is not supported"),
-        };
+        let public_key: CombinedPublicKey =
+            match PublicKey::from_protobuf_encoding(multihash.as_bytes())
+                .map_err(|_| "Invalid public key")?
+            {
+                PublicKey::Secp256k1(pk) => {
+                    // TODO: Remove libp2p dep to avoid conversion here
+                    enr::secp256k1::PublicKey::parse(&pk.encode_uncompressed())
+                        .expect("Libp2p key conversion, always valid")
+                        .into()
+                }
+                PublicKey::Ed25519(pk) => enr::ed25519_dalek::PublicKey::from_bytes(&pk.encode())
+                    .expect("Libp2p key conversion, always valid")
+                    .into(),
+                _ => return Err("The key type is not supported"),
+            };
 
-        return NodeContact::Raw {
-            publick_key: public_key.clone(),
+        return Ok(NodeContact::Raw {
+            public_key: public_key.clone(),
             node_address: NodeAddress {
-                socket_addr: SocketAddr::from(ip_addr.unwrap(), udp_port.unwrap()),
+                socket_addr: SocketAddr::new(ip_addr, udp_port),
                 node_id: public_key.into(),
             },
-        };
+        });
     }
 }
 
@@ -134,7 +141,7 @@ impl std::fmt::Display for NodeContact {
             NodeContact::Enr(enr) => {
                 write!(f, "Node: {}, addr: {:?}", enr.node_id(), enr.udp_socket())
             }
-            NodeContact::Raw { node_address } => write!(f, "{}", node_address),
+            NodeContact::Raw { node_address, .. } => write!(f, "{}", node_address),
         }
     }
 }
