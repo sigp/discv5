@@ -30,11 +30,8 @@ use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct FindNodeQuery<TTarget, TNodeId> {
-    /// Target we're looking for.
-    target: TTarget,
-
     /// The target key we are looking for
-    target_key: Key<TTarget>,
+    target_key: Key<TNodeId>,
 
     /// The current state of progress of the query.
     progress: QueryProgress,
@@ -50,6 +47,8 @@ pub struct FindNodeQuery<TTarget, TNodeId> {
 
     /// The configuration of the query.
     config: FindNodeQueryConfig,
+
+    phantom_data: std::marker::PhantomData<TTarget>,
 }
 
 /// Configuration for a `Query`.
@@ -88,22 +87,23 @@ impl FindNodeQueryConfig {
     }
 }
 
-impl<TTarget, TNodeId> FindNodeQuery<TTarget, TNodeId>
+impl<'a, TTarget, TNodeId> FindNodeQuery<TTarget, TNodeId>
 where
-    TTarget: Into<Key<TTarget>> + Clone,
+    TTarget: 'a,
+    &'a TTarget: Into<Key<TNodeId>>,
     TNodeId: Into<Key<TNodeId>> + Eq + Clone,
 {
     /// Creates a new query with the given configuration.
     pub fn with_config<I>(
         config: FindNodeQueryConfig,
-        target: TTarget,
+        target: &'a TTarget,
         known_closest_peers: I,
         iterations: usize,
     ) -> Self
     where
         I: IntoIterator<Item = Key<TNodeId>>,
     {
-        let target_key = target.clone().into();
+        let target_key = target.into();
 
         // Initialise the closest peers to begin the query with.
         let closest_peers = BTreeMap::from_iter(
@@ -122,13 +122,13 @@ where
         let progress = QueryProgress::Iterating { no_progress: 0 };
 
         FindNodeQuery {
-            target,
             config,
             target_key,
             progress,
             closest_peers,
             iterations,
             num_waiting: 0,
+            phantom_data: std::marker::PhantomData,
         }
     }
 
@@ -248,7 +248,7 @@ where
             return;
         }
 
-        let key: Key<TNodeId> = peer.into();
+        let key: Key<TNodeId> = peer.clone().into();
         let distance = key.distance(&self.target_key);
 
         match self.closest_peers.entry(distance) {
@@ -292,7 +292,7 @@ where
                         peer.state = QueryPeerState::Waiting(timeout);
                         self.num_waiting += 1;
                         let return_peer = ReturnPeer {
-                            node_id: peer.key.preimage().clone(),
+                            key: peer.key.preimage().clone(),
                             iteration: peer.iteration,
                         };
                         return QueryState::Waiting(Some(return_peer));
@@ -476,6 +476,7 @@ enum QueryPeerState {
     Succeeded,
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -742,3 +743,4 @@ mod tests {
         QuickCheck::new().tests(10).quickcheck(prop as fn(_) -> _)
     }
 }
+*/

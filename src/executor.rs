@@ -8,20 +8,20 @@ pub trait Executor: ExecutorClone {
 }
 
 pub trait ExecutorClone {
-    fn clone_box(&self) -> Box<dyn Executor>;
+    fn clone_box(&self) -> Box<dyn Executor + Send>;
 }
 
 impl<T> ExecutorClone for T
 where
-    T: 'static + Executor + Clone,
+    T: 'static + Executor + Clone + Send,
 {
-    fn clone_box(&self) -> Box<dyn Executor> {
+    fn clone_box(&self) -> Box<dyn Executor + Send> {
         Box::new(self.clone())
     }
 }
 
-impl Clone for Box<dyn Executor> {
-    fn clone(&self) -> Box<dyn Executor> {
+impl Clone for Box<dyn Executor + Send> {
+    fn clone(&self) -> Box<dyn Executor + Send> {
         self.clone_box()
     }
 }

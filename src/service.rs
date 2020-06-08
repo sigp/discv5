@@ -15,35 +15,33 @@
 
 use self::ip_vote::IpVote;
 use self::query_info::{QueryInfo, QueryType};
-use crate::error::Discv5Error;
+use crate::error::RequestError;
 use crate::handler::{Handler, HandlerRequest, HandlerResponse};
-use crate::kbucket::{self, EntryRefView, KBucketsTable, NodeStatus};
+use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
 use crate::node_info::{NodeAddress, NodeContact};
 use crate::query_pool::{
-    FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, ReturnPeer,
+    FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState,
 };
 use crate::rpc;
 use crate::socket::MAX_PACKET_SIZE;
 use crate::Enr;
-use enr::{CombinedKey, EnrError, EnrKey, NodeId};
+use crate::{Discv5Config, Discv5Event};
+use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
 use log::{debug, error, info, trace, warn};
 use parking_lot::RwLock;
 use rpc::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::task::Poll;
-use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
-use crate::{Discv5Event, Discv5Config};
 
 mod ip_vote;
 mod query_info;
 // mod test;
-
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
@@ -59,12 +57,9 @@ pub enum QueryKind {
     Predicate {
         target_node: NodeId,
         target_peer_no: usize,
-        predicate: Box<dyn Fn(&Enr) -> bool>,
+        predicate: Box<dyn Fn(&Enr) -> bool + Send>,
     },
 }
-
-
-
 
 // TODO: ENR's for connected peer should be maintained.
 pub struct Service {
@@ -85,7 +80,7 @@ pub struct Service {
 
     /// RPC requests that have been sent and are awaiting a response. Some requests are linked to a
     /// query.
-    active_rpc_requests: FnvHashMap<RequestId, ActiveRequest>,
+    active_requests: FnvHashMap<RequestId, ActiveRequest>,
 
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
@@ -100,7 +95,7 @@ pub struct Service {
     handler_recv: mpsc::Receiver<HandlerResponse>,
 
     /// The exit channel to shutdown the handler.
-    handler_exit: oneshot::Sender<()>,
+    handler_exit: Option<oneshot::Sender<()>>,
 
     discv5_recv: mpsc::Receiver<ServiceRequest>,
 
@@ -108,7 +103,7 @@ pub struct Service {
     /// An interval to check and ping all nodes in the routing table.
     ping_heartbeat: Interval,
 
-    event_stream: Option<mpsc::Sender<Discv5Event>>
+    event_stream: Option<mpsc::Sender<Discv5Event>>,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -161,7 +156,6 @@ impl Service {
         mut config: Discv5Config,
         listen_socket: SocketAddr,
     ) -> (oneshot::Sender<()>, mpsc::Sender<ServiceRequest>) {
-
         let node_id = local_enr.read().node_id();
 
         // process behaviour-level configuration parameters
@@ -172,29 +166,24 @@ impl Service {
         };
 
         // build the session service
-        let (handler_exit, handler_send, handler_recv) = Handler::spawn(
-            local_enr.clone(),
-            enr_key.clone(),
-            listen_socket,
-            &config,
-        );
+        let (handler_exit, handler_send, handler_recv) =
+            Handler::spawn(local_enr.clone(), enr_key.clone(), listen_socket, &config);
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
-
 
         let mut service = Service {
             local_enr,
             enr_key,
             kbuckets,
             queries: QueryPool::new(config.query_timeout.clone()),
-            active_rpc_requests: Default::default(),
+            active_requests: Default::default(),
             active_nodes_responses: HashMap::new(),
             ip_votes,
             handler_send,
             handler_recv,
-            handler_exit,
+            handler_exit: Some(handler_exit),
             ping_heartbeat: tokio::time::interval(config.ping_interval),
             discv5_recv,
             event_stream: None,
@@ -219,10 +208,12 @@ impl Service {
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
-                    let _ = self.handler_exit.send(());
-                    info!("Discv5 Service shutdown");
+                    if let Some(exit) = self.handler_exit.take() {
+                        exit.send(());
+                        info!("Discv5 Service shutdown");
+                    }
                 }
-                Some(service_request) = &mut self.discv5_recv => {
+                Some(service_request) = &mut self.discv5_recv.next() => {
                     match service_request {
                         ServiceRequest::StartQuery(query, callback) => {
                             match query {
@@ -269,28 +260,35 @@ impl Service {
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
                             trace!("RPC Request failed: id: {}, error {:?}", request_id, error);
-                            self.rpc_failure(request_id);
+                            self.rpc_failure(request_id, error);
                         }
                     }
                 }
-                event = Service::bucket_maintenance_poll(&mut self.kbuckets) => {
-                    self.send_event_stream(event).await;
+                event = Service::bucket_maintenance_poll(&self.kbuckets) => {
+                    self.send_event(event);
                 }
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
-                        QueryEvent::Waiting(query_id, target, return_peer) => {
-                            self.send_rpc_query(query_id, target, &return_peer).await;
+                        QueryEvent::Waiting(query_id, enr, request_body) => {
+                            self.send_rpc_query(query_id, enr, request_body).await;
                         }
                         // Note: Currently the distinction between a timed-out query and a finished
                         // query is superfluous, however it may be useful in future versions.
-                        QueryEvent::Finished(query) => {
-                                if let Err(e) = query.target().callback.send(Ok(query.into_result())).await {
-                                    warn!("Callback dropped for query {}. Results dropped", *query.id());
+                        QueryEvent::Finished(query) | QueryEvent::TimedOut(query) => {
+                            let id = query.id();
+                            let mut result = query.into_result();
+                            // obtain the ENR's for the resulting nodes
+                            let mut found_enrs = Vec::new();
+                            for node_id in result.closest_peers.into_iter() {
+                                if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
+                                    let enr = result.target.untrusted_enrs.swap_remove(position);
+                                    found_enrs.push(enr);
+                                } else {
+                                    error!("ENR not present in queries results");
                                 }
-                        }
-                        QueryEvent::TimedOut(query) => {
-                                if let Err(e) = query.target().callback.send(Ok(query.into_result())).await {
-                                    warn!("Callback dropped for query {}. Results dropped", *query.id());
+                            }
+                                if let Err(e) = result.target.callback.send(found_enrs) {
+                                    warn!("Callback dropped for query {}. Results dropped", *id);
                                 }
                         }
                     }
@@ -301,7 +299,6 @@ impl Service {
             }
         }
     }
-
 
     /// Internal function that starts a query.
     fn start_findnode_query(&mut self, target_node: NodeId, callback: oneshot::Sender<Vec<Enr>>) {
@@ -315,24 +312,25 @@ impl Service {
         // FINDNODE requires multiple iterations as it requests a specific distance.
         let query_iterations = target.iterations();
 
-        let target_key: kbucket::Key<QueryInfo> = target.clone().into();
-        let known_closest_peers = self.kbuckets.closest_keys(&target_key);
+        let target_key: kbucket::Key<NodeId> = (&target).into();
+        let known_closest_peers = self.kbuckets.read().closest_keys(&target_key);
         let query_config = FindNodeQueryConfig::new_from_config(&self.config);
-        self.queries
-            .add_findnode_query(query_config, target, known_closest_peers, query_iterations)
+        self.queries.add_findnode_query(
+            query_config,
+            target,
+            known_closest_peers,
+            query_iterations,
+        );
     }
 
     /// Internal function that starts a query.
-    fn start_predicate_query<F>(
+    fn start_predicate_query(
         &mut self,
         target_node: NodeId,
         num_nodes: usize,
-        predicate: Box<dyn Fn(&Enr) -> bool>,
+        predicate: Box<dyn Fn(&Enr) -> bool + Send>,
         callback: oneshot::Sender<Vec<Enr>>,
-    ) 
-    where
-        F: Fn(&Enr) -> bool + Send + Clone + 'static,
-    {
+    ) {
         let target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
@@ -343,11 +341,12 @@ impl Service {
         // FINDNODE requires multiple iterations as it requests a specific distance.
         let query_iterations = target.iterations();
 
-        let target_key: kbucket::Key<QueryInfo> = target.clone().into();
+        let target_key: kbucket::Key<NodeId> = (&target).into();
 
         let known_closest_peers = self
             .kbuckets
-            .closest_keys_predicate(&target_key, predicate.clone());
+            .read()
+            .closest_keys_predicate(&target_key, &predicate);
 
         let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
         query_config.num_results = num_nodes;
@@ -357,14 +356,14 @@ impl Service {
             known_closest_peers,
             query_iterations,
             predicate,
-        )
+        );
     }
 
     /// Returns an ENR if one is known for the given NodeId.
     pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.entry(&key) {
+        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.read().entry(&key) {
             return Some(entry.value().clone());
         }
         // check the untrusted addresses for ongoing queries
@@ -397,25 +396,28 @@ impl Service {
                         },
                     };
                     debug!("Sending our ENR to node: {}", node_address);
-                    self.handler_send.send(HandlerRequest::Response(node_address, response))
-                        .await.unwrap_or_else(|_| ());
+                    self.handler_send
+                        .send(HandlerRequest::Response(node_address, response))
+                        .await
+                        .unwrap_or_else(|_| ());
                 } else {
                     self.send_nodes_response(node_address, id, distance).await;
                 }
             }
             RequestBody::Ping { enr_seq } => {
                 // check if we need to update the known ENR
+                let mut to_request_enr = None;
                 match self.kbuckets.write().entry(&node_address.node_id.into()) {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            self.request_enr(enr.into()).await;
+                            to_request_enr = Some(enr.into());
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            self.request_enr(enr.into()).await;
+                            to_request_enr = Some(enr.into());
                         }
                     }
                     // don't know of the ENR, request the update
@@ -423,6 +425,9 @@ impl Service {
                         // The ENR is no longer in our table, we stop responding to PING's
                         return;
                     }
+                }
+                if let Some(enr) = to_request_enr {
+                    self.request_enr(enr, None).await;
                 }
 
                 // build the PONG response
@@ -436,8 +441,10 @@ impl Service {
                     },
                 };
                 debug!("Sending PONG response to {}", node_address);
-                self.handler_send.send(HandlerRequest::Response(node_address, response))
-                    .await.unwrap_or_else(|_| ());
+                self.handler_send
+                    .send(HandlerRequest::Response(node_address, response))
+                    .await
+                    .unwrap_or_else(|_| ());
             }
             _ => {} //TODO: Implement all RPC methods
         }
@@ -448,7 +455,7 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id;
 
-        if let Some(active_request) = self.active_rpc_requests.remove(&id) {
+        if let Some(mut active_request) = self.active_requests.remove(&id) {
             let node_id = active_request.contact.node_id();
             if !response.match_request(&active_request.request_body) {
                 warn!(
@@ -481,7 +488,10 @@ impl Service {
                         }
                         // This must be for asking for an ENR
                         if nodes.len() > 1 {
-                            warn!("Peer returned more than one ENR for itself. {}", active_request.contact);
+                            warn!(
+                                "Peer returned more than one ENR for itself. {}",
+                                active_request.contact
+                            );
                         }
                         callback.send(nodes.pop()).unwrap_or_else(|_| ());
                         return;
@@ -527,8 +537,7 @@ impl Service {
                             current_response.received_nodes.append(&mut nodes);
                             self.active_nodes_responses
                                 .insert(node_id, current_response);
-                            self.active_rpc_requests
-                                .insert(id, active_request);
+                            self.active_requests.insert(id, active_request);
                             return;
                         }
 
@@ -560,15 +569,20 @@ impl Service {
                     if let Some(ref mut ip_votes) = self.ip_votes {
                         ip_votes.insert(node_id, socket.clone());
                         if let Some(majority_socket) = ip_votes.majority() {
-                        if Some(majority_socket) != local_socket {
-                            info!("Local UDP socket updated to: {}", majority_socket);
-                            self.send_event(Discv5Event::SocketUpdated(majority_socket));
+                            if Some(majority_socket) != local_socket {
+                                info!("Local UDP socket updated to: {}", majority_socket);
+                                self.send_event(Discv5Event::SocketUpdated(majority_socket));
                                 // Update the UDP socket
-                                if self.local_enr.write().set_udp_socket(majority_socket, &self.enr_key.read()).is_ok() {
-                                // alert known peers to our updated enr
-                                self.ping_connected_peers().await;
+                                if self
+                                    .local_enr
+                                    .write()
+                                    .set_udp_socket(majority_socket, &self.enr_key.read())
+                                    .is_ok()
+                                {
+                                    // alert known peers to our updated enr
+                                    self.ping_connected_peers().await;
+                                }
                             }
-                        }
                         }
                     }
 
@@ -578,7 +592,7 @@ impl Service {
                             // request an ENR update
                             debug!("Requesting an ENR update from: {}", active_request.contact);
                             let request_body = RequestBody::FindNode { distance: 0 };
-                            let active_request = ActiveRequest{
+                            let active_request = ActiveRequest {
                                 contact: active_request.contact,
                                 request_body,
                                 query_id: None,
@@ -586,11 +600,7 @@ impl Service {
                             };
                             self.send_rpc_request(active_request).await;
                         }
-                        self.connection_updated(
-                            node_id,
-                            Some(enr),
-                            NodeStatus::Connected,
-                        )
+                        self.connection_updated(node_id, Some(enr), NodeStatus::Connected)
                     }
                 }
                 _ => {} //TODO: Implement all RPC methods
@@ -618,11 +628,19 @@ impl Service {
 
     async fn ping_connected_peers(&mut self) {
         // maintain the ping interval
-        let connected_peers = self.kbuckets.write().iter().filter_map(|entry| {
-            if entry.status == NodeStatus::Connected {
-                Some(entry.node.value)
-                } else { None }
-        }).collect::<Vec<_>>();
+        let connected_peers = {
+            let mut kbuckets = self.kbuckets.write();
+            kbuckets
+                .iter()
+                .filter_map(|entry| {
+                    if entry.status == NodeStatus::Connected {
+                        Some(entry.node.value.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
 
         for enr in connected_peers {
             self.send_ping(enr.clone()).await;
@@ -630,9 +648,13 @@ impl Service {
     }
 
     /// Request an external node's ENR.
-    async fn request_enr(&mut self, contact: NodeContact, callback: Option<oneshot::Sender<Option<Enr>>>) {
+    async fn request_enr(
+        &mut self,
+        contact: NodeContact,
+        callback: Option<oneshot::Sender<Option<Enr>>>,
+    ) {
         let request_body = RequestBody::FindNode { distance: 0 };
-        let mut active_request = ActiveRequest {
+        let active_request = ActiveRequest {
             contact,
             request_body,
             query_id: None,
@@ -644,12 +666,20 @@ impl Service {
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
     /// into multiple responses to ensure the response stays below the maximum packet size.
     async fn send_nodes_response(&mut self, node_address: NodeAddress, rpc_id: u64, distance: u64) {
-        let nodes: Vec<EntryRefView<'_, NodeId, Enr>> = self
-            .kbuckets.read()
-            .nodes_by_distance(distance)
-            .into_iter()
-            .filter(|entry| entry.node.key.preimage() != &node_address.node_id)
-            .collect();
+        let nodes: Vec<Enr> = {
+            let mut kbuckets = self.kbuckets.write();
+            kbuckets
+                .nodes_by_distance(distance)
+                .into_iter()
+                .filter_map(|entry| {
+                    if entry.node.key.preimage() != &node_address.node_id {
+                        Some(entry.node.value.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
         // if there are no nodes, send an empty response
         if nodes.is_empty() {
             let response = Response {
@@ -663,28 +693,29 @@ impl Service {
                 "Sending empty FINDNODES response to: {}",
                 node_address.node_id
             );
-            self.handler_send.send(HandlerRequest::Response(node_address, response))
-                .await.unwrap_or_else(|_| ());
+            self.handler_send
+                .send(HandlerRequest::Response(node_address, response))
+                .await
+                .unwrap_or_else(|_| ());
         } else {
             // build the NODES response
             let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
             let mut total_size = 0;
             let mut rpc_index = 0;
             to_send_nodes.push(Vec::new());
-            for entry in nodes.into_iter() {
-                let entry_size = entry.node.value.clone().encode().len();
+            for enr in nodes.into_iter() {
+                let entry_size = enr.encode().len();
                 // Responses assume that a session is established. Thus, on top of the encoded
                 // ENR's the packet should be a regular message. A regular message has a tag (32
                 // bytes), and auth_tag (12 bytes) and the NODES response has an ID (8 bytes) and a total (8 bytes).
                 // The encryption adds the HMAC (16 bytes) and can be at most 16 bytes larger so the total packet size can be at most 92 (given AES_GCM).
                 if entry_size + total_size < MAX_PACKET_SIZE - 92 {
                     total_size += entry_size;
-                    trace!("Adding ENR, Valid: {}", entry.node.value.verify());
-                    trace!("Enr: {}", entry.node.value.clone());
-                    to_send_nodes[rpc_index].push(entry.node.value.clone());
+                    trace!("Adding ENR {}", enr);
+                    to_send_nodes[rpc_index].push(enr);
                 } else {
                     total_size = entry_size;
-                    to_send_nodes.push(vec![entry.node.value.clone()]);
+                    to_send_nodes.push(vec![enr]);
                     rpc_index += 1;
                 }
             }
@@ -706,8 +737,10 @@ impl Service {
                     node_address,
                     response
                 );
-                self.handler_send.send(HandlerRequest::Response(node_address.clone(), response))
-                    .await.unwrap_or_else(|_| ());
+                self.handler_send
+                    .send(HandlerRequest::Response(node_address.clone(), response))
+                    .await
+                    .unwrap_or_else(|_| ());
             }
         }
     }
@@ -716,63 +749,41 @@ impl Service {
     async fn send_rpc_query(
         &mut self,
         query_id: QueryId,
-        query_info: QueryInfo,
-        return_peer: &ReturnPeer<NodeId>,
+        return_peer: Enr,
+        request_body: RequestBody,
     ) {
-        let node_id = return_peer.key;
-        trace!(
-            "Sending query. Iteration: {}, NodeId: {}",
-            return_peer.iteration,
-            node_id
-        );
-
-        let request_body = match query_info.into_rpc_request(return_peer) {
-            Ok(r) => r,
-            Err(e) => {
-                // dst node is local_key, report failure
-                error!("Send RPC: {}", e);
-                if let Some(query) = self.queries.get_mut(query_id) {
-                    query.on_failure(&node_id);
-                }
-                return;
-            }
-        };
-
-        // get the enr from the untrusted ENR list of the query
-        if let Some(enr) = self.queries.get(query_id).target().untrusted_enrs.iter().find(|v| v.node_id() == node_id)  {
         let active_request = ActiveRequest {
-            contact: enr.clone().into(),
+            contact: return_peer.into(),
             request_body,
             query_id: Some(query_id),
             callback: None,
         };
         self.send_rpc_request(active_request).await;
-        } else {
-            error!("Query {} requested ENR not in it's untrusted list", *query_id);
-        }
     }
 
     /// Sends generic RPC requests. Each request gets added to known outputs, awaiting a response.
     async fn send_rpc_request(&mut self, active_request: ActiveRequest) {
         // Generate a random rpc_id which is matched per node id
-        let id: u64 = rand::random(),
+        let id: u64 = rand::random();
         let request: Request = Request {
             id: rand::random(),
-            body: active_request.body.clone(),
+            body: active_request.request_body.clone(),
         };
         let contact = active_request.contact.clone();
         self.active_requests.insert(id, active_request);
         debug!("Sending RPC {} to node: {}", request, contact);
-        self.handler_send(HandlerRequest::Request(contact, request))
-            .await.unwrap_or_else(|| ());
+        self.handler_send
+            .send(HandlerRequest::Request(contact, request))
+            .await
+            .unwrap_or_else(|_| ());
     }
 
     fn send_event(&mut self, event: Discv5Event) {
-        if let Some(stream) = self.event_stream.get_mut() {
-           if let TrySendError::Closed(_) = stream.try_send(event) {
-               // If the stream has been dropped prevent future attempts to send events
-               self.event_stream = None;
-           }
+        if let Some(stream) = self.event_stream.as_mut() {
+            if let Err(mpsc::error::TrySendError::Closed(_)) = stream.try_send(event) {
+                // If the stream has been dropped prevent future attempts to send events
+                self.event_stream = None;
+            }
         }
     }
 
@@ -792,18 +803,19 @@ impl Service {
                 if !self.config.ip_limit
                     || self
                         .kbuckets
+                        .read()
                         .check(&key, enr_ref, { |v, o, l| ip_limiter(v, &o, l) })
                 {
-                    match self.kbuckets.entry(&key) {
+                    match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(mut entry, _) => {
                             if entry.value().seq() < enr_ref.seq() {
-                                trace!("Enr updated: {}", enr_ref);
+                                trace!("ENR updated: {}", enr_ref);
                                 *entry.value() = enr_ref.clone();
                             }
                         }
                         kbucket::Entry::Pending(mut entry, _) => {
                             if entry.value().seq() < enr_ref.seq() {
-                                trace!("Enr updated: {}", enr_ref);
+                                trace!("ENR updated: {}", enr_ref);
                                 *entry.value() = enr_ref.clone();
                             }
                         }
@@ -854,6 +866,7 @@ impl Service {
             if self.config.ip_limit
                 && !self
                     .kbuckets
+                    .read()
                     .check(&key, enr, { |v, o, l| ip_limiter(v, &o, l) })
             {
                 // if the node status is connected and it would exceed the ip ban, consider it
@@ -862,7 +875,7 @@ impl Service {
             }
         }
 
-        match self.kbuckets.entry(&key) {
+        match self.kbuckets.write().entry(&key) {
             kbucket::Entry::Present(mut entry, old_status) => {
                 if let Some(enr) = enr {
                     *entry.value() = enr;
@@ -888,18 +901,15 @@ impl Service {
                     if let Some(enr) = enr {
                         match entry.insert(enr, new_status) {
                             kbucket::InsertResult::Inserted => {
-                                let event = ServiceEvent::NodeInserted {
+                                let event = Discv5Event::NodeInserted {
                                     node_id,
                                     replaced: None,
                                 };
-                                self.discv5_events.push_back(event);
+                                self.send_event(event);
                             }
                             kbucket::InsertResult::Full => (),
                             kbucket::InsertResult::Pending { disconnected } => {
-                                debug_assert!(!self
-                                    .connected_peers
-                                    .contains_key(disconnected.preimage()));
-                                self.send_ping(&disconnected.into_preimage());
+                                self.send_ping(enr);
                             }
                         }
                     }
@@ -914,29 +924,24 @@ impl Service {
     async fn inject_session_established(&mut self, enr: Enr) {
         let node_id = enr.node_id();
         debug!("Session established with Node: {}", node_id);
-        self.connection_updated(node_id.clone(), Some(enr), NodeStatus::Connected);
+        self.connection_updated(node_id.clone(), Some(enr.clone()), NodeStatus::Connected);
         // send an initial ping and start the ping interval
-        self.send_ping(&node_id).await;
+        self.send_ping(enr).await;
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
-    fn rpc_failure(&mut self, id: RequestId) {
-        if let Some(active_request) = self.active_rpc_requests.remove(&id)
-        {
+    fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
+        if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
-            if let Some(id) = active_request.callback_id {
-                if let Some(callback) = self.active_callbacks.remove(id) {
-                    callback.send(Err(error)).await.unwrap_or_else(|| ());
-                } else {
-                    crit!("Callback non-existant for id {}", id);
-                }
+            if let Some(callback) = active_request.callback {
+                callback.send(None).unwrap_or_else(|_| ());
                 return;
             }
 
-            let node_id = active_request.contact.node_id;
-            match request {
+            let node_id = active_request.contact.node_id();
+            match active_request.request_body {
                 // if a failed FindNodes request, ensure we haven't partially received packets. If
                 // so, process the partially found nodes
                 RequestBody::FindNode { .. } => {
@@ -944,58 +949,62 @@ impl Service {
                         if !nodes_response.received_nodes.is_empty() {
                             warn!(
                                 "NODES Response failed, but was partially processed from: {}",
-                                node_address
+                                active_request.contact
                             );
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
                                 &node_id,
                                 nodes_response.received_nodes,
-                                query_id_option,
+                                active_request.query_id,
                             );
                         }
                     } else {
                         // there was no partially downloaded nodes inform the query of the failure
                         // if it's part of a query
-                        if let Some(query_id) = query_id_option {
+                        if let Some(query_id) = active_request.query_id {
                             if let Some(query) = self.queries.get_mut(query_id) {
                                 query.on_failure(&node_id);
                             }
                         } else {
-                            debug!("Failed RPC request: {}: {} ", request, node_address);
+                            debug!(
+                                "Failed RPC request: {}: {} ",
+                                active_request.request_body, active_request.contact
+                            );
                         }
                     }
                 }
                 // for all other requests, if any are queries, mark them as failures.
                 _ => {
-                    if let Some(query_id) = query_id_option {
+                    if let Some(query_id) = active_request.query_id {
                         if let Some(query) = self.queries.get_mut(query_id) {
                             debug!(
                                 "Failed query request: {} for query: {} and {} ",
-                                request, *query_id, node_address
+                                active_request.request_body, *query_id, active_request.contact
                             );
                             query.on_failure(&node_id);
                         }
                     } else {
-                        debug!("Failed RPC request: {:?} for node: {} ", request, node_id);
+                        debug!(
+                            "Failed RPC request: {:?} for node: {} ",
+                            active_request.request_body, active_request.contact
+                        );
                     }
                 }
             }
 
             self.connection_updated(node_id, None, NodeStatus::Disconnected);
-            if self.connected_peers.remove(&node_id).is_some() {
-                // report the node as being disconnected
-                debug!("Session dropped with {}", node_address);
-            }
         }
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
     /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
-    async fn bucket_maintenance_poll(kbuckets: &mut KBucketsTable<NodeId, Enr>) -> Discv5Event {
+    async fn bucket_maintenance_poll(
+        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+    ) -> Discv5Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.
-            if let Some(entry) = kbuckets.take_applied_pending() {
+            if let Some(entry) = kbuckets.write().take_applied_pending() {
                 let event = Discv5Event::NodeInserted {
                     node_id: entry.inserted.into_preimage(),
                     replaced: entry.evicted.map(|n| n.key.into_preimage()),
@@ -1012,9 +1021,44 @@ impl Service {
     async fn query_event_poll(queries: &mut QueryPool<QueryInfo, NodeId, Enr>) -> QueryEvent {
         future::poll_fn(move |_cx| match queries.poll() {
             QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(query)),
-            QueryPoolState::Waiting(Some((query, return_peer))) => Poll::Ready(
-                QueryEvent::Waiting(query.id(), query.target().clone(), return_peer),
-            ),
+            QueryPoolState::Waiting(Some((query, return_peer))) => {
+                // Find the ENR of the associated peer and return this Enr to contact
+                let node_id = return_peer.key;
+                let enr = {
+                    if let Some(enr) = query
+                        .target()
+                        .untrusted_enrs
+                        .iter()
+                        .find(|v| v.node_id() == node_id)
+                    {
+                        enr.clone()
+                    } else {
+                        error!(
+                            "Query {} requested ENR not in it's untrusted list",
+                            *query.id()
+                        );
+                        return Poll::Pending;
+                    }
+                };
+                trace!(
+                    "Query: {} iteration: {} NodeId: {}",
+                    *query.id(),
+                    return_peer.iteration,
+                    node_id
+                );
+
+                let request_body = match query.target().rpc_request(&return_peer) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // dst node is local_key, report failure
+                        error!("Send RPC failed: {}", e);
+                        query.on_failure(&node_id);
+                        return Poll::Pending;
+                    }
+                };
+
+                Poll::Ready(QueryEvent::Waiting(query.id(), enr, request_body))
+            }
             QueryPoolState::Timeout(query) => {
                 warn!("Query id: {:?} timed out", query.id());
                 Poll::Ready(QueryEvent::TimedOut(query))
@@ -1029,7 +1073,7 @@ impl Service {
 /// active query.
 enum QueryEvent {
     /// The query is waiting for a peer to be contacted.
-    Waiting(QueryId, QueryInfo, ReturnPeer<NodeId>),
+    Waiting(QueryId, Enr, RequestBody),
     /// The query has timed out, possible returning peers.
     TimedOut(crate::query_pool::Query<QueryInfo, NodeId, Enr>),
     /// The query has completed successfully.

@@ -16,7 +16,7 @@ pub use send::OutboundPacket;
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig<'a> {
     /// The executor to spawn the tasks.
-    pub executor: Box<dyn Executor>,
+    pub executor: Box<dyn Executor + Send>,
     /// The listening socket.
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.

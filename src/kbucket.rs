@@ -76,6 +76,7 @@ mod key;
 
 pub use entry::*;
 
+use crate::Enr;
 use arrayvec::{self, ArrayVec};
 use bucket::KBucket;
 use std::collections::VecDeque;

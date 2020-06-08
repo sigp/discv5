@@ -61,9 +61,10 @@ pub enum QueryPoolState<'a, TTarget, TNodeId, TResult> {
     Timeout(Query<TTarget, TNodeId, TResult>),
 }
 
-impl<TTarget, TNodeId, TResult> QueryPool<TTarget, TNodeId, TResult>
+impl<'a, TTarget, TNodeId, TResult> QueryPool<TTarget, TNodeId, TResult>
 where
-    TTarget: Into<Key<TTarget>> + Clone,
+    TTarget: 'a,
+    &'a TTarget: Into<Key<TNodeId>>,
     TNodeId: Into<Key<TNodeId>> + Eq + Clone,
     TResult: Into<TNodeId> + Clone,
 {
@@ -92,7 +93,7 @@ where
     where
         I: IntoIterator<Item = Key<TNodeId>>,
     {
-        let findnode_query = FindNodeQuery::with_config(config, target.clone(), peers, iterations);
+        let findnode_query = FindNodeQuery::with_config(config, &target, peers, iterations);
         let peer_iter = QueryPeerIter::FindNode(findnode_query);
         self.add(peer_iter, target)
     }
@@ -110,7 +111,7 @@ where
         I: IntoIterator<Item = PredicateKey<TNodeId>>,
     {
         let predicate_query =
-            PredicateQuery::with_config(config, target.clone(), peers, iterations, predicate);
+            PredicateQuery::with_config(config, &target, peers, iterations, predicate);
         let peer_iter = QueryPeerIter::Predicate(predicate_query);
         self.add(peer_iter, target)
     }
@@ -213,9 +214,10 @@ enum QueryPeerIter<TTarget, TNodeId, TResult> {
     Predicate(PredicateQuery<TTarget, TNodeId, TResult>),
 }
 
-impl<TTarget, TNodeId, TResult> Query<TTarget, TNodeId, TResult>
+impl<'b, TTarget, TNodeId, TResult> Query<TTarget, TNodeId, TResult>
 where
-    TTarget: Into<Key<TTarget>> + Clone,
+    TTarget: 'b,
+    &'b TTarget: Into<Key<TNodeId>>,
     TNodeId: Into<Key<TNodeId>> + Eq + Clone,
     TResult: Into<TNodeId> + Clone,
 {

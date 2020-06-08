@@ -8,7 +8,6 @@ use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::Discv5Config;
 use crate::Enr;
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
-use futures::prelude::*;
 use log::{error, warn};
 use parking_lot::RwLock;
 use std::{convert::TryFrom, net::SocketAddr, sync::Arc, time::Duration};

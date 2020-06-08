@@ -1,23 +1,24 @@
 use crate::kbucket::Key;
 use crate::query_pool::ReturnPeer;
 use crate::rpc::RequestBody;
+use crate::Enr;
 use enr::NodeId;
-use enr::{CombinedKey, Enr};
 use sha2::digest::generic_array::GenericArray;
 use smallvec::SmallVec;
+use tokio::sync::oneshot;
 
 /// The number of distances to request when running a FINDNODE query. The probability that a peer returns
 /// any given target peer is `1 - 0.5**MAX_FINDNODE_REQUESTS`.
 const MAX_FINDNODE_REQUESTS: usize = 3;
 
 /// Information about a query.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct QueryInfo {
     /// What we are querying and why.
     pub query_type: QueryType,
 
     /// Temporary ENRs used when trying to reach nodes.
-    pub untrusted_enrs: SmallVec<[Enr<CombinedKey>; 16]>,
+    pub untrusted_enrs: SmallVec<[Enr; 16]>,
 
     /// A callback channel for the service that requested the query.
     pub callback: oneshot::Sender<Vec<Enr>>,
@@ -31,13 +32,13 @@ pub enum QueryType {
 }
 
 impl QueryInfo {
-    /// Builds an RPC Request
-    pub(crate) fn into_rpc_request(
-        self,
+    /// Builds an RPC Request, given the QueryInfo
+    pub(crate) fn rpc_request(
+        &self,
         return_peer: &ReturnPeer<NodeId>,
     ) -> Result<RequestBody, &'static str> {
-        let request = match &self.query_type {
-            QueryType::FindNode(node_id) => {
+        let request = match self.query_type {
+            QueryType::FindNode(ref node_id) => {
                 let distance = findnode_log2distance(node_id, return_peer)
                     .ok_or_else(|| "Requested a node find itself")?;
                 RequestBody::FindNode { distance }
@@ -54,12 +55,11 @@ impl QueryInfo {
     }
 }
 
-impl Into<Key<QueryInfo>> for QueryInfo {
-    fn into(self) -> Key<QueryInfo> {
-        let cloned_self = self.clone();
+impl Into<Key<NodeId>> for &QueryInfo {
+    fn into(self) -> Key<NodeId> {
         match self.query_type {
-            QueryType::FindNode(node_id) => {
-                Key::new_raw(cloned_self, *GenericArray::from_slice(&node_id.raw()))
+            QueryType::FindNode(ref node_id) => {
+                Key::new_raw(node_id.clone(), *GenericArray::from_slice(&node_id.raw()))
             }
         }
     }
@@ -77,7 +77,7 @@ fn findnode_log2distance(target: &NodeId, return_peer: &ReturnPeer<NodeId>) -> O
         panic!("Iterations cannot be greater than 127");
     }
 
-    let dst_key: Key<NodeId> = return_peer.node_id.clone().into();
+    let dst_key: Key<NodeId> = return_peer.key.clone().into();
 
     let distance = dst_key.log2_distance(&target.clone().into())?;
 
@@ -112,7 +112,7 @@ mod tests {
 
         for (iteration, distance) in expected_distances.into_iter().enumerate() {
             let return_peer = ReturnPeer {
-                node_id: destination.clone(),
+                key: destination.clone(),
                 iteration: iteration + 1,
             };
             assert_eq!(
@@ -134,7 +134,7 @@ mod tests {
         for (iteration, distance) in expected_distances.into_iter().enumerate() {
             println!("{}", iteration);
             let return_peer = ReturnPeer {
-                node_id: destination.clone(),
+                key: destination.clone(),
                 iteration: iteration + 1,
             };
             assert_eq!(
@@ -155,7 +155,7 @@ mod tests {
 
         for (iteration, distance) in expected_distances.into_iter().enumerate() {
             let return_peer = ReturnPeer {
-                node_id: destination.clone(),
+                key: destination.clone(),
                 iteration: iteration + 1,
             };
             assert_eq!(

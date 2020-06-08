@@ -49,7 +49,7 @@ pub struct Discv5Config {
 
     pub filter_config: FilterConfig,
 
-    pub executor: Option<Box<dyn Executor>>,
+    pub executor: Option<Box<dyn Executor + Send>>,
 }
 
 impl Default for Discv5Config {
@@ -160,7 +160,7 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    pub fn executor(&mut self, executor: Box<dyn Executor>) -> &mut Self {
+    pub fn executor(&mut self, executor: Box<dyn Executor + Send>) -> &mut Self {
         self.config.executor = Some(executor);
         self
     }

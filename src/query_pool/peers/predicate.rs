@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) struct PredicateQuery<TTarget, TNodeId, TResult> {
     /// The target key we are looking for
-    target_key: Key<TTarget>,
+    target_key: Key<TNodeId>,
 
     /// The current state of progress of the query.
     progress: QueryProgress,
@@ -26,6 +26,8 @@ pub(crate) struct PredicateQuery<TTarget, TNodeId, TResult> {
 
     /// The configuration of the query.
     config: PredicateQueryConfig,
+
+    phantom_data: std::marker::PhantomData<TTarget>,
 }
 
 /// Configuration for a `Query`.
@@ -64,16 +66,17 @@ impl PredicateQueryConfig {
     }
 }
 
-impl<TTarget, TNodeId, TResult> PredicateQuery<TTarget, TNodeId, TResult>
+impl<'b, TTarget, TNodeId, TResult> PredicateQuery<TTarget, TNodeId, TResult>
 where
-    TTarget: Into<Key<TTarget>> + Clone,
+    TTarget: 'b,
+    &'b TTarget: Into<Key<TNodeId>> + Clone,
     TNodeId: Into<Key<TNodeId>> + Eq + Clone,
     TResult: Into<TNodeId> + Clone,
 {
     /// Creates a new query with the given configuration.
     pub fn with_config<I>(
         config: PredicateQueryConfig,
-        target: TTarget,
+        target: &'b TTarget,
         known_closest_peers: I,
         iterations: usize,
         predicate: impl Fn(&TResult) -> bool + Send + 'static,
@@ -109,6 +112,7 @@ where
             iterations,
             num_waiting: 0,
             predicate: Box::new(predicate),
+            phantom_data: std::marker::PhantomData,
         }
     }
 
@@ -273,7 +277,7 @@ where
                         peer.state = QueryPeerState::Waiting(timeout);
                         self.num_waiting += 1;
                         let return_peer = ReturnPeer {
-                            node_id: peer.key.preimage().clone(),
+                            key: peer.key.preimage().clone(),
                             iteration: peer.iteration,
                         };
                         return QueryState::Waiting(Some(return_peer));
