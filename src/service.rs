@@ -164,36 +164,36 @@ impl Service {
             enr_key.clone(),
             listen_socket,
             active_sessions,
-            &config,
+            config.clone(),
         );
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
-        let mut service = Service {
-            local_enr,
-            enr_key,
-            kbuckets,
-            queries: QueryPool::new(config.query_timeout.clone()),
-            active_requests: Default::default(),
-            active_nodes_responses: HashMap::new(),
-            ip_votes,
-            handler_send,
-            handler_recv,
-            handler_exit: Some(handler_exit),
-            ping_heartbeat: tokio::time::interval(config.ping_interval),
-            discv5_recv,
-            event_stream: None,
-            exit,
-            config: config.clone(),
-        };
-
         config
             .executor
             .clone()
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
+                let mut service = Service {
+                    local_enr,
+                    enr_key,
+                    kbuckets,
+                    queries: QueryPool::new(config.query_timeout.clone()),
+                    active_requests: Default::default(),
+                    active_nodes_responses: HashMap::new(),
+                    ip_votes,
+                    handler_send,
+                    handler_recv,
+                    handler_exit: Some(handler_exit),
+                    ping_heartbeat: tokio::time::interval(config.ping_interval),
+                    discv5_recv,
+                    event_stream: None,
+                    exit,
+                    config: config.clone(),
+                };
+
                 info!("Discv5 Service started");
                 service.start().await;
             }));

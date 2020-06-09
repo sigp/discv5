@@ -182,7 +182,7 @@ impl Handler {
         key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
         active_sessions: Arc<AtomicUsize>,
-        config: &Discv5Config,
+        config: Discv5Config,
     ) -> (
         oneshot::Sender<()>,
         mpsc::Sender<HandlerRequest>,
@@ -209,40 +209,39 @@ impl Handler {
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
             socket_addr: listen_socket.clone(),
-            filter_config: &config.filter_config,
+            filter_config: config.filter_config.clone(),
             whoareyou_magic: magic,
         };
 
-        let socket = socket::Socket::new(socket_config);
-
         let node_id = enr.read().node_id();
-
-        let mut handler = Handler {
-            request_retries: config.request_retries,
-            node_id,
-            enr,
-            key,
-            active_requests: HashMapDelay::new(config.request_timeout),
-            active_requests_auth: HashMap::new(),
-            active_sessions,
-            pending_requests: HashMap::new(),
-            sessions: LruCache::with_expiry_duration_and_capacity(
-                config.session_timeout,
-                config.session_cache_capacity,
-            ),
-            active_challenges: LruCache::with_expiry_duration(config.request_timeout * 2),
-            inbound_channel,
-            outbound_channel,
-            listen_socket,
-            socket,
-            exit,
-        };
 
         config
             .executor
             .clone()
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
+                let socket = socket::Socket::new(socket_config);
+
+                let mut handler = Handler {
+                    request_retries: config.request_retries,
+                    node_id,
+                    enr,
+                    key,
+                    active_requests: HashMapDelay::new(config.request_timeout),
+                    active_requests_auth: HashMap::new(),
+                    active_sessions,
+                    pending_requests: HashMap::new(),
+                    sessions: LruCache::with_expiry_duration_and_capacity(
+                        config.session_timeout,
+                        config.session_cache_capacity,
+                    ),
+                    active_challenges: LruCache::with_expiry_duration(config.request_timeout * 2),
+                    inbound_channel,
+                    outbound_channel,
+                    listen_socket,
+                    socket,
+                    exit,
+                };
                 debug!("Handler Starting");
                 handler.start().await;
             }));

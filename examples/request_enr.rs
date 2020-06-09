@@ -10,26 +10,26 @@
 //!
 //! The <MULTIADDR> value should be the string form of a multiaddr including the p2p protocol.
 //! Currently only secp256k1 and ed25519 keys are supported.
+//!
+//! This requires the "libp2p" feature.
 
 use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() {
     env_logger::init();
 
-    // if there is an address specified use it
-    let address = Ipv4Addr::new(0, 0, 0, 0);
-    let port = 9000;
+    // listening address and port
+    let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
 
+    // generate a new enr key
     let enr_key = CombinedKey::generate_secp256k1();
     // construct a local ENR
     let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
 
-    // default configuration
+    // default discv5 configuration
     let config = Discv5Config::default();
-    // the address to listen on
-    let socket_addr = SocketAddr::new(address.into(), port);
 
     let multiaddr = std::env::args()
         .nth(1)
@@ -39,7 +39,7 @@ async fn main() {
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // start the discv5 service
-    discv5.start(socket_addr);
+    discv5.start(listen_addr);
 
     // search for the ENR
     match discv5.request_enr(multiaddr).await {

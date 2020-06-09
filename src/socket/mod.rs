@@ -14,13 +14,13 @@ pub use recv::InboundPacket;
 pub(crate) use recv::MAX_PACKET_SIZE;
 pub use send::OutboundPacket;
 /// Convenience objects for setting up the recv handler.
-pub struct SocketConfig<'a> {
+pub struct SocketConfig {
     /// The executor to spawn the tasks.
-    pub executor: Box<dyn Executor + Send>,
+    pub executor: Box<dyn Executor + Send + Sync>,
     /// The listening socket.
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
-    pub filter_config: &'a FilterConfig,
+    pub filter_config: FilterConfig,
     /// The WhoAreYou magic packet.
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
 }
@@ -36,7 +36,7 @@ pub struct Socket {
 impl Socket {
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
-    pub(crate) fn new(config: SocketConfig<'_>) -> Self {
+    pub(crate) fn new(config: SocketConfig) -> Self {
         // set up the UDP socket
         let socket = {
             #[cfg(unix)]
