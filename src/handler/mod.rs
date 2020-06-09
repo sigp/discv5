@@ -23,7 +23,7 @@ use crate::socket::Socket;
 use crate::Enr;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
-use log::{debug, error, warn};
+use log::{debug, error, trace, warn};
 use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
@@ -144,7 +144,6 @@ impl RequestCall {
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
-
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
     /// during the operation of the server.
     node_id: NodeId,
@@ -168,6 +167,8 @@ pub struct Handler {
     inbound_channel: mpsc::Receiver<HandlerRequest>,
     /// The channel to send responses to the application layer.
     outbound_channel: mpsc::Sender<HandlerResponse>,
+    /// The listening socket to filter out any attempted requests to self.
+    listen_socket: SocketAddr,
     /// The discovery v5 UDP socket tasks.
     socket: Socket,
     /// Exit channel to shutdown the handler.
@@ -207,7 +208,7 @@ impl Handler {
 
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
-            socket_addr: listen_socket,
+            socket_addr: listen_socket.clone(),
             filter_config: &config.filter_config,
             whoareyou_magic: magic,
         };
@@ -232,6 +233,7 @@ impl Handler {
             active_challenges: LruCache::with_expiry_duration(config.request_timeout * 2),
             inbound_channel,
             outbound_channel,
+            listen_socket,
             socket,
             exit,
         };
@@ -323,14 +325,8 @@ impl Handler {
         mut request_call: RequestCall,
     ) {
         if request_call.retries >= self.request_retries {
-            // The Request has expired, remove the session.
-            let auth_tag = request_call
-                .packet
-                .auth_tag()
-                .expect("No challenge packets here");
-            // Remove from the auth_tag mapping also.
-            self.active_requests_auth.remove(auth_tag);
-            self.fail_session(&node_address).await;
+            debug!("Request timed out with {}", node_address);
+            self.fail_request(request_call, RequestError::Timeout).await;
         } else {
             // increment the request retry count and restart the timeout
             debug!(
@@ -357,12 +353,14 @@ impl Handler {
             .node_address()
             .map_err(|e| RequestError::InvalidEnr(e.into()))?;
 
+        if node_address.socket_addr == self.listen_socket {
+            debug!("Filtered request to self");
+            return Err(RequestError::SelfRequest);
+        }
+
         // If there is already an active request for this node, add to pending requests
         if self.active_requests.get(&node_address).is_some() {
-            debug!(
-                "Session is being established, request queued for node: {}",
-                node_address
-            );
+            debug!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
                 .or_insert_with(|| Vec::new())
@@ -497,7 +495,8 @@ impl Handler {
                 "Auth response already sent. Dropping session. Node: {}",
                 node_address.node_id
             );
-            self.fail_session(&node_address).await;
+            self.fail_request(request_call, RequestError::InvalidRemotePacket)
+                .await;
             return;
         }
 
@@ -527,24 +526,11 @@ impl Handler {
             Ok(v) => v,
             Err(e) => {
                 error!("Could not generate a session. Error: {:?}", e);
-                self.fail_session(&node_address).await;
+                self.fail_request(request_call, RequestError::InvalidRemotePacket)
+                    .await;
                 return;
             }
         };
-
-        debug!(
-            "Sending Authentication response to node: {}",
-            request_call
-                .contact
-                .node_address()
-                .expect("Sanitized contact")
-        );
-        request_call.packet = auth_packet.clone();
-        request_call.handshake_sent = true;
-        // Reinsert the request_call
-        let contact = request_call.contact.clone();
-        self.insert_active_request(request_call);
-        self.send(node_address.socket_addr, auth_packet).await;
 
         // There are two quirks with an established session at this point.
         // 1. We may not know the ENR if we dialed this node with a NodeContact::Raw. In this case
@@ -557,10 +543,25 @@ impl Handler {
         // We handle both of these cases here.
 
         // Check if we know the ENR, if not request it and flag the session as awaiting an ENR.
-        match contact {
+        match request_call.contact.clone() {
             NodeContact::Enr(enr) => {
                 // Verify the ENR and establish or fail a session.
                 if self.verify_enr(&enr, &node_address) {
+                    // Send the Auth response
+                    debug!(
+                        "Sending Authentication response to node: {}",
+                        request_call
+                            .contact
+                            .node_address()
+                            .expect("Sanitized contact")
+                    );
+                    request_call.packet = auth_packet.clone();
+                    request_call.handshake_sent = true;
+                    // Reinsert the request_call
+                    self.insert_active_request(request_call);
+                    self.send(node_address.socket_addr, auth_packet).await;
+
+                    // Notify the application the session has been established
                     self.outbound_channel
                         .send(HandlerResponse::Established(enr))
                         .await
@@ -573,12 +574,29 @@ impl Handler {
                         enr.udp_socket(),
                         node_address
                     );
-                    self.fail_session(&node_address).await;
+                    self.fail_request(request_call, RequestError::InvalidRemoteEnr)
+                        .await;
                     return;
                 }
             }
             NodeContact::Raw { .. } => {
                 // Don't know the ENR. Establish the session, but request an ENR also
+
+                // Send the Auth response
+                let contact = request_call.contact.clone();
+                debug!(
+                    "Sending Authentication response to node: {}",
+                    request_call
+                        .contact
+                        .node_address()
+                        .expect("Sanitized contact")
+                );
+                request_call.packet = auth_packet.clone();
+                request_call.handshake_sent = true;
+                // Reinsert the request_call
+                self.insert_active_request(request_call);
+                self.send(node_address.socket_addr, auth_packet).await;
+
                 let id = rand::random();
                 let request = Request {
                     id,
@@ -656,7 +674,8 @@ impl Handler {
                             enr.udp_socket(),
                             node_address
                         );
-                        self.fail_session(&node_address).await;
+                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr)
+                            .await;
                     }
                 }
                 Err(e) => {
@@ -664,7 +683,8 @@ impl Handler {
                         "Invalid Authentication header. Dropping session. Error: {:?}",
                         e
                     );
-                    self.fail_session(&node_address).await;
+                    self.fail_session(&node_address, RequestError::InvalidRemotePacket)
+                        .await;
                     return;
                 }
             }
@@ -688,6 +708,7 @@ impl Handler {
                     if entry.get().is_empty() {
                         entry.remove();
                     }
+                    trace!("Sending next awaiting message. Node: {}", request.0);
                     self.send_request(request.0, request.1)
                         .await
                         .unwrap_or_else(|_| ());
@@ -705,6 +726,7 @@ impl Handler {
         message: &[u8],
         tag: Tag,
     ) {
+        trace!("Received encrypted message from: {}", node_address);
         // check if we have an available session
         if let Some(session) = self.sessions.get_mut(&node_address) {
             // attempt to decrypt and process the message.
@@ -722,7 +744,8 @@ impl Handler {
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
                     debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", node_address);
-                    self.fail_session(&node_address).await;
+                    self.fail_session(&node_address, RequestError::InvalidRemotePacket)
+                        .await;
                     // spawn a WHOAREYOU event to check for highest known ENR
                     let whoareyou_ref = WhoAreYouRef(node_address, auth_tag);
                     self.outbound_channel
@@ -732,6 +755,8 @@ impl Handler {
                     return;
                 }
             };
+
+            trace!("Received message from: {}", node_address);
 
             // Remove any associated request from pending_request
             match message {
@@ -764,7 +789,8 @@ impl Handler {
                                 _ => {}
                             }
                             debug!("Session failed invalid ENR response");
-                            self.fail_session(&node_address).await;
+                            self.fail_session(&node_address, RequestError::InvalidRemoteEnr)
+                                .await;
                             return;
                         }
                     }
@@ -848,7 +874,29 @@ impl Handler {
         }
     }
 
-    async fn fail_session(&mut self, node_address: &NodeAddress) {
+    async fn fail_request(&mut self, request_call: RequestCall, error: RequestError) {
+        // The Request has expired, remove the session.
+        let auth_tag = request_call
+            .packet
+            .auth_tag()
+            .expect("No challenge packets here");
+        // Remove from the auth_tag mapping also.
+        self.active_requests_auth.remove(auth_tag);
+        // Fail the current request
+        let request_id = request_call.request.id;
+        self.outbound_channel
+            .send(HandlerResponse::RequestFailed(request_id, error.clone()))
+            .await
+            .unwrap_or_else(|_| ());
+
+        let node_address = request_call
+            .contact
+            .node_address()
+            .expect("All Request calls have been sanitized");
+        self.fail_session(&node_address, error).await;
+    }
+
+    async fn fail_session(&mut self, node_address: &NodeAddress, error: RequestError) {
         self.sessions.remove(&node_address);
         self.active_sessions
             .store(self.sessions.len(), Ordering::Relaxed);
@@ -858,10 +906,7 @@ impl Handler {
             .unwrap_or_else(|| Vec::new())
         {
             self.outbound_channel
-                .send(HandlerResponse::RequestFailed(
-                    request.1.id,
-                    RequestError::Timeout,
-                ))
+                .send(HandlerResponse::RequestFailed(request.1.id, error.clone()))
                 .await
                 .unwrap_or_else(|_| ());
         }

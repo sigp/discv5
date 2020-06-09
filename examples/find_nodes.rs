@@ -1,8 +1,6 @@
-fn main() {}
-/*
 //! Demonstrates how to run a basic Discovery v5 Service.
 //!
-//! This example creates a discv5 service which searches for peers every 30 seconds. On
+//! This example creates a discv5 service which searches for peers every 60 seconds. On
 //! creation, the local ENR created for this service is displayed in base64. This can be used to
 //! allow other instances to connect and join the network. The service can be stopped by pressing
 //! Ctrl-C.
@@ -37,7 +35,7 @@ fn main() {}
 //!
 //!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
-use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config, Discv5Event};
+use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config};
 use futures::prelude::*;
 use hex_literal::*;
 use std::{
@@ -107,8 +105,10 @@ async fn main() {
     // the address to listen on
     let socket_addr = SocketAddr::new(address.into(), port);
 
-    // construct the discv5 service, initializing an unused transport layer
-    let mut discv5 = Discv5::new(enr, enr_key, config, socket_addr).unwrap();
+    // construct the discv5 server
+    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    // start the discv5 service
+    discv5.start(socket_addr);
 
     // if we know of another peer's ENR, add it known peers
     if let Some(base64_enr) = std::env::args().nth(4) {
@@ -127,29 +127,26 @@ async fn main() {
             Err(e) => panic!("Decoding ENR failed: {}", e),
         }
     }
+
     // construct a 30 second interval to search for new peers.
-    let mut query_interval = tokio::time::interval(Duration::from_secs(30));
+    let mut query_interval = tokio::time::interval(Duration::from_secs(60));
 
     loop {
         tokio::select! {
             _ = query_interval.next() => {
                 // pick a random node target
                 let target_random_node_id = enr::NodeId::random();
-                println!("Connected Peers: {}", discv5.connected_peers());
+                println!("Connected peers: {}, Active sessions: {}", discv5.connected_peers(), discv5.active_sessions());
                 println!("Searching for peers...");
                 // execute a FINDNODE query
-                discv5.find_node(target_random_node_id);
-            }
-            event = discv5.next() => {
-                if let Some(event) = event {
-                    if let Discv5Event::FindNodeResult { closer_peers, query_id,  .. } = event {
-                        if !closer_peers.is_empty() {
-                            println!("Query with id {} Completed. Nodes found: {}", *query_id, closer_peers.len());
-                            for n in closer_peers {
-                                println!("Node: {}", n);
-                            }
-                        } else {
-                            println!("Query Completed. No peers found.")
+                match discv5.find_node(target_random_node_id).await {
+                    Err(e) => println!("Find Node result failed: {:?}", e),
+                    Ok(v) => {
+                        // found a list of ENR's print their NodeIds
+                        let node_ids = v.iter().map(|enr| enr.node_id()).collect::<Vec<_>>();
+                        println!("Nodes found: {}", node_ids.len());
+                        for node_id in node_ids {
+                            println!("Node: {}", node_id);
                         }
                     }
                 }
@@ -157,4 +154,3 @@ async fn main() {
         }
     }
 }
-*/

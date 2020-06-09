@@ -267,8 +267,8 @@ impl Service {
                 }
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
-                        QueryEvent::Waiting(query_id, enr, request_body) => {
-                            self.send_rpc_query(query_id, enr, request_body).await;
+                        QueryEvent::Waiting(query_id, node_id, request_body) => {
+                            self.send_rpc_query(query_id, node_id, request_body).await;
                         }
                         // Note: Currently the distinction between a timed-out query and a finished
                         // query is superfluous, however it may be useful in future versions.
@@ -281,13 +281,17 @@ impl Service {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
                                     let enr = result.target.untrusted_enrs.swap_remove(position);
                                     found_enrs.push(enr);
-                                } else {
-                                    error!("ENR not present in queries results");
+                                } else if let Some(enr) = self.find_enr(&node_id) {
+                                    // look up from the routing table
+                                    found_enrs.push(enr);
+                                }
+                                else {
+                                    warn!("ENR not present in queries results");
                                 }
                             }
-                                if let Err(_) = result.target.callback.send(found_enrs) {
-                                    warn!("Callback dropped for query {}. Results dropped", *id);
-                                }
+                            if let Err(_) = result.target.callback.send(found_enrs) {
+                                warn!("Callback dropped for query {}. Results dropped", *id);
+                            }
                         }
                     }
                 }
@@ -459,6 +463,10 @@ impl Service {
         let id = response.id;
 
         if let Some(mut active_request) = self.active_requests.remove(&id) {
+            debug!(
+                "Received RPC response: {} to id: {} from: {}",
+                active_request.request_body, id, active_request.contact
+            );
             let node_id = active_request.contact.node_id();
             if !response.match_request(&active_request.request_body) {
                 warn!(
@@ -610,7 +618,10 @@ impl Service {
                 _ => {} //TODO: Implement all RPC methods
             }
         } else {
-            warn!("Received an RPC response which doesn't match a request");
+            warn!(
+                "Received an RPC response which doesn't match a request. Id: {}",
+                id
+            );
         }
     }
 
@@ -753,16 +764,21 @@ impl Service {
     async fn send_rpc_query(
         &mut self,
         query_id: QueryId,
-        return_peer: Enr,
+        return_peer: NodeId,
         request_body: RequestBody,
     ) {
-        let active_request = ActiveRequest {
-            contact: return_peer.into(),
-            request_body,
-            query_id: Some(query_id),
-            callback: None,
-        };
-        self.send_rpc_request(active_request).await;
+        // find the ENR associated with the query
+        if let Some(enr) = self.find_enr(&return_peer) {
+            let active_request = ActiveRequest {
+                contact: enr.into(),
+                request_body,
+                query_id: Some(query_id),
+                callback: None,
+            };
+            self.send_rpc_request(active_request).await;
+        } else {
+            error!("Query {} requested an unknown ENR", *query_id);
+        }
     }
 
     /// Sends generic RPC requests. Each request gets added to known outputs, awaiting a response.
@@ -770,12 +786,13 @@ impl Service {
         // Generate a random rpc_id which is matched per node id
         let id: u64 = rand::random();
         let request: Request = Request {
-            id: rand::random(),
+            id,
             body: active_request.request_body.clone(),
         };
         let contact = active_request.contact.clone();
         self.active_requests.insert(id, active_request);
         debug!("Sending RPC {} to node: {}", request, contact);
+
         self.handler_send
             .send(HandlerRequest::Request(contact, request))
             .await
@@ -946,6 +963,7 @@ impl Service {
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
     async fn rpc_failure(&mut self, id: RequestId, _error: RequestError) {
+        debug!("RPC Error removing request: {}", id);
         if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
@@ -1037,30 +1055,7 @@ impl Service {
         future::poll_fn(move |_cx| match queries.poll() {
             QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(query)),
             QueryPoolState::Waiting(Some((query, return_peer))) => {
-                // Find the ENR of the associated peer and return this Enr to contact
                 let node_id = return_peer.key;
-                let enr = {
-                    if let Some(enr) = query
-                        .target()
-                        .untrusted_enrs
-                        .iter()
-                        .find(|v| v.node_id() == node_id)
-                    {
-                        enr.clone()
-                    } else {
-                        error!(
-                            "Query {} requested ENR not in it's untrusted list",
-                            *query.id()
-                        );
-                        return Poll::Pending;
-                    }
-                };
-                trace!(
-                    "Query: {} iteration: {} NodeId: {}",
-                    *query.id(),
-                    return_peer.iteration,
-                    node_id
-                );
 
                 let request_body = match query.target().rpc_request(&return_peer) {
                     Ok(r) => r,
@@ -1072,7 +1067,7 @@ impl Service {
                     }
                 };
 
-                Poll::Ready(QueryEvent::Waiting(query.id(), enr, request_body))
+                Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
             }
             QueryPoolState::Timeout(query) => {
                 warn!("Query id: {:?} timed out", query.id());
@@ -1088,7 +1083,7 @@ impl Service {
 /// active query.
 enum QueryEvent {
     /// The query is waiting for a peer to be contacted.
-    Waiting(QueryId, Enr, RequestBody),
+    Waiting(QueryId, NodeId, RequestBody),
     /// The query has timed out, possible returning peers.
     TimedOut(crate::query_pool::Query<QueryInfo, NodeId, Enr>),
     /// The query has completed successfully.

@@ -21,8 +21,11 @@ pub enum Discv5Error {
 pub enum RequestError {
     Timeout,
     ServiceNotStarted,
+    SelfRequest,
     ChannelFailed(String),
     InvalidEnr(String),
+    InvalidRemoteEnr,
+    InvalidRemotePacket,
     EncryptionFailed(String),
     InvalidMultiaddr(String),
 }
