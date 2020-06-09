@@ -1,4 +1,4 @@
-use crate::{Enr, Executor, FilterConfig};
+use crate::{AllowDenyList, Enr, Executor, FilterConfig};
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
@@ -54,6 +54,9 @@ pub struct Discv5Config {
     /// default values.
     pub filter_config: FilterConfig,
 
+    /// A set of lists that allow or deny IP's or NodeIds from the server. See `crate::AllowDenyList`.
+    pub allow_deny_list: AllowDenyList,
+
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
@@ -76,6 +79,7 @@ impl Default for Discv5Config {
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
             filter_config: FilterConfig::default(),
+            allow_deny_list: AllowDenyList::default(),
             executor: None,
         }
     }
@@ -187,8 +191,14 @@ impl Discv5ConfigBuilder {
     }
 
     /// A set of configuration parameters for the inbound packet filter.
-    pub fn filter_confgi(&mut self, config: FilterConfig) -> &mut Self {
+    pub fn filter_config(&mut self, config: FilterConfig) -> &mut Self {
         self.config.filter_config = config;
+        self
+    }
+
+    /// A set of lists that allow or deny IP's or NodeIds from the server. See `crate::AllowDenyList`.
+    pub fn allow_deny_list(&mut self, list: AllowDenyList) -> &mut Self {
+        self.config.allow_deny_list = list;
         self
     }
 

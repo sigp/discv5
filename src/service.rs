@@ -23,7 +23,7 @@ use crate::query_pool::{
     FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
 };
 use crate::rpc;
-use crate::socket::MAX_PACKET_SIZE;
+use crate::socket::{AllowDenyList, MAX_PACKET_SIZE};
 use crate::Enr;
 use crate::{Discv5Config, Discv5Event};
 use enr::{CombinedKey, NodeId};
@@ -34,7 +34,7 @@ use parking_lot::RwLock;
 use rpc::*;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{atomic::AtomicUsize, Arc};
 use std::task::Poll;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
@@ -61,7 +61,6 @@ pub enum QueryKind {
     },
 }
 
-// TODO: ENR's for connected peer should be maintained.
 pub struct Service {
     /// Configuration parameters.
     config: Discv5Config,
@@ -102,6 +101,8 @@ pub struct Service {
     exit: oneshot::Receiver<()>,
     /// An interval to check and ping all nodes in the routing table.
     ping_heartbeat: Interval,
+
+    allow_deny_list: Arc<RwLock<AllowDenyList>>,
 
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 }
@@ -148,7 +149,9 @@ impl Service {
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
-        active_sessions: Arc<std::sync::atomic::AtomicUsize>,
+        active_sessions: Arc<AtomicUsize>,
+        allow_deny_list: Arc<RwLock<AllowDenyList>>,
+        unsolicited_requests_per_second: Arc<AtomicUsize>,
         listen_socket: SocketAddr,
     ) -> (oneshot::Sender<()>, mpsc::Sender<ServiceRequest>) {
         // process behaviour-level configuration parameters
@@ -164,6 +167,8 @@ impl Service {
             enr_key.clone(),
             listen_socket,
             active_sessions,
+            allow_deny_list.clone(),
+            unsolicited_requests_per_second,
             config.clone(),
         );
 
@@ -188,6 +193,7 @@ impl Service {
                     handler_recv,
                     handler_exit: Some(handler_exit),
                     ping_heartbeat: tokio::time::interval(config.ping_interval),
+                    allow_deny_list,
                     discv5_recv,
                     event_stream: None,
                     exit,
@@ -509,17 +515,30 @@ impl Service {
                     }
 
                     // Filter out any nodes that are not of the correct distance
-                    // TODO: Blacklist and remove peers that have the incorrect distance
                     let peer_key: kbucket::Key<NodeId> = node_id.into();
                     let distance_requested = match active_request.request_body {
                         RequestBody::FindNode { distance } => distance,
                         _ => todo!(),
                     };
                     if distance_requested != 0 {
+                        let before_len = nodes.len();
                         nodes.retain(|enr| {
                             peer_key.log2_distance(&enr.node_id().clone().into())
                                 == Some(distance_requested)
                         });
+                        if nodes.len() < before_len {
+                            // Peer sent invalid ENRs. Blacklist the Node
+                            warn!(
+                                "Peer sent invalid ENR. Blacklisting {}",
+                                active_request.contact
+                            );
+                            self.allow_deny_list.write().deny(
+                                active_request
+                                    .contact
+                                    .node_address()
+                                    .expect("Sanitized request"),
+                            );
+                        }
                     } else {
                         // requested an ENR update
                         nodes.retain(|enr| {

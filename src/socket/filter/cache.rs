@@ -34,8 +34,12 @@ impl<T> ReceivedPacketCache<T> {
         }
     }
 
-    pub fn insert(&mut self, content: T) -> bool {
+    pub fn _insert_reset(&mut self, content: T) -> bool {
         self.reset();
+        self.insert(content)
+    }
+
+    pub fn insert(&mut self, content: T) -> bool {
         if self.inner.len() >= self.size {
             // The cache is full
             return false;

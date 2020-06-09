@@ -127,7 +127,7 @@ pub use config::{Discv5Config, Discv5ConfigBuilder};
 pub use error::Discv5Error;
 pub use executor::{Executor, TokioExecutor};
 pub use handler::{Handler, HandlerRequest, HandlerResponse};
-pub use socket::FilterConfig;
+pub use socket::{AllowDenyList, FilterConfig};
 // re-export the ENR crate
 pub use enr;
 pub use query_pool::QueryId;

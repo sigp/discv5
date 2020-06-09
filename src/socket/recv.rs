@@ -2,11 +2,10 @@
 //!
 //! Every UDP packet passes a filter before being processed.
 
-use super::filter::Filter;
-pub use super::filter::FilterConfig;
+use super::filter::{Filter, FilterArgs, FilterConfig};
 use crate::packet::*;
 use crate::Executor;
-use log::debug;
+use log::{debug, trace};
 use std::net::SocketAddr;
 use tokio::sync::{mpsc, oneshot};
 
@@ -26,6 +25,7 @@ pub struct RecvHandlerConfig {
     pub executor: Box<dyn Executor>,
     pub recv: tokio::net::udp::RecvHalf,
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
+    pub filter_args: FilterArgs,
 }
 
 /// The main task that handles inbound UDP packets.
@@ -57,7 +57,7 @@ impl RecvHandler {
         // If a filter is required, create it
         let filter = {
             if let Some(filter_config) = config.filter_config {
-                Some(Filter::new(&filter_config))
+                Some(Filter::new(&filter_config, config.filter_args))
             } else {
                 None
             }
@@ -102,6 +102,7 @@ impl RecvHandler {
             // Perform the first run of the filter. This checks for rate limits and black listed IP
             // addresses.
             if !filter.initial_pass(&src) {
+                trace!("Packet filtered from source: {:?}", src);
                 return;
             }
         }

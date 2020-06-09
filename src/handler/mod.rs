@@ -18,9 +18,8 @@ use crate::config::Discv5Config;
 use crate::error::{Discv5Error, RequestError};
 use crate::packet::{AuthHeader, AuthTag, Magic, Nonce, Packet, Tag, TAG_LENGTH};
 use crate::rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody};
-use crate::socket;
 use crate::socket::Socket;
-use crate::Enr;
+use crate::{socket, AllowDenyList, Enr};
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use log::{debug, error, trace, warn};
@@ -29,7 +28,7 @@ use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     default::Default,
     net::SocketAddr,
     sync::atomic::{AtomicUsize, Ordering},
@@ -155,7 +154,11 @@ pub struct Handler {
     /// These are indexed by SocketAddr as WHOAREYOU messages do not return a source node id to
     /// match against.
     active_requests: HashMapDelay<NodeAddress, RequestCall>,
+    /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
+    expected_responses: Arc<RwLock<HashSet<SocketAddr>>>,
+    /// A mapping of active requests by AuthTag.
     active_requests_auth: HashMap<AuthTag, NodeAddress>,
+    /// The current number of active sessions.
     active_sessions: Arc<AtomicUsize>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
@@ -182,6 +185,8 @@ impl Handler {
         key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
         active_sessions: Arc<AtomicUsize>,
+        allow_deny_list: Arc<RwLock<AllowDenyList>>,
+        unsolicited_requests_per_second: Arc<AtomicUsize>,
         config: Discv5Config,
     ) -> (
         oneshot::Sender<()>,
@@ -194,6 +199,14 @@ impl Handler {
         let (outbound_channel, outbound_recv) = mpsc::channel(20);
 
         // Creates a SocketConfig to pass to the underlying UDP socket tasks.
+
+        // Lets the underlying filter know that we are expecting a packet from this source.
+        let expected_responses = Arc::new(RwLock::new(HashSet::new()));
+        let filter_args = crate::socket::FilterArgs {
+            awaiting_responses: expected_responses.clone(),
+            allow_deny_list,
+            unsolicited_requests_per_second,
+        };
 
         // Generates the WHOAREYOU magic packet for the local node-id
         // Will be removed in update
@@ -215,6 +228,7 @@ impl Handler {
                 None
             },
             whoareyou_magic: magic,
+            filter_args,
         };
 
         let node_id = enr.read().node_id();
@@ -235,6 +249,7 @@ impl Handler {
                     active_requests_auth: HashMap::new(),
                     active_sessions,
                     pending_requests: HashMap::new(),
+                    expected_responses,
                     sessions: LruCache::with_expiry_duration_and_capacity(
                         config.session_timeout,
                         config.session_cache_capacity,
@@ -329,6 +344,11 @@ impl Handler {
     ) {
         if request_call.retries >= self.request_retries {
             trace!("Request timed out with {}", node_address);
+            // Remove the request from the awaiting packet_filter
+            // TODO: Make this a counter
+            self.expected_responses
+                .write()
+                .remove(&node_address.socket_addr);
             self.fail_request(request_call, RequestError::Timeout).await;
         } else {
             // increment the request retry count and restart the timeout
@@ -393,6 +413,10 @@ impl Handler {
         let auth_tag = call.packet.auth_tag().expect("No challenges here").clone();
         self.active_requests_auth
             .insert(auth_tag, node_address.clone());
+        // let the filter know we are expecting a response
+        self.expected_responses
+            .write()
+            .insert(node_address.socket_addr.clone());
         self.send(node_address.socket_addr.clone(), packet).await;
         self.active_requests.insert(node_address, call);
         Ok(())
@@ -811,6 +835,11 @@ impl Handler {
                             self.active_requests.insert(node_address, request_call);
                             return;
                         } else {
+                            // Remove the expected response
+                            // TODO: This needs to be a counter
+                            self.expected_responses
+                                .write()
+                                .remove(&node_address.socket_addr);
                             // The request matches report the response
                             self.outbound_channel
                                 .send(HandlerResponse::Response(node_address.clone(), response))

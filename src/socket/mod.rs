@@ -9,7 +9,7 @@ mod filter;
 mod recv;
 mod send;
 
-pub use filter::FilterConfig;
+pub use filter::{AllowDenyList, FilterArgs, FilterConfig};
 pub use recv::InboundPacket;
 pub(crate) use recv::MAX_PACKET_SIZE;
 pub use send::OutboundPacket;
@@ -21,6 +21,7 @@ pub struct SocketConfig {
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: Option<FilterConfig>,
+    pub filter_args: FilterArgs,
     /// The WhoAreYou magic packet.
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
 }
@@ -69,6 +70,7 @@ impl Socket {
             executor: config.executor.clone(),
             recv: recv_udp,
             whoareyou_magic: config.whoareyou_magic,
+            filter_args: config.filter_args,
         };
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);
