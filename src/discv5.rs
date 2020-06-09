@@ -1,5 +1,4 @@
 //! The Discovery v5 protocol. See `lib.rs` for further details.
-//!
 
 use crate::error::{QueryError, RequestError};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
@@ -23,6 +22,26 @@ use tokio::sync::{mpsc, oneshot};
 
 use libp2p_core::Multiaddr;
 
+/// Events that can be produced by the `Discv5` event stream.
+#[derive(Debug)]
+pub enum Discv5Event {
+    /// A node has been discovered from a FINDNODES request.
+    ///
+    /// The ENR of the node is returned. Various properties can be derived from the ENR.
+    /// This happen spontaneously through queries as nodes return ENR's. These ENR's are not
+    /// guaranteed to be live or contactable.
+    Discovered(Enr),
+    /// A new ENR was added to the routing table.
+    EnrAdded { enr: Enr, replaced: Option<Enr> },
+    /// A new node has been added to the routing table.
+    NodeInserted {
+        node_id: NodeId,
+        replaced: Option<NodeId>,
+    },
+    /// Our local ENR IP address has been updated.
+    SocketUpdated(SocketAddr),
+}
+
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
 // TODO: Add blacklist and whitelist
@@ -30,10 +49,15 @@ pub struct Discv5 {
     config: Discv5Config,
     /// The channel to make requests from the main service.
     service_channel: Option<mpsc::Sender<ServiceRequest>>,
+    /// The exit channel to shutdown the underlying service.
     service_exit: Option<oneshot::Sender<()>>,
+    /// The routing table of the discv5 service.
     kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+    /// The local ENR of the server.
     local_enr: Arc<RwLock<Enr>>,
+    /// The key associated with the local ENR, required for updating the local ENR.
     enr_key: Arc<RwLock<CombinedKey>>,
+    /// The current number of active session keys stored with peers.
     active_sessions: Arc<AtomicUsize>,
 }
 
@@ -332,6 +356,7 @@ impl Discv5 {
             .map_err(|_| String::from("Service channel closed"))?)
     }
 
+    /// Internal helper function to send events to the Service.
     async fn send_event(&mut self, event: ServiceRequest) -> Result<(), String> {
         if let Some(channel) = self.service_channel.as_mut() {
             channel.send(event).await.map_err(|e| e.to_string())?;
@@ -346,25 +371,4 @@ impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
     }
-}
-
-/// Events that can be produced by the `Discv5` event stream.
-#[derive(Debug)]
-pub enum Discv5Event {
-    /// A node has been discovered from a FINDNODES request.
-    ///
-    /// The ENR of the node is returned. Various properties can be derived from the ENR.
-    /// - `NodeId`: enr.node_id()
-    /// - `SeqNo`: enr.seq_no()
-    /// - `Ip`: enr.ip()
-    Discovered(Enr),
-    /// A new ENR was added to the routing table.
-    EnrAdded { enr: Enr, replaced: Option<Enr> },
-    /// A new node has been added to the routing table.
-    NodeInserted {
-        node_id: NodeId,
-        replaced: Option<NodeId>,
-    },
-    /// Our local ENR IP address has been updated.
-    SocketUpdated(SocketAddr),
 }

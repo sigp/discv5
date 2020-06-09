@@ -20,7 +20,7 @@ pub struct SocketConfig {
     /// The listening socket.
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
-    pub filter_config: FilterConfig,
+    pub filter_config: Option<FilterConfig>,
     /// The WhoAreYou magic packet.
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
 }
@@ -65,7 +65,7 @@ impl Socket {
 
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {
-            filter_config: &config.filter_config,
+            filter_config: config.filter_config,
             executor: config.executor.clone(),
             recv: recv_udp,
             whoareyou_magic: config.whoareyou_magic,

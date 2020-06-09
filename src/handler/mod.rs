@@ -209,7 +209,11 @@ impl Handler {
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
             socket_addr: listen_socket.clone(),
-            filter_config: config.filter_config.clone(),
+            filter_config: if config.enable_packet_filter {
+                Some(config.filter_config.clone())
+            } else {
+                None
+            },
             whoareyou_magic: magic,
         };
 

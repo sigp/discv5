@@ -21,8 +21,8 @@ pub struct InboundPacket {
 }
 
 /// Convenience objects for setting up the recv handler.
-pub struct RecvHandlerConfig<'a> {
-    pub filter_config: &'a FilterConfig,
+pub struct RecvHandlerConfig {
+    pub filter_config: Option<FilterConfig>,
     pub executor: Box<dyn Executor>,
     pub recv: tokio::net::udp::RecvHalf,
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
@@ -33,7 +33,7 @@ pub(crate) struct RecvHandler {
     /// The UDP recv socket.
     recv: tokio::net::udp::RecvHalf,
     /// The packet filter which decides whether to accept or reject inbound packets.
-    filter: Filter,
+    filter: Option<Filter>,
     /// The buffer to accept inbound datagrams.
     recv_buffer: [u8; MAX_PACKET_SIZE],
     /// WhoAreYou Magic Value. Used to decode raw WHOAREYOU packets.
@@ -47,16 +47,25 @@ pub(crate) struct RecvHandler {
 impl RecvHandler {
     /// Spawns the `RecvHandler` on a provided executor.
     pub(crate) fn spawn(
-        config: RecvHandlerConfig<'_>,
+        config: RecvHandlerConfig,
     ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
 
         // create the channel to send decoded packets to the handler
         let (handler, handler_recv) = mpsc::channel(30);
 
+        // If a filter is required, create it
+        let filter = {
+            if let Some(filter_config) = config.filter_config {
+                Some(Filter::new(&filter_config))
+            } else {
+                None
+            }
+        };
+
         let mut recv_handler = RecvHandler {
             recv: config.recv,
-            filter: Filter::new(config.filter_config),
+            filter,
             recv_buffer: [0; MAX_PACKET_SIZE],
             whoareyou_magic: config.whoareyou_magic,
             handler,
@@ -89,10 +98,12 @@ impl RecvHandler {
     /// Handles in incoming packet. Passes through the filter, decodes and sends to the packet
     /// handler.
     async fn handle_inbound(&mut self, src: SocketAddr, length: usize) {
-        // Perform the first run of the filter. This checks for rate limits and black listed IP
-        // addresses.
-        if !self.filter.initial_pass(&src) {
-            return;
+        if let Some(filter) = self.filter.as_mut() {
+            // Perform the first run of the filter. This checks for rate limits and black listed IP
+            // addresses.
+            if !filter.initial_pass(&src) {
+                return;
+            }
         }
 
         // Decodes the packet
@@ -105,8 +116,10 @@ impl RecvHandler {
         };
 
         // Perform packet-level filtering
-        if !self.filter.final_pass(&src, &packet) {
-            return;
+        if let Some(filter) = self.filter.as_mut() {
+            if !filter.final_pass(&src, &packet) {
+                return;
+            }
         }
 
         let inbound = InboundPacket { src, packet };
