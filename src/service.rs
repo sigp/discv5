@@ -962,8 +962,8 @@ impl Service {
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
-    async fn rpc_failure(&mut self, id: RequestId, _error: RequestError) {
-        debug!("RPC Error removing request: {}", id);
+    async fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
+        debug!("RPC Error removing request. Reason: {:?}, id {}", error, id);
         if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.

@@ -107,8 +107,6 @@ async fn main() {
 
     // construct the discv5 server
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-    // start the discv5 service
-    discv5.start(socket_addr);
 
     // if we know of another peer's ENR, add it known peers
     if let Some(base64_enr) = std::env::args().nth(4) {
@@ -127,6 +125,9 @@ async fn main() {
             Err(e) => panic!("Decoding ENR failed: {}", e),
         }
     }
+
+    // start the discv5 service
+    discv5.start(socket_addr);
 
     // construct a 30 second interval to search for new peers.
     let mut query_interval = tokio::time::interval(Duration::from_secs(60));

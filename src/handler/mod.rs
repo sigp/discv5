@@ -325,13 +325,14 @@ impl Handler {
         mut request_call: RequestCall,
     ) {
         if request_call.retries >= self.request_retries {
-            debug!("Request timed out with {}", node_address);
+            trace!("Request timed out with {}", node_address);
             self.fail_request(request_call, RequestError::Timeout).await;
         } else {
             // increment the request retry count and restart the timeout
-            debug!(
+            trace!(
                 "Resending message: {} to {}",
-                request_call.request, node_address
+                request_call.request,
+                node_address
             );
             self.send(
                 node_address.socket_addr.clone(),
@@ -360,7 +361,7 @@ impl Handler {
 
         // If there is already an active request for this node, add to pending requests
         if self.active_requests.get(&node_address).is_some() {
-            debug!("Request queued for node: {}", node_address);
+            trace!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
                 .or_insert_with(|| Vec::new())
@@ -377,7 +378,7 @@ impl Handler {
                     .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?
             } else {
                 // No session exists, start a new handshake
-                debug!(
+                trace!(
                     "Starting session. Sending random packet to: {}",
                     node_address
                 );
@@ -431,7 +432,7 @@ impl Handler {
 
         // Ignore this request if the session is already established
         if self.sessions.get(&node_address).is_some() {
-            debug!(
+            trace!(
                 "Session already established. WHOAREYOU not sent to {}",
                 node_address
             );
@@ -483,7 +484,7 @@ impl Handler {
             }
         };
 
-        debug!("Received a WHOAREYOU packet. Source: {}", src);
+        trace!("Received a WHOAREYOU packet. Source: {}", src);
 
         let node_address = request_call
             .contact
@@ -548,7 +549,7 @@ impl Handler {
                 // Verify the ENR and establish or fail a session.
                 if self.verify_enr(&enr, &node_address) {
                     // Send the Auth response
-                    debug!(
+                    trace!(
                         "Sending Authentication response to node: {}",
                         request_call
                             .contact
@@ -584,7 +585,7 @@ impl Handler {
 
                 // Send the Auth response
                 let contact = request_call.contact.clone();
-                debug!(
+                trace!(
                     "Sending Authentication response to node: {}",
                     request_call
                         .contact
@@ -638,7 +639,7 @@ impl Handler {
         // This will lead to future outgoing challenges if they proceed to send further encrypted
         // packets.
         let src_id = self.src_id(&tag);
-        debug!("Received an Authentication header message from: {}", src_id);
+        trace!("Received an Authentication header message from: {}", src_id);
 
         let node_address = NodeAddress {
             socket_addr: src,
@@ -726,7 +727,6 @@ impl Handler {
         message: &[u8],
         tag: Tag,
     ) {
-        trace!("Received encrypted message from: {}", node_address);
         // check if we have an available session
         if let Some(session) = self.sessions.get_mut(&node_address) {
             // attempt to decrypt and process the message.
@@ -797,13 +797,18 @@ impl Handler {
                     // Handle responses normally
                     if let Some(request_call) = self.active_requests.remove(&node_address) {
                         if request_call.id() != response.id {
-                            debug!("Received an RPC Response to an unknown request. Likely late response. {}", node_address);
+                            trace!("Received an RPC Response to an unknown request. Likely late response. {}", node_address);
+                            // This could be an extra NodesResponse. We send to the application
+                            // layer to get filtered.
+                            self.outbound_channel
+                                .send(HandlerResponse::Response(node_address.clone(), response))
+                                .await
+                                .unwrap_or_else(|_| ());
                             // add the request back and reset the timer
                             self.active_requests.insert(node_address, request_call);
                             return;
                         } else {
-                            // The request matches
-                            // report the response
+                            // The request matches report the response
                             self.outbound_channel
                                 .send(HandlerResponse::Response(node_address.clone(), response))
                                 .await
@@ -811,14 +816,22 @@ impl Handler {
                             self.send_next_request(node_address).await;
                         }
                     } else {
-                        debug!("Late response from node: {}", node_address);
+                        // This could be that the request was late, or it is an extra Nodes
+                        // response. We report these to the application layer even if the request
+                        // has already timed out.
+                        trace!("Late response from node: {}", node_address);
+                        self.outbound_channel
+                            .send(HandlerResponse::Response(node_address.clone(), response))
+                            .await
+                            .unwrap_or_else(|_| ());
+                        self.send_next_request(node_address).await;
                     }
                 }
             }
         } else {
             // no session exists
-            debug!("Received a message without a session. {}", node_address);
-            debug!("Requesting a WHOAREYOU packet to be sent.");
+            trace!("Received a message without a session. {}", node_address);
+            trace!("Requesting a WHOAREYOU packet to be sent.");
             // spawn a WHOAREYOU event to check for highest known ENR
             let whoareyou_ref = WhoAreYouRef(node_address, auth_tag);
             self.outbound_channel
