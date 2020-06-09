@@ -36,12 +36,7 @@ impl Executor for TokioExecutor {
 }
 
 impl TokioExecutor {
-    pub fn new() -> (Self, tokio::runtime::Runtime) {
-        let runtime = tokio::runtime::Builder::new()
-            .threaded_scheduler()
-            .enable_all()
-            .build()
-            .expect("Could not initialize runtime");
-        (TokioExecutor(runtime.handle().clone()), runtime)
+    pub fn new() -> Self {
+        TokioExecutor(tokio::runtime::Handle::current())
     }
 }

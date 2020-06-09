@@ -35,8 +35,6 @@ pub struct Discv5 {
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
     active_sessions: Arc<AtomicUsize>,
-    /// Stores a default runtime if none is given in the configuration.
-    _runtime: Option<tokio::runtime::Runtime>,
 }
 
 impl Discv5 {
@@ -50,15 +48,9 @@ impl Discv5 {
             return Err("Provided keypair does not match the provided ENR");
         }
 
-        // if an executor is not provided create one and store locally
-        let _runtime = {
-            if config.executor.is_none() {
-                let (executor, runtime) = crate::executor::TokioExecutor::new();
-                config.executor = Some(Box::new(executor));
-                Some(runtime)
-            } else {
-                None
-            }
+        // If an executor is not provided, assume a current tokio runtime is running. If not panic.
+        if config.executor.is_none() {
+            config.executor = Some(Box::new(crate::executor::TokioExecutor::new()));
         };
 
         let local_enr = Arc::new(RwLock::new(local_enr));
@@ -76,7 +68,6 @@ impl Discv5 {
             local_enr,
             enr_key,
             active_sessions: Arc::new(AtomicUsize::new(0)),
-            _runtime,
         })
     }
 
@@ -354,10 +345,6 @@ impl Discv5 {
 impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
-        // wait for the runtime to exit if one exists
-        if let Some(runtime) = self._runtime.take() {
-            runtime.shutdown_timeout(Duration::from_secs(1))
-        }
     }
 }
 

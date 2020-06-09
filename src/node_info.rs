@@ -110,7 +110,7 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
         }
 
         let public_key: CombinedPublicKey =
-            match PublicKey::from_protobuf_encoding(multihash.as_bytes())
+            match PublicKey::from_protobuf_encoding(&multihash.as_bytes()[2..])
                 .map_err(|_| "Invalid public key")?
             {
                 PublicKey::Secp256k1(pk) => {
