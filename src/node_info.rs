@@ -3,6 +3,7 @@ use crate::Enr;
 use enr::{CombinedPublicKey, NodeId};
 use std::net::SocketAddr;
 
+#[cfg(feature = "libp2p")]
 use libp2p_core::{identity::PublicKey, multiaddr::Protocol, Multiaddr};
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
@@ -78,6 +79,7 @@ impl From<Enr> for NodeContact {
     }
 }
 
+#[cfg(feature = "libp2p")]
 impl std::convert::TryFrom<Multiaddr> for NodeContact {
     type Error = &'static str;
 

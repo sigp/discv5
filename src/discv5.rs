@@ -11,6 +11,7 @@ use parking_lot::RwLock;
 use std::{convert::TryFrom, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
+#[cfg(feature = "libp2p")]
 use libp2p_core::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
@@ -261,6 +262,8 @@ impl Discv5 {
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
     /// Only `ed25519` and `secp256k1` key types are currently supported.
+    #[cfg(feature = "libp2p")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "libp2p")))]
     pub async fn request_enr(
         &mut self,
         multiaddr: impl std::convert::TryInto<Multiaddr>,
