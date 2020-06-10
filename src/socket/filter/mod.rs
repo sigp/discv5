@@ -2,29 +2,18 @@
 
 use crate::packet::Packet;
 use parking_lot::RwLock;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-mod allow_deny;
 mod cache;
 mod config;
 
-pub use allow_deny::AllowDenyList;
+use crate::discv5::PERMIT_BAN_LIST;
+use crate::metrics::METRICS;
 use cache::ReceivedPacketCache;
 pub use config::FilterConfig;
-
-/// Required shared data variables throughout the Discv5 server.
-pub struct FilterArgs {
-    /// The number of requests we are receiving per second.
-    pub unsolicited_requests_per_second: Arc<AtomicUsize>,
-    /// A set of lists about allowing or denying packets from IP's or node ids.
-    pub allow_deny_list: Arc<RwLock<AllowDenyList>>,
-    /// The list of waiting responses. These are used to allow incoming packets from sources
-    /// that we are expected a response from bypassing the rate-limit filters.
-    pub awaiting_responses: Arc<RwLock<HashSet<SocketAddr>>>,
-}
 
 /// The packet filter which decides whether we accept or reject incoming packets.
 pub(crate) struct Filter {
@@ -41,41 +30,34 @@ pub(crate) struct Filter {
 
     /// The list of waiting responses. These are used to allow incoming packets from sources
     /// that we are expected a response from bypassing the rate-limit filters.
-    awaiting_responses: Arc<RwLock<HashSet<SocketAddr>>>,
-
-    /// A set of lists about allowing or denying packets from IP's or node ids.
-    allow_deny_list: Arc<RwLock<AllowDenyList>>,
-
-    /// The number of requests we are receiving per second.
-    unsolicited_requests_per_second: Arc<AtomicUsize>,
+    expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
 }
 
 impl Filter {
-    pub fn new(config: &FilterConfig, args: FilterArgs) -> Filter {
+    pub fn new(
+        config: &FilterConfig,
+        expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
+    ) -> Filter {
         Filter {
             config: config.clone(),
             raw_packets_received: ReceivedPacketCache::new(config.max_requests_per_second),
             _packets_received: ReceivedPacketCache::new(config.max_requests_per_second),
-            awaiting_responses: args.awaiting_responses,
-            unsolicited_requests_per_second: args.unsolicited_requests_per_second,
-            allow_deny_list: args.allow_deny_list,
+            expected_responses: expected_responses,
         }
     }
 
     /// The first check. This determines if a new UDP packet should be decoded or dropped.
     pub fn initial_pass(&mut self, src: &SocketAddr) -> bool {
-        let allow_deny_list = self.allow_deny_list.read();
-
-        if allow_deny_list.allow_ips.get(&src.ip()).is_some() {
+        if PERMIT_BAN_LIST.read().permit_ips.get(&src.ip()).is_some() {
             return true;
         }
 
-        if allow_deny_list.deny_ips.get(&src.ip()).is_some() {
+        if PERMIT_BAN_LIST.read().ban_ips.get(&src.ip()).is_some() {
             return false;
         }
 
         // expected requests are excluded from rate limits
-        if self.awaiting_responses.read().get(src).is_some() {
+        if self.expected_responses.read().get(src).is_some() {
             return true;
         }
 
@@ -100,7 +82,8 @@ impl Filter {
         let result = self.raw_packets_received.insert(src.clone());
 
         // update the metric
-        self.unsolicited_requests_per_second
+        METRICS
+            .unsolicited_requests_per_second
             .store(self.raw_packets_received.len(), Ordering::Relaxed);
 
         result

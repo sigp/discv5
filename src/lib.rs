@@ -113,12 +113,17 @@ mod error;
 mod executor;
 pub mod handler;
 mod kbucket;
+pub mod metrics;
 mod node_info;
 pub mod packet;
+pub mod permit_ban;
 mod query_pool;
 mod rpc;
 pub mod service;
 mod socket;
+
+#[macro_use]
+extern crate lazy_static;
 
 pub type Enr = enr::Enr<enr::CombinedKey>;
 
@@ -127,7 +132,8 @@ pub use config::{Discv5Config, Discv5ConfigBuilder};
 pub use error::Discv5Error;
 pub use executor::{Executor, TokioExecutor};
 pub use handler::{Handler, HandlerRequest, HandlerResponse};
-pub use socket::{AllowDenyList, FilterConfig};
+pub use permit_ban::PermitBanList;
+pub use socket::FilterConfig;
 // re-export the ENR crate
 pub use enr;
 pub use query_pool::QueryId;

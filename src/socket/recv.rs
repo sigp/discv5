@@ -2,11 +2,14 @@
 //!
 //! Every UDP packet passes a filter before being processed.
 
-use super::filter::{Filter, FilterArgs, FilterConfig};
+use super::filter::{Filter, FilterConfig};
 use crate::packet::*;
 use crate::Executor;
 use log::{debug, trace};
+use parking_lot::RwLock;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
@@ -25,7 +28,7 @@ pub struct RecvHandlerConfig {
     pub executor: Box<dyn Executor>,
     pub recv: tokio::net::udp::RecvHalf,
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
-    pub filter_args: FilterArgs,
+    pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
 }
 
 /// The main task that handles inbound UDP packets.
@@ -57,7 +60,7 @@ impl RecvHandler {
         // If a filter is required, create it
         let filter = {
             if let Some(filter_config) = config.filter_config {
-                Some(Filter::new(&filter_config, config.filter_args))
+                Some(Filter::new(&filter_config, config.expected_responses))
             } else {
                 None
             }

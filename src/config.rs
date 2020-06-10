@@ -1,4 +1,4 @@
-use crate::{AllowDenyList, Enr, Executor, FilterConfig};
+use crate::{Enr, Executor, FilterConfig, PermitBanList};
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
@@ -54,8 +54,9 @@ pub struct Discv5Config {
     /// default values.
     pub filter_config: FilterConfig,
 
-    /// A set of lists that allow or deny IP's or NodeIds from the server. See `crate::AllowDenyList`.
-    pub allow_deny_list: AllowDenyList,
+    /// A set of lists that permit or ban IP's or NodeIds from the server. See
+    /// `crate::PermitBanList`.
+    pub permit_ban_list: PermitBanList,
 
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
@@ -79,7 +80,7 @@ impl Default for Discv5Config {
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
             filter_config: FilterConfig::default(),
-            allow_deny_list: AllowDenyList::default(),
+            permit_ban_list: PermitBanList::default(),
             executor: None,
         }
     }
@@ -196,9 +197,10 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// A set of lists that allow or deny IP's or NodeIds from the server. See `crate::AllowDenyList`.
-    pub fn allow_deny_list(&mut self, list: AllowDenyList) -> &mut Self {
-        self.config.allow_deny_list = list;
+    /// A set of lists that permit or ban IP's or NodeIds from the server. See
+    /// `crate::PermitBanList`.
+    pub fn permit_ban_list(&mut self, list: PermitBanList) -> &mut Self {
+        self.config.permit_ban_list = list;
         self
     }
 

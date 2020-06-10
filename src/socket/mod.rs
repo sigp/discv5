@@ -1,15 +1,18 @@
 use crate::packet::*;
 use crate::Executor;
+use parking_lot::RwLock;
 use recv::*;
 use send::*;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 mod filter;
 mod recv;
 mod send;
 
-pub use filter::{AllowDenyList, FilterArgs, FilterConfig};
+pub use filter::FilterConfig;
 pub use recv::InboundPacket;
 pub(crate) use recv::MAX_PACKET_SIZE;
 pub use send::OutboundPacket;
@@ -21,7 +24,7 @@ pub struct SocketConfig {
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: Option<FilterConfig>,
-    pub filter_args: FilterArgs,
+    pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// The WhoAreYou magic packet.
     pub whoareyou_magic: [u8; MAGIC_LENGTH],
 }
@@ -70,7 +73,7 @@ impl Socket {
             executor: config.executor.clone(),
             recv: recv_udp,
             whoareyou_magic: config.whoareyou_magic,
-            filter_args: config.filter_args,
+            expected_responses: config.expected_responses,
         };
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);

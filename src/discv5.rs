@@ -4,23 +4,21 @@ use crate::error::{QueryError, RequestError};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
 use crate::node_info::NodeContact;
 use crate::service::{QueryKind, Service, ServiceRequest};
-use crate::socket::AllowDenyList;
 use crate::{Discv5Config, Enr};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use log::{error, warn};
 use parking_lot::RwLock;
-use std::{
-    convert::TryFrom,
-    net::SocketAddr,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{convert::TryFrom, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 use libp2p_core::Multiaddr;
+
+// Create lazy static variable for the global permit/ban list
+use crate::metrics::{Metrics, METRICS};
+lazy_static! {
+    pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
+        RwLock::new(crate::PermitBanList::default());
+}
 
 /// Events that can be produced by the `Discv5` event stream.
 #[derive(Debug)]
@@ -56,12 +54,6 @@ pub struct Discv5 {
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
     enr_key: Arc<RwLock<CombinedKey>>,
-    /// The current number of active session keys stored with peers.
-    active_sessions: Arc<AtomicUsize>,
-    /// The number of unsolicited requests per second.
-    unsolicited_requests_per_second: Arc<AtomicUsize>,
-    /// The currently allowed/disallowed peers.
-    allow_deny_list: Arc<RwLock<AllowDenyList>>,
 }
 
 impl Discv5 {
@@ -87,7 +79,8 @@ impl Discv5 {
             Duration::from_secs(60),
         )));
 
-        let allow_deny_list = Arc::new(RwLock::new(config.allow_deny_list.clone()));
+        // Update the PermitBan list based on initial configuration
+        *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
 
         Ok(Discv5 {
             config,
@@ -96,9 +89,6 @@ impl Discv5 {
             kbuckets,
             local_enr,
             enr_key,
-            active_sessions: Arc::new(AtomicUsize::new(0)),
-            unsolicited_requests_per_second: Arc::new(AtomicUsize::new(0)),
-            allow_deny_list,
         })
     }
 
@@ -115,9 +105,6 @@ impl Discv5 {
             self.enr_key.clone(),
             self.kbuckets.clone(),
             self.config.clone(),
-            self.active_sessions.clone(),
-            self.allow_deny_list.clone(),
-            self.unsolicited_requests_per_second.clone(),
             listen_socket,
         );
         self.service_exit = Some(service_exit);
@@ -206,15 +193,9 @@ impl Discv5 {
             .count()
     }
 
-    /// The number of active Discv5 session handshakes stored in the cache.
-    pub fn active_sessions(&self) -> usize {
-        self.active_sessions.load(Ordering::Relaxed)
-    }
-
-    /// If packet filtering is turned on, this keeps track of the number of unsolicited requests per
-    /// second the server is receiving.
-    pub fn unsolicited_requests_per_second(&self) -> usize {
-        self.unsolicited_requests_per_second.load(Ordering::Relaxed)
+    /// Gets the metrics associated with the Server
+    pub fn metrics(&self) -> Metrics {
+        Metrics::from(&METRICS)
     }
 
     /// Returns the local ENR of the node.
