@@ -26,6 +26,7 @@ impl InternalMetrics {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Metrics {
     pub active_sessions: usize,
     pub unsolicited_requests_per_second: usize,

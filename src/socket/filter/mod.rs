@@ -1,11 +1,8 @@
 //! A filter which decides whether to accept/reject incoming UDP packets.
 
 use crate::packet::Packet;
-use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 mod cache;
 mod config;
@@ -27,22 +24,14 @@ pub(crate) struct Filter {
     /// An ordered (by time) collection of seen packets that have passed the first filter check and
     /// have an associated NodeId.
     _packets_received: ReceivedPacketCache<(SocketAddr, Packet)>,
-
-    /// The list of waiting responses. These are used to allow incoming packets from sources
-    /// that we are expected a response from bypassing the rate-limit filters.
-    expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
 }
 
 impl Filter {
-    pub fn new(
-        config: &FilterConfig,
-        expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
-    ) -> Filter {
+    pub fn new(config: &FilterConfig) -> Filter {
         Filter {
             config: config.clone(),
             raw_packets_received: ReceivedPacketCache::new(config.max_requests_per_second),
             _packets_received: ReceivedPacketCache::new(config.max_requests_per_second),
-            expected_responses: expected_responses,
         }
     }
 
@@ -54,11 +43,6 @@ impl Filter {
 
         if PERMIT_BAN_LIST.read().ban_ips.get(&src.ip()).is_some() {
             return false;
-        }
-
-        // expected requests are excluded from rate limits
-        if self.expected_responses.read().get(src).is_some() {
-            return true;
         }
 
         // update the cache
@@ -80,11 +64,6 @@ impl Filter {
         // Add the un-solicited request to the cache
         // If this is over the maximum requests per second, it will be rejected and return false.
         let result = self.raw_packets_received.insert(src.clone());
-
-        // update the metric
-        METRICS
-            .unsolicited_requests_per_second
-            .store(self.raw_packets_received.len(), Ordering::Relaxed);
 
         result
     }

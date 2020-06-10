@@ -23,7 +23,7 @@ pub struct SocketConfig {
     /// The listening socket.
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
-    pub filter_config: Option<FilterConfig>,
+    pub filter_config: FilterConfig,
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// The WhoAreYou magic packet.
     pub whoareyou_magic: [u8; MAGIC_LENGTH],

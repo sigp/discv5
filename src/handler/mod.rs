@@ -206,14 +206,14 @@ impl Handler {
             magic
         };
 
+        // enable the packet filter
+        let mut filter_config = config.filter_config.clone();
+        filter_config.enabled = config.enable_packet_filter;
+
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
             socket_addr: listen_socket.clone(),
-            filter_config: if config.enable_packet_filter {
-                Some(config.filter_config.clone())
-            } else {
-                None
-            },
+            filter_config,
             whoareyou_magic: magic,
             expected_responses: filter_expected_responses.clone(),
         };

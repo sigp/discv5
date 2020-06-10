@@ -107,6 +107,7 @@ impl Discv5ConfigBuilder {
 
     /// Whether to enable the incoming packet filter.
     pub fn enable_packet_filter(&mut self) -> &mut Self {
+        self.config.filter_config.enabled = true;
         self.config.enable_packet_filter = true;
         self
     }
