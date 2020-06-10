@@ -119,6 +119,9 @@ pub(crate) struct RequestCall {
     handshake_sent: bool,
     /// The number of times this request has been re-sent.
     retries: u8,
+    /// If we receive a Nodes Response with a total greater than 1. This keeps track of the
+    /// remaining responses expected.
+    remaining_responses: Option<u64>,
 }
 
 impl RequestCall {
@@ -129,6 +132,7 @@ impl RequestCall {
             request,
             handshake_sent: false,
             retries: 1,
+            remaining_responses: None,
         }
     }
 
@@ -800,6 +804,7 @@ impl Handler {
                     // these
                     if let Some(request_id) = session.awaiting_enr {
                         if response.id == request_id {
+                            session.awaiting_enr = None;
                             match response.body {
                                 ResponseBody::Nodes { mut nodes, .. } => {
                                     // Received the requested ENR
@@ -822,40 +827,8 @@ impl Handler {
                             return;
                         }
                     }
-                    // Handle responses normally
-                    if let Some(request_call) = self.active_requests.remove(&node_address) {
-                        if request_call.id() != response.id {
-                            trace!("Received an RPC Response to an unknown request. Likely late response. {}", node_address);
-                            // This could be an extra NodesResponse. We send to the application
-                            // layer to get filtered.
-                            self.outbound_channel
-                                .send(HandlerResponse::Response(node_address.clone(), response))
-                                .await
-                                .unwrap_or_else(|_| ());
-                            // add the request back and reset the timer
-                            self.active_requests.insert(node_address, request_call);
-                            return;
-                        } else {
-                            // Remove the expected response
-                            self.remove_expected_response(node_address.socket_addr.clone());
-                            // The request matches report the response
-                            self.outbound_channel
-                                .send(HandlerResponse::Response(node_address.clone(), response))
-                                .await
-                                .unwrap_or_else(|_| ());
-                            self.send_next_request(node_address).await;
-                        }
-                    } else {
-                        // This could be that the request was late, or it is an extra Nodes
-                        // response. We report these to the application layer even if the request
-                        // has already timed out.
-                        trace!("Late response from node: {}", node_address);
-                        self.outbound_channel
-                            .send(HandlerResponse::Response(node_address.clone(), response))
-                            .await
-                            .unwrap_or_else(|_| ());
-                        self.send_next_request(node_address).await;
-                    }
+                    // Handle standard responses
+                    self.handle_response(node_address, response).await;
                 }
             }
         } else {
@@ -868,6 +841,71 @@ impl Handler {
                 .send(HandlerResponse::WhoAreYou(whoareyou_ref))
                 .await
                 .unwrap_or_else(|_| ());
+        }
+    }
+
+    /// Handles a response to a request. Re-inserts the request call if the response is a multiple
+    /// Nodes response.
+    async fn handle_response(&mut self, node_address: NodeAddress, response: Response) {
+        // Find a matching request, if any
+        if let Some(mut request_call) = self.active_requests.remove(&node_address) {
+            if request_call.id() != response.id {
+                trace!(
+                    "Received an RPC Response to an unknown request. Likely late response. {}",
+                    node_address
+                );
+                // add the request back and reset the timer
+                self.active_requests.insert(node_address, request_call);
+                return;
+            }
+
+            // The response matches a request
+
+            // Check to see if this is a Nodes response, in which case we may require to wait for
+            // extra responses
+            if let ResponseBody::Nodes { total, .. } = response.body {
+                if total > 1 {
+                    // This is a multi-response Nodes response
+                    if let Some(mut remaining_responses) = request_call.remaining_responses {
+                        remaining_responses -= 1;
+                        if remaining_responses != 0 {
+                            // more responses remaining, add back the request and send the response
+                            // add back the request and send the response
+                            self.active_requests
+                                .insert(node_address.clone(), request_call);
+                            self.outbound_channel
+                                .send(HandlerResponse::Response(node_address, response))
+                                .await
+                                .unwrap_or_else(|_| ());
+                            return;
+                        }
+                    } else {
+                        // This is the first instance
+                        request_call.remaining_responses = Some(total - 1);
+                        // add back the request and send the response
+                        self.active_requests
+                            .insert(node_address.clone(), request_call);
+                        self.outbound_channel
+                            .send(HandlerResponse::Response(node_address, response))
+                            .await
+                            .unwrap_or_else(|_| ());
+                        return;
+                    }
+                }
+            }
+
+            // Remove the expected response
+            self.remove_expected_response(node_address.socket_addr.clone());
+            // The request matches report the response
+            self.outbound_channel
+                .send(HandlerResponse::Response(node_address.clone(), response))
+                .await
+                .unwrap_or_else(|_| ());
+            self.send_next_request(node_address).await;
+        } else {
+            // This is likely a late response and we have already failed the request. These get
+            // dropped here.
+            trace!("Late response from node: {}", node_address);
         }
     }
 
