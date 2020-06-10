@@ -12,10 +12,15 @@
 //! Currently only secp256k1 and ed25519 keys are supported.
 //!
 //! This requires the "libp2p" feature.
-
+#[cfg(feature = "libp2p")]
 use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config};
+#[cfg(feature = "libp2p")]
 use std::net::SocketAddr;
 
+#[cfg(not(feature = "libp2p"))]
+fn main() {}
+
+#[cfg(feature = "libp2p")]
 #[tokio::main]
 async fn main() {
     env_logger::init();

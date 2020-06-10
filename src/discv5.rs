@@ -1,18 +1,20 @@
 //! The Discovery v5 protocol. See `lib.rs` for further details.
 
-use crate::error::{QueryError, RequestError};
+use crate::error::QueryError;
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
-use crate::node_info::NodeContact;
 use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::{Discv5Config, Enr};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use log::{error, warn};
 use parking_lot::RwLock;
-use std::{convert::TryFrom, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 #[cfg(feature = "libp2p")]
-use libp2p_core::Multiaddr;
+use {
+    crate::error::RequestError, crate::node_info::NodeContact, libp2p_core::Multiaddr,
+    std::convert::TryFrom,
+};
 
 // Create lazy static variable for the global permit/ban list
 use crate::metrics::{Metrics, METRICS};
@@ -20,6 +22,8 @@ lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
 }
+
+mod test;
 
 /// Events that can be produced by the `Discv5` event stream.
 #[derive(Debug)]

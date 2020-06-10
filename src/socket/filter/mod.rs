@@ -18,12 +18,10 @@ use std::collections::HashMap;
 pub(crate) struct Filter {
     /// Configuration for the packet filter.
     config: FilterConfig,
-
     /// An ordered (by time) collection of recently seen packets by SocketAddr. The packet data is not
     /// stored here. This stores a 5 seconds of history to calculate a 5 second moving average for
     /// the metrics.
     raw_packets_received: ReceivedPacketCache<SocketAddr>,
-
     /// An ordered (by time) collection of seen packets that have passed the first filter check and
     /// have an associated NodeId.
     _packets_received: ReceivedPacketCache<(SocketAddr, Packet)>,
@@ -62,7 +60,7 @@ impl Filter {
 
         // build the metrics
         METRICS
-            .unsolicited_requests_per_second
+            .unsolicited_requests_per_window
             .store(self.raw_packets_received.len(), Ordering::Relaxed);
 
         // TODO: Bench the performance of this
