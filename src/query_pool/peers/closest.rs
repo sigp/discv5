@@ -469,7 +469,6 @@ enum QueryPeerState {
     Succeeded,
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,7 +477,7 @@ mod tests {
     use rand::{thread_rng, Rng};
     use std::time::Duration;
 
-    type TestQuery = FindNodeQuery<NodeId, NodeId>;
+    type TestQuery = FindNodeQuery<NodeId>;
 
     fn random_nodes(n: usize) -> impl Iterator<Item = NodeId> + Clone {
         (0..n).map(|_| NodeId::random())
@@ -493,7 +492,7 @@ mod tests {
             peer_timeout: Duration::from_secs(g.gen_range(10, 30)),
         };
         let iterations = 1;
-        FindNodeQuery::with_config(config, target, known_closest_peers, iterations)
+        FindNodeQuery::with_config(config, target.into(), known_closest_peers, iterations)
     }
 
     fn sorted(target: &Key<NodeId>, peers: &Vec<Key<NodeId>>) -> bool {
@@ -511,7 +510,7 @@ mod tests {
     #[test]
     fn new_query() {
         let query = random_query(&mut thread_rng());
-        let target = Key::from(query.target.clone());
+        let target = query.target_key.clone();
 
         let (keys, states): (Vec<_>, Vec<_>) = query
             .closest_peers
@@ -554,7 +553,7 @@ mod tests {
             let num_known = expected.len();
             let max_parallelism = usize::min(query.config.parallelism, num_known);
 
-            let target = Key::from(query.target.clone());
+            let target = query.target_key.clone();
             let mut remaining;
             let mut num_failures = 0;
 
@@ -573,7 +572,7 @@ mod tests {
                 for k in expected.iter() {
                     match query.next(now) {
                         QueryState::Finished => break 'finished,
-                        QueryState::Waiting(Some(p)) => assert_eq!(&p.node_id, k.preimage()),
+                        QueryState::Waiting(Some(p)) => assert_eq!(&p.key, k.preimage()),
                         QueryState::Waiting(None) => panic!("Expected another peer."),
                         QueryState::WaitingAtCapacity => panic!("Unexpectedly reached capacity."),
                     }
@@ -620,13 +619,13 @@ mod tests {
                 _ => true,
             });
 
-            let target = query.target.clone();
+            let target_key = query.target_key.clone();
             let num_results = query.config.num_results;
             let result = query.into_result();
             let closest = result.into_iter().map(Key::from).collect::<Vec<_>>();
 
             // assert_eq!(result.target, target);
-            assert!(sorted(&Key::from(target), &closest));
+            assert!(sorted(&target_key, &closest));
 
             if closest.len() < num_results {
                 // The query returned fewer results than requested. Therefore
@@ -655,15 +654,15 @@ mod tests {
                 QueryState::Waiting(Some(p)) => p.clone(),
                 _ => panic!("No peer."),
             };
-            query.on_success(&peer1.node_id, closer.clone());
+            query.on_success(&peer1.key, closer.clone());
             // Duplicate result from the same peer.
-            query.on_success(&peer1.node_id, closer.clone());
+            query.on_success(&peer1.key, closer.clone());
 
             // If there is a second peer, let it also report the same "closer" peer.
             match query.next(now) {
                 QueryState::Waiting(Some(p)) => {
                     let peer2 = p.clone();
-                    query.on_success(&peer2.node_id, closer.clone())
+                    query.on_success(&peer2.key, closer.clone())
                 }
                 QueryState::Finished => {}
                 _ => panic!("Unexpectedly query state."),
@@ -697,7 +696,7 @@ mod tests {
                 .into_preimage();
             // Poll the query for the first peer to be in progress.
             match query.next(now) {
-                QueryState::Waiting(Some(id)) => assert_eq!(id.node_id, peer),
+                QueryState::Waiting(Some(id)) => assert_eq!(id.key, peer),
                 _ => panic!(),
             }
 
@@ -736,4 +735,3 @@ mod tests {
         QuickCheck::new().tests(10).quickcheck(prop as fn(_) -> _)
     }
 }
-*/

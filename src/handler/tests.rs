@@ -1,7 +1,7 @@
-/*
 #![cfg(test)]
 use super::*;
 use crate::rpc::{Request, Response};
+use crate::{Discv5ConfigBuilder, TokioExecutor};
 use enr::EnrBuilder;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -29,7 +29,9 @@ async fn simple_session_message() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let config = Discv5Config::default();
+    let config = Discv5ConfigBuilder::new()
+        .executor(Box::new(TokioExecutor(tokio::runtime::Handle::current())))
+        .build();
 
     let sender_enr = EnrBuilder::new("v4")
         .ip(ip)
@@ -42,14 +44,14 @@ async fn simple_session_message() {
         .build(&key2)
         .unwrap();
 
-    let mut sender_handler = Handler::spawn(
+    let (_exit_send, mut sender_handler, _) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
         sender_enr.udp_socket().unwrap(),
         config.clone(),
     );
 
-    let mut receiver_handler = Handler::spawn(
+    let (_exit_recv, mut recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_enr.udp_socket().unwrap(),
@@ -61,30 +63,24 @@ async fn simple_session_message() {
         body: RequestBody::Ping { enr_seq: 1 },
     };
 
-    let receiver_send_message = send_message.clone();
-
-    let _ = sender_handler.send_request(&receiver_enr, send_message);
-    let sender = async move {
-        sender_handler.collect::<Vec<_>>().await;
-    };
+    let _ = sender_handler
+        .send(HandlerRequest::Request(
+            receiver_enr.into(),
+            send_message.clone(),
+        ))
+        .await;
 
     let receiver = async move {
         loop {
-            if let Some(message) = receiver_handler.next().await {
+            if let Some(message) = receiver_handler.recv().await {
                 match message {
-                    HandlerEvent::WhoAreYouRequest { src, auth_tag, .. } => {
-                        let seq = sender_enr.seq();
-                        let node_id = &sender_enr.node_id();
-                        receiver_handler.send_whoareyou(
-                            src,
-                            node_id,
-                            seq,
-                            Some(sender_enr.clone()),
-                            auth_tag,
-                        );
+                    HandlerResponse::WhoAreYou(wru_ref) => {
+                        let _ = recv_send
+                            .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())))
+                            .await;
                     }
-                    HandlerEvent::Message { message, .. } => {
-                        assert_eq!(*message, receiver_send_message);
+                    HandlerResponse::Request(_, request) => {
+                        assert_eq!(request, send_message);
                         return;
                     }
                     _ => {}
@@ -94,7 +90,6 @@ async fn simple_session_message() {
     };
 
     tokio::select! {
-        _ = sender => {}
         _ = receiver => {}
         _ = delay_for(Duration::from_millis(100)) => {
             panic!("Test timed out");
@@ -112,6 +107,10 @@ async fn multiple_messages() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
+    let config = Discv5ConfigBuilder::new()
+        .executor(Box::new(TokioExecutor(tokio::runtime::Handle::current())))
+        .build();
+
     let sender_enr = EnrBuilder::new("v4")
         .ip(ip)
         .udp(sender_port)
@@ -123,51 +122,59 @@ async fn multiple_messages() {
         .build(&key2)
         .unwrap();
 
-    let mut sender_handler = Handler::new(
-        sender_enr.clone(),
-        key1,
+    let (_exit_send, mut sender_handler, mut sender_handler_recv) = Handler::spawn(
+        arc_rw!(sender_enr.clone()),
+        arc_rw!(key1),
         sender_enr.udp_socket().unwrap(),
-        Discv5Config::default(),
-    )
-    .unwrap();
-    let mut receiver_handler = Handler::new(
-        receiver_enr.clone(),
-        key2,
-        receiver_enr.udp_socket().unwrap(),
-        Discv5Config::default(),
-    )
-    .unwrap();
+        config.clone(),
+    );
 
-    let send_message = ProtocolMessage {
+    let (_exit_recv, mut recv_send, mut receiver_handler) = Handler::spawn(
+        arc_rw!(receiver_enr.clone()),
+        arc_rw!(key2),
+        receiver_enr.udp_socket().unwrap(),
+        config,
+    );
+
+    let send_message = Request {
         id: 1,
-        body: RpcType::Request(Request::Ping { enr_seq: 1 }),
+        body: RequestBody::Ping { enr_seq: 1 },
     };
 
-    let pong_response = ProtocolMessage {
+    let pong_response = Response {
         id: 1,
-        body: RpcType::Response(Response::Ping {
+        body: ResponseBody::Ping {
             enr_seq: 1,
             ip,
             port: sender_port,
-        }),
+        },
     };
 
-    let receiver_send_message = send_message.clone();
-
-    let messages_to_send = 5;
+    let messages_to_send = 5usize;
 
     // sender to send the first message then await for the session to be established
-    let _ = sender_handler.send_request(&receiver_enr, send_message.clone());
+    let _ = sender_handler
+        .send(HandlerRequest::Request(
+            receiver_enr.clone().into(),
+            send_message.clone(),
+        ))
+        .await;
 
-    let mut message_count = 0;
+    let mut message_count = 0usize;
+    let recv_send_message = send_message.clone();
 
     let sender = async move {
         loop {
-            match sender_handler.next().await {
-                Some(HandlerEvent::Established(_)) => {
+            match sender_handler_recv.next().await {
+                Some(HandlerResponse::Established(_)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
-                        let _ = sender_handler.send_request(&receiver_enr, send_message.clone());
+                        let _ = sender_handler
+                            .send(HandlerRequest::Request(
+                                receiver_enr.clone().into(),
+                                send_message.clone(),
+                            ))
+                            .await;
                     }
                 }
                 _ => continue,
@@ -178,24 +185,20 @@ async fn multiple_messages() {
     let receiver = async move {
         loop {
             match receiver_handler.next().await {
-                Some(HandlerEvent::WhoAreYouRequest { src, auth_tag, .. }) => {
-                    let seq = sender_enr.seq();
-                    let node_id = &sender_enr.node_id();
-                    receiver_handler.send_whoareyou(
-                        src,
-                        node_id,
-                        seq,
-                        Some(sender_enr.clone()),
-                        auth_tag,
-                    );
+                Some(HandlerResponse::WhoAreYou(wru_ref)) => {
+                    let _ = recv_send
+                        .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())))
+                        .await;
                 }
-                Some(HandlerEvent::Message { message, .. }) => {
-                    assert_eq!(*message, receiver_send_message);
+                Some(HandlerResponse::Request(addr, request)) => {
+                    assert_eq!(request, recv_send_message);
                     message_count += 1;
                     // required to send a pong response to establish the session
-                    let _ = receiver_handler.send_request(&sender_enr, pong_response.clone());
+                    let _ = recv_send
+                        .send(HandlerRequest::Response(addr, pong_response.clone()))
+                        .await;
                     if message_count == messages_to_send {
-                        return Poll::Ready(());
+                        return;
                     }
                 }
                 _ => continue,
@@ -211,4 +214,3 @@ async fn multiple_messages() {
         }
     }
 }
-*/
