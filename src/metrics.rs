@@ -10,14 +10,16 @@ lazy_static! {
 
 pub struct InternalMetrics {
     pub active_sessions: AtomicUsize,
+    pub moving_window: u64,
     pub unsolicited_requests_per_second: AtomicUsize,
-    pub requests_per_node_per_second: RwLock<HashMap<NodeId, usize>>,
-    pub requests_per_ip_per_second: RwLock<HashMap<IpAddr, usize>>,
+    pub requests_per_node_per_second: RwLock<HashMap<NodeId, f64>>,
+    pub requests_per_ip_per_second: RwLock<HashMap<IpAddr, f64>>,
 }
 
 impl InternalMetrics {
     pub fn new() -> Self {
         InternalMetrics {
+            moving_window: 5,
             active_sessions: AtomicUsize::new(0),
             unsolicited_requests_per_second: AtomicUsize::new(0),
             requests_per_node_per_second: RwLock::new(HashMap::new()),
@@ -29,9 +31,9 @@ impl InternalMetrics {
 #[derive(Clone, Debug)]
 pub struct Metrics {
     pub active_sessions: usize,
-    pub unsolicited_requests_per_second: usize,
-    pub requests_per_node_per_second: HashMap<NodeId, usize>,
-    pub requests_per_ip_per_second: HashMap<IpAddr, usize>,
+    pub unsolicited_requests_per_second: f64,
+    pub requests_per_node_per_second: HashMap<NodeId, f64>,
+    pub requests_per_ip_per_second: HashMap<IpAddr, f64>,
 }
 
 impl From<&METRICS> for Metrics {
@@ -40,7 +42,8 @@ impl From<&METRICS> for Metrics {
             active_sessions: internal_metrics.active_sessions.load(Ordering::Relaxed),
             unsolicited_requests_per_second: internal_metrics
                 .unsolicited_requests_per_second
-                .load(Ordering::Relaxed),
+                .load(Ordering::Relaxed) as f64
+                / internal_metrics.moving_window as f64,
             requests_per_node_per_second: internal_metrics
                 .requests_per_node_per_second
                 .read()

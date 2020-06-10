@@ -96,9 +96,12 @@ impl RecvHandler {
     /// Handles in incoming packet. Passes through the filter, decodes and sends to the packet
     /// handler.
     async fn handle_inbound(&mut self, src: SocketAddr, length: usize) {
+        // Permit all expected responses
+        let permitted = self.expected_responses.read().get(&src).is_some();
+
         // Perform the first run of the filter. This checks for rate limits and black listed IP
         // addresses.
-        if !self.filter.initial_pass(&src) {
+        if !permitted && !self.filter.initial_pass(&src) {
             trace!("Packet filtered from source: {:?}", src);
             return;
         }
@@ -112,7 +115,7 @@ impl RecvHandler {
         };
 
         // Perform packet-level filtering
-        if !self.filter.final_pass(&src, &packet) {
+        if !permitted && !self.filter.final_pass(&src, &packet) {
             return;
         }
 
