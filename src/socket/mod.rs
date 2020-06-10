@@ -12,7 +12,7 @@ mod filter;
 mod recv;
 mod send;
 
-pub use filter::FilterConfig;
+pub use filter::{FilterConfig, FilterConfigBuilder};
 pub use recv::InboundPacket;
 pub(crate) use recv::MAX_PACKET_SIZE;
 pub use send::OutboundPacket;

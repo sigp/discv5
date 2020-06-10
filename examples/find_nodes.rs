@@ -35,7 +35,7 @@
 //!
 //!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
-use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config};
+use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder};
 use futures::prelude::*;
 use hex_literal::*;
 use std::{
@@ -99,8 +99,8 @@ async fn main() {
         println!("ENR is not printed as no IP:PORT was specified");
     }
 
-    // default configuration
-    let config = Discv5Config::default();
+    // default configuration with packet filtering
+    let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
 
     // the address to listen on
     let socket_addr = SocketAddr::new(address.into(), port);

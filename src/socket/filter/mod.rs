@@ -10,7 +10,7 @@ mod config;
 use crate::discv5::PERMIT_BAN_LIST;
 use crate::metrics::METRICS;
 use cache::ReceivedPacketCache;
-pub use config::FilterConfig;
+pub use config::{FilterConfig, FilterConfigBuilder};
 use log::debug;
 use std::collections::HashMap;
 
