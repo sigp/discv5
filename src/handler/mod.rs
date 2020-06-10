@@ -30,10 +30,10 @@ use std::sync::Arc;
 use std::{collections::HashMap, default::Default, net::SocketAddr, sync::atomic::Ordering};
 use tokio::sync::{mpsc, oneshot};
 
-// mod tests;
 mod crypto;
 mod hashmap_delay;
 mod session;
+mod tests;
 
 pub use crate::node_info::{NodeAddress, NodeContact};
 
