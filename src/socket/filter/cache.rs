@@ -57,7 +57,7 @@ impl<T> ReceivedPacketCache<T> {
         self.within_enforced_time = count;
     }
 
-    pub fn _insert_reset(&mut self, content: T) -> bool {
+    pub fn insert_reset(&mut self, content: T) -> bool {
         self.reset();
         self.insert(content)
     }

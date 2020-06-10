@@ -463,8 +463,8 @@ impl Service {
 
         if let Some(mut active_request) = self.active_requests.remove(&id) {
             debug!(
-                "Received RPC response: {} to id: {} from: {}",
-                active_request.request_body, id, active_request.contact
+                "Received RPC response: {} to request: {} from: {}",
+                response.body, active_request.request_body, active_request.contact
             );
             let node_id = active_request.contact.node_id();
             if !response.match_request(&active_request.request_body) {
@@ -975,7 +975,7 @@ impl Service {
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
     async fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
-        debug!("RPC Error removing request. Reason: {:?}, id {}", error, id);
+        trace!("RPC Error removing request. Reason: {:?}, id {}", error, id);
         if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
@@ -1030,7 +1030,7 @@ impl Service {
                         }
                     } else {
                         debug!(
-                            "Failed RPC request: {:?} for node: {} ",
+                            "Failed RPC request: {} for node: {} ",
                             active_request.request_body, active_request.contact
                         );
                     }

@@ -137,7 +137,16 @@ async fn main() {
             _ = query_interval.next() => {
                 // pick a random node target
                 let target_random_node_id = enr::NodeId::random();
-                println!("Connected peers: {}, Active sessions: {}", discv5.connected_peers(), discv5.active_sessions());
+                // get metrics
+                let metrics = discv5.metrics();
+                let connected_peers = discv5.connected_peers();
+                println!("Connected peers: {}, Active sessions: {}, Unsolicited requests/s: {:.2}", connected_peers, metrics.active_sessions, metrics.unsolicited_requests_per_second);
+                if !metrics.requests_per_ip_per_second.is_empty() {
+                    println!("Requests/s per IP:");
+                    for (ip, requests) in metrics.requests_per_ip_per_second.iter() {
+                        println!("IP: {:?} R/s: {:.2}", ip, requests);
+                    }
+                }
                 println!("Searching for peers...");
                 // execute a FINDNODE query
                 match discv5.find_node(target_random_node_id).await {

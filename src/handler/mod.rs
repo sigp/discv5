@@ -866,9 +866,9 @@ impl Handler {
             if let ResponseBody::Nodes { total, .. } = response.body {
                 if total > 1 {
                     // This is a multi-response Nodes response
-                    if let Some(mut remaining_responses) = request_call.remaining_responses {
-                        remaining_responses -= 1;
-                        if remaining_responses != 0 {
+                    if let Some(remaining_responses) = request_call.remaining_responses.as_mut() {
+                        *remaining_responses -= 1;
+                        if remaining_responses != &0 {
                             // more responses remaining, add back the request and send the response
                             // add back the request and send the response
                             self.active_requests
