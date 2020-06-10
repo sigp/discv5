@@ -34,82 +34,49 @@ For a simple CLI discovery service see [discv5-cli](https://github.com/AgeMannin
 
 # Usage
 
-The `Discv5` service implements `Stream` which emits `Discv5Event` events. Running a
-discv5 service is as simple as initialising a `Discv5` struct and driving the stream.
-
 A simple example of creating this service is as follows:
 
-
 ```rust
-use enr::{Enr,EnrBuilder, CombinedKey};
-use std::net::Ipv4Addr;
-use discv5::{Discv5, Discv5Config, Discv5Event};
-use futures::prelude::*;
- 
-#[tokio::main]
-async fn main() {
-  // generate a key for the node
-  let enr_key = CombinedKey::generate_secp256k1();
+   use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, Discv5ConfigBuilder};
+   use std::net::SocketAddr;
 
-  // construct a local ENR
-  let enr = EnrBuilder::new("v4")
-       .ip("127.0.0.1".parse::<Ipv4Addr>().expect("valid address").into())
-       .udp(9000)
-       .build(&enr_key)
+   // listening address and port
+   let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
+
+   // construct a local ENR
+   let enr_key = CombinedKey::generate_secp256k1();
+   let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
+
+   // build the tokio executor
+   let mut runtime = tokio::runtime::Builder::new()
+       .threaded_scheduler()
+       .thread_name("Discv5-example")
+       .enable_all()
+       .build()
        .unwrap();
 
-    // display the ENR's node id and base64 encoding
-    println!("Node Id: {}", enr.node_id());
-    println!("Base64 ENR: {}", enr.to_base64());
+   // Any struct that implements the Executor trait can be used to spawn the discv5 tasks. We
+   // use the one provided by discv5 here.
+   let executor = TokioExecutor(runtime.handle().clone());
 
-    // listen on the UDP socket of the ENR
-    let listen_address = enr.udp_socket().unwrap();
+   // default configuration
+   let config = Discv5ConfigBuilder::new()
+        .executor(Box::new(executor))
+        .build();
 
-    // use default settings for the discv5 service
-    let config = Discv5Config::default();
+   // construct the discv5 server
+   let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
-   // construct the discv5 service
-   let mut discv5 = Discv5::new(enr, enr_key, config, listen_address).unwrap();
+   // In order to bootstrap the routing table an external ENR should be added
+   // This can be done via add_enr. I.e.:
+   // discv5.add_enr(<ENR>)
 
-   // add another node's ENR to connect to and join an existing DHT
-   discv5.add_enr("-IS4QKXYSAtVY5dwZneGdrMnuvjnhG3TQM8P8RHW1ZMbdOBsMfKQoZvEe9PqsYgKAb5afYVffn8iCxptuwUamV98d8IBgmlkgnY0gmlwhAAAAACJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCIyg".parse::<Enr<CombinedKey>>().unwrap());
+   // start the discv5 server
+   discv5.start(listen_addr);
 
-    // search peers closest to a target
-    let target_random_node_id = enr::NodeId::random();
-    discv5.find_node(target_random_node_id);
-
-
-    // poll the stream for the next FindNoeResult event
-    while let Some(event) = discv5.next().await {
-        match event {
-             Discv5Event::FindNodeResult { closer_peers, .. } => {
-                 println!("Query completed. Found {} peers", closer_peers.len());
-                 break;
-             }
-             _ => {} // handle other discv5 events
-         }
-    }
-}
+   // run a find_node query
+   runtime.block_on(async {
+      let found_nodes = discv5.find_node(NodeId::random()).await.unwrap();
+      println!("Found nodes: {:?}", found_nodes);
+   });
 ```
-
-To see a usage in a runtime environment, see the `find_nodes` example in `/examples`.
-
-
-
-# Implementation Notes
-
-This protocol is split into three main sections/layers:
-
- * Transport - The transport for this protocol is currently fixed to UDP and is realised by the
- `Discv5` struct. It encodes/decodes `Packet`'s to and from the specified UDP
- socket.
- * Session - The protocol's communication is encrypted with `AES_GCM`. All node communication
- undergoes a handshake, which results in a `Session`. `Session`'s are established when
- needed and get dropped after a timeout. This section manages the creation and maintenance of
- sessions between nodes. It is realised by the `Service` struct.
- * Application - This section contains the protocol-level logic. In particular it manages the
- routing table of known ENR's, topic registration/advertisement and performs various queries
- such as peer discovery. This section is realised by the `Discv5` struct.
-
- *Note* -  Currently only `secp256k1` keys are supported.
-

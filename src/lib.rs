@@ -17,6 +17,8 @@
 //! majority is chosen as our external IP address. If an external IP address is updated, this is
 //! produced as an event to notify the swarm (if one is used for this behaviour).
 //!
+//!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
+//!
 //! This protocol is split into four main sections/layers:
 //!
 //!  * Socket - The [`socket`] module is responsible for opening the underlying UDP socket. It
@@ -49,9 +51,6 @@
 //!  a tokio runtime is present when creating the [`Discv5`] struct. The struct will use the
 //!  existing runtime for spawning the underlying server tasks. If a runtime is not present, the
 //!  creation of the [`Discv5`] struct will panic.
-//!
-//!
-//!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 //!
 //! # Usage
 //!
