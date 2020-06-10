@@ -1,4 +1,65 @@
-//! The Discovery v5 protocol. See `lib.rs` for further details.
+//! The Discovery v5 protocol. See the module level docs for further details.
+//!
+//! This provides the main struct for running and interfacing with a discovery v5 server.
+//!
+//! A [`Discv5`] struct needs to be created either with an [`Executor`] specified in the
+//! [`Discv5Config`] via the [`Discv5ConfigBuilder`] or in the presence of a tokio runtime that has
+//! timing and io enabled.
+//!
+//! Once a [`Discv5`] struct has been created the service is started by running the [`start()`]
+//! functions with a UDP socket. This will start a discv5 server in the background listening on the
+//! specified UDP socket.
+//!
+//! The server can be shutdown using the [`shutdown()`] function.
+//!
+//! ## Example
+//!
+//! Running and executing a discovery query (with a pre-built executor):
+//!
+//! ```rust
+//!    use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, Discv5ConfigBuilder};
+//!    use std::net::SocketAddr;
+//!
+//!    // listening address and port
+//!    let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
+//!
+//!    // construct a local ENR
+//!    let enr_key = CombinedKey::generate_secp256k1();
+//!    let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
+//!
+//!    // build the tokio executor
+//!    let mut runtime = tokio::runtime::Builder::new()
+//!        .threaded_scheduler()
+//!        .thread_name("Discv5-example")
+//!        .enable_all()
+//!        .build()
+//!        .unwrap();
+//!
+//!    // Any struct that implements the Executor trait can be used to spawn the discv5 tasks. We
+//!    // use the one provided by discv5 here.
+//!    let executor = TokioExecutor(runtime.handle().clone());
+//!
+//!    // default configuration
+//!    let config = Discv5ConfigBuilder::new()
+//!         .executor(Box::new(executor))
+//!         .build();
+//!
+//!    // construct the discv5 server
+//!    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+//!
+//!    // In order to bootstrap the routing table an external ENR should be added
+//!    // This can be done via add_enr. I.e.:
+//!    // discv5.add_enr(<ENR>)
+//!
+//!    // start the discv5 server
+//!    discv5.start(listen_addr);
+//!
+//!    // run a find_node query
+//!    runtime.block_on(async {
+//!       let found_nodes = discv5.find_node(NodeId::random()).await.unwrap();
+//!       println!("Found nodes: {:?}", found_nodes);
+//!    });
+//! ```
 
 use crate::error::QueryError;
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
