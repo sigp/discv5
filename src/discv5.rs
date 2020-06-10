@@ -279,6 +279,48 @@ impl Discv5 {
         None
     }
 
+    /// Bans a node from the server. This will remove the node from the routing table if it exists
+    /// and block all incoming packets from the node.
+    pub fn ban_node(&mut self, node_id: &NodeId) {
+        self.remove_node(node_id);
+        PERMIT_BAN_LIST.write().ban_nodes.insert(node_id.clone());
+    }
+
+    /// Removes a banned node from the banned list.
+    pub fn ban_node_remove(&mut self, node_id: &NodeId) {
+        PERMIT_BAN_LIST.write().ban_nodes.remove(node_id);
+    }
+
+    /// Permits a node, allowing the node to bypass the packet filter.  
+    pub fn permit_node(&mut self, node_id: &NodeId) {
+        PERMIT_BAN_LIST.write().permit_nodes.insert(node_id.clone());
+    }
+
+    /// Removes a node from the permit list.
+    pub fn permit_node_remove(&mut self, node_id: &NodeId) {
+        PERMIT_BAN_LIST.write().permit_nodes.remove(node_id);
+    }
+
+    /// Bans an IP from the server.  This will block all incoming packets from the IP.
+    pub fn ban_ip(&mut self, ip: std::net::IpAddr) {
+        PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+    }
+
+    /// Removes a banned IP from the banned list.
+    pub fn ban_ip_remove(&mut self, ip: &std::net::IpAddr) {
+        PERMIT_BAN_LIST.write().ban_ips.remove(ip);
+    }
+
+    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.  
+    pub fn permit_ip(&mut self, ip: std::net::IpAddr) {
+        PERMIT_BAN_LIST.write().permit_ips.insert(ip);
+    }
+
+    /// Removes an IP from the permit list.
+    pub fn permit_ip_remove(&mut self, ip: &std::net::IpAddr) {
+        PERMIT_BAN_LIST.write().permit_ips.remove(ip);
+    }
+
     /// Updates the local ENR TCP/UDP socket.
     pub fn update_local_enr_socket(&mut self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
         let local_socket = self.local_enr.read().udp_socket();
