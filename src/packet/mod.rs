@@ -13,14 +13,18 @@ mod auth_header;
 
 pub use auth_header::AuthHeader;
 pub use auth_header::AuthResponse;
+use enr::NodeId;
 use log::debug;
 use rlp::{Decodable, DecoderError, RlpStream};
+use sha2::{Digest, Sha256};
 use std::default::Default;
 
 pub const TAG_LENGTH: usize = 32;
 const AUTH_TAG_LENGTH: usize = 12;
 pub const MAGIC_LENGTH: usize = 32;
 pub const ID_NONCE_LENGTH: usize = 32;
+
+const WHOAREYOU_STRING: &str = "WHOAREYOU";
 
 /// The authentication nonce (12 bytes).
 pub type AuthTag = [u8; AUTH_TAG_LENGTH];
@@ -50,7 +54,7 @@ pub enum Packet {
         magic: [u8; MAGIC_LENGTH],
 
         /// The auth-tag of the request.
-        token: AuthTag, //potentially rename to auth-tag
+        auth_tag: AuthTag,
 
         /// The `id-nonce` to prevent handshake replays.
         id_nonce: Nonce,
@@ -92,6 +96,28 @@ impl Packet {
             auth_tag: rand::random(),
             data,
         }
+    }
+
+    /// Creates a WHOAREYOU packet and returns the associated generated nonce.
+    pub fn whoareyou(node_id: NodeId, enr_seq: u64, auth_tag: AuthTag) -> (Packet, Nonce) {
+        let magic = {
+            let mut hasher = Sha256::new();
+            hasher.input(node_id.raw());
+            hasher.input(WHOAREYOU_STRING.as_bytes());
+            let mut magic = [0u8; MAGIC_LENGTH];
+            magic.copy_from_slice(&hasher.result());
+            magic
+        };
+
+        let id_nonce: Nonce = rand::random();
+
+        let packet = Packet::WhoAreYou {
+            magic,
+            auth_tag,
+            id_nonce: id_nonce.clone(),
+            enr_seq,
+        };
+        (packet, id_nonce)
     }
 
     /// The authentication tag for all packets except WHOAREYOU.
@@ -140,7 +166,7 @@ impl Packet {
             }
             Packet::WhoAreYou {
                 magic,
-                token,
+                auth_tag,
                 id_nonce,
                 enr_seq,
             } => {
@@ -150,7 +176,7 @@ impl Packet {
                 let list = {
                     let mut s = RlpStream::new();
                     s.begin_list(3);
-                    s.append(&token.to_vec());
+                    s.append(&auth_tag.to_vec());
                     s.append(&id_nonce.to_vec());
                     s.append(enr_seq);
                     s.drain()
@@ -217,12 +243,12 @@ impl Packet {
         let mut id_nonce: [u8; ID_NONCE_LENGTH] = Default::default();
         id_nonce.clone_from_slice(&id_nonce_bytes);
 
-        let mut token: AuthTag = Default::default();
-        token.clone_from_slice(&token_bytes);
+        let mut auth_tag: AuthTag = Default::default();
+        auth_tag.clone_from_slice(&token_bytes);
 
         Ok(Packet::WhoAreYou {
             magic,
-            token,
+            auth_tag,
             id_nonce,
             enr_seq,
         })
@@ -374,7 +400,7 @@ mod tests {
     fn ref_test_encode_whoareyou_packet() {
         // reference input
         let magic = [1u8; MAGIC_LENGTH]; // all 1's.
-        let token = [2u8; AUTH_TAG_LENGTH]; // all 2's
+        let auth_tag = [2u8; AUTH_TAG_LENGTH]; // all 2's
         let id_nonce = [3u8; ID_NONCE_LENGTH]; // all 3's
         let enr_seq = 1;
 
@@ -383,7 +409,7 @@ mod tests {
 
         let packet = Packet::WhoAreYou {
             magic,
-            token,
+            auth_tag,
             id_nonce,
             enr_seq,
         };
@@ -484,12 +510,12 @@ mod tests {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let magic = hash256_to_fixed_array("magic");
         let id_nonce: [u8; ID_NONCE_LENGTH] = rand::random();
-        let token: [u8; AUTH_TAG_LENGTH] = rand::random();
+        let auth_tag: [u8; AUTH_TAG_LENGTH] = rand::random();
         let enr_seq: u64 = rand::random();
 
         let packet = Packet::WhoAreYou {
             magic,
-            token,
+            auth_tag,
             id_nonce,
             enr_seq,
         };

@@ -5,14 +5,17 @@
 //! There is no abstraction in this module as the specification explicitly defines a singular
 //! encryption and key-derivation algorithms. Future versions may abstract some of these to allow
 //! for different algorithms.
-use super::ecdh_ident::EcdhIdent;
 use crate::error::Discv5Error;
+use crate::node_info::NodeContact;
 use crate::packet::{AuthHeader, AuthResponse, AuthTag, Nonce};
-use enr::{CombinedKey, CombinedPublicKey, Enr, NodeId};
+use ecdh_ident::EcdhIdent;
+use enr::{CombinedKey, CombinedPublicKey, NodeId};
 use hkdf::Hkdf;
 use openssl::symm::{decrypt_aead, encrypt_aead, Cipher};
 use secp256k1::Signature;
 use sha2::{Digest, Sha256};
+
+mod ecdh_ident;
 
 const NODE_ID_LENGTH: usize = 32;
 const INFO_LENGTH: usize = 26 + 2 * NODE_ID_LENGTH;
@@ -30,11 +33,11 @@ type Key = [u8; KEY_LENGTH];
 /// response key and the ephemeral public key.
 pub(crate) fn generate_session_keys(
     local_id: &NodeId,
-    remote_enr: &Enr<CombinedKey>,
+    contact: &NodeContact,
     id_nonce: &Nonce,
 ) -> Result<(Key, Key, Key, Vec<u8>), Discv5Error> {
     let (secret, ephem_pk) = {
-        match remote_enr.public_key() {
+        match contact.public_key() {
             CombinedPublicKey::Secp256k1(remote_pk) => {
                 let mut rng = rand::thread_rng();
                 let ephem_sk = secp256k1::SecretKey::random(&mut rng);
@@ -52,7 +55,7 @@ pub(crate) fn generate_session_keys(
     };
 
     let (initiator_key, responder_key, auth_resp_key) =
-        derive_key(secret.as_ref(), local_id, &remote_enr.node_id(), id_nonce)?;
+        derive_key(secret.as_ref(), local_id, &contact.node_id(), id_nonce)?;
 
     Ok((initiator_key, responder_key, auth_resp_key, ephem_pk))
 }
@@ -374,7 +377,7 @@ mod tests {
         let nonce: Nonce = rand::random();
 
         let (key1, key2, key3, pk) =
-            generate_session_keys(&node1_enr.node_id(), &node2_enr, &nonce).unwrap();
+            generate_session_keys(&node1_enr.node_id(), &node2_enr.clone().into(), &nonce).unwrap();
         let (key4, key5, key6) = derive_keys_from_pubkey(
             &node2_key,
             &node2_enr.node_id(),

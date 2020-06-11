@@ -1,147 +1,195 @@
-//! The Discovery v5 protocol. See `lib.rs` for further details.
+//! The Discovery v5 protocol. See the module level docs for further details.
 //!
-//! Note: Discovered ENR's are not automatically added to the routing table. Only established
-//! sessions get added, ensuring only valid ENRs are added. Manual additions can be made using the
-//! `add_enr()` function.
+//! This provides the main struct for running and interfacing with a discovery v5 server.
 //!
-//! Response to queries return `PeerId`. Only the trusted (a session has been established with)
-//! `PeerId`'s are returned, as ENR's for these `PeerId`'s are stored in the routing table and as
-//! such should have an address to connect to. Untrusted `PeerId`'s can be obtained from the
-//! `Discv5::Discovered` event, which is fired as peers get discovered.
+//! A [`Discv5`] struct needs to be created either with an [`Executor`] specified in the
+//! [`Discv5Config`] via the [`Discv5ConfigBuilder`] or in the presence of a tokio runtime that has
+//! timing and io enabled.
 //!
-//! Note that although the ENR crate does support Ed25519 keys, these are currently not
-//! supported as the ECDH procedure isn't specified in the specification. Therefore, only
-//! secp256k1 keys are supported currently.
+//! Once a [`Discv5`] struct has been created the service is started by running the [`start()`]
+//! functions with a UDP socket. This will start a discv5 server in the background listening on the
+//! specified UDP socket.
+//!
+//! The server can be shutdown using the [`shutdown()`] function.
+//!
+//! ## Example
+//!
+//! Running and executing a discovery query (with a pre-built executor):
+//!
+//! ```rust
+//!    use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, Discv5ConfigBuilder};
+//!    use std::net::SocketAddr;
+//!
+//!    // listening address and port
+//!    let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
+//!
+//!    // construct a local ENR
+//!    let enr_key = CombinedKey::generate_secp256k1();
+//!    let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
+//!
+//!    // build the tokio executor
+//!    let mut runtime = tokio::runtime::Builder::new()
+//!        .threaded_scheduler()
+//!        .thread_name("Discv5-example")
+//!        .enable_all()
+//!        .build()
+//!        .unwrap();
+//!
+//!    // Any struct that implements the Executor trait can be used to spawn the discv5 tasks. We
+//!    // use the one provided by discv5 here.
+//!    let executor = TokioExecutor(runtime.handle().clone());
+//!
+//!    // default configuration
+//!    let config = Discv5ConfigBuilder::new()
+//!         .executor(Box::new(executor))
+//!         .build();
+//!
+//!    // construct the discv5 server
+//!    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+//!
+//!    // In order to bootstrap the routing table an external ENR should be added
+//!    // This can be done via add_enr. I.e.:
+//!    // discv5.add_enr(<ENR>)
+//!
+//!    // start the discv5 server
+//!    discv5.start(listen_addr);
+//!
+//!    // run a find_node query
+//!    runtime.block_on(async {
+//!       let found_nodes = discv5.find_node(NodeId::random()).await.unwrap();
+//!       println!("Found nodes: {:?}", found_nodes);
+//!    });
+//! ```
 
-use self::ip_vote::IpVote;
-use self::query_info::{QueryInfo, QueryType};
-use crate::error::Discv5Error;
-use crate::kbucket::{self, EntryRefView, KBucketsTable, NodeStatus};
-use crate::query_pool::{
-    FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, ReturnPeer,
-};
-use crate::rpc;
-use crate::service::{Service, ServiceEvent};
-use crate::transport::MAX_PACKET_SIZE;
-use crate::Discv5Config;
-use enr::{CombinedKey, Enr as RawEnr, EnrError, EnrKey, NodeId};
-use fnv::FnvHashMap;
-use futures::prelude::*;
-use log::{debug, error, info, trace, warn};
-use std::collections::{HashMap, VecDeque};
-use std::net::SocketAddr;
-use std::time::Duration;
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
-use tokio::time::Interval;
+use crate::error::QueryError;
+use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
+use crate::service::{QueryKind, Service, ServiceRequest};
+use crate::{Discv5Config, Enr};
+use enr::{CombinedKey, EnrError, EnrKey, NodeId};
+use log::{error, warn};
+use parking_lot::RwLock;
+use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tokio::sync::{mpsc, oneshot};
 
-mod ip_vote;
-mod query_info;
+#[cfg(feature = "libp2p")]
+use {
+    crate::error::RequestError, crate::node_info::NodeContact, libp2p_core::Multiaddr,
+    std::convert::TryFrom,
+};
+
+// Create lazy static variable for the global permit/ban list
+use crate::metrics::{Metrics, METRICS};
+lazy_static! {
+    pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
+        RwLock::new(crate::PermitBanList::default());
+}
+
 mod test;
 
-type RpcId = u64;
-// The general key-type of ENR's are used to support multiple signing types.
-pub type Enr = RawEnr<CombinedKey>;
+/// Events that can be produced by the `Discv5` event stream.
+#[derive(Debug)]
+pub enum Discv5Event {
+    /// A node has been discovered from a FINDNODES request.
+    ///
+    /// The ENR of the node is returned. Various properties can be derived from the ENR.
+    /// This happen spontaneously through queries as nodes return ENR's. These ENR's are not
+    /// guaranteed to be live or contactable.
+    Discovered(Enr),
+    /// A new ENR was added to the routing table.
+    EnrAdded { enr: Enr, replaced: Option<Enr> },
+    /// A new node has been added to the routing table.
+    NodeInserted {
+        node_id: NodeId,
+        replaced: Option<NodeId>,
+    },
+    /// Our local ENR IP address has been updated.
+    SocketUpdated(SocketAddr),
+}
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct RpcRequest(RpcId, NodeId);
-
+/// The main Discv5 Service struct. This provides the user-level API for performing queries and
+/// interacting with the underlying service.
 pub struct Discv5 {
-    /// Events yielded by this behaviour.
-    events: VecDeque<Discv5Event>,
-
-    /// Configuration parameters for the Discv5 service
     config: Discv5Config,
-
-    /// Storage of the ENR record for each node.
-    kbuckets: KBucketsTable<NodeId, Enr>,
-
-    /// All the iterative queries we are currently performing.
-    queries: QueryPool<QueryInfo, NodeId, Enr>,
-
-    /// RPC requests that have been sent and are awaiting a response. Some requests are linked to a
-    /// query.
-    active_rpc_requests: FnvHashMap<RpcRequest, (Option<QueryId>, rpc::Request)>,
-
-    /// Keeps track of the number of responses received from a NODES response.
-    active_nodes_responses: HashMap<NodeId, NodesResponse>,
-
-    /// A map of votes nodes have made about our external IP address. We accept the majority.
-    ip_votes: Option<IpVote>,
-
-    /// List of peers we have established sessions with and an interval for when to send a PING.
-    connected_peers: HashMap<NodeId, Interval>,
-
-    /// Main discv5 UDP service that establishes sessions with peers.
-    service: Service,
-}
-
-/// For multiple responses to a FindNodes request, this struct keeps track of the request count
-/// and the nodes that have been received.
-struct NodesResponse {
-    /// The response count.
-    count: usize,
-    /// The filtered nodes that have been received.
-    received_nodes: Vec<Enr>,
-}
-
-impl Default for NodesResponse {
-    fn default() -> Self {
-        NodesResponse {
-            count: 1,
-            received_nodes: Vec::new(),
-        }
-    }
+    /// The channel to make requests from the main service.
+    service_channel: Option<mpsc::Sender<ServiceRequest>>,
+    /// The exit channel to shutdown the underlying service.
+    service_exit: Option<oneshot::Sender<()>>,
+    /// The routing table of the discv5 service.
+    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+    /// The local ENR of the server.
+    local_enr: Arc<RwLock<Enr>>,
+    /// The key associated with the local ENR, required for updating the local ENR.
+    enr_key: Arc<RwLock<CombinedKey>>,
 }
 
 impl Discv5 {
-    /// Builds the `Discv5` main struct.
-    ///
-    /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
-    /// as IP addresses and ports which we wish to broadcast to other nodes via this discovery
-    /// mechanism. The `listen_socket` determines which UDP socket address the behaviour will listen on.
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
-        config: Discv5Config,
-        listen_socket: SocketAddr,
-    ) -> Result<Self, Discv5Error> {
-        let node_id = local_enr.node_id();
-
+        mut config: Discv5Config,
+    ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
-            return Err(Discv5Error::Custom(
-                "Discv5: Provided keypair does not match the provided ENR",
-            ));
+            return Err("Provided keypair does not match the provided ENR");
         }
 
-        // process behaviour-level configuration parameters
-        let ip_votes = if config.enr_update {
-            Some(IpVote::new(config.enr_peer_update_min))
-        } else {
-            None
+        // If an executor is not provided, assume a current tokio runtime is running. If not panic.
+        if config.executor.is_none() {
+            config.executor = Some(Box::new(crate::executor::TokioExecutor::new()));
         };
 
-        // build the session service
-        let service = Service::new(local_enr, enr_key, listen_socket, config.clone())?;
+        let local_enr = Arc::new(RwLock::new(local_enr));
+        let enr_key = Arc::new(RwLock::new(enr_key));
+        let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
+            local_enr.read().node_id().into(),
+            Duration::from_secs(60),
+        )));
 
-        let query_timeout = config.query_timeout;
+        // Update the PermitBan list based on initial configuration
+        *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
+
         Ok(Discv5 {
-            events: VecDeque::new(),
             config,
-            kbuckets: KBucketsTable::new(node_id.into(), Duration::from_secs(60)),
-            queries: QueryPool::new(query_timeout),
-            active_rpc_requests: Default::default(),
-            active_nodes_responses: HashMap::new(),
-            ip_votes,
-            connected_peers: Default::default(),
-            service,
+            service_channel: None,
+            service_exit: None,
+            kbuckets,
+            local_enr,
+            enr_key,
         })
     }
 
-    /// Adds a known ENR of a peer participating in Discv5 to the
+    /// Starts the required tasks and begins listening on a given UDP SocketAddr.
+    pub fn start(&mut self, listen_socket: SocketAddr) {
+        if self.service_channel.is_some() {
+            warn!("Service is already started");
+            return;
+        }
+
+        // create the main service
+        let (service_exit, service_channel) = Service::spawn(
+            self.local_enr.clone(),
+            self.enr_key.clone(),
+            self.kbuckets.clone(),
+            self.config.clone(),
+            listen_socket,
+        );
+        self.service_exit = Some(service_exit);
+        self.service_channel = Some(service_channel);
+    }
+
+    /// Terminates the service.
+    pub fn shutdown(&mut self) {
+        if let Some(exit) = self.service_exit.take() {
+            if let Err(_) = exit.send(()) {
+                error!("Could not send exit request to Discv5 service");
+            }
+            self.service_channel = None;
+        } else {
+            warn!("Service is already shutdown");
+        }
+    }
+
+    /// Adds a known ENR of a peer participating in Service to the
     /// routing table.
     ///
     /// This allows pre-populating the Kademlia routing table with known
@@ -166,9 +214,10 @@ impl Discv5 {
         let ip_limit_ban = self.config.ip_limit
             && !self
                 .kbuckets
+                .read()
                 .check(&key, &enr, { |v, o, l| ip_limiter(v, &o, l) });
 
-        match self.kbuckets.entry(&key) {
+        match self.kbuckets.write().entry(&key) {
             kbucket::Entry::Present(mut entry, _) => {
                 // still update an ENR, regardless of the IP limit ban
                 *entry.value() = enr;
@@ -179,18 +228,11 @@ impl Discv5 {
             kbucket::Entry::Absent(entry) => {
                 if !ip_limit_ban {
                     match entry.insert(enr.clone(), NodeStatus::Disconnected) {
-                        kbucket::InsertResult::Inserted => {
-                            let event = Discv5Event::EnrAdded {
-                                enr,
-                                replaced: None,
-                            };
-                            self.events.push_back(event);
+                        kbucket::InsertResult::Inserted => {}
+                        kbucket::InsertResult::Full => {
+                            return Err("Table full");
                         }
-                        kbucket::InsertResult::Full => (),
-                        kbucket::InsertResult::Pending { disconnected } => {
-                            // Try and establish a connection
-                            self.send_ping(&disconnected.into_preimage());
-                        }
+                        kbucket::InsertResult::Pending { .. } => {}
                     }
                 }
             }
@@ -205,41 +247,95 @@ impl Discv5 {
     /// table. Returns `true` if the node was in the table and `false` otherwise.
     pub fn remove_node(&mut self, node_id: &NodeId) -> bool {
         let key = &kbucket::Key::from(*node_id);
-        self.kbuckets.remove(key)
+        self.kbuckets.write().remove(key)
     }
 
-    /// Returns the number of connected peers the service knows about.
+    /// Returns the number of connected peers that exist in the routing table.
     pub fn connected_peers(&self) -> usize {
-        self.connected_peers.len()
+        self.kbuckets
+            .write()
+            .iter()
+            .filter(|entry| entry.status == NodeStatus::Connected)
+            .count()
+    }
+
+    /// Gets the metrics associated with the Server
+    pub fn metrics(&self) -> Metrics {
+        Metrics::from(&METRICS)
     }
 
     /// Returns the local ENR of the node.
-    pub fn local_enr(&self) -> &Enr {
-        &self.service.enr()
+    pub fn local_enr(&self) -> Enr {
+        self.local_enr.read().clone()
     }
 
-    /// Allows the application layer to update the local ENR's UDP socket. The second parameter
-    /// determines whether the port is a TCP port. If this parameter is false, this is
-    /// interpreted as a UDP `SocketAddr`.
-    pub fn update_local_enr_socket(&mut self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
-        if is_tcp {
-            if self.local_enr().tcp_socket() == Some(socket_addr) {
-                // nothing to do, not updated
-                return false;
-            }
-        } else if self.local_enr().udp_socket() == Some(socket_addr) {
-            // nothing to do, not updated
-            return false;
+    /// Returns an ENR if one is known for the given NodeId.
+    pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
+        // check if we know this node id in our routing table
+        let key = kbucket::Key::from(*node_id);
+        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+            return Some(entry.value().clone());
         }
-        // a new socket addr has been supplied
-        if self
-            .service
-            .update_local_enr_socket(socket_addr, is_tcp)
-            .is_ok()
-        {
-            // notify peers of the update
-            self.ping_connected_peers();
-            true
+        None
+    }
+
+    /// Bans a node from the server. This will remove the node from the routing table if it exists
+    /// and block all incoming packets from the node.
+    pub fn ban_node(&mut self, node_id: &NodeId) {
+        self.remove_node(node_id);
+        PERMIT_BAN_LIST.write().ban_nodes.insert(node_id.clone());
+    }
+
+    /// Removes a banned node from the banned list.
+    pub fn ban_node_remove(&mut self, node_id: &NodeId) {
+        PERMIT_BAN_LIST.write().ban_nodes.remove(node_id);
+    }
+
+    /// Permits a node, allowing the node to bypass the packet filter.  
+    pub fn permit_node(&mut self, node_id: &NodeId) {
+        PERMIT_BAN_LIST.write().permit_nodes.insert(node_id.clone());
+    }
+
+    /// Removes a node from the permit list.
+    pub fn permit_node_remove(&mut self, node_id: &NodeId) {
+        PERMIT_BAN_LIST.write().permit_nodes.remove(node_id);
+    }
+
+    /// Bans an IP from the server.  This will block all incoming packets from the IP.
+    pub fn ban_ip(&mut self, ip: std::net::IpAddr) {
+        PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+    }
+
+    /// Removes a banned IP from the banned list.
+    pub fn ban_ip_remove(&mut self, ip: &std::net::IpAddr) {
+        PERMIT_BAN_LIST.write().ban_ips.remove(ip);
+    }
+
+    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.  
+    pub fn permit_ip(&mut self, ip: std::net::IpAddr) {
+        PERMIT_BAN_LIST.write().permit_ips.insert(ip);
+    }
+
+    /// Removes an IP from the permit list.
+    pub fn permit_ip_remove(&mut self, ip: &std::net::IpAddr) {
+        PERMIT_BAN_LIST.write().permit_ips.remove(ip);
+    }
+
+    /// Updates the local ENR TCP/UDP socket.
+    pub fn update_local_enr_socket(&mut self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
+        let local_socket = self.local_enr.read().udp_socket();
+        if local_socket != Some(socket_addr) {
+            if is_tcp {
+                self.local_enr
+                    .write()
+                    .set_tcp_socket(socket_addr, &self.enr_key.read())
+                    .is_ok()
+            } else {
+                self.local_enr
+                    .write()
+                    .set_udp_socket(socket_addr, &self.enr_key.read())
+                    .is_ok()
+            }
         } else {
             false
         }
@@ -247,892 +343,138 @@ impl Discv5 {
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
     pub fn enr_insert(&mut self, key: &str, value: Vec<u8>) -> Result<Option<Vec<u8>>, EnrError> {
-        let result = self.service.enr_insert(key, value);
-
-        if result.is_ok() {
-            self.ping_connected_peers();
-        }
-        result
+        self.local_enr
+            .write()
+            .insert(key, value, &self.enr_key.read())
     }
 
-    /// Returns an iterator over all ENR node IDs of nodes currently contained in a bucket
-    /// of the Kademlia routing table.
-    pub fn kbuckets_entries(&mut self) -> impl Iterator<Item = &NodeId> {
-        self.kbuckets.iter().map(|entry| entry.node.key.preimage())
+    /// Returns an iterator over all ENR node IDs of nodes currently contained in the routing table.
+    pub fn table_entries_id(&mut self) -> Vec<NodeId> {
+        self.kbuckets
+            .write()
+            .iter()
+            .map(|entry| entry.node.key.preimage().clone())
+            .collect()
     }
 
-    /// Returns an iterator over all the ENR's of nodes currently contained in a bucket of
-    /// the Kademlia routing table.
-    pub fn enr_entries(&mut self) -> impl Iterator<Item = &Enr> {
-        self.kbuckets.iter().map(|entry| entry.node.value)
+    /// Returns an iterator over all the ENR's of nodes currently contained in the routing table.
+    pub fn table_entries_enr(&mut self) -> Vec<Enr> {
+        self.kbuckets
+            .write()
+            .iter()
+            .map(|entry| entry.node.value.clone())
+            .collect()
     }
 
-    /// Starts an iterative `FIND_NODE` request.
+    /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
-    /// This will eventually produce an event containing the nodes of the DHT closest to the
-    /// requested `PeerId`.
-    pub fn find_node(&mut self, target_node: NodeId) -> QueryId {
-        self.start_findnode_query(target_node)
+    /// Only `ed25519` and `secp256k1` key types are currently supported.
+    #[cfg(feature = "libp2p")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "libp2p")))]
+    pub async fn request_enr(
+        &mut self,
+        multiaddr: impl std::convert::TryInto<Multiaddr>,
+    ) -> Result<Option<Enr>, RequestError> {
+        // Sanitize the multiaddr
+
+        // The multiaddr must support the udp protocol and be of an appropriate key type.
+        // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
+        // `NodeContact`.
+        let multiaddr: Multiaddr = multiaddr
+            .try_into()
+            .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr".into()))?;
+        let node_contact: NodeContact = NodeContact::try_from(multiaddr)
+            .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
+
+        let (callback_send, callback_recv) = oneshot::channel();
+
+        let event = ServiceRequest::FindEnr(node_contact, callback_send);
+        if let Err(_) = self.send_event(event).await {
+            return Err(RequestError::ServiceNotStarted);
+        }
+        Ok(callback_recv
+            .await
+            .map_err(|e| RequestError::ChannelFailed(e.to_string()))?)
+    }
+
+    /// Runs an iterative `FIND_NODE` request.
+    ///
+    /// This will return peers containing contactable nodes of the DHT closest to the
+    /// requested `NodeId`.
+    pub async fn find_node(&mut self, target_node: NodeId) -> Result<Vec<Enr>, QueryError> {
+        let (callback_send, callback_recv) = oneshot::channel();
+
+        let query_kind = QueryKind::FindNode { target_node };
+
+        let event = ServiceRequest::StartQuery(query_kind, callback_send);
+
+        if let Err(_) = self.send_event(event).await {
+            return Err(QueryError::ServiceNotStarted);
+        }
+
+        Ok(callback_recv
+            .await
+            .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
     }
 
     /// Starts a `FIND_NODE` request.
     ///
-    /// This will eventually produce an event containing <= `num` nodes which satisfy the
-    /// `predicate` with passed `value`.
-    pub fn find_enr_predicate<F>(
-        &mut self,
-        node_id: NodeId,
-        predicate: F,
-        num_nodes: usize,
-    ) -> QueryId
-    where
-        F: Fn(&Enr) -> bool + Send + Clone + 'static,
-    {
-        self.start_predicate_query(node_id, predicate, num_nodes)
-    }
-
-    /// Returns an ENR if one is known for the given NodeId.
-    pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
-        // check if we know this node id in our routing table
-        let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.entry(&key) {
-            return Some(entry.value().clone());
-        }
-        // check the untrusted addresses for ongoing queries
-        for query in self.queries.iter() {
-            if let Some(enr) = query
-                .target()
-                .untrusted_enrs
-                .iter()
-                .find(|v| v.node_id() == *node_id)
-            {
-                return Some(enr.clone());
-            }
-        }
-        None
-    }
-
-    // private functions //
-
-    /// Processes an RPC request from a peer. Requests respond to the received socket address,
-    /// rather than the IP of the known ENR.
-    fn handle_rpc_request(
-        &mut self,
-        src: SocketAddr,
-        node_id: NodeId,
-        rpc_id: u64,
-        req: rpc::Request,
-    ) {
-        match req {
-            rpc::Request::FindNode { distance } => {
-                // if the distance is 0 send our local ENR
-                if distance == 0 {
-                    let response = rpc::ProtocolMessage {
-                        id: rpc_id,
-                        body: rpc::RpcType::Response(rpc::Response::Nodes {
-                            total: 1,
-                            nodes: vec![self.local_enr().clone()],
-                        }),
-                    };
-                    debug!("Sending our ENR to node: {}", node_id);
-                    let _ = self
-                        .service
-                        .send_response(src, &node_id, response)
-                        .map_err(|e| warn!("Failed to send a FINDNODES response. Error: {:?}", e));
-                } else {
-                    self.send_nodes_response(src, node_id, rpc_id, distance);
-                }
-            }
-            rpc::Request::Ping { enr_seq } => {
-                // check if we need to update the known ENR
-                match self.kbuckets.entry(&node_id.clone().into()) {
-                    kbucket::Entry::Present(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            self.request_enr(&node_id, src);
-                        }
-                    }
-                    kbucket::Entry::Pending(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            self.request_enr(&node_id, src);
-                        }
-                    }
-                    // don't know of the ENR, request the update
-                    _ => self.request_enr(&node_id, src),
-                }
-
-                // build the PONG response
-                let response = rpc::ProtocolMessage {
-                    id: rpc_id,
-                    body: rpc::RpcType::Response(rpc::Response::Ping {
-                        enr_seq: self.local_enr().seq(),
-                        ip: src.ip(),
-                        port: src.port(),
-                    }),
-                };
-                debug!("Sending PONG response to node: {}", node_id);
-                let _ = self
-                    .service
-                    .send_response(src, &node_id, response)
-                    .map_err(|e| warn!("Failed to send rpc request. Error: {:?}", e));
-            }
-            _ => {} //TODO: Implement all RPC methods
-        }
-    }
-
-    /// Processes an RPC response from a peer.
-    fn handle_rpc_response(&mut self, node_id: NodeId, rpc_id: u64, res: rpc::Response) {
-        // verify we know of the rpc_id
-        let req = RpcRequest(rpc_id, node_id);
-        if let Some((query_id, request)) = self.active_rpc_requests.remove(&req) {
-            if !res.match_request(&request) {
-                warn!(
-                    "Node gave an incorrect response type. Ignoring response from node: {}",
-                    node_id
-                );
-                return;
-            }
-            match res {
-                rpc::Response::Nodes { total, mut nodes } => {
-                    // Currently a maximum of 16 peers can be returned. Datagrams have a max
-                    // size of 1280 and ENR's have a max size of 300 bytes. There should be no
-                    // more than 5 responses, to return 16 peers.
-                    if total > 5 {
-                        warn!("NodesResponse has a total larger than 5, nodes will be truncated");
-                    }
-
-                    // filter out any nodes that are not of the correct distance
-                    // TODO: If a swarm peer reputation is built - downvote the peer if all
-                    // peers do not have the correct distance.
-                    let peer_key: kbucket::Key<NodeId> = node_id.clone().into();
-                    let distance_requested = match request {
-                        rpc::Request::FindNode { distance } => distance,
-                        _ => unreachable!(),
-                    };
-                    if distance_requested != 0 {
-                        nodes.retain(|enr| {
-                            peer_key.log2_distance(&enr.node_id().clone().into())
-                                == Some(distance_requested)
-                        });
-                    } else {
-                        // requested an ENR update
-                        nodes.retain(|enr| {
-                            peer_key
-                                .log2_distance(&enr.node_id().clone().into())
-                                .is_none()
-                        });
-                    }
-
-                    // handle the case that there is more than one response
-                    if total > 1 {
-                        let mut current_response = self
-                            .active_nodes_responses
-                            .remove(&node_id)
-                            .unwrap_or_default();
-
-                        debug!(
-                            "Nodes Response: {} of {} received",
-                            current_response.count, total
-                        );
-                        // if there are more requests coming, store the nodes and wait for
-                        // another response
-                        if current_response.count < 5 && (current_response.count as u64) < total {
-                            current_response.count += 1;
-
-                            current_response.received_nodes.append(&mut nodes);
-                            self.active_rpc_requests.insert(req, (query_id, request));
-                            self.active_nodes_responses
-                                .insert(node_id, current_response);
-                            return;
-                        }
-
-                        // have received all the Nodes responses we are willing to accept
-                        // ignore duplicates here as they will be handled when adding
-                        // to the DHT
-                        current_response.received_nodes.append(&mut nodes);
-                        nodes = current_response.received_nodes;
-                    }
-
-                    debug!(
-                        "Received a nodes response of len: {}, total: {}, from node_id: {}",
-                        nodes.len(),
-                        total,
-                        node_id
-                    );
-                    // note: If a peer sends an initial NODES response with a total > 1 then
-                    // in a later response sends a response with a total of 1, all previous nodes
-                    // will be ignored.
-                    // ensure any mapping is removed in this rare case
-                    self.active_nodes_responses.remove(&node_id);
-
-                    self.discovered(&node_id, nodes, query_id);
-                }
-                rpc::Response::Ping { enr_seq, ip, port } => {
-                    let socket = SocketAddr::new(ip, port);
-                    // perform ENR majority-based update if required.
-                    let local_socket = self.local_enr().udp_socket();
-                    if let Some(ref mut ip_votes) = self.ip_votes {
-                        ip_votes.insert(node_id.clone(), socket.clone());
-                        let majority_socket = ip_votes.majority();
-                        if majority_socket.is_some() && majority_socket != local_socket {
-                            let majority_socket = majority_socket.expect("is some");
-                            info!("Local UDP socket updated to: {}", majority_socket);
-                            self.events
-                                .push_back(Discv5Event::SocketUpdated(majority_socket));
-                            if self
-                                .service
-                                .update_local_enr_socket(majority_socket, false)
-                                .is_ok()
-                            {
-                                // alert known peers to our updated enr
-                                self.ping_connected_peers();
-                            }
-                        }
-                    }
-
-                    // check if we need to request a new ENR
-                    if let Some(enr) = self.find_enr(&node_id) {
-                        if enr.seq() < enr_seq {
-                            // request an ENR update
-                            debug!("Requesting an ENR update from node: {}", node_id);
-                            let req = rpc::Request::FindNode { distance: 0 };
-                            self.send_rpc_request(&node_id, req, None);
-                        }
-                        self.connection_updated(node_id.clone(), Some(enr), NodeStatus::Connected)
-                    }
-                }
-                _ => {} //TODO: Implement all RPC methods
-            }
-        } else {
-            warn!("Received an RPC response which doesn't match a request");
-        }
-    }
-
-    // Send RPC Requests //
-
-    /// Sends a PING request to a node.
-    fn send_ping(&mut self, node_id: &NodeId) {
-        let req = rpc::Request::Ping {
-            enr_seq: self.local_enr().seq(),
-        };
-        self.send_rpc_request(&node_id, req, None);
-    }
-
-    fn ping_connected_peers(&mut self) {
-        // maintain the ping interval
-        let connected_nodes: Vec<NodeId> = self.connected_peers.keys().cloned().collect();
-        for node_id in connected_nodes {
-            self.send_ping(&node_id);
-        }
-    }
-
-    /// Request an external node's ENR.
-    // This logic doesn't fit into a standard request - We likely don't know the ENR,
-    // and would like to send this as a response, with request logic built in.
-    fn request_enr(&mut self, node_id: &NodeId, src: SocketAddr) {
-        // Generate a random rpc_id which is matched per node id
-        let id: u64 = rand::random();
-        let req = rpc::Request::FindNode { distance: 0 };
-        let message = rpc::ProtocolMessage {
-            id,
-            body: rpc::RpcType::Request(req.clone()),
-        };
-        debug!("Sending ENR request to node: {}", node_id);
-
-        match self.service.send_request_unknown_enr(src, node_id, message) {
-            Ok(_) => {
-                let rpc_request = RpcRequest(id, *node_id);
-                self.active_rpc_requests.insert(rpc_request, (None, req));
-            }
-            _ => warn!("Requesting ENR failed. Node: {}", node_id),
-        }
-    }
-
-    /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
-    /// into multiple responses to ensure the response stays below the maximum packet size.
-    fn send_nodes_response(
-        &mut self,
-        dst: SocketAddr, // overwrites the ENR IP - we resend to the IP we received the request from
-        dst_id: NodeId,
-        rpc_id: u64,
-        distance: u64,
-    ) {
-        let nodes: Vec<EntryRefView<'_, NodeId, Enr>> = self
-            .kbuckets
-            .nodes_by_distance(distance)
-            .into_iter()
-            .filter(|entry| entry.node.key.preimage() != &dst_id)
-            .collect();
-        // if there are no nodes, send an empty response
-        if nodes.is_empty() {
-            let response = rpc::ProtocolMessage {
-                id: rpc_id,
-                body: rpc::RpcType::Response(rpc::Response::Nodes {
-                    total: 1u64,
-                    nodes: Vec::new(),
-                }),
-            };
-            trace!("Sending empty FINDNODES response to: {}", dst_id);
-            let _ = self
-                .service
-                .send_response(dst, &dst_id, response)
-                .map_err(|e| warn!("Failed to send a FINDNODES response. Error: {:?}", e));
-        } else {
-            // build the NODES response
-            let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
-            let mut total_size = 0;
-            let mut rpc_index = 0;
-            to_send_nodes.push(Vec::new());
-            for entry in nodes.into_iter() {
-                let entry_size = entry.node.value.clone().encode().len();
-                // Responses assume that a session is established. Thus, on top of the encoded
-                // ENR's the packet should be a regular message. A regular message has a tag (32
-                // bytes), and auth_tag (12 bytes) and the NODES response has an ID (8 bytes) and a total (8 bytes).
-                // The encryption adds the HMAC (16 bytes) and can be at most 16 bytes larger so the total packet size can be at most 92 (given AES_GCM).
-                if entry_size + total_size < MAX_PACKET_SIZE - 92 {
-                    total_size += entry_size;
-                    trace!("Adding ENR, Valid: {}", entry.node.value.verify());
-                    trace!("Enr: {}", entry.node.value.clone());
-                    to_send_nodes[rpc_index].push(entry.node.value.clone());
-                } else {
-                    total_size = entry_size;
-                    to_send_nodes.push(vec![entry.node.value.clone()]);
-                    rpc_index += 1;
-                }
-            }
-
-            let responses: Vec<rpc::ProtocolMessage> = to_send_nodes
-                .into_iter()
-                .map(|nodes| rpc::ProtocolMessage {
-                    id: rpc_id,
-                    body: rpc::RpcType::Response(rpc::Response::Nodes {
-                        total: (rpc_index + 1) as u64,
-                        nodes,
-                    }),
-                })
-                .collect();
-
-            for response in responses {
-                trace!(
-                    "Sending FINDNODES response to: {}. Response: {:?}",
-                    dst_id,
-                    response.clone().encode()
-                );
-                let _ = self
-                    .service
-                    .send_response(dst, &dst_id, response)
-                    .map_err(|e| warn!("Failed to send a FINDNODES response. Error: {:?}", e));
-            }
-        }
-    }
-
-    /// Constructs and sends a request RPC to the session service given a `QueryInfo`.
-    fn send_rpc_query(
-        &mut self,
-        query_id: QueryId,
-        query_info: QueryInfo,
-        return_peer: &ReturnPeer<NodeId>,
-    ) {
-        let node_id = return_peer.node_id;
-        trace!(
-            "Sending query. Iteration: {}, NodeId: {}",
-            return_peer.iteration,
-            node_id
-        );
-
-        let req = match query_info.into_rpc_request(return_peer) {
-            Ok(r) => r,
-            Err(e) => {
-                //dst node is local_key, report failure
-                error!("Send RPC: {}", e);
-                if let Some(query) = self.queries.get_mut(query_id) {
-                    query.on_failure(&node_id);
-                }
-                return;
-            }
-        };
-
-        self.send_rpc_request(&node_id, req, Some(query_id));
-    }
-
-    /// Sends generic RPC requests. Each request gets added to known outputs, awaiting a response.
-    fn send_rpc_request(&mut self, node_id: &NodeId, req: rpc::Request, query_id: Option<QueryId>) {
-        // find the destination ENR
-        if let Some(dst_enr) = self.find_enr(&node_id) {
-            // Generate a random rpc_id which is matched per node id
-            let id: u64 = rand::random();
-
-            debug!(
-                "Sending RPC Request: {:?} to node: {}",
-                req,
-                dst_enr.node_id()
-            );
-            match self.service.send_request(
-                &dst_enr,
-                rpc::ProtocolMessage {
-                    id,
-                    body: rpc::RpcType::Request(req.clone()),
-                },
-            ) {
-                Ok(_) => {
-                    let rpc_request = RpcRequest(id, *node_id);
-                    self.active_rpc_requests
-                        .insert(rpc_request, (query_id, req));
-                }
-                Err(_) => {
-                    warn!("Sending request to node: {} failed", &node_id);
-                    self.connected_peers.remove(node_id);
-                    if let Some(query_id) = query_id {
-                        if let Some(query) = self.queries.get_mut(query_id) {
-                            query.on_failure(&node_id);
-                        }
-                    }
-                }
-            }
-        } else {
-            warn!(
-                "Request not sent. Failed to find ENR for Node: {:?}",
-                node_id
-            );
-        }
-    }
-
-    /// Internal function that starts a query.
-    fn start_findnode_query(&mut self, target_node: NodeId) -> QueryId {
-        let target = QueryInfo {
-            query_type: QueryType::FindNode(target_node),
-            untrusted_enrs: Default::default(),
-        };
-
-        // How many times to call the rpc per node.
-        // FINDNODE requires multiple iterations as it requests a specific distance.
-        let query_iterations = target.iterations();
-
-        let target_key: kbucket::Key<QueryInfo> = target.clone().into();
-
-        let known_closest_peers = self.kbuckets.closest_keys(&target_key);
-        let query_config = FindNodeQueryConfig::new_from_config(&self.config);
-        self.queries
-            .add_findnode_query(query_config, target, known_closest_peers, query_iterations)
-    }
-
-    /// Internal function that starts a query.
-    fn start_predicate_query<F>(
+    /// This will return less than or equal to `num_nodes` ENRs which satisfy the
+    /// `predicate`.
+    pub async fn find_node_predicate<F>(
         &mut self,
         target_node: NodeId,
         predicate: F,
-        num_nodes: usize,
-    ) -> QueryId
+        target_peer_no: usize,
+    ) -> Result<Vec<Enr>, QueryError>
     where
         F: Fn(&Enr) -> bool + Send + Clone + 'static,
     {
-        let target = QueryInfo {
-            query_type: QueryType::FindNode(target_node),
-            untrusted_enrs: Default::default(),
+        let (callback_send, callback_recv) = oneshot::channel();
+
+        let query_kind = QueryKind::Predicate {
+            target_node,
+            predicate: Box::new(predicate),
+            target_peer_no,
         };
 
-        // How many times to call the rpc per node.
-        // FINDNODE requires multiple iterations as it requests a specific distance.
-        let query_iterations = target.iterations();
+        let event = ServiceRequest::StartQuery(query_kind, callback_send);
 
-        let target_key: kbucket::Key<QueryInfo> = target.clone().into();
+        if let Err(_) = self.send_event(event).await {
+            return Err(QueryError::ServiceNotStarted);
+        }
 
-        let known_closest_peers = self
-            .kbuckets
-            .closest_keys_predicate(&target_key, predicate.clone());
-
-        let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
-        query_config.num_results = num_nodes;
-        self.queries.add_predicate_query(
-            query_config,
-            target,
-            known_closest_peers,
-            query_iterations,
-            predicate,
-        )
+        Ok(callback_recv
+            .await
+            .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
     }
 
-    /// Processes discovered peers from a query.
-    fn discovered(&mut self, source: &NodeId, enrs: Vec<Enr>, query_id: Option<QueryId>) {
-        let local_id = self.local_enr().node_id();
-        let other_enr_iter = enrs.iter().filter(|p| p.node_id() != local_id);
+    /// Creates an event stream channel which can be polled to receive Discv5 events.
+    pub async fn event_stream(&mut self) -> Result<mpsc::Receiver<Discv5Event>, String> {
+        let (callback_send, callback_recv) = oneshot::channel();
 
-        for enr_ref in other_enr_iter.clone() {
-            // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
-            self.events
-                .push_back(Discv5Event::Discovered(enr_ref.clone()));
+        let event = ServiceRequest::RequestEventStream(callback_send);
 
-            // ignore peers that don't pass the able filter
-            if (self.config.table_filter)(enr_ref) {
-                let key = kbucket::Key::from(enr_ref.node_id());
-                if !self.config.ip_limit
-                    || self
-                        .kbuckets
-                        .check(&key, enr_ref, { |v, o, l| ip_limiter(v, &o, l) })
-                {
-                    match self.kbuckets.entry(&key) {
-                        kbucket::Entry::Present(mut entry, _) => {
-                            if entry.value().seq() < enr_ref.seq() {
-                                trace!("Enr updated: {}", enr_ref);
-                                *entry.value() = enr_ref.clone();
-                                self.service.update_enr(enr_ref.clone());
-                            }
-                        }
-                        kbucket::Entry::Pending(mut entry, _) => {
-                            if entry.value().seq() < enr_ref.seq() {
-                                trace!("Enr updated: {}", enr_ref);
-                                *entry.value() = enr_ref.clone();
-                                self.service.update_enr(enr_ref.clone());
-                            }
-                        }
-                        kbucket::Entry::Absent(_entry) => {
-                            // the service may have an untrusted session
-                            // update the service, which will inform this protocol if a session is
-                            // established or not.
-                            self.service.update_enr(enr_ref.clone());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
+        self.send_event(event).await?;
 
-        // if this is part of a query, update the query
-        if let Some(query_id) = query_id {
-            if let Some(query) = self.queries.get_mut(query_id) {
-                let mut peer_count = 0;
-                for enr_ref in other_enr_iter.clone() {
-                    if query
-                        .target_mut()
-                        .untrusted_enrs
-                        .iter()
-                        .position(|e| e.node_id() == enr_ref.node_id())
-                        .is_none()
-                    {
-                        query.target_mut().untrusted_enrs.push(enr_ref.clone());
-                    }
-                    peer_count += 1;
-                }
-                debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(source, &other_enr_iter.cloned().collect::<Vec<_>>())
-            }
-        }
+        Ok(callback_recv
+            .await
+            .map_err(|_| String::from("Service channel closed"))?)
     }
 
-    /// Update the connection status of a node in the routing table.
-    fn connection_updated(
-        &mut self,
-        node_id: NodeId,
-        enr: Option<Enr>,
-        mut new_status: NodeStatus,
-    ) {
-        let key = kbucket::Key::from(node_id);
-        if let Some(enr) = enr.as_ref() {
-            // ignore peers that don't pass the table filter
-            if !(self.config.table_filter)(enr) {
-                return;
-            }
-
-            // should the ENR be inserted or updated to a value that would exceed the IP limit ban
-            if self.config.ip_limit
-                && !self
-                    .kbuckets
-                    .check(&key, enr, { |v, o, l| ip_limiter(v, &o, l) })
-            {
-                // if the node status is connected and it would exceed the ip ban, consider it
-                // disconnected to be pruned.
-                new_status = NodeStatus::Disconnected;
-            }
-        }
-
-        match self.kbuckets.entry(&key) {
-            kbucket::Entry::Present(mut entry, old_status) => {
-                if let Some(enr) = enr {
-                    *entry.value() = enr;
-                }
-                if old_status != new_status {
-                    entry.update(new_status);
-                }
-            }
-
-            kbucket::Entry::Pending(mut entry, old_status) => {
-                if let Some(enr) = enr {
-                    *entry.value() = enr;
-                }
-                if old_status != new_status {
-                    entry.update(new_status);
-                }
-            }
-
-            kbucket::Entry::Absent(entry) => {
-                if new_status == NodeStatus::Connected {
-                    // Note: If an ENR is not provided, no record is added
-                    debug_assert!(enr.is_some());
-                    if let Some(enr) = enr {
-                        match entry.insert(enr, new_status) {
-                            kbucket::InsertResult::Inserted => {
-                                let event = Discv5Event::NodeInserted {
-                                    node_id,
-                                    replaced: None,
-                                };
-                                self.events.push_back(event);
-                            }
-                            kbucket::InsertResult::Full => (),
-                            kbucket::InsertResult::Pending { disconnected } => {
-                                debug_assert!(!self
-                                    .connected_peers
-                                    .contains_key(disconnected.preimage()));
-                                self.send_ping(&disconnected.into_preimage());
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
-    /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr) {
-        let node_id = enr.node_id();
-        debug!("Session established with Node: {}", node_id);
-        self.connection_updated(node_id.clone(), Some(enr), NodeStatus::Connected);
-        // send an initial ping and start the ping interval
-        self.send_ping(&node_id);
-        let interval = tokio::time::interval(self.config.ping_interval);
-        self.connected_peers.insert(node_id, interval);
-    }
-
-    /// A session could not be established or an RPC request timed-out (after a few retries, if
-    /// specified).
-    fn rpc_failure(&mut self, node_id: NodeId, failed_rpc_id: RpcId) {
-        let req = RpcRequest(failed_rpc_id, node_id);
-
-        if let Some((query_id_option, request)) = self.active_rpc_requests.remove(&req) {
-            match request {
-                // if a failed FindNodes request, ensure we haven't partially received packets. If
-                // so, process the partially found nodes
-                rpc::Request::FindNode { .. } => {
-                    if let Some(nodes_response) = self.active_nodes_responses.remove(&node_id) {
-                        if !nodes_response.received_nodes.is_empty() {
-                            warn!(
-                                "NODES Response failed, but was partially processed from Node: {}",
-                                node_id
-                            );
-                            // if it's a query mark it as success, to process the partial
-                            // collection of peers
-                            self.discovered(
-                                &node_id,
-                                nodes_response.received_nodes,
-                                query_id_option,
-                            );
-                        }
-                    } else {
-                        // there was no partially downloaded nodes inform the query of the failure
-                        // if it's part of a query
-                        if let Some(query_id) = query_id_option {
-                            if let Some(query) = self.queries.get_mut(query_id) {
-                                query.on_failure(&node_id);
-                            }
-                        } else {
-                            debug!("Failed RPC request: {:?} for node: {} ", request, node_id);
-                        }
-                    }
-                }
-                // for all other requests, if any are queries, mark them as failures.
-                _ => {
-                    if let Some(query_id) = query_id_option {
-                        if let Some(query) = self.queries.get_mut(query_id) {
-                            debug!(
-                                "Failed query request: {:?} for query: {:?} and node: {} ",
-                                request, query_id, node_id
-                            );
-                            query.on_failure(&node_id);
-                        }
-                    } else {
-                        debug!("Failed RPC request: {:?} for node: {} ", request, node_id);
-                    }
-                }
-            }
-        }
-
-        self.connection_updated(node_id.clone(), None, NodeStatus::Disconnected);
-        if self.connected_peers.remove(&node_id).is_some() {
-            // report the node as being disconnected
-            debug!("Session dropped with Node: {}", node_id);
+    /// Internal helper function to send events to the Service.
+    async fn send_event(&mut self, event: ServiceRequest) -> Result<(), String> {
+        if let Some(channel) = self.service_channel.as_mut() {
+            channel.send(event).await.map_err(|e| e.to_string())?;
+            Ok(())
+        } else {
+            return Err(String::from("Service has not started"));
         }
     }
 }
 
-impl Stream for Discv5 {
-    type Item = Discv5Event;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            // Process events from the session service
-            while let Poll::Ready(Some(event)) = self.service.poll_next_unpin(cx) {
-                match event {
-                    ServiceEvent::Established(enr) => {
-                        self.inject_session_established(enr);
-                    }
-                    ServiceEvent::Message {
-                        src_id,
-                        src,
-                        message,
-                    } => match message.body {
-                        rpc::RpcType::Request(req) => {
-                            self.handle_rpc_request(src, src_id, message.id, req);
-                        }
-                        rpc::RpcType::Response(res) => {
-                            self.handle_rpc_response(src_id, message.id, res)
-                        }
-                    },
-                    ServiceEvent::WhoAreYouRequest {
-                        src,
-                        src_id,
-                        auth_tag,
-                    } => {
-                        // check what our latest known ENR is for this node.
-                        if let Some(known_enr) = self.find_enr(&src_id) {
-                            self.service.send_whoareyou(
-                                src,
-                                &src_id,
-                                known_enr.seq(),
-                                Some(known_enr.clone()),
-                                auth_tag,
-                            );
-                        } else {
-                            // do not know of this peer
-                            debug!("NodeId unknown, requesting ENR. NodeId: {}", src_id);
-                            self.service.send_whoareyou(src, &src_id, 0, None, auth_tag)
-                        }
-                    }
-                    ServiceEvent::RequestFailed(node_id, rpc_id) => {
-                        self.rpc_failure(node_id, rpc_id);
-                    }
-                }
-            }
-
-            // Drain queued events
-            if let Some(event) = self.events.pop_front() {
-                return Poll::Ready(Some(event));
-            }
-
-            // Drain applied pending entries from the routing table.
-            if let Some(entry) = self.kbuckets.take_applied_pending() {
-                let event = Discv5Event::NodeInserted {
-                    node_id: entry.inserted.into_preimage(),
-                    replaced: entry.evicted.map(|n| n.key.into_preimage()),
-                };
-                return Poll::Ready(Some(event));
-            }
-
-            // Handle active queries
-
-            // If iterating finds a query that is finished, stores it here and stops looping.
-            let mut finished_query = None;
-            // If a query is waiting for an rpc to send, store it here and stop looping.
-            let mut waiting_query = None;
-            match self.queries.poll() {
-                QueryPoolState::Finished(query) => {
-                    finished_query = Some(query);
-                }
-                QueryPoolState::Waiting(Some((query, return_peer))) => {
-                    waiting_query = Some((query.id(), query.target().clone(), return_peer));
-                }
-                QueryPoolState::Timeout(query) => {
-                    warn!("Query id: {:?} timed out", query.id());
-                    finished_query = Some(query);
-                }
-                QueryPoolState::Waiting(None) | QueryPoolState::Idle => {}
-            };
-
-            if let Some((query_id, target, return_peer)) = waiting_query {
-                self.send_rpc_query(query_id, target, &return_peer);
-            } else if let Some(finished_query) = finished_query {
-                let query_id = finished_query.id();
-                let result = finished_query.into_result();
-
-                match result.target.query_type {
-                    QueryType::FindNode(node_id) => {
-                        let event = Discv5Event::FindNodeResult {
-                            key: node_id,
-                            closer_peers: result
-                                .closest_peers
-                                .filter_map(|p| self.find_enr(&p))
-                                .collect(),
-                            query_id,
-                        };
-                        return Poll::Ready(Some(event));
-                    }
-                }
-            } else {
-                // check for ping intervals
-                let mut to_send_ping = Vec::new();
-                for (node_id, interval) in self.connected_peers.iter_mut() {
-                    while let Poll::Ready(_) = Box::pin(interval.tick()).as_mut().poll(cx) {
-                        to_send_ping.push(node_id.clone());
-                    }
-                }
-                to_send_ping.dedup();
-                for id in to_send_ping.into_iter() {
-                    debug!("Sending PING to: {}", id);
-                    self.send_ping(&id);
-                }
-
-                return Poll::Pending;
-            }
-        }
+impl Drop for Discv5 {
+    fn drop(&mut self) {
+        self.shutdown();
     }
-}
-
-/// Takes an `enr` to insert and a list of other `enrs` to compare against.
-/// Returns `true` if `enr` can be inserted and `false` otherwise.
-/// `enr` can be inserted if the count of enrs in `others` in the same /24 subnet as `enr`
-/// is less than `limit`.
-fn ip_limiter(enr: &Enr, others: &[&Enr], limit: usize) -> bool {
-    let mut allowed = true;
-    if let Some(ip) = enr.ip() {
-        let count = others.iter().flat_map(|e| e.ip()).fold(0, |acc, x| {
-            if x.octets()[0..3] == ip.octets()[0..3] {
-                acc + 1
-            } else {
-                acc
-            }
-        });
-        if count >= limit {
-            allowed = false;
-        }
-    };
-    allowed
-}
-
-/// Event that can be produced by the `Discv5` service.
-#[derive(Debug)]
-pub enum Discv5Event {
-    /// A node has been discovered from a FINDNODES request.
-    ///
-    /// The ENR of the node is returned. Various properties can be derived from the ENR.
-    /// - `NodeId`: enr.node_id()
-    /// - `SeqNo`: enr.seq_no()
-    /// - `Ip`: enr.ip()
-    Discovered(Enr),
-    /// A new ENR was added to the routing table.
-    EnrAdded { enr: Enr, replaced: Option<Enr> },
-    /// A new node has been added to the routing table.
-    NodeInserted {
-        node_id: NodeId,
-        replaced: Option<NodeId>,
-    },
-    /// Our local ENR IP address has been updated.
-    SocketUpdated(SocketAddr),
-    /// Result of a `FIND_NODE` iterative query.
-    FindNodeResult {
-        /// The key that we looked for in the query.
-        key: NodeId,
-        /// List of peers ordered from closest to furthest away.
-        closer_peers: Vec<Enr>,
-        /// Id of the query this result fulfils
-        query_id: QueryId,
-    },
 }
