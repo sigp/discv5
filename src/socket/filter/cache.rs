@@ -65,7 +65,7 @@ impl<T> ReceivedPacketCache<T> {
     pub fn insert(&mut self, content: T) -> bool {
         if self.within_enforced_time >= self.size {
             // The cache is full
-            return false;
+            false
         } else {
             let received_packet = ReceivedPacket {
                 content,

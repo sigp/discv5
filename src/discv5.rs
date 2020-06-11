@@ -135,7 +135,7 @@ impl Discv5 {
 
         // If an executor is not provided, assume a current tokio runtime is running. If not panic.
         if config.executor.is_none() {
-            config.executor = Some(Box::new(crate::executor::TokioExecutor::new()));
+            config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
         };
 
         let local_enr = Arc::new(RwLock::new(local_enr));
@@ -180,7 +180,7 @@ impl Discv5 {
     /// Terminates the service.
     pub fn shutdown(&mut self) {
         if let Some(exit) = self.service_exit.take() {
-            if let Err(_) = exit.send(()) {
+            if exit.send(()).is_err() {
                 error!("Could not send exit request to Discv5 service");
             }
             self.service_channel = None;
@@ -227,7 +227,7 @@ impl Discv5 {
             }
             kbucket::Entry::Absent(entry) => {
                 if !ip_limit_ban {
-                    match entry.insert(enr.clone(), NodeStatus::Disconnected) {
+                    match entry.insert(enr, NodeStatus::Disconnected) {
                         kbucket::InsertResult::Inserted => {}
                         kbucket::InsertResult::Full => {
                             return Err("Table full");
@@ -353,7 +353,7 @@ impl Discv5 {
         self.kbuckets
             .write()
             .iter()
-            .map(|entry| entry.node.key.preimage().clone())
+            .map(|entry| *entry.node.key.preimage())
             .collect()
     }
 
@@ -408,7 +408,7 @@ impl Discv5 {
 
         let event = ServiceRequest::StartQuery(query_kind, callback_send);
 
-        if let Err(_) = self.send_event(event).await {
+        if self.send_event(event).await.is_err() {
             return Err(QueryError::ServiceNotStarted);
         }
 
@@ -440,7 +440,7 @@ impl Discv5 {
 
         let event = ServiceRequest::StartQuery(query_kind, callback_send);
 
-        if let Err(_) = self.send_event(event).await {
+        if self.send_event(event).await.is_err() {
             return Err(QueryError::ServiceNotStarted);
         }
 
@@ -468,7 +468,7 @@ impl Discv5 {
             channel.send(event).await.map_err(|e| e.to_string())?;
             Ok(())
         } else {
-            return Err(String::from("Service has not started"));
+            Err(String::from("Service has not started"))
         }
     }
 }

@@ -52,6 +52,7 @@ use session::Session;
 
 /// Events sent to the handler to be executed.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum HandlerRequest {
     /// Sends a `Request` to a `NodeContact`. A `NodeContact` is an abstract type
     /// that allows for either an ENR to be sent or a `Raw` type which represents an `SocketAddr`,
@@ -65,13 +66,13 @@ pub enum HandlerRequest {
     ///
     /// Note: To update an ENR for an unknown node, we request a FINDNODE with distance 0 to the
     /// `NodeContact` we know of.
-    Request(NodeContact, Request),
+    Request(NodeContact, Box<Request>),
 
     /// Send a response to a received request to a particular node.
     ///
     /// The handler does not keep state of requests, so the application layer must send the
     /// response back to the `NodeAddress` from which the request was received.
-    Response(NodeAddress, Response),
+    Response(NodeAddress, Box<Response>),
 
     /// A Random packet has been received and we have requested the application layer to inform
     /// us what the highest known ENR is for this node.
@@ -90,10 +91,10 @@ pub enum HandlerResponse {
     Established(Enr),
 
     /// A Request has been received.
-    Request(NodeAddress, Request),
+    Request(NodeAddress, Box<Request>),
 
     /// A Response has been received.
-    Response(NodeAddress, Response),
+    Response(NodeAddress, Box<Response>),
 
     /// An unknown source has requested information from us. Return the reference with the known
     /// ENR of this node (if known). See the `HandlerRequest::WhoAreYou` variant.
@@ -224,7 +225,7 @@ impl Handler {
 
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
-            socket_addr: listen_socket.clone(),
+            socket_addr: listen_socket,
             filter_config,
             whoareyou_magic: magic,
             expected_responses: filter_expected_responses.clone(),
@@ -274,12 +275,12 @@ impl Handler {
                     match handler_request {
                         HandlerRequest::Request(contact, request) => {
                            let id = request.id;
-                           if let Err(request_error) =  self.send_request(contact, request).await {
+                           if let Err(request_error) =  self.send_request(contact, *request).await {
                                // If the sending failed report to the application
                                self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await.unwrap_or_else(|_| ());
                            }
                         }
-                        HandlerRequest::Response(dst, response) => self.send_response(dst, response).await,
+                        HandlerRequest::Response(dst, response) => self.send_response(dst, *response).await,
                         HandlerRequest::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                     }
                 }
@@ -402,7 +403,7 @@ impl Handler {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
-                .or_insert_with(|| Vec::new())
+                .or_insert_with(Vec::new)
                 .push((contact, request));
             return Ok(());
         }
@@ -425,7 +426,7 @@ impl Handler {
         };
 
         let call = RequestCall::new(contact, packet.clone(), request);
-        let auth_tag = call.packet.auth_tag().expect("No challenges here").clone();
+        let auth_tag = *call.packet.auth_tag().expect("No challenges here");
         self.active_requests_auth
             .insert(auth_tag, node_address.clone());
         // let the filter know we are expecting a response
@@ -604,7 +605,7 @@ impl Handler {
 
                     // Notify the application the session has been established
                     self.outbound_channel
-                        .send(HandlerResponse::Established(enr))
+                        .send(HandlerResponse::Established(*enr))
                         .await
                         .unwrap_or_else(|_| ());
                 } else {
@@ -658,13 +659,8 @@ impl Handler {
     fn verify_enr(&mut self, enr: &Enr, node_address: &NodeAddress) -> bool {
         // If the ENR does not match the observed IP addresses, we consider the Session
         // failed.
-        if enr.node_id() == node_address.node_id
+        enr.node_id() == node_address.node_id
             && (enr.udp_socket().is_none() || enr.udp_socket() == Some(node_address.socket_addr))
-        {
-            true
-        } else {
-            false
-        }
     }
 
     /// Handle a message that contains an authentication header.
@@ -726,7 +722,6 @@ impl Handler {
                     );
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket)
                         .await;
-                    return;
                 }
             }
         } else {
@@ -734,7 +729,6 @@ impl Handler {
                 "Received an authenticated header without a matching WHOAREYOU request. {}",
                 node_address
             );
-            return;
         }
     }
 
@@ -742,24 +736,24 @@ impl Handler {
         // ensure we are not over writing any existing requests
 
         if self.active_requests.get(&node_address).is_none() {
-            match self.pending_requests.entry(node_address) {
-                std::collections::hash_map::Entry::Occupied(mut entry) => {
-                    // If it exists, there must be a request here
-                    let request = entry.get_mut().remove(0);
-                    if entry.get().is_empty() {
-                        entry.remove();
-                    }
-                    trace!("Sending next awaiting message. Node: {}", request.0);
-                    self.send_request(request.0, request.1)
-                        .await
-                        .unwrap_or_else(|_| ());
+            if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                self.pending_requests.entry(node_address)
+            {
+                // If it exists, there must be a request here
+                let request = entry.get_mut().remove(0);
+                if entry.get().is_empty() {
+                    entry.remove();
                 }
-                _ => {}
+                trace!("Sending next awaiting message. Node: {}", request.0);
+                self.send_request(request.0, request.1)
+                    .await
+                    .unwrap_or_else(|_| ());
             }
         }
     }
 
     /// Handle a standard message that does not contain an authentication header.
+    #[allow(clippy::single_match)]
     async fn handle_message(
         &mut self,
         node_address: NodeAddress,
@@ -803,7 +797,7 @@ impl Handler {
                 Message::Request(request) => {
                     // report the request to the application
                     self.outbound_channel
-                        .send(HandlerResponse::Request(node_address, request))
+                        .send(HandlerResponse::Request(node_address, Box::new(request)))
                         .await
                         .unwrap_or_else(|_| ());
                 }
@@ -882,7 +876,7 @@ impl Handler {
                             self.active_requests
                                 .insert(node_address.clone(), request_call);
                             self.outbound_channel
-                                .send(HandlerResponse::Response(node_address, response))
+                                .send(HandlerResponse::Response(node_address, Box::new(response)))
                                 .await
                                 .unwrap_or_else(|_| ());
                             return;
@@ -894,7 +888,7 @@ impl Handler {
                         self.active_requests
                             .insert(node_address.clone(), request_call);
                         self.outbound_channel
-                            .send(HandlerResponse::Response(node_address, response))
+                            .send(HandlerResponse::Response(node_address, Box::new(response)))
                             .await
                             .unwrap_or_else(|_| ());
                         return;
@@ -906,7 +900,10 @@ impl Handler {
             self.remove_expected_response(node_address.socket_addr.clone());
             // The request matches report the response
             self.outbound_channel
-                .send(HandlerResponse::Response(node_address.clone(), response))
+                .send(HandlerResponse::Response(
+                    node_address.clone(),
+                    Box::new(response),
+                ))
                 .await
                 .unwrap_or_else(|_| ());
             self.send_next_request(node_address).await;
@@ -939,11 +936,10 @@ impl Handler {
 
     /// Inserts a request and associated auth_tag mapping.
     fn insert_active_request(&mut self, request_call: RequestCall) {
-        let auth_tag = request_call
+        let auth_tag = *request_call
             .packet
             .auth_tag()
-            .expect("Can only add non-challenge requests")
-            .clone();
+            .expect("Can only add non-challenge requests");
         let node_address = request_call
             .contact
             .node_address()
@@ -994,7 +990,7 @@ impl Handler {
         for request in self
             .pending_requests
             .remove(&node_address)
-            .unwrap_or_else(|| Vec::new())
+            .unwrap_or_else(Vec::new)
         {
             self.outbound_channel
                 .send(HandlerResponse::RequestFailed(request.1.id, error.clone()))

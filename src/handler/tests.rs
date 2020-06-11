@@ -58,10 +58,10 @@ async fn simple_session_message() {
         config,
     );
 
-    let send_message = Request {
+    let send_message = Box::new(Request {
         id: 1,
         body: RequestBody::Ping { enr_seq: 1 },
-    };
+    });
 
     let _ = sender_handler
         .send(HandlerRequest::Request(
@@ -136,10 +136,10 @@ async fn multiple_messages() {
         config,
     );
 
-    let send_message = Request {
+    let send_message = Box::new(Request {
         id: 1,
         body: RequestBody::Ping { enr_seq: 1 },
-    };
+    });
 
     let pong_response = Response {
         id: 1,
@@ -195,7 +195,10 @@ async fn multiple_messages() {
                     message_count += 1;
                     // required to send a pong response to establish the session
                     let _ = recv_send
-                        .send(HandlerRequest::Response(addr, pong_response.clone()))
+                        .send(HandlerRequest::Response(
+                            addr,
+                            Box::new(pong_response.clone()),
+                        ))
                         .await;
                     if message_count == messages_to_send {
                         return;

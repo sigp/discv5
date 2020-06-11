@@ -180,7 +180,7 @@ impl Service {
                     local_enr,
                     enr_key,
                     kbuckets,
-                    queries: QueryPool::new(config.query_timeout.clone()),
+                    queries: QueryPool::new(config.query_timeout),
                     active_requests: Default::default(),
                     active_nodes_responses: HashMap::new(),
                     ip_votes,
@@ -229,7 +229,7 @@ impl Service {
                         ServiceRequest::RequestEventStream(callback) => {
                             let (event_stream, event_stream_recv) = mpsc::channel(30);
                             self.event_stream = Some(event_stream);
-                            if let Err(_) = callback.send(event_stream_recv) {
+                            if callback.send(event_stream_recv).is_err() {
                                 error!("Failed to return the event stream channel");
                             }
                         }
@@ -241,10 +241,10 @@ impl Service {
                             self.inject_session_established(enr).await;
                         }
                         HandlerResponse::Request(node_address, request) => {
-                                self.handle_rpc_request(node_address, request).await;
+                                self.handle_rpc_request(node_address, *request).await;
                             }
                         HandlerResponse::Response(_, response) => {
-                                self.handle_rpc_response(response).await;
+                                self.handle_rpc_response(*response).await;
                             }
                         HandlerResponse::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
@@ -289,7 +289,7 @@ impl Service {
                                     warn!("ENR not present in queries results");
                                 }
                             }
-                            if let Err(_) = result.target.callback.send(found_enrs) {
+                            if result.target.callback.send(found_enrs).is_err() {
                                 warn!("Callback dropped for query {}. Results dropped", *id);
                             }
                         }
@@ -404,7 +404,7 @@ impl Service {
                     };
                     debug!("Sending our ENR to node: {}", node_address);
                     self.handler_send
-                        .send(HandlerRequest::Response(node_address, response))
+                        .send(HandlerRequest::Response(node_address, Box::new(response)))
                         .await
                         .unwrap_or_else(|_| ());
                 } else {
@@ -438,7 +438,7 @@ impl Service {
                 }
 
                 // build the PONG response
-                let src = node_address.socket_addr.clone();
+                let src = node_address.socket_addr;
                 let response = Response {
                     id,
                     body: ResponseBody::Ping {
@@ -449,7 +449,7 @@ impl Service {
                 };
                 debug!("Sending PONG response to {}", node_address);
                 self.handler_send
-                    .send(HandlerRequest::Response(node_address, response))
+                    .send(HandlerRequest::Response(node_address, Box::new(response)))
                     .await
                     .unwrap_or_else(|_| ());
             }
@@ -722,7 +722,7 @@ impl Service {
                 node_address.node_id
             );
             self.handler_send
-                .send(HandlerRequest::Response(node_address, response))
+                .send(HandlerRequest::Response(node_address, Box::new(response)))
                 .await
                 .unwrap_or_else(|_| ());
         } else {
@@ -766,7 +766,10 @@ impl Service {
                     response
                 );
                 self.handler_send
-                    .send(HandlerRequest::Response(node_address.clone(), response))
+                    .send(HandlerRequest::Response(
+                        node_address.clone(),
+                        Box::new(response),
+                    ))
                     .await
                     .unwrap_or_else(|_| ());
             }
@@ -807,7 +810,7 @@ impl Service {
         debug!("Sending RPC {} to node: {}", request, contact);
 
         self.handler_send
-            .send(HandlerRequest::Request(contact, request))
+            .send(HandlerRequest::Request(contact, Box::new(request)))
             .await
             .unwrap_or_else(|_| ());
     }
@@ -943,7 +946,7 @@ impl Service {
                             }
                             kbucket::InsertResult::Full => (),
                             kbucket::InsertResult::Pending { disconnected } => {
-                                ping_peer = Some(disconnected.preimage().clone());
+                                ping_peer = Some(*disconnected.preimage());
                             }
                         }
                     }
@@ -1066,7 +1069,7 @@ impl Service {
     /// well as queries which need to be driven further with extra requests.
     async fn query_event_poll(queries: &mut QueryPool<QueryInfo, NodeId, Enr>) -> QueryEvent {
         future::poll_fn(move |_cx| match queries.poll() {
-            QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(query)),
+            QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(Box::new(query))),
             QueryPoolState::Waiting(Some((query, return_peer))) => {
                 let node_id = return_peer.key;
 
@@ -1084,7 +1087,7 @@ impl Service {
             }
             QueryPoolState::Timeout(query) => {
                 warn!("Query id: {:?} timed out", query.id());
-                Poll::Ready(QueryEvent::TimedOut(query))
+                Poll::Ready(QueryEvent::TimedOut(Box::new(query)))
             }
             QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         })
@@ -1098,7 +1101,7 @@ enum QueryEvent {
     /// The query is waiting for a peer to be contacted.
     Waiting(QueryId, NodeId, RequestBody),
     /// The query has timed out, possible returning peers.
-    TimedOut(crate::query_pool::Query<QueryInfo, NodeId, Enr>),
+    TimedOut(Box<crate::query_pool::Query<QueryInfo, NodeId, Enr>>),
     /// The query has completed successfully.
-    Finished(crate::query_pool::Query<QueryInfo, NodeId, Enr>),
+    Finished(Box<crate::query_pool::Query<QueryInfo, NodeId, Enr>>),
 }
