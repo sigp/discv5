@@ -5,44 +5,72 @@ use std::net::IpAddr;
 
 type TopicHash = [u8; 32];
 
+/// Wrapping type for requests.
 pub type RequestId = u64;
 
 #[derive(Debug, Clone, PartialEq)]
+/// A combined type representing requests and responses.
 pub enum Message {
+    /// A request, which contains its [`RequestId`].
     Request(Request),
+    /// A Response, which contains the [`RequestId`] of its associated request.
     Response(Response),
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// A request sent between nodes.
 pub struct Request {
+    /// The [`RequestId`] of the request.
     pub id: RequestId,
+    /// The body of the request.
     pub body: RequestBody,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// A response sent in response to a [`Request`]
 pub struct Response {
+    /// The [`RequestId`] of the request that triggered this response.
     pub id: RequestId,
+    /// The body of this response.
     pub body: ResponseBody,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RequestBody {
-    Ping { enr_seq: u64 },
-    FindNode { distance: u64 },
+    /// A PING request.
+    Ping {
+        /// Our current ENR sequence number.
+        enr_seq: u64,
+    },
+    /// A FINDNODE request.
+    FindNode {
+        /// The distance of peers we expect to be returned in the response.
+        distance: u64,
+    },
+    /// A TICKET request.
     Ticket { topic: TopicHash },
+    /// A REGISTERTOPIC request.
     RegisterTopic { ticket: Vec<u8> },
+    /// A TOPICQUERY request.
     TopicQuery { topic: TopicHash },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResponseBody {
+    /// A PONG response.
     Ping {
+        /// The current ENR sequence number of the responder.
         enr_seq: u64,
+        /// Our external IP address as observed by the responder.
         ip: IpAddr,
+        /// Our external UDP port as observed by the responder.
         port: u16,
     },
+    /// A NODES response.
     Nodes {
+        /// The total number of responses that make up this response.
         total: u64,
+        /// A list of ENR's returned by the responder.
         nodes: Vec<Enr<CombinedKey>>,
     },
     Ticket {

@@ -16,9 +16,19 @@ pub(crate) struct Keys {
     decryption_key: [u8; 16],
 }
 
+/// A Session containing the encryption/decryption keys. These are kept individually for a given
+/// node.
 pub(crate) struct Session {
+    /// The current keys used to encrypt/decrypt messages.
     keys: Keys,
+    /// If a new handshake is being established, these keys can be tried to determine if this new
+    /// set of keys is canon.
     awaiting_keys: Option<Keys>,
+    /// If we contacted this node without an ENR, i.e. via a multiaddr, during the session
+    /// establishment we request the nodes ENR. Once the ENR is received and verified, this session
+    /// becomes established.
+    ///
+    /// This field holds the request_id associated with the ENR request.
     pub awaiting_enr: Option<RequestId>,
 }
 

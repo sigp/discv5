@@ -1,19 +1,27 @@
-//! Session management for the Discv5 Discovery service.
+//! Session and packet handling for the Discv5 Discovery service.
 //!
-//! The [`Service`] is responsible for establishing and maintaining sessions with
+//! The [`Handler`] is responsible for establishing and maintaining sessions with
 //! connected/discovered nodes. Each node, identified by it's [`NodeId`] is associated with a
 //! [`Session`]. This service drives the handshakes for establishing the sessions and associated
-//! logic for sending/requesting initial connections/ENR's from unknown peers.
+//! logic for sending/requesting initial connections/ENR's to/from unknown peers.
 //!
-//! The `Service` also manages the timeouts for each request and reports back RPC failures,
-//! session timeouts and received messages. Messages are encrypted and decrypted using the
-//! associated `Session` for each node.
+//! The [`Handler`] also manages the timeouts for each request and reports back RPC failures,
+//! and received messages. Messages are encrypted and decrypted using the
+//! associated [`Session`] for each node.
 //!
-//! An ongoing connection is managed by [`Session`]. A node that provides and ENR with an
-//! IP address/port that doesn't match the source, is considered untrusted. Once the IP is updated
-//! to match the source, the `Session` is promoted to an established state. RPC requests are not sent
-//! to untrusted Sessions, only responses.
-
+//! An ongoing established connection is abstractly represented by a [`Session`]. A node that provides an ENR with an
+//! IP address/port that doesn't match the source, is considered untrusted and any
+//! establishing/established session is dropped. Once the IP is updated
+//! to match the source, the [`Session`] is promoted to an established state and reported back.
+//!
+//! # Usage
+//!
+//! Interacting with a handler is done via channels. A Handler is spawned using the [`spawn()`]
+//! function. This returns an exit channel, a sending and receiving channel respectively. If the
+//! exit channel is dropped or fired, the handler task gets shutdown.
+//!
+//! Requests to the handler can be made via the sending channel using a [`HandlerRequest`].
+//! Responses come by the receiving channel in the form of a [`HandlerResponse`].
 use crate::config::Discv5Config;
 use crate::error::{Discv5Error, RequestError};
 use crate::packet::{AuthHeader, AuthTag, Magic, Nonce, Packet, Tag, TAG_LENGTH};
