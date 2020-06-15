@@ -114,7 +114,7 @@ impl Packet {
         let packet = Packet::WhoAreYou {
             magic,
             auth_tag,
-            id_nonce: id_nonce.clone(),
+            id_nonce,
             enr_seq,
         };
         (packet, id_nonce)

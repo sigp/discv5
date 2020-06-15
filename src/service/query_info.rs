@@ -59,7 +59,7 @@ impl crate::query_pool::TargetKey<NodeId> for QueryInfo {
     fn key(&self) -> Key<NodeId> {
         match self.query_type {
             QueryType::FindNode(ref node_id) => {
-                Key::new_raw(node_id.clone(), *GenericArray::from_slice(&node_id.raw()))
+                Key::new_raw(*node_id, *GenericArray::from_slice(&node_id.raw()))
             }
         }
     }

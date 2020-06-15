@@ -123,7 +123,7 @@ where
             self.expirations.remove(&entry.key);
             return Some(entry.value);
         }
-        return None;
+        None
     }
 
     /// Retains only the elements specified by the predicate.

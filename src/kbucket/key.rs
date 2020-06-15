@@ -21,6 +21,8 @@
 // This basis of this file has been taken from the rust-libp2p codebase:
 // https://github.com/libp2p/rust-libp2p
 
+#![allow(clippy::all)]
+
 use enr::NodeId;
 use uint::construct_uint;
 //use libp2p_core::PeerId;
