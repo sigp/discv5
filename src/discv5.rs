@@ -421,20 +421,28 @@ impl Discv5 {
     ///
     /// This will return less than or equal to `num_nodes` ENRs which satisfy the
     /// `predicate`.
+    ///
+    /// The predicate is a boxed function that takes an ENR reference and returns a boolean
+    /// indicating if the record is applicable to the query or not. 
+    ///
+    /// ### Example
+    /// ```rust
+    ///  let predicate = Box::new(|enr: &Enr| enr.ip().is_some());
+    ///  let target = NodeId::random();
+    ///  let result = discv5.find_node_predicate(target, predicate, 5).await;
+    ///  ```
     pub async fn find_node_predicate<F>(
         &mut self,
         target_node: NodeId,
-        predicate: F,
+        predicate: Box<dyn Fn(&Enr) -> bool + Send>,
         target_peer_no: usize,
     ) -> Result<Vec<Enr>, QueryError>
-    where
-        F: Fn(&Enr) -> bool + Send + Clone + 'static,
     {
         let (callback_send, callback_recv) = oneshot::channel();
 
         let query_kind = QueryKind::Predicate {
             target_node,
-            predicate: Box::new(predicate),
+            predicate,
             target_peer_no,
         };
 
