@@ -431,7 +431,7 @@ impl Discv5 {
     ///  let target = NodeId::random();
     ///  let result = discv5.find_node_predicate(target, predicate, 5).await;
     ///  ```
-    pub async fn find_node_predicate<F>(
+    pub async fn find_node_predicate(
         &mut self,
         target_node: NodeId,
         predicate: Box<dyn Fn(&Enr) -> bool + Send>,
