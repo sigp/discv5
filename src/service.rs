@@ -210,6 +210,7 @@ impl Service {
                         let _ = exit.send(());
                         info!("Discv5 Service shutdown");
                     }
+                    return;
                 }
                 Some(service_request) = &mut self.discv5_recv.next() => {
                     match service_request {

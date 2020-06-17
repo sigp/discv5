@@ -87,7 +87,7 @@ impl RecvHandler {
                 }
                 _ = &mut self.exit => {
                     debug!("Recv handler shutdown");
-                    break;
+                    return;
                 }
             }
         }

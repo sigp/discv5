@@ -58,7 +58,7 @@ impl SendHandler {
                 }
                 _ = &mut self.exit => {
                     debug!("Send handler shutdown");
-                    break;
+                    return;
                 }
             }
         }
