@@ -9,6 +9,8 @@ pub enum Discv5Error {
     InvalidRemotePublicKey,
     InvalidSecretKey,
     InvalidSignature,
+    ServiceChannelClosed,
+    ServiceNotStarted,
     SessionNotEstablished,
     RLPError(DecoderError),
     EncryptionFail(String),

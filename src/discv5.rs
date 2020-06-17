@@ -61,7 +61,7 @@
 //!    });
 //! ```
 
-use crate::error::QueryError;
+use crate::error::{QueryError, Discv5Error};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
 use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::{Discv5Config, Enr};
@@ -70,6 +70,7 @@ use log::{error, warn};
 use parking_lot::RwLock;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
+use std::future::Future;
 
 #[cfg(feature = "libp2p")]
 use {
@@ -425,6 +426,9 @@ impl Discv5 {
     /// The predicate is a boxed function that takes an ENR reference and returns a boolean
     /// indicating if the record is applicable to the query or not. 
     ///
+    /// Note: The async syntax is forgone here in order to create `'static` futures, where the
+    /// underlying sending channel is cloned.
+    ///
     /// ### Example
     /// ```rust
     ///  let predicate = Box::new(|enr: &Enr| enr.ip().is_some());
@@ -458,25 +462,30 @@ impl Discv5 {
     }
 
     /// Creates an event stream channel which can be polled to receive Discv5 events.
-    pub async fn event_stream(&mut self) -> Result<mpsc::Receiver<Discv5Event>, String> {
+    pub fn event_stream(&mut self) -> impl Future<Output = Result<mpsc::Receiver<Discv5Event>, Discv5Error>> + 'static {
         let (callback_send, callback_recv) = oneshot::channel();
 
         let event = ServiceRequest::RequestEventStream(callback_send);
 
-        self.send_event(event).await?;
+        let channel = match self.clone_channel() {
+            Ok(channel) => channel,
+            Err(e) => return futures::future::ready(Err(e)),
+        };
 
-        Ok(callback_recv
+        async move {
+            channel.send(event).await?; 
+            Ok(callback_recv
             .await
-            .map_err(|_| String::from("Service channel closed"))?)
+            .map_err(|e| Discv5Error::ServiceChannelClosed)?)
+        }
     }
 
     /// Internal helper function to send events to the Service.
-    async fn send_event(&mut self, event: ServiceRequest) -> Result<(), String> {
-        if let Some(channel) = self.service_channel.as_mut() {
-            channel.send(event).await.map_err(|e| e.to_string())?;
-            Ok(())
+    fn clone_channel(&self) -> Result<mpsc::Sender<ServiceRequest>, Discv5Error> {
+        if let Some(channel) = self.service_channel.as_ref() {
+            Ok(channel.clone())
         } else {
-            return Err(String::from("Service has not started"));
+            Err(Discv5Error::ServiceNotStarted)
         }
     }
 }
