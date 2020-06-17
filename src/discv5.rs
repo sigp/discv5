@@ -370,52 +370,63 @@ impl Discv5 {
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
     /// Only `ed25519` and `secp256k1` key types are currently supported.
+    ///
+    /// Note: The async syntax is forgone here in order to create `'static` futures, where the
+    /// underlying sending channel is cloned.
     #[cfg(feature = "libp2p")]
     #[cfg_attr(docsrs, doc(cfg(feature = "libp2p")))]
-    pub async fn request_enr(
+    pub fn request_enr(
         &mut self,
-        multiaddr: impl std::convert::TryInto<Multiaddr>,
-    ) -> Result<Option<Enr>, RequestError> {
-        // Sanitize the multiaddr
+        multiaddr: impl std::convert::TryInto<Multiaddr> + 'static,
+    ) -> impl Future<Output=Result<Option<Enr>, RequestError>> + 'static {
+        let channel = self.clone_channel();
 
-        // The multiaddr must support the udp protocol and be of an appropriate key type.
-        // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
-        // `NodeContact`.
-        let multiaddr: Multiaddr = multiaddr
-            .try_into()
-            .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr".into()))?;
-        let node_contact: NodeContact = NodeContact::try_from(multiaddr)
-            .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
+        async move {
+            let mut channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+            // Sanitize the multiaddr
 
-        let (callback_send, callback_recv) = oneshot::channel();
+            // The multiaddr must support the udp protocol and be of an appropriate key type.
+            // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
+            // `NodeContact`.
+            let multiaddr: Multiaddr = multiaddr
+                .try_into()
+                .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr".into()))?;
+            let node_contact: NodeContact = NodeContact::try_from(multiaddr)
+                .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
 
-        let event = ServiceRequest::FindEnr(node_contact, callback_send);
-        if let Err(_) = self.send_event(event).await {
-            return Err(RequestError::ServiceNotStarted);
+            let (callback_send, callback_recv) = oneshot::channel();
+
+            let event = ServiceRequest::FindEnr(node_contact, callback_send);
+            channel.send(event).await.map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?; 
+            Ok(callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?)
         }
-        Ok(callback_recv
-            .await
-            .map_err(|e| RequestError::ChannelFailed(e.to_string()))?)
     }
 
     /// Runs an iterative `FIND_NODE` request.
     ///
     /// This will return peers containing contactable nodes of the DHT closest to the
     /// requested `NodeId`.
-    pub async fn find_node(&mut self, target_node: NodeId) -> Result<Vec<Enr>, QueryError> {
-        let (callback_send, callback_recv) = oneshot::channel();
+    ///
+    /// Note: The async syntax is forgone here in order to create `'static` futures, where the
+    /// underlying sending channel is cloned.
+    pub fn find_node(&mut self, target_node: NodeId) -> impl Future<Output=Result<Vec<Enr>, QueryError>> + 'static {
+        let channel = self.clone_channel();
 
-        let query_kind = QueryKind::FindNode { target_node };
+        async move {
+            let mut channel = channel.map_err(|_| QueryError::ServiceNotStarted)?;
+            let (callback_send, callback_recv) = oneshot::channel();
 
-        let event = ServiceRequest::StartQuery(query_kind, callback_send);
+            let query_kind = QueryKind::FindNode { target_node };
 
-        if let Err(_) = self.send_event(event).await {
-            return Err(QueryError::ServiceNotStarted);
-        }
+            let event = ServiceRequest::StartQuery(query_kind, callback_send);
+            channel.send(event).await.map_err(|_| QueryError::ChannelFailed("Service channel closed".into()))?; 
 
         Ok(callback_recv
             .await
             .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
+        }
     }
 
     /// Starts a `FIND_NODE` request.
@@ -430,53 +441,52 @@ impl Discv5 {
     /// underlying sending channel is cloned.
     ///
     /// ### Example
-    /// ```rust
+    /// ```ignore
     ///  let predicate = Box::new(|enr: &Enr| enr.ip().is_some());
     ///  let target = NodeId::random();
     ///  let result = discv5.find_node_predicate(target, predicate, 5).await;
     ///  ```
-    pub async fn find_node_predicate(
+    pub fn find_node_predicate(
         &mut self,
         target_node: NodeId,
         predicate: Box<dyn Fn(&Enr) -> bool + Send>,
         target_peer_no: usize,
-    ) -> Result<Vec<Enr>, QueryError>
+    ) -> impl Future<Output=Result<Vec<Enr>, QueryError>> + 'static
     {
-        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
 
-        let query_kind = QueryKind::Predicate {
-            target_node,
-            predicate,
-            target_peer_no,
-        };
+        async move {
+            let mut channel = channel.map_err(|_| QueryError::ServiceNotStarted)?;
+            let (callback_send, callback_recv) = oneshot::channel();
 
-        let event = ServiceRequest::StartQuery(query_kind, callback_send);
+            let query_kind = QueryKind::Predicate {
+                target_node,
+                predicate,
+                target_peer_no,
+            };
 
-        if let Err(_) = self.send_event(event).await {
-            return Err(QueryError::ServiceNotStarted);
+            let event = ServiceRequest::StartQuery(query_kind, callback_send);
+            channel.send(event).await.map_err(|_| QueryError::ChannelFailed("Service channel closed".into()))?; 
+
+            Ok(callback_recv
+                .await
+                .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
         }
-
-        Ok(callback_recv
-            .await
-            .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
     }
 
     /// Creates an event stream channel which can be polled to receive Discv5 events.
     pub fn event_stream(&mut self) -> impl Future<Output = Result<mpsc::Receiver<Discv5Event>, Discv5Error>> + 'static {
-        let (callback_send, callback_recv) = oneshot::channel();
-
-        let event = ServiceRequest::RequestEventStream(callback_send);
-
-        let channel = match self.clone_channel() {
-            Ok(channel) => channel,
-            Err(e) => return futures::future::ready(Err(e)),
-        };
+        let channel = self.clone_channel();
 
         async move {
-            channel.send(event).await?; 
-            Ok(callback_recv
-            .await
-            .map_err(|e| Discv5Error::ServiceChannelClosed)?)
+            let mut channel = channel?;
+
+            let (callback_send, callback_recv) = oneshot::channel();
+
+            let event = ServiceRequest::RequestEventStream(callback_send);
+            channel.send(event).await.map_err(|_| Discv5Error::ServiceChannelClosed)?; 
+
+            Ok(callback_recv.await.map_err(|_| Discv5Error::ServiceChannelClosed)?)
         }
     }
 

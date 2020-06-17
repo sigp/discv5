@@ -316,7 +316,7 @@ async fn test_predicate_search() {
     let found_nodes = nodes
         .first_mut()
         .unwrap()
-        .find_node_predicate(target_random_node_id, predicate, total_nodes)
+        .find_node_predicate(target_random_node_id, Box::new(predicate), total_nodes)
         .await
         .unwrap();
 
