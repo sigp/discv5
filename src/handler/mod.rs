@@ -111,7 +111,7 @@ pub enum HandlerResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhoAreYouRef(pub NodeAddress, AuthTag);
 
-pub struct Challenge {
+pub(crate) struct Challenge {
     nonce: Nonce,
     remote_enr: Option<Enr>,
 }
@@ -150,6 +150,7 @@ impl RequestCall {
     }
 }
 
+/// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,

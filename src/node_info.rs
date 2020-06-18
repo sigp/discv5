@@ -132,7 +132,7 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
             node_address: Box::new(NodeAddress {
                 socket_addr: SocketAddr::new(ip_addr, udp_port),
                 node_id: public_key.into(),
-            })
+            }),
         });
     }
 }
