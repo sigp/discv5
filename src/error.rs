@@ -58,4 +58,3 @@ impl std::fmt::Display for QueryError {
         write!(f, "{:?}", self)
     }
 }
-

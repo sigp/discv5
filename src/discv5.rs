@@ -61,16 +61,16 @@
 //!    });
 //! ```
 
-use crate::error::{QueryError, Discv5Error};
+use crate::error::{Discv5Error, QueryError};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
 use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::{Discv5Config, Enr};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use log::warn;
 use parking_lot::RwLock;
+use std::future::Future;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
-use std::future::Future;
 
 #[cfg(feature = "libp2p")]
 use {
@@ -383,7 +383,7 @@ impl Discv5 {
     pub fn request_enr(
         &mut self,
         multiaddr: impl std::convert::TryInto<Multiaddr> + 'static,
-    ) -> impl Future<Output=Result<Option<Enr>, RequestError>> + 'static {
+    ) -> impl Future<Output = Result<Option<Enr>, RequestError>> + 'static {
         let channel = self.clone_channel();
 
         async move {
@@ -393,16 +393,19 @@ impl Discv5 {
             // The multiaddr must support the udp protocol and be of an appropriate key type.
             // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
             // `NodeContact`.
-            let multiaddr: Multiaddr = multiaddr
-                .try_into()
-                .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr".into()))?;
+            let multiaddr: Multiaddr = multiaddr.try_into().map_err(|_| {
+                RequestError::InvalidMultiaddr("Could not convert to multiaddr".into())
+            })?;
             let node_contact: NodeContact = NodeContact::try_from(multiaddr)
                 .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
 
             let (callback_send, callback_recv) = oneshot::channel();
 
             let event = ServiceRequest::FindEnr(node_contact, callback_send);
-            channel.send(event).await.map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?; 
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             Ok(callback_recv
                 .await
                 .map_err(|e| RequestError::ChannelFailed(e.to_string()))?)
@@ -416,7 +419,10 @@ impl Discv5 {
     ///
     /// Note: The async syntax is forgone here in order to create `'static` futures, where the
     /// underlying sending channel is cloned.
-    pub fn find_node(&mut self, target_node: NodeId) -> impl Future<Output=Result<Vec<Enr>, QueryError>> + 'static {
+    pub fn find_node(
+        &mut self,
+        target_node: NodeId,
+    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
         let channel = self.clone_channel();
 
         async move {
@@ -426,11 +432,14 @@ impl Discv5 {
             let query_kind = QueryKind::FindNode { target_node };
 
             let event = ServiceRequest::StartQuery(query_kind, callback_send);
-            channel.send(event).await.map_err(|_| QueryError::ChannelFailed("Service channel closed".into()))?; 
+            channel
+                .send(event)
+                .await
+                .map_err(|_| QueryError::ChannelFailed("Service channel closed".into()))?;
 
-        Ok(callback_recv
-            .await
-            .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
+            Ok(callback_recv
+                .await
+                .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
         }
     }
 
@@ -440,7 +449,7 @@ impl Discv5 {
     /// `predicate`.
     ///
     /// The predicate is a boxed function that takes an ENR reference and returns a boolean
-    /// indicating if the record is applicable to the query or not. 
+    /// indicating if the record is applicable to the query or not.
     ///
     /// Note: The async syntax is forgone here in order to create `'static` futures, where the
     /// underlying sending channel is cloned.
@@ -456,8 +465,7 @@ impl Discv5 {
         target_node: NodeId,
         predicate: Box<dyn Fn(&Enr) -> bool + Send>,
         target_peer_no: usize,
-    ) -> impl Future<Output=Result<Vec<Enr>, QueryError>> + 'static
-    {
+    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
         let channel = self.clone_channel();
 
         async move {
@@ -471,7 +479,10 @@ impl Discv5 {
             };
 
             let event = ServiceRequest::StartQuery(query_kind, callback_send);
-            channel.send(event).await.map_err(|_| QueryError::ChannelFailed("Service channel closed".into()))?; 
+            channel
+                .send(event)
+                .await
+                .map_err(|_| QueryError::ChannelFailed("Service channel closed".into()))?;
 
             Ok(callback_recv
                 .await
@@ -480,7 +491,9 @@ impl Discv5 {
     }
 
     /// Creates an event stream channel which can be polled to receive Discv5 events.
-    pub fn event_stream(&mut self) -> impl Future<Output = Result<mpsc::Receiver<Discv5Event>, Discv5Error>> + 'static {
+    pub fn event_stream(
+        &mut self,
+    ) -> impl Future<Output = Result<mpsc::Receiver<Discv5Event>, Discv5Error>> + 'static {
         let channel = self.clone_channel();
 
         async move {
@@ -489,9 +502,14 @@ impl Discv5 {
             let (callback_send, callback_recv) = oneshot::channel();
 
             let event = ServiceRequest::RequestEventStream(callback_send);
-            channel.send(event).await.map_err(|_| Discv5Error::ServiceChannelClosed)?; 
+            channel
+                .send(event)
+                .await
+                .map_err(|_| Discv5Error::ServiceChannelClosed)?;
 
-            Ok(callback_recv.await.map_err(|_| Discv5Error::ServiceChannelClosed)?)
+            Ok(callback_recv
+                .await
+                .map_err(|_| Discv5Error::ServiceChannelClosed)?)
         }
     }
 
