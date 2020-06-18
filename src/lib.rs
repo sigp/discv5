@@ -136,6 +136,7 @@ pub use executor::{Executor, TokioExecutor};
 pub use handler::{Handler, HandlerRequest, HandlerResponse};
 pub use permit_ban::PermitBanList;
 pub use socket::{FilterConfig, FilterConfigBuilder};
+pub use metrics::{METRICS, InternalMetrics, Metrics};
 // re-export the ENR crate
 pub use enr;
-pub use query_pool::QueryId;
+
