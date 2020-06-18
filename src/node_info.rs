@@ -11,7 +11,7 @@ use libp2p_core::{identity::PublicKey, multiaddr::Protocol, Multiaddr};
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeContact {
     /// We know the ENR of the node we are contacting.
-    Enr(Enr),
+    Enr(Box<Enr>),
     /// We don't have an ENR, but have enough information to start a handshake.
     ///
     /// The handshake will request the ENR at the first opportunity.
@@ -19,9 +19,9 @@ pub enum NodeContact {
     /// implementation for `String` and `MultiAddr`. This is gated behind the `libp2p` feature.
     Raw {
         /// An ENR compatible public key, required for handshaking with peers.
-        public_key: CombinedPublicKey,
+        public_key: Box<CombinedPublicKey>,
         /// The socket address and `NodeId` of the peer to connect to.
-        node_address: NodeAddress,
+        node_address: Box<NodeAddress>,
     },
 }
 
@@ -43,7 +43,7 @@ impl NodeContact {
     pub fn public_key(&self) -> CombinedPublicKey {
         match self {
             NodeContact::Enr(ref enr) => enr.public_key(),
-            NodeContact::Raw { public_key, .. } => public_key.clone(),
+            NodeContact::Raw { public_key, .. } => *public_key.clone(),
         }
     }
 
@@ -59,7 +59,7 @@ impl NodeContact {
             NodeContact::Enr(ref enr) => enr
                 .udp_socket()
                 .ok_or_else(|| "ENR does not contain an IP and UDP port"),
-            NodeContact::Raw { node_address, .. } => Ok(node_address.socket_addr.clone()),
+            NodeContact::Raw { node_address, .. } => Ok(node_address.socket_addr),
         }
     }
 
@@ -75,7 +75,7 @@ impl NodeContact {
 
 impl From<Enr> for NodeContact {
     fn from(enr: Enr) -> Self {
-        NodeContact::Enr(enr)
+        NodeContact::Enr(Box::new(enr))
     }
 }
 
@@ -167,7 +167,7 @@ impl Ord for NodeAddress {
         if ord != std::cmp::Ordering::Equal {
             return ord;
         }
-        return self.socket_addr.port().cmp(&other.socket_addr.port());
+        self.socket_addr.port().cmp(&other.socket_addr.port())
     }
 }
 

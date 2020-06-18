@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 lazy_static! {
-    pub static ref METRICS: InternalMetrics = InternalMetrics::new();
+    pub static ref METRICS: InternalMetrics = InternalMetrics::default();
 }
 
 /// A collection of metrics used throughout the server.
@@ -24,8 +24,8 @@ pub struct InternalMetrics {
     pub requests_per_ip_per_second: RwLock<HashMap<IpAddr, f64>>,
 }
 
-impl InternalMetrics {
-    pub fn new() -> Self {
+impl Default for InternalMetrics {
+    fn default() -> Self {
         InternalMetrics {
             moving_window: 5,
             active_sessions: AtomicUsize::new(0),

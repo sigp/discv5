@@ -35,8 +35,8 @@ impl Executor for TokioExecutor {
     }
 }
 
-impl TokioExecutor {
-    pub fn new() -> Self {
+impl Default for TokioExecutor {
+    fn default() -> Self {
         TokioExecutor(tokio::runtime::Handle::current())
     }
 }

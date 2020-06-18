@@ -80,12 +80,12 @@ impl Socket {
         // spawn the sender handler
         let (send, sender_exit) = SendHandler::spawn(config.executor.clone(), send_udp);
 
-        return Socket {
+        Socket {
             send,
             recv,
             sender_exit: Some(sender_exit),
             recv_exit: Some(recv_exit),
-        };
+        }
     }
 }
 
