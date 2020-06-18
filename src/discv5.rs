@@ -66,7 +66,7 @@ use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
 use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::{Discv5Config, Enr};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
-use log::{error, warn};
+use log::warn;
 use parking_lot::RwLock;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
@@ -182,11 +182,11 @@ impl Discv5 {
     pub fn shutdown(&mut self) {
         if let Some(exit) = self.service_exit.take() {
             if let Err(_) = exit.send(()) {
-                error!("Could not send exit request to Discv5 service");
+                log::debug!("Discv5 service already shutdown");
             }
             self.service_channel = None;
         } else {
-            warn!("Service is already shutdown");
+            log::debug!("Service is already shutdown");
         }
     }
 
