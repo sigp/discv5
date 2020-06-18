@@ -9,6 +9,8 @@ pub enum Discv5Error {
     InvalidRemotePublicKey,
     InvalidSecretKey,
     InvalidSignature,
+    ServiceChannelClosed,
+    ServiceNotStarted,
     SessionNotEstablished,
     RLPError(DecoderError),
     EncryptionFail(String),
@@ -37,4 +39,22 @@ pub enum QueryError {
     InvalidEnr(String),
     EncryptionFailed(String),
     InvalidMultiaddr(String),
+}
+
+impl std::fmt::Display for Discv5Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::fmt::Display for QueryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }

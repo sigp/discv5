@@ -61,13 +61,14 @@
 //!    });
 //! ```
 
-use crate::error::QueryError;
+use crate::error::{Discv5Error, QueryError};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
 use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::{Discv5Config, Enr};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
-use log::{error, warn};
+use log::warn;
 use parking_lot::RwLock;
+use std::future::Future;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
@@ -181,11 +182,11 @@ impl Discv5 {
     pub fn shutdown(&mut self) {
         if let Some(exit) = self.service_exit.take() {
             if exit.send(()).is_err() {
-                error!("Could not send exit request to Discv5 service");
+                log::debug!("Discv5 service already shutdown");
             }
             self.service_channel = None;
         } else {
-            warn!("Service is already shutdown");
+            log::debug!("Service is already shutdown");
         }
     }
 
@@ -262,6 +263,11 @@ impl Discv5 {
     /// Gets the metrics associated with the Server
     pub fn metrics(&self) -> Metrics {
         Metrics::from(&METRICS)
+    }
+
+    /// Exposes the raw reference to the underlying internal metrics.
+    pub fn raw_metrics() -> &'static METRICS {
+        &METRICS
     }
 
     /// Returns the local ENR of the node.
@@ -369,106 +375,150 @@ impl Discv5 {
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
     /// Only `ed25519` and `secp256k1` key types are currently supported.
+    ///
+    /// Note: The async syntax is forgone here in order to create `'static` futures, where the
+    /// underlying sending channel is cloned.
     #[cfg(feature = "libp2p")]
     #[cfg_attr(docsrs, doc(cfg(feature = "libp2p")))]
-    pub async fn request_enr(
+    pub fn request_enr(
         &mut self,
-        multiaddr: impl std::convert::TryInto<Multiaddr>,
-    ) -> Result<Option<Enr>, RequestError> {
-        // Sanitize the multiaddr
+        multiaddr: impl std::convert::TryInto<Multiaddr> + 'static,
+    ) -> impl Future<Output = Result<Option<Enr>, RequestError>> + 'static {
+        let channel = self.clone_channel();
 
-        // The multiaddr must support the udp protocol and be of an appropriate key type.
-        // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
-        // `NodeContact`.
-        let multiaddr: Multiaddr = multiaddr
-            .try_into()
-            .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr".into()))?;
-        let node_contact: NodeContact = NodeContact::try_from(multiaddr)
-            .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
+        async move {
+            let mut channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+            // Sanitize the multiaddr
 
-        let (callback_send, callback_recv) = oneshot::channel();
+            // The multiaddr must support the udp protocol and be of an appropriate key type.
+            // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
+            // `NodeContact`.
+            let multiaddr: Multiaddr = multiaddr.try_into().map_err(|_| {
+                RequestError::InvalidMultiaddr("Could not convert to multiaddr".into())
+            })?;
+            let node_contact: NodeContact = NodeContact::try_from(multiaddr)
+                .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
 
-        let event = ServiceRequest::FindEnr(node_contact, callback_send);
-        if let Err(_) = self.send_event(event).await {
-            return Err(RequestError::ServiceNotStarted);
+            let (callback_send, callback_recv) = oneshot::channel();
+
+            let event = ServiceRequest::FindEnr(node_contact, callback_send);
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            Ok(callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?)
         }
-        Ok(callback_recv
-            .await
-            .map_err(|e| RequestError::ChannelFailed(e.to_string()))?)
     }
 
     /// Runs an iterative `FIND_NODE` request.
     ///
     /// This will return peers containing contactable nodes of the DHT closest to the
     /// requested `NodeId`.
-    pub async fn find_node(&mut self, target_node: NodeId) -> Result<Vec<Enr>, QueryError> {
-        let (callback_send, callback_recv) = oneshot::channel();
+    ///
+    /// Note: The async syntax is forgone here in order to create `'static` futures, where the
+    /// underlying sending channel is cloned.
+    pub fn find_node(
+        &mut self,
+        target_node: NodeId,
+    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
+        let channel = self.clone_channel();
 
-        let query_kind = QueryKind::FindNode { target_node };
+        async move {
+            let mut channel = channel.map_err(|_| QueryError::ServiceNotStarted)?;
+            let (callback_send, callback_recv) = oneshot::channel();
 
-        let event = ServiceRequest::StartQuery(query_kind, callback_send);
+            let query_kind = QueryKind::FindNode { target_node };
 
-        if self.send_event(event).await.is_err() {
-            return Err(QueryError::ServiceNotStarted);
+            let event = ServiceRequest::StartQuery(query_kind, callback_send);
+            channel
+                .send(event)
+                .await
+                .map_err(|_| QueryError::ChannelFailed("Service channel closed".into()))?;
+
+            Ok(callback_recv
+                .await
+                .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
         }
-
-        Ok(callback_recv
-            .await
-            .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
     }
 
     /// Starts a `FIND_NODE` request.
     ///
     /// This will return less than or equal to `num_nodes` ENRs which satisfy the
     /// `predicate`.
-    pub async fn find_node_predicate<F>(
+    ///
+    /// The predicate is a boxed function that takes an ENR reference and returns a boolean
+    /// indicating if the record is applicable to the query or not.
+    ///
+    /// Note: The async syntax is forgone here in order to create `'static` futures, where the
+    /// underlying sending channel is cloned.
+    ///
+    /// ### Example
+    /// ```ignore
+    ///  let predicate = Box::new(|enr: &Enr| enr.ip().is_some());
+    ///  let target = NodeId::random();
+    ///  let result = discv5.find_node_predicate(target, predicate, 5).await;
+    ///  ```
+    pub fn find_node_predicate(
         &mut self,
         target_node: NodeId,
-        predicate: F,
+        predicate: Box<dyn Fn(&Enr) -> bool + Send>,
         target_peer_no: usize,
-    ) -> Result<Vec<Enr>, QueryError>
-    where
-        F: Fn(&Enr) -> bool + Send + Clone + 'static,
-    {
-        let (callback_send, callback_recv) = oneshot::channel();
+    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
+        let channel = self.clone_channel();
 
-        let query_kind = QueryKind::Predicate {
-            target_node,
-            predicate: Box::new(predicate),
-            target_peer_no,
-        };
+        async move {
+            let mut channel = channel.map_err(|_| QueryError::ServiceNotStarted)?;
+            let (callback_send, callback_recv) = oneshot::channel();
 
-        let event = ServiceRequest::StartQuery(query_kind, callback_send);
+            let query_kind = QueryKind::Predicate {
+                target_node,
+                predicate,
+                target_peer_no,
+            };
 
-        if self.send_event(event).await.is_err() {
-            return Err(QueryError::ServiceNotStarted);
+            let event = ServiceRequest::StartQuery(query_kind, callback_send);
+            channel
+                .send(event)
+                .await
+                .map_err(|_| QueryError::ChannelFailed("Service channel closed".into()))?;
+
+            Ok(callback_recv
+                .await
+                .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
         }
-
-        Ok(callback_recv
-            .await
-            .map_err(|e| QueryError::ChannelFailed(e.to_string()))?)
     }
 
     /// Creates an event stream channel which can be polled to receive Discv5 events.
-    pub async fn event_stream(&mut self) -> Result<mpsc::Receiver<Discv5Event>, String> {
-        let (callback_send, callback_recv) = oneshot::channel();
+    pub fn event_stream(
+        &mut self,
+    ) -> impl Future<Output = Result<mpsc::Receiver<Discv5Event>, Discv5Error>> + 'static {
+        let channel = self.clone_channel();
 
-        let event = ServiceRequest::RequestEventStream(callback_send);
+        async move {
+            let mut channel = channel?;
 
-        self.send_event(event).await?;
+            let (callback_send, callback_recv) = oneshot::channel();
 
-        Ok(callback_recv
-            .await
-            .map_err(|_| String::from("Service channel closed"))?)
+            let event = ServiceRequest::RequestEventStream(callback_send);
+            channel
+                .send(event)
+                .await
+                .map_err(|_| Discv5Error::ServiceChannelClosed)?;
+
+            Ok(callback_recv
+                .await
+                .map_err(|_| Discv5Error::ServiceChannelClosed)?)
+        }
     }
 
     /// Internal helper function to send events to the Service.
-    async fn send_event(&mut self, event: ServiceRequest) -> Result<(), String> {
-        if let Some(channel) = self.service_channel.as_mut() {
-            channel.send(event).await.map_err(|e| e.to_string())?;
-            Ok(())
+    fn clone_channel(&self) -> Result<mpsc::Sender<ServiceRequest>, Discv5Error> {
+        if let Some(channel) = self.service_channel.as_ref() {
+            Ok(channel.clone())
         } else {
-            Err(String::from("Service has not started"))
+            Err(Discv5Error::ServiceNotStarted)
         }
     }
 }

@@ -131,11 +131,11 @@ pub type Enr = enr::Enr<enr::CombinedKey>;
 
 pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
-pub use error::Discv5Error;
+pub use error::{Discv5Error, QueryError, RequestError};
 pub use executor::{Executor, TokioExecutor};
 pub use handler::{Handler, HandlerRequest, HandlerResponse};
+pub use metrics::{InternalMetrics, Metrics, METRICS};
 pub use permit_ban::PermitBanList;
 pub use socket::{FilterConfig, FilterConfigBuilder};
 // re-export the ENR crate
 pub use enr;
-pub use query_pool::QueryId;
