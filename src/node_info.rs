@@ -128,11 +128,11 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
             };
 
         return Ok(NodeContact::Raw {
-            public_key: public_key.clone(),
-            node_address: NodeAddress {
+            public_key: Box::new(public_key.clone()),
+            node_address: Box::new(NodeAddress {
                 socket_addr: SocketAddr::new(ip_addr, udp_port),
                 node_id: public_key.into(),
-            },
+            })
         });
     }
 }

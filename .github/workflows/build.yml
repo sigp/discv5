@@ -20,6 +20,15 @@ jobs:
         run: rustup update stable
       - name: Run tests in release
         run: cargo test --all --release --tests
+  test-all-features:
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+      - uses: actions/checkout@v2
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Run tests in release
+        run: cargo test --all --release --all-features --tests
   clippy:
     runs-on: ubuntu-latest
     needs: cargo-fmt
