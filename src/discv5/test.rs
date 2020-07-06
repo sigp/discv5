@@ -8,6 +8,7 @@ use enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
 use env_logger;
 use rand_core::{RngCore, SeedableRng};
 use rand_xorshift;
+use std::net::Ipv4Addr;
 use std::{collections::HashMap, net::IpAddr};
 
 fn init() {
@@ -327,4 +328,100 @@ async fn test_predicate_search() {
     );
     println!("Nodes expected to pass predicate search {}", num_nodes);
     assert!(found_nodes.len() == num_nodes);
+}
+
+// The kbuckets table can have maximum 10 nodes in the same /24 subnet across all buckets
+#[tokio::test]
+async fn test_table_limits() {
+    // this seed generates 12 node id's that are distributed accross buckets such that no more than
+    // 2 exist in a single bucket.
+    let mut keypairs = generate_deterministic_keypair(12, 9487);
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let enr_key: CombinedKey = keypairs.remove(0);
+    let config = Discv5ConfigBuilder::new().ip_limit().build();
+    let enr = EnrBuilder::new("v4")
+        .ip(ip.clone().into())
+        .udp(9050)
+        .build(&enr_key)
+        .unwrap();
+
+    // let socket_addr = enr.udp_socket().unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let table_limit: usize = 10;
+    // Generate `table_limit + 2` nodes in the same subnet.
+    let enrs: Vec<Enr<CombinedKey>> = (1..=table_limit + 1)
+        .map(|i| {
+            let ip: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8));
+            let enr_key: CombinedKey = keypairs.remove(0);
+            EnrBuilder::new("v4")
+                .ip(ip.clone().into())
+                .udp(9050 + i as u16)
+                .build(&enr_key)
+                .unwrap()
+        })
+        .collect();
+    for enr in enrs {
+        discv5.add_enr(enr.clone()).unwrap();
+    }
+    // Number of entries should be `table_limit`, i.e one node got restricted
+    assert_eq!(
+        discv5.kbuckets.read().iter_ref().collect::<Vec<_>>().len(),
+        table_limit
+    );
+}
+
+// Each bucket can have maximum 2 nodes in the same /24 subnet
+#[tokio::test]
+async fn test_bucket_limits() {
+    let enr_key = CombinedKey::generate_secp256k1();
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let enr = EnrBuilder::new("v4")
+        .ip(ip.clone().into())
+        .udp(9500)
+        .build(&enr_key)
+        .unwrap();
+    let bucket_limit: usize = 2;
+    // Generate `bucket_limit + 1` keypairs that go in `enr` node's 256th bucket.
+    let keys = {
+        let mut keys = Vec::new();
+        for _ in 0..bucket_limit + 1 {
+            loop {
+                let key = CombinedKey::generate_secp256k1();
+                let enr_new = EnrBuilder::new("v4").build(&key).unwrap();
+                let node_key: kbucket::Key<NodeId> = enr.node_id().clone().into();
+                let distance = node_key
+                    .log2_distance(&enr_new.node_id().clone().into())
+                    .unwrap();
+                if distance == 256 {
+                    keys.push(key);
+                    break;
+                }
+            }
+        }
+        keys
+    };
+    // Generate `bucket_limit + 1` nodes in the same subnet.
+    let enrs: Vec<Enr<CombinedKey>> = (1..=bucket_limit + 1)
+        .map(|i| {
+            let kp = &keys[i - 1];
+            let ip: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8));
+            EnrBuilder::new("v4")
+                .ip(ip.clone().into())
+                .udp(9500 + i as u16)
+                .build(kp)
+                .unwrap()
+        })
+        .collect();
+
+    let config = Discv5ConfigBuilder::new().ip_limit().build();
+    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    for enr in enrs {
+        discv5.add_enr(enr.clone()).unwrap();
+    }
+
+    // Number of entries should be equal to `bucket_limit`.
+    assert_eq!(
+        discv5.kbuckets.read().iter_ref().collect::<Vec<_>>().len(),
+        bucket_limit
+    );
 }
