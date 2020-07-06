@@ -41,7 +41,6 @@ use tokio::time::Interval;
 
 mod ip_vote;
 mod query_info;
-//TODO: Update service tests
 mod test;
 
 /// The types of requests to send to the Discv5 service.
