@@ -627,7 +627,7 @@ mod tests {
 
 /// Takes an `ENR` to insert and a list of other `ENR`s to compare against.
 /// Returns `true` if `ENR` can be inserted and `false` otherwise.
-/// `NR` can be inserted if the count of enrs in `others` in the same /24 subnet as `ENR`
+/// `enr` can be inserted if the count of enrs in `others` in the same /24 subnet as `ENR`
 /// is less than `limit`.
 pub fn ip_limiter(enr: &Enr, others: &[&Enr], limit: usize) -> bool {
     let mut allowed = true;
