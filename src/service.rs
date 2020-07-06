@@ -842,7 +842,7 @@ impl Service {
                     || self
                         .kbuckets
                         .read()
-                        .check(&key, enr_ref, { |v, o, l| ip_limiter(v, &o, l) })
+                        .check(&key, enr_ref, |v, o, l| ip_limiter(v, &o, l))
                 {
                     match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(mut entry, _) => {
@@ -905,7 +905,7 @@ impl Service {
                 && !self
                     .kbuckets
                     .read()
-                    .check(&key, enr, { |v, o, l| ip_limiter(v, &o, l) })
+                    .check(&key, enr, |v, o, l| ip_limiter(v, &o, l))
             {
                 // if the node status is connected and it would exceed the ip ban, consider it
                 // disconnected to be pruned.

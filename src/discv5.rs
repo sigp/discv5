@@ -216,7 +216,7 @@ impl Discv5 {
             && !self
                 .kbuckets
                 .read()
-                .check(&key, &enr, { |v, o, l| ip_limiter(v, &o, l) });
+                .check(&key, &enr, |v, o, l| ip_limiter(v, &o, l));
 
         match self.kbuckets.write().entry(&key) {
             kbucket::Entry::Present(mut entry, _) => {
