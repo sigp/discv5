@@ -176,7 +176,7 @@ pub struct Handler {
     /// Established sessions with peers.
     sessions: LruCache<NodeAddress, Session>,
     /// The channel that receives requests from the application layer.
-    inbound_channel: mpsc::Receiver<HandlerRequest>,
+    inbound_channel: mpsc::UnboundedReceiver<HandlerRequest>,
     /// The channel to send responses to the application layer.
     outbound_channel: mpsc::Sender<HandlerResponse>,
     /// The listening socket to filter out any attempted requests to self.
@@ -196,13 +196,13 @@ impl Handler {
         config: Discv5Config,
     ) -> (
         oneshot::Sender<()>,
-        mpsc::Sender<HandlerRequest>,
+        mpsc::UnboundedSender<HandlerRequest>,
         mpsc::Receiver<HandlerResponse>,
     ) {
         let (exit_sender, exit) = oneshot::channel();
         // create the channels to send/receive messages from the application
-        let (inbound_send, inbound_channel) = mpsc::channel(20);
-        let (outbound_channel, outbound_recv) = mpsc::channel(20);
+        let (inbound_send, inbound_channel) = mpsc::unbounded_channel();
+        let (outbound_channel, outbound_recv) = mpsc::channel(50);
 
         // Creates a SocketConfig to pass to the underlying UDP socket tasks.
 

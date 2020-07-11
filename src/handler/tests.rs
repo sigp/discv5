@@ -44,14 +44,14 @@ async fn simple_session_message() {
         .build(&key2)
         .unwrap();
 
-    let (_exit_send, mut sender_handler, _) = Handler::spawn(
+    let (_exit_send, sender_handler, _) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
         sender_enr.udp_socket().unwrap(),
         config.clone(),
     );
 
-    let (_exit_recv, mut recv_send, mut receiver_handler) = Handler::spawn(
+    let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_enr.udp_socket().unwrap(),
@@ -67,8 +67,7 @@ async fn simple_session_message() {
         .send(HandlerRequest::Request(
             receiver_enr.into(),
             send_message.clone(),
-        ))
-        .await;
+        ));
 
     let receiver = async move {
         loop {
@@ -76,8 +75,7 @@ async fn simple_session_message() {
                 match message {
                     HandlerResponse::WhoAreYou(wru_ref) => {
                         let _ = recv_send
-                            .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())))
-                            .await;
+                            .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())));
                     }
                     HandlerResponse::Request(_, request) => {
                         assert_eq!(request, send_message);
@@ -122,14 +120,14 @@ async fn multiple_messages() {
         .build(&key2)
         .unwrap();
 
-    let (_exit_send, mut sender_handler, mut sender_handler_recv) = Handler::spawn(
+    let (_exit_send, sender_handler, mut sender_handler_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
         sender_enr.udp_socket().unwrap(),
         config.clone(),
     );
 
-    let (_exit_recv, mut recv_send, mut receiver_handler) = Handler::spawn(
+    let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_enr.udp_socket().unwrap(),
@@ -157,8 +155,7 @@ async fn multiple_messages() {
         .send(HandlerRequest::Request(
             receiver_enr.clone().into(),
             send_message.clone(),
-        ))
-        .await;
+        ));
 
     let mut message_count = 0usize;
     let recv_send_message = send_message.clone();
@@ -173,8 +170,7 @@ async fn multiple_messages() {
                             .send(HandlerRequest::Request(
                                 receiver_enr.clone().into(),
                                 send_message.clone(),
-                            ))
-                            .await;
+                            ));
                     }
                 }
                 _ => continue,
@@ -187,8 +183,7 @@ async fn multiple_messages() {
             match receiver_handler.next().await {
                 Some(HandlerResponse::WhoAreYou(wru_ref)) => {
                     let _ = recv_send
-                        .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())))
-                        .await;
+                        .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())));
                 }
                 Some(HandlerResponse::Request(addr, request)) => {
                     assert_eq!(request, recv_send_message);
@@ -198,8 +193,7 @@ async fn multiple_messages() {
                         .send(HandlerRequest::Response(
                             addr,
                             Box::new(pong_response.clone()),
-                        ))
-                        .await;
+                        ));
                     if message_count == messages_to_send {
                         return;
                     }
