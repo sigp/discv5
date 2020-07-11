@@ -406,7 +406,6 @@ impl Service {
                     debug!("Sending our ENR to node: {}", node_address);
                     self.handler_send
                         .send(HandlerRequest::Response(node_address, Box::new(response)))
-                       
                         .unwrap_or_else(|_| ());
                 } else {
                     self.send_nodes_response(node_address, id, distance).await;

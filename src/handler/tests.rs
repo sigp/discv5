@@ -63,11 +63,10 @@ async fn simple_session_message() {
         body: RequestBody::Ping { enr_seq: 1 },
     });
 
-    let _ = sender_handler
-        .send(HandlerRequest::Request(
-            receiver_enr.into(),
-            send_message.clone(),
-        ));
+    let _ = sender_handler.send(HandlerRequest::Request(
+        receiver_enr.into(),
+        send_message.clone(),
+    ));
 
     let receiver = async move {
         loop {
@@ -151,11 +150,10 @@ async fn multiple_messages() {
     let messages_to_send = 5usize;
 
     // sender to send the first message then await for the session to be established
-    let _ = sender_handler
-        .send(HandlerRequest::Request(
-            receiver_enr.clone().into(),
-            send_message.clone(),
-        ));
+    let _ = sender_handler.send(HandlerRequest::Request(
+        receiver_enr.clone().into(),
+        send_message.clone(),
+    ));
 
     let mut message_count = 0usize;
     let recv_send_message = send_message.clone();
@@ -166,11 +164,10 @@ async fn multiple_messages() {
                 Some(HandlerResponse::Established(_)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
-                        let _ = sender_handler
-                            .send(HandlerRequest::Request(
-                                receiver_enr.clone().into(),
-                                send_message.clone(),
-                            ));
+                        let _ = sender_handler.send(HandlerRequest::Request(
+                            receiver_enr.clone().into(),
+                            send_message.clone(),
+                        ));
                     }
                 }
                 _ => continue,
@@ -189,11 +186,10 @@ async fn multiple_messages() {
                     assert_eq!(request, recv_send_message);
                     message_count += 1;
                     // required to send a pong response to establish the session
-                    let _ = recv_send
-                        .send(HandlerRequest::Response(
-                            addr,
-                            Box::new(pong_response.clone()),
-                        ));
+                    let _ = recv_send.send(HandlerRequest::Response(
+                        addr,
+                        Box::new(pong_response.clone()),
+                    ));
                     if message_count == messages_to_send {
                         return;
                     }
