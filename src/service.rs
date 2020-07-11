@@ -90,7 +90,7 @@ pub struct Service {
     ip_votes: Option<IpVote>,
 
     /// The channel to send messages to the handler.
-    handler_send: mpsc::Sender<HandlerRequest>,
+    handler_send: mpsc::UnboundedSender<HandlerRequest>,
 
     /// The channel to receive messages from the handler.
     handler_recv: mpsc::Receiver<HandlerResponse>,
@@ -98,6 +98,7 @@ pub struct Service {
     /// The exit channel to shutdown the handler.
     handler_exit: Option<oneshot::Sender<()>>,
 
+    /// The channel of messages sent by the controlling discv5 wrapper.
     discv5_recv: mpsc::Receiver<ServiceRequest>,
 
     exit: oneshot::Receiver<()>,
@@ -249,11 +250,11 @@ impl Service {
                         HandlerResponse::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).await.unwrap_or_else(|_| ());
+                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).unwrap_or_else(|_| ());
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, None)).await.unwrap_or_else(|_| ());
+                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, None)).unwrap_or_else(|_| ());
                             }
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
@@ -405,7 +406,6 @@ impl Service {
                     debug!("Sending our ENR to node: {}", node_address);
                     self.handler_send
                         .send(HandlerRequest::Response(node_address, Box::new(response)))
-                        .await
                         .unwrap_or_else(|_| ());
                 } else {
                     self.send_nodes_response(node_address, id, distance).await;
@@ -450,7 +450,6 @@ impl Service {
                 debug!("Sending PONG response to {}", node_address);
                 self.handler_send
                     .send(HandlerRequest::Response(node_address, Box::new(response)))
-                    .await
                     .unwrap_or_else(|_| ());
             }
             _ => {} //TODO: Implement all RPC methods
@@ -723,7 +722,6 @@ impl Service {
             );
             self.handler_send
                 .send(HandlerRequest::Response(node_address, Box::new(response)))
-                .await
                 .unwrap_or_else(|_| ());
         } else {
             // build the NODES response
@@ -770,7 +768,6 @@ impl Service {
                         node_address.clone(),
                         Box::new(response),
                     ))
-                    .await
                     .unwrap_or_else(|_| ());
             }
         }
@@ -811,7 +808,6 @@ impl Service {
 
         self.handler_send
             .send(HandlerRequest::Request(contact, Box::new(request)))
-            .await
             .unwrap_or_else(|_| ());
     }
 
