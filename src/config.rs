@@ -25,7 +25,7 @@ pub struct Discv5Config {
     /// The session timeout for each node. Default: 1 day.
     pub session_timeout: Duration,
 
-    /// The maximum number of established sessions to maintain. Default: 100.
+    /// The maximum number of established sessions to maintain. Default: 1000.
     pub session_cache_capacity: usize,
 
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
@@ -72,7 +72,7 @@ impl Default for Discv5Config {
             query_timeout: Duration::from_secs(60),
             request_retries: 1,
             session_timeout: Duration::from_secs(86400),
-            session_cache_capacity: 100,
+            session_cache_capacity: 1000,
             enr_update: true,
             enr_peer_update_min: 10,
             query_parallelism: 3,
