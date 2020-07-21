@@ -37,7 +37,6 @@
 
 use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder};
 use futures::prelude::*;
-use hex_literal::*;
 use std::{
     net::{Ipv4Addr, SocketAddr},
     time::Duration,
@@ -65,7 +64,8 @@ async fn main() {
     };
 
     // A fixed key for testing
-    let raw_key = hex!("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291");
+    let raw_key =
+        hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291").unwrap();
     let secret_key = secp256k1::SecretKey::parse_slice(&raw_key).unwrap();
     let mut enr_key = CombinedKey::from(secret_key);
 

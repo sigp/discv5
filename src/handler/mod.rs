@@ -899,6 +899,12 @@ impl Handler {
 
             // Remove the expected response
             self.remove_expected_response(node_address.socket_addr.clone());
+
+            let auth_tag = request_call
+                .packet
+                .auth_tag()
+                .expect("No challenge packet in response");
+            self.active_requests_auth.remove(auth_tag);
             // The request matches report the response
             self.outbound_channel
                 .send(HandlerResponse::Response(
