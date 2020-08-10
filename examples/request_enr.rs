@@ -44,7 +44,7 @@ async fn main() {
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // start the discv5 service
-    discv5.start(listen_addr);
+    discv5.start(listen_addr).unwrap();
 
     // search for the ENR
     match discv5.request_enr(multiaddr).await {

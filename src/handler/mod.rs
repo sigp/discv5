@@ -194,11 +194,14 @@ impl Handler {
         key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
         config: Discv5Config,
-    ) -> (
-        oneshot::Sender<()>,
-        mpsc::UnboundedSender<HandlerRequest>,
-        mpsc::Receiver<HandlerResponse>,
-    ) {
+    ) -> Result<
+        (
+            oneshot::Sender<()>,
+            mpsc::UnboundedSender<HandlerRequest>,
+            mpsc::Receiver<HandlerResponse>,
+        ),
+        std::io::Error,
+    > {
         let (exit_sender, exit) = oneshot::channel();
         // create the channels to send/receive messages from the application
         let (inbound_send, inbound_channel) = mpsc::unbounded_channel();
@@ -234,13 +237,13 @@ impl Handler {
 
         let node_id = enr.read().node_id();
 
+        let socket = socket::Socket::new(socket_config)?;
+
         config
             .executor
             .clone()
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
-                let socket = socket::Socket::new(socket_config);
-
                 let mut handler = Handler {
                     request_retries: config.request_retries,
                     node_id,
@@ -265,7 +268,7 @@ impl Handler {
                 handler.start().await;
             }));
 
-        (exit_sender, inbound_send, outbound_recv)
+        Ok((exit_sender, inbound_send, outbound_recv))
     }
 
     /// The main execution loop for the handler.

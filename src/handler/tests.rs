@@ -49,14 +49,16 @@ async fn simple_session_message() {
         arc_rw!(key1),
         sender_enr.udp_socket().unwrap(),
         config.clone(),
-    );
+    )
+    .unwrap();
 
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_enr.udp_socket().unwrap(),
         config,
-    );
+    )
+    .unwrap();
 
     let send_message = Box::new(Request {
         id: 1,
@@ -124,14 +126,16 @@ async fn multiple_messages() {
         arc_rw!(key1),
         sender_enr.udp_socket().unwrap(),
         config.clone(),
-    );
+    )
+    .unwrap();
 
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_enr.udp_socket().unwrap(),
         config,
-    );
+    )
+    .unwrap();
 
     let send_message = Box::new(Request {
         id: 1,

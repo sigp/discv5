@@ -38,7 +38,8 @@ fn build_service(
         enr_key.clone(),
         listen_socket,
         config.clone(),
-    );
+    )
+    .unwrap();
 
     let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
         local_enr.read().node_id().into(),

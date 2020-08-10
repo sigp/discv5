@@ -151,7 +151,7 @@ impl Service {
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
         listen_socket: SocketAddr,
-    ) -> (oneshot::Sender<()>, mpsc::Sender<ServiceRequest>) {
+    ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
             Some(IpVote::new(config.enr_peer_update_min))
@@ -165,7 +165,7 @@ impl Service {
             enr_key.clone(),
             listen_socket,
             config.clone(),
-        );
+        )?;
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
@@ -198,7 +198,7 @@ impl Service {
                 service.start().await;
             }));
 
-        (exit_send, discv5_send)
+        Ok((exit_send, discv5_send))
     }
 
     /// The main execution loop of the discv5 serviced.

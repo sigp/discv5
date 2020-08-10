@@ -11,12 +11,20 @@ pub enum Discv5Error {
     InvalidSignature,
     ServiceChannelClosed,
     ServiceNotStarted,
+    ServiceAlreadyStarted,
     SessionNotEstablished,
     RLPError(DecoderError),
     EncryptionFail(String),
     DecryptionFail(String),
     Custom(&'static str),
     Error(String),
+    Io(std::io::Error),
+}
+
+impl From<std::io::Error> for Discv5Error {
+    fn from(err: std::io::Error) -> Discv5Error {
+        Discv5Error::Io(err)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

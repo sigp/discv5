@@ -160,10 +160,10 @@ impl Discv5 {
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
-    pub fn start(&mut self, listen_socket: SocketAddr) {
+    pub fn start(&mut self, listen_socket: SocketAddr) -> Result<(), Discv5Error> {
         if self.service_channel.is_some() {
             warn!("Service is already started");
-            return;
+            return Err(Discv5Error::ServiceAlreadyStarted);
         }
 
         // create the main service
@@ -173,9 +173,10 @@ impl Discv5 {
             self.kbuckets.clone(),
             self.config.clone(),
             listen_socket,
-        );
+        )?;
         self.service_exit = Some(service_exit);
         self.service_channel = Some(service_channel);
+        Ok(())
     }
 
     /// Terminates the service.

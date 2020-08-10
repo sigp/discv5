@@ -62,7 +62,7 @@ fn main() {
     }
 
     // start the discv5 service
-    discv5.start(listen_addr);
+    discv5.start(listen_addr).unwrap();
     println!("Server started");
 
     runtime.block_on(async {
