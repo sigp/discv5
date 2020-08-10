@@ -50,3 +50,4 @@ rand_core = "0.5.1"
 
 [features]
 libp2p = ["libp2p-core", "multihash"]
+openssl-vendored = ["openssl/vendored"]
