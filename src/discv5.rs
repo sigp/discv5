@@ -290,7 +290,7 @@ impl Discv5 {
     /// and block all incoming packets from the node.
     pub fn ban_node(&mut self, node_id: &NodeId) {
         self.remove_node(node_id);
-        PERMIT_BAN_LIST.write().ban_nodes.insert(node_id.clone());
+        PERMIT_BAN_LIST.write().ban_nodes.insert(*node_id);
     }
 
     /// Removes a banned node from the banned list.
@@ -300,7 +300,7 @@ impl Discv5 {
 
     /// Permits a node, allowing the node to bypass the packet filter.  
     pub fn permit_node(&mut self, node_id: &NodeId) {
-        PERMIT_BAN_LIST.write().permit_nodes.insert(node_id.clone());
+        PERMIT_BAN_LIST.write().permit_nodes.insert(*node_id);
     }
 
     /// Removes a node from the permit list.

@@ -187,6 +187,11 @@ pub struct Handler {
     exit: oneshot::Receiver<()>,
 }
 
+type HandlerReturn = (
+    oneshot::Sender<()>,
+    mpsc::UnboundedSender<HandlerRequest>,
+    mpsc::Receiver<HandlerResponse>,
+);
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
     pub(crate) fn spawn(
@@ -194,14 +199,7 @@ impl Handler {
         key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
         config: Discv5Config,
-    ) -> Result<
-        (
-            oneshot::Sender<()>,
-            mpsc::UnboundedSender<HandlerRequest>,
-            mpsc::Receiver<HandlerResponse>,
-        ),
-        std::io::Error,
-    > {
+    ) -> Result<HandlerReturn, std::io::Error> {
         let (exit_sender, exit) = oneshot::channel();
         // create the channels to send/receive messages from the application
         let (inbound_send, inbound_channel) = mpsc::unbounded_channel();
@@ -237,13 +235,21 @@ impl Handler {
 
         let node_id = enr.read().node_id();
 
-        let socket = socket::Socket::new(socket_config)?;
+        let udp_socket = socket::Socket::new_socket(socket_config.socket_addr)?;
 
         config
             .executor
             .clone()
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
+                let socket = match socket::Socket::new(udp_socket, socket_config) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!("Could not bind UDP socket. {}", e);
+                        return;
+                    }
+                };
+
                 let mut handler = Handler {
                     request_retries: config.request_retries,
                     node_id,
@@ -368,7 +374,7 @@ impl Handler {
         if request_call.retries >= self.request_retries {
             trace!("Request timed out with {}", node_address);
             // Remove the request from the awaiting packet_filter
-            self.remove_expected_response(node_address.socket_addr.clone());
+            self.remove_expected_response(node_address.socket_addr);
             self.fail_request(request_call, RequestError::Timeout).await;
         } else {
             // increment the request retry count and restart the timeout
@@ -377,11 +383,8 @@ impl Handler {
                 request_call.request,
                 node_address
             );
-            self.send(
-                node_address.socket_addr.clone(),
-                request_call.packet.clone(),
-            )
-            .await;
+            self.send(node_address.socket_addr, request_call.packet.clone())
+                .await;
             request_call.retries += 1;
             self.active_requests.insert(node_address, request_call);
         }
@@ -434,8 +437,8 @@ impl Handler {
         self.active_requests_auth
             .insert(auth_tag, node_address.clone());
         // let the filter know we are expecting a response
-        self.add_expected_response(node_address.socket_addr.clone());
-        self.send(node_address.socket_addr.clone(), packet).await;
+        self.add_expected_response(node_address.socket_addr);
+        self.send(node_address.socket_addr, packet).await;
         self.active_requests.insert(node_address, call);
         Ok(())
     }
@@ -901,7 +904,7 @@ impl Handler {
             }
 
             // Remove the expected response
-            self.remove_expected_response(node_address.socket_addr.clone());
+            self.remove_expected_response(node_address.socket_addr);
 
             let auth_tag = request_call
                 .packet

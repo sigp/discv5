@@ -38,26 +38,36 @@ pub struct Socket {
 }
 
 impl Socket {
+    // Creates a std UDP Socket which can be called outside of a tokio execution environment. These
+    // verifies the creation of the socket. Once established we create the underlying Recv and Send
+    // Handlers with the `new()` function.
+    pub(crate) fn new_socket(
+        socket_addr: SocketAddr,
+    ) -> Result<std::net::UdpSocket, std::io::Error> {
+        // set up the UDP socket
+        #[cfg(unix)]
+        fn platform_specific(s: &net2::UdpBuilder) -> std::io::Result<()> {
+            net2::unix::UnixUdpBuilderExt::reuse_port(s, true)?;
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        fn platform_specific(_: &net2::UdpBuilder) -> std::io::Result<()> {
+            Ok(())
+        }
+        let builder = net2::UdpBuilder::new_v4()?;
+        builder.reuse_address(true)?;
+
+        platform_specific(&builder)?;
+        builder.bind(socket_addr)
+    }
+
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
-    pub(crate) fn new(config: SocketConfig) -> Result<Self, std::io::Error> {
-        // set up the UDP socket
-        let socket = {
-            #[cfg(unix)]
-            fn platform_specific(s: &net2::UdpBuilder) -> std::io::Result<()> {
-                net2::unix::UnixUdpBuilderExt::reuse_port(s, true)?;
-                Ok(())
-            }
-            #[cfg(not(unix))]
-            fn platform_specific(_: &net2::UdpBuilder) -> std::io::Result<()> {
-                Ok(())
-            }
-            let builder = net2::UdpBuilder::new_v4()?;
-            builder.reuse_address(true)?;
-
-            platform_specific(&builder)?;
-            builder.bind(config.socket_addr)?
-        };
+    /// This needs to be run inside of a tokio executor.
+    pub(crate) fn new(
+        socket: std::net::UdpSocket,
+        config: SocketConfig,
+    ) -> Result<Self, std::io::Error> {
         let socket = tokio::net::UdpSocket::from_std(socket)?;
 
         // split the UDP socket

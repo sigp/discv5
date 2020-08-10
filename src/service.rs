@@ -590,7 +590,7 @@ impl Service {
                     // perform ENR majority-based update if required.
                     let local_socket = self.local_enr.read().udp_socket();
                     if let Some(ref mut ip_votes) = self.ip_votes {
-                        ip_votes.insert(node_id, socket.clone());
+                        ip_votes.insert(node_id, socket);
                         if let Some(majority_socket) = ip_votes.majority() {
                             if Some(majority_socket) != local_socket {
                                 info!("Local UDP socket updated to: {}", majority_socket);
@@ -966,7 +966,7 @@ impl Service {
     async fn inject_session_established(&mut self, enr: Enr) {
         let node_id = enr.node_id();
         debug!("Session established with Node: {}", node_id);
-        self.connection_updated(node_id.clone(), Some(enr.clone()), NodeStatus::Connected)
+        self.connection_updated(node_id, Some(enr.clone()), NodeStatus::Connected)
             .await;
         // send an initial ping and start the ping interval
         self.send_ping(enr).await;
