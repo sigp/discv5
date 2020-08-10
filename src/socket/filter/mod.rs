@@ -56,7 +56,7 @@ impl Filter {
 
         // Add the un-solicited request to the cache
         // If this is over the maximum requests per ENFORCED_SIZE_TIME, it will be rejected and return false.
-        let result = self.raw_packets_received.insert_reset(src.clone());
+        let result = self.raw_packets_received.insert_reset(*src);
 
         // build the metrics
         METRICS

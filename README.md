@@ -72,7 +72,7 @@ A simple example of creating this service is as follows:
    // discv5.add_enr(<ENR>)
 
    // start the discv5 server
-   discv5.start(listen_addr);
+   discv5.start(listen_addr).unwrap();
 
    // run a find_node query
    runtime.block_on(async {

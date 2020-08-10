@@ -50,7 +50,7 @@ async fn main() {
     }
 
     // start the discv5 service
-    discv5.start(listen_addr);
+    discv5.start(listen_addr).unwrap();
     println!("Server started");
 
     // get an event stream

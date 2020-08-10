@@ -39,7 +39,7 @@ fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
         // transport for building a swarm
         let socket_addr = enr.udp_socket().unwrap();
         let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-        discv5.start(socket_addr);
+        discv5.start(socket_addr).unwrap();
         nodes.push(discv5);
     }
     nodes
@@ -62,7 +62,7 @@ fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Disc
 
         let socket_addr = enr.udp_socket().unwrap();
         let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-        discv5.start(socket_addr);
+        discv5.start(socket_addr).unwrap();
         nodes.push(discv5);
     }
     nodes

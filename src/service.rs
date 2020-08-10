@@ -151,7 +151,7 @@ impl Service {
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
         listen_socket: SocketAddr,
-    ) -> (oneshot::Sender<()>, mpsc::Sender<ServiceRequest>) {
+    ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
             Some(IpVote::new(config.enr_peer_update_min))
@@ -165,7 +165,7 @@ impl Service {
             enr_key.clone(),
             listen_socket,
             config.clone(),
-        );
+        )?;
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
@@ -198,7 +198,7 @@ impl Service {
                 service.start().await;
             }));
 
-        (exit_send, discv5_send)
+        Ok((exit_send, discv5_send))
     }
 
     /// The main execution loop of the discv5 serviced.
@@ -590,7 +590,7 @@ impl Service {
                     // perform ENR majority-based update if required.
                     let local_socket = self.local_enr.read().udp_socket();
                     if let Some(ref mut ip_votes) = self.ip_votes {
-                        ip_votes.insert(node_id, socket.clone());
+                        ip_votes.insert(node_id, socket);
                         if let Some(majority_socket) = ip_votes.majority() {
                             if Some(majority_socket) != local_socket {
                                 info!("Local UDP socket updated to: {}", majority_socket);
@@ -966,7 +966,7 @@ impl Service {
     async fn inject_session_established(&mut self, enr: Enr) {
         let node_id = enr.node_id();
         debug!("Session established with Node: {}", node_id);
-        self.connection_updated(node_id.clone(), Some(enr.clone()), NodeStatus::Connected)
+        self.connection_updated(node_id, Some(enr.clone()), NodeStatus::Connected)
             .await;
         // send an initial ping and start the ping interval
         self.send_ping(enr).await;
