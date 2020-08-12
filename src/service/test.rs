@@ -127,7 +127,7 @@ async fn test_updating_connection_on_ping() {
     );
 
     // Handle the ping and expect the disconnected Node to become connected
-    service.handle_rpc_response(response).await;
+    service.handle_rpc_response(response);
     let buckets = service.kbuckets.read();
     let node = buckets.iter_ref().next().unwrap();
     assert_eq!(node.status, NodeStatus::Connected);
