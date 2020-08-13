@@ -103,7 +103,7 @@ async fn main() {
     let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
 
     // the address to listen on
-    let socket_addr = SocketAddr::new(address.into(), port);
+    let socket_addr = SocketAddr::new("0.0.0.0".parse().expect("valid ip"), port);
 
     // construct the discv5 server
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
