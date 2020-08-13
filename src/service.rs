@@ -225,7 +225,7 @@ impl Service {
                             }
                         }
                         ServiceRequest::FindEnr(node_contact, callback) => {
-                            self.request_enr(node_contact, Some(callback)).await;
+                            self.request_enr(node_contact, Some(callback));
                         }
                         ServiceRequest::RequestEventStream(callback) => {
                             let (event_stream, event_stream_recv) = mpsc::channel(30);
@@ -239,13 +239,13 @@ impl Service {
                 Some(event) = &mut self.handler_recv.next() => {
                     match event {
                         HandlerResponse::Established(enr) => {
-                            self.inject_session_established(enr).await;
+                            self.inject_session_established(enr);
                         }
                         HandlerResponse::Request(node_address, request) => {
-                                self.handle_rpc_request(node_address, *request).await;
+                                self.handle_rpc_request(node_address, *request);
                             }
                         HandlerResponse::Response(_, response) => {
-                                self.handle_rpc_response(*response).await;
+                                self.handle_rpc_response(*response);
                             }
                         HandlerResponse::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
@@ -259,7 +259,7 @@ impl Service {
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
                             trace!("RPC Request failed: id: {}, error {:?}", request_id, error);
-                            self.rpc_failure(request_id, error).await;
+                            self.rpc_failure(request_id, error);
                         }
                     }
                 }
@@ -269,7 +269,7 @@ impl Service {
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
                         QueryEvent::Waiting(query_id, node_id, request_body) => {
-                            self.send_rpc_query(query_id, node_id, request_body).await;
+                            self.send_rpc_query(query_id, node_id, request_body);
                         }
                         // Note: Currently the distinction between a timed-out query and a finished
                         // query is superfluous, however it may be useful in future versions.
@@ -297,7 +297,7 @@ impl Service {
                     }
                 }
                 _ = self.ping_heartbeat.next() => {
-                    self.ping_connected_peers().await;
+                    self.ping_connected_peers();
                 }
             }
         }
@@ -390,7 +390,7 @@ impl Service {
 
     /// Processes an RPC request from a peer. Requests respond to the received socket address,
     /// rather than the IP of the known ENR.
-    async fn handle_rpc_request(&mut self, node_address: NodeAddress, req: Request) {
+    fn handle_rpc_request(&mut self, node_address: NodeAddress, req: Request) {
         let id = req.id;
         match req.body {
             RequestBody::FindNode { distance } => {
@@ -408,7 +408,7 @@ impl Service {
                         .send(HandlerRequest::Response(node_address, Box::new(response)))
                         .unwrap_or_else(|_| ());
                 } else {
-                    self.send_nodes_response(node_address, id, distance).await;
+                    self.send_nodes_response(node_address, id, distance);
                 }
             }
             RequestBody::Ping { enr_seq } => {
@@ -434,7 +434,7 @@ impl Service {
                     }
                 }
                 if let Some(enr) = to_request_enr {
-                    self.request_enr(enr, None).await;
+                    self.request_enr(enr, None);
                 }
 
                 // build the PONG response
@@ -457,7 +457,7 @@ impl Service {
     }
 
     /// Processes an RPC response from a peer.
-    async fn handle_rpc_response(&mut self, response: Response) {
+    fn handle_rpc_response(&mut self, response: Response) {
         // verify we know of the rpc_id
         let id = response.id;
 
@@ -603,7 +603,7 @@ impl Service {
                                     .is_ok()
                                 {
                                     // alert known peers to our updated enr
-                                    self.ping_connected_peers().await;
+                                    self.ping_connected_peers();
                                 }
                             }
                         }
@@ -621,10 +621,9 @@ impl Service {
                                 query_id: None,
                                 callback: None,
                             };
-                            self.send_rpc_request(active_request).await;
+                            self.send_rpc_request(active_request);
                         }
-                        self.connection_updated(node_id, Some(enr), NodeStatus::Connected)
-                            .await;
+                        self.connection_updated(node_id, Some(enr), NodeStatus::Connected);
                     }
                 }
                 _ => {} //TODO: Implement all RPC methods
@@ -640,7 +639,7 @@ impl Service {
     // Send RPC Requests //
 
     /// Sends a PING request to a node.
-    async fn send_ping(&mut self, enr: Enr) {
+    fn send_ping(&mut self, enr: Enr) {
         let request_body = RequestBody::Ping {
             enr_seq: self.local_enr.read().seq(),
         };
@@ -650,10 +649,10 @@ impl Service {
             query_id: None,
             callback: None,
         };
-        self.send_rpc_request(active_request).await;
+        self.send_rpc_request(active_request);
     }
 
-    async fn ping_connected_peers(&mut self) {
+    fn ping_connected_peers(&mut self) {
         // maintain the ping interval
         let connected_peers = {
             let mut kbuckets = self.kbuckets.write();
@@ -670,12 +669,12 @@ impl Service {
         };
 
         for enr in connected_peers {
-            self.send_ping(enr.clone()).await;
+            self.send_ping(enr.clone());
         }
     }
 
     /// Request an external node's ENR.
-    async fn request_enr(
+    fn request_enr(
         &mut self,
         contact: NodeContact,
         callback: Option<oneshot::Sender<Option<Enr>>>,
@@ -687,12 +686,12 @@ impl Service {
             query_id: None,
             callback,
         };
-        self.send_rpc_request(active_request).await;
+        self.send_rpc_request(active_request);
     }
 
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
     /// into multiple responses to ensure the response stays below the maximum packet size.
-    async fn send_nodes_response(&mut self, node_address: NodeAddress, rpc_id: u64, distance: u64) {
+    fn send_nodes_response(&mut self, node_address: NodeAddress, rpc_id: u64, distance: u64) {
         let nodes: Vec<Enr> = {
             let mut kbuckets = self.kbuckets.write();
             kbuckets
@@ -774,7 +773,7 @@ impl Service {
     }
 
     /// Constructs and sends a request RPC to the session service given a `QueryInfo`.
-    async fn send_rpc_query(
+    fn send_rpc_query(
         &mut self,
         query_id: QueryId,
         return_peer: NodeId,
@@ -788,14 +787,14 @@ impl Service {
                 query_id: Some(query_id),
                 callback: None,
             };
-            self.send_rpc_request(active_request).await;
+            self.send_rpc_request(active_request);
         } else {
             error!("Query {} requested an unknown ENR", *query_id);
         }
     }
 
     /// Sends generic RPC requests. Each request gets added to known outputs, awaiting a response.
-    async fn send_rpc_request(&mut self, active_request: ActiveRequest) {
+    fn send_rpc_request(&mut self, active_request: ActiveRequest) {
         // Generate a random rpc_id which is matched per node id
         let id: u64 = rand::random();
         let request: Request = Request {
@@ -882,7 +881,7 @@ impl Service {
     }
 
     /// Update the connection status of a node in the routing table.
-    async fn connection_updated(
+    fn connection_updated(
         &mut self,
         node_id: NodeId,
         enr: Option<Enr>,
@@ -956,25 +955,24 @@ impl Service {
         }
         if let Some(node_id) = ping_peer {
             if let Some(enr) = self.find_enr(&node_id) {
-                self.send_ping(enr).await;
+                self.send_ping(enr);
             }
         }
     }
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    async fn inject_session_established(&mut self, enr: Enr) {
+    fn inject_session_established(&mut self, enr: Enr) {
         let node_id = enr.node_id();
         debug!("Session established with Node: {}", node_id);
-        self.connection_updated(node_id, Some(enr.clone()), NodeStatus::Connected)
-            .await;
+        self.connection_updated(node_id, Some(enr.clone()), NodeStatus::Connected);
         // send an initial ping and start the ping interval
-        self.send_ping(enr).await;
+        self.send_ping(enr);
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
-    async fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
+    fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
         trace!("RPC Error removing request. Reason: {:?}, id {}", error, id);
         if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
@@ -1037,8 +1035,7 @@ impl Service {
                 }
             }
 
-            self.connection_updated(node_id, None, NodeStatus::Disconnected)
-                .await;
+            self.connection_updated(node_id, None, NodeStatus::Disconnected);
         }
     }
 
