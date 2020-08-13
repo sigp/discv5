@@ -15,7 +15,7 @@ pub enum Discv5Error {
     SessionNotEstablished,
     RLPError(DecoderError),
     EncryptionFail(String),
-    DecryptionFail(String),
+    DecryptionFailed(&'static str),
     Custom(&'static str),
     Error(String),
     Io(std::io::Error),

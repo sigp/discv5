@@ -8,10 +8,14 @@
 use crate::error::Discv5Error;
 use crate::node_info::NodeContact;
 use crate::packet::{AuthHeader, AuthResponse, AuthTag, Nonce};
+use crypto::{
+    aead::{AeadDecryptor, AeadEncryptor},
+    aes::KeySize,
+    aes_gcm::AesGcm,
+};
 use ecdh_ident::EcdhIdent;
 use enr::{CombinedKey, CombinedPublicKey, NodeId};
 use hkdf::Hkdf;
-use openssl::symm::{decrypt_aead, encrypt_aead, Cipher};
 use secp256k1::Signature;
 use sha2::{Digest, Sha256};
 
@@ -196,23 +200,24 @@ pub(crate) fn decrypt_message(
     aad: &[u8],
 ) -> Result<Vec<u8>, Discv5Error> {
     if message.len() < 16 {
-        return Err(Discv5Error::DecryptionFail(
-            "Message not long enough to contain a MAC".into(),
+        return Err(Discv5Error::DecryptionFailed(
+            "Message not long enough to contain a MAC",
         ));
     }
 
     let mut mac: [u8; 16] = Default::default();
     mac.copy_from_slice(&message[message.len() - 16..]);
+    let ciphertext = &message[..message.len() - 16];
 
-    decrypt_aead(
-        Cipher::aes_128_gcm(),
-        key,
-        Some(&nonce),
-        aad,
-        &message[..message.len() - 16],
-        &mac,
-    )
-    .map_err(|e| Discv5Error::DecryptionFail(format!("Could not decrypt message. Error: {:?}", e)))
+    let mut decryptor = AesGcm::new(KeySize::KeySize128, key, &nonce, aad);
+
+    let mut decrypt_buffer: Vec<u8> = std::iter::repeat(0).take(ciphertext.len()).collect();
+
+    if decryptor.decrypt(ciphertext, &mut decrypt_buffer, &mac) {
+        Ok(decrypt_buffer)
+    } else {
+        Err(Discv5Error::DecryptionFailed("Decryption failed"))
+    }
 }
 
 /* Encryption related functions */
@@ -226,19 +231,16 @@ pub(crate) fn encrypt_message(
     aad: &[u8],
 ) -> Result<Vec<u8>, Discv5Error> {
     let mut mac: [u8; 16] = Default::default();
-    let mut msg_cipher = encrypt_aead(
-        Cipher::aes_128_gcm(),
-        key,
-        Some(&nonce),
-        aad,
-        message,
-        &mut mac,
-    )
-    .map_err(|e| Discv5Error::EncryptionFail(format!("{:?}", e)))?;
+
+    let mut encryptor = AesGcm::new(KeySize::KeySize128, key, &nonce, aad);
+
+    let mut ciphertext: Vec<u8> = std::iter::repeat(0).take(message.len()).collect();
+
+    encryptor.encrypt(message, &mut ciphertext, &mut mac);
 
     // concat the ciphertext with the MAC
-    msg_cipher.append(&mut mac.to_vec());
-    Ok(msg_cipher)
+    ciphertext.append(&mut mac.to_vec());
+    Ok(ciphertext)
 }
 
 #[cfg(test)]
@@ -394,14 +396,14 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt() {
-        let tag: Tag = rand::random();
+        // aad
+        let aad: Tag = rand::random();
         let msg: Vec<u8> = vec![1, 2, 3, 4, 5, 6];
         let key: Key = rand::random();
         let nonce: AuthTag = rand::random();
 
-        let cipher = encrypt_message(&key, nonce, &msg, &tag).unwrap();
-
-        let plain_text = decrypt_message(&key, nonce, &cipher, &tag).unwrap();
+        let cipher = encrypt_message(&key, nonce, &msg, &aad).unwrap();
+        let plain_text = decrypt_message(&key, nonce, &cipher, &aad).unwrap();
 
         assert_eq!(plain_text, msg);
     }
