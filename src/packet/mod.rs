@@ -51,7 +51,7 @@ pub enum Packet {
     /// Handshake packet to establish identities.
     WhoAreYou {
         /// SHA256(`dest-node-id` || "WHOAREYOU").
-        magic: [u8; MAGIC_LENGTH],
+        magic: Magic,
 
         /// The auth-tag of the request.
         auth_tag: AuthTag,
