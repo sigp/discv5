@@ -193,42 +193,19 @@ pub(crate) fn decrypt_authentication_header(
 pub(crate) fn decrypt_message(
     key: &Key,
     nonce: AuthTag,
-    message: &[u8],
+    msg: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>, Discv5Error> {
-    if message.len() < 16 {
+    if msg.len() < 16 {
         return Err(Discv5Error::DecryptionFailed(
             "Message not long enough to contain a MAC",
         ));
     }
 
     let aead = Aes128Gcm::new(GenericArray::from_slice(key));
-    let payload = Payload { msg: message, aad };
+    let payload = Payload { msg, aad };
     aead.decrypt(GenericArray::from_slice(&nonce), payload)
         .map_err(|_| Discv5Error::DecryptionFailed("Decryption failed"))
-    /*
-    let data = base64::decode(value).map_err(|_| "bad base64 value")?;
-    if data.len() <= NONCE_LEN {
-        return Err("length of decoded data is <= NONCE_LEN");
-    }
-
-    let (nonce, cipher) = data.split_at(NONCE_LEN);
-    let payload = Payload { msg: cipher, aad: name.as_bytes() };
-
-    let aead = Aes256Gcm::new(GenericArray::from_slice(&self.key));
-    aead.decrypt(GenericArray::from_slice(nonce), payload)
-        .map_err(|_| "invalid key/nonce/value: bad seal")
-        .and_then(|s| String::from_utf8(s).map_err(|_| "bad unsealed utf8"))*/
-    // let mut decryptor = AesGcm::new(KeySize::KeySize128, key, &nonce, aad);
-    //
-    // let mut decrypt_buffer: Vec<u8> = std::iter::repeat(0).take(ciphertext.len()).collect();
-    //
-    // if decryptor.decrypt(ciphertext, &mut decrypt_buffer, &mac) {
-    //     Ok(decrypt_buffer)
-    // } else {
-    //     Err(Discv5Error::DecryptionFailed("Decryption failed"))
-    // }
-    // todo!()
 }
 
 /* Encryption related functions */
@@ -238,11 +215,11 @@ pub(crate) fn decrypt_message(
 pub(crate) fn encrypt_message(
     key: &Key,
     nonce: AuthTag,
-    message: &[u8],
+    msg: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>, Discv5Error> {
     let aead = Aes128Gcm::new(GenericArray::from_slice(key));
-    let payload = Payload { msg: message, aad };
+    let payload = Payload { msg, aad };
     aead.encrypt(GenericArray::from_slice(&nonce), payload)
         .map_err(|_| Discv5Error::DecryptionFailed("Decryption failed"))
 }
