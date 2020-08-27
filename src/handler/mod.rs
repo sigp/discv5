@@ -33,6 +33,7 @@ use futures::prelude::*;
 use log::{debug, error, trace, warn};
 use lru_time_cache::LruCache;
 use parking_lot::RwLock;
+use sha2::digest::generic_array::{typenum::U32, GenericArray};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::{collections::HashMap, default::Default, net::SocketAddr, sync::atomic::Ordering};
@@ -157,6 +158,9 @@ pub struct Handler {
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
     /// during the operation of the server.
     node_id: NodeId,
+    /// Hash of the local node-id to avoid recalculating it.  For example, each time a Random Packet is
+    /// received the hash(node_id) must be performed to determine the src_node_id
+    node_id_hash: GenericArray<u8, U32>,
     /// The local ENR.
     enr: Arc<RwLock<Enr>>,
     /// The key to sign the ENR and set up encrypted communication with peers.
@@ -234,6 +238,7 @@ impl Handler {
         };
 
         let node_id = enr.read().node_id();
+        let node_id_hash = Sha256::digest(&node_id.raw());
 
         let udp_socket = socket::Socket::new_socket(socket_config.socket_addr)?;
 
@@ -253,6 +258,7 @@ impl Handler {
                 let mut handler = Handler {
                     request_retries: config.request_retries,
                     node_id,
+                    node_id_hash,
                     enr,
                     key,
                     active_requests: HashMapDelay::new(config.request_timeout),
@@ -333,7 +339,7 @@ impl Handler {
                 auth_tag,
                 message,
             } => {
-                let src_id = self.src_id(&tag);
+                let src_id = Handler::src_id(&tag, self.node_id_hash);
                 let node_address = NodeAddress {
                     node_id: src_id,
                     socket_addr: inbound_packet.src,
@@ -681,7 +687,7 @@ impl Handler {
         // Needs to match an outgoing challenge packet (so we have the required nonce to be signed). If it doesn't we drop the packet.
         // This will lead to future outgoing challenges if they proceed to send further encrypted
         // packets.
-        let src_id = self.src_id(&tag);
+        let src_id = Handler::src_id(&tag, self.node_id_hash);
         trace!("Received an Authentication header message from: {}", src_id);
 
         let node_address = NodeAddress {
@@ -928,8 +934,7 @@ impl Handler {
     }
 
     /// Calculates the src `NodeId` given a tag.
-    fn src_id(&self, tag: &Tag) -> NodeId {
-        let hash = Sha256::digest(&self.node_id.raw());
+    fn src_id(tag: &Tag, hash: GenericArray<u8, U32>) -> NodeId {
         let mut src_id: [u8; 32] = Default::default();
         for i in 0..32 {
             src_id[i] = hash[i] ^ tag[i];
