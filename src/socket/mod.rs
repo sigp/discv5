@@ -45,20 +45,22 @@ impl Socket {
         socket_addr: SocketAddr,
     ) -> Result<std::net::UdpSocket, std::io::Error> {
         // set up the UDP socket
-        #[cfg(unix)]
-        fn platform_specific(s: &net2::UdpBuilder) -> std::io::Result<()> {
-            net2::unix::UnixUdpBuilderExt::reuse_port(s, true)?;
-            Ok(())
-        }
-        #[cfg(not(unix))]
-        fn platform_specific(_: &net2::UdpBuilder) -> std::io::Result<()> {
-            Ok(())
-        }
-        let builder = net2::UdpBuilder::new_v4()?;
-        builder.reuse_address(true)?;
+        let socket = {
+            let domain = match socket_addr {
+                SocketAddr::V4(_) => socket2::Domain::ipv4(),
 
-        platform_specific(&builder)?;
-        builder.bind(socket_addr)
+                SocketAddr::V6(_) => socket2::Domain::ipv6(),
+            };
+            socket2::Socket::new(
+                domain,
+                socket2::Type::dgram(),
+                Some(socket2::Protocol::udp()),
+            )?
+        };
+        socket.reuse_address()?;
+        socket.bind(&socket_addr.into())?;
+        socket.listen(128)?;
+        Ok(socket.into_udp_socket())
     }
 
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
