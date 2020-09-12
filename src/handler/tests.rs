@@ -3,7 +3,6 @@ use super::*;
 use crate::rpc::{Request, Response};
 use crate::{Discv5ConfigBuilder, TokioExecutor};
 use enr::EnrBuilder;
-use std::convert::TryInto;
 use std::net::IpAddr;
 use std::time::Duration;
 use tokio::time::delay_for;
