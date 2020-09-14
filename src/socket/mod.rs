@@ -54,8 +54,7 @@ impl Socket {
             socket2::Socket::new(
                 domain,
                 socket2::Type::dgram(),
-                //Some(socket2::Protocol::udp()),
-                None,
+                Some(socket2::Protocol::udp()),
             )?
         };
         socket.reuse_address()?;
