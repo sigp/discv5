@@ -30,6 +30,10 @@ pub(crate) struct Session {
     ///
     /// This field holds the request_id associated with the ENR request.
     pub awaiting_enr: Option<RequestId>,
+
+    /// Number of messages sent. Used to ensure the nonce used in message encryption is always
+    /// unique.
+    counter: u32,
 }
 
 impl Session {
@@ -38,6 +42,7 @@ impl Session {
             keys,
             awaiting_keys: None,
             awaiting_enr: None,
+            counter: 0,
         }
     }
 
@@ -50,9 +55,17 @@ impl Session {
 
     /// Uses the current `Session` to encrypt a message. Encrypt packets with the current session
     /// key if we are awaiting a response from AuthMessage.
-    pub(crate) fn encrypt_message(&self, tag: Tag, message: &[u8]) -> Result<Packet, Discv5Error> {
-        //TODO: Establish a counter to prevent repeats of nonce
-        let auth_tag: AuthTag = rand::random();
+    pub(crate) fn encrypt_message(
+        &mut self,
+        tag: Tag,
+        message: &[u8],
+    ) -> Result<Packet, Discv5Error> {
+        self.counter += 1;
+
+        let random_nonce: [u8; 8] = rand::random();
+        let mut auth_tag: AuthTag = [0u8; crate::packet::AUTH_TAG_LENGTH];
+        auth_tag[..4].copy_from_slice(&self.counter.to_be_bytes());
+        auth_tag[4..].copy_from_slice(&random_nonce);
 
         let cipher = crypto::encrypt_message(&self.keys.encryption_key, auth_tag, message, &tag)?;
         Ok(Packet::Message {

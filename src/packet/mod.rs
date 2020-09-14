@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 use std::default::Default;
 
 pub const TAG_LENGTH: usize = 32;
-const AUTH_TAG_LENGTH: usize = 12;
+pub const AUTH_TAG_LENGTH: usize = 12;
 pub const MAGIC_LENGTH: usize = 32;
 pub const ID_NONCE_LENGTH: usize = 32;
 
