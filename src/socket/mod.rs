@@ -54,12 +54,12 @@ impl Socket {
             socket2::Socket::new(
                 domain,
                 socket2::Type::dgram(),
-                Some(socket2::Protocol::udp()),
+                //Some(socket2::Protocol::udp()),
+                None,
             )?
         };
         socket.reuse_address()?;
         socket.bind(&socket_addr.into())?;
-        socket.listen(128)?;
         Ok(socket.into_udp_socket())
     }
 
