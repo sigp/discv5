@@ -423,7 +423,7 @@ impl Handler {
         let tag = self.tag(&node_address.node_id);
 
         let packet = {
-            if let Some(session) = self.sessions.get(&node_address) {
+            if let Some(session) = self.sessions.get_mut(&node_address) {
                 // Encrypt the message and send
                 session
                     .encrypt_message(tag, &request.clone().encode())
@@ -453,7 +453,7 @@ impl Handler {
     async fn send_response(&mut self, node_address: NodeAddress, response: Response) {
         let tag = self.tag(&node_address.node_id);
         // Check for an established session
-        if let Some(session) = self.sessions.get(&node_address) {
+        if let Some(session) = self.sessions.get_mut(&node_address) {
             // Encrypt the message and send
             let packet = match session.encrypt_message(tag, &response.encode()) {
                 Ok(packet) => packet,
