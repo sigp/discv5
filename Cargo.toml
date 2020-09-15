@@ -38,6 +38,7 @@ lru_time_cache = "0.10.0"
 lazy_static = "1.4.0"
 aes-gcm = "0.6.0"
 socket2 = "0.3.12"
+aes-ctr = "0.4.0"
 
 [dev-dependencies]
 quickcheck = "0.9.2"

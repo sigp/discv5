@@ -24,7 +24,7 @@
 //! Responses come by the receiving channel in the form of a [`HandlerResponse`].
 use crate::config::Discv5Config;
 use crate::error::{Discv5Error, RequestError};
-use crate::packet::{AuthHeader, AuthTag, Magic, Nonce, Packet, Tag, TAG_LENGTH};
+use crate::packet::{IdNonce, MessageNonce, Packet};
 use crate::rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody};
 use crate::socket::Socket;
 use crate::{socket, Enr};
@@ -35,6 +35,7 @@ use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use sha2::digest::generic_array::{typenum::U32, GenericArray};
 use sha2::{Digest, Sha256};
+use std::convert::TryInto;
 use std::sync::Arc;
 use std::{collections::HashMap, default::Default, net::SocketAddr, sync::atomic::Ordering};
 use tokio::sync::{mpsc, oneshot};
@@ -110,10 +111,10 @@ pub enum HandlerResponse {
 /// A reference for the application layer to send back when the handler requests any known
 /// ENR for the NodeContact.
 #[derive(Debug, Clone, PartialEq)]
-pub struct WhoAreYouRef(pub NodeAddress, AuthTag);
+pub struct WhoAreYouRef(pub NodeAddress, MessageNonce);
 
 pub(crate) struct Challenge {
-    nonce: Nonce,
+    nonce: IdNonce,
     remote_enr: Option<Enr>,
 }
 
@@ -171,8 +172,8 @@ pub struct Handler {
     active_requests: HashMapDelay<NodeAddress, RequestCall>,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
-    /// A mapping of active requests by AuthTag.
-    active_requests_auth: HashMap<AuthTag, NodeAddress>,
+    /// A mapping of active requests by MessageNonce.
+    active_requests_auth: HashMap<MessageNonce, NodeAddress>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
     /// Currently in-progress handshakes with peers.
@@ -214,18 +215,12 @@ impl Handler {
         // Lets the underlying filter know that we are expecting a packet from this source.
         let filter_expected_responses = Arc::new(RwLock::new(HashMap::new()));
 
-        // Generates the WHOAREYOU magic packet for the local node-id
-        // Will be removed in update
-        let magic = {
-            let mut hasher = Sha256::new();
-            hasher.input(enr.read().node_id().raw());
-            hasher.input(b"WHOAREYOU");
-            let mut magic: Magic = Default::default();
-            magic.copy_from_slice(&hasher.result());
-            magic
-        };
+        // The decrypting key
+        let local_key: [u8; 16] = enr.read().node_id().raw()[..16]
+            .try_into()
+            .expect("This is 16 bytes");
 
-        // enable the packet filter
+        // enable the packet filter if required
         let mut filter_config = config.filter_config.clone();
         filter_config.enabled = config.enable_packet_filter;
 
@@ -233,7 +228,7 @@ impl Handler {
             executor: config.executor.clone().expect("Executor must exist"),
             socket_addr: listen_socket,
             filter_config,
-            whoareyou_magic: magic,
+            local_key,
             expected_responses: filter_expected_responses.clone(),
         };
 

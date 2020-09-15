@@ -27,6 +27,25 @@ impl From<std::io::Error> for Discv5Error {
     }
 }
 
+#[derive(Debug, Clone)]
+/// Types of packet errors.
+pub enum PacketError {
+    /// The packet type is unknown.
+    UnknownPacket,
+    /// The packet size was smaller than expected.
+    TooSmall,
+    /// The header has an invalid length.
+    HeaderLengthInvalid(usize),
+    /// The header could not be decrypted.
+    HeaderDecryptionFailed,
+    /// The authdata size is too large.
+    InvalidAuthDataSize,
+    /// The handshake is of an invalid version.
+    InvalidVersion(u8),
+    /// The ENR sent was invalid.
+    InvalidEnr(DecoderError),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RequestError {
     Timeout,
