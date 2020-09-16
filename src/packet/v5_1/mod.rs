@@ -45,17 +45,17 @@ pub struct Packet {
     /// Random data unique to the packet.
     iv: u128,
     /// Protocol header.
-    header: PacketHeader,
+    pub header: PacketHeader,
     /// The message contents itself.
-    message: Vec<u8>,
+    pub message: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketHeader {
     /// The source NodeId of the packet.
-    src_id: NodeId,
+    pub src_id: NodeId,
     /// The type of packet this is.
-    flag: PacketType,
+    pub flag: PacketType,
 }
 
 impl PacketHeader {
@@ -323,14 +323,16 @@ impl Packet {
     }
 
     /// Generates a Packet::Random given a `tag`.
-    pub fn new_random(src_id: NodeId, message_nonce: MessageNonce) -> Result<Self, &'static str> {
+    pub fn new_random(src_id: &NodeId) -> Result<Self, &'static str> {
         let mut ciphertext = [0u8; 44];
         rand::thread_rng()
             .try_fill(&mut ciphertext[..])
             .map_err(|_| "PRNG failed")?;
 
+        let message_nonce: MessageNonce = rand::random();
+
         Ok(Self::new_message(
-            src_id,
+            src_id.clone(),
             message_nonce,
             ciphertext.to_vec(),
         ))
@@ -341,6 +343,15 @@ impl Packet {
         match &self.header.flag {
             PacketType::WhoAreYou { .. } => true,
             PacketType::Message(_) | PacketType::Handshake { .. } => false,
+        }
+    }
+
+    /// Returns the message nonce if one exists.
+    pub fn message_nonce(&self) -> Option<&MessageNonce> {
+        match &self.header.flag {
+            PacketType::Message(message_nonce) => Some(message_nonce),
+            PacketType::WhoAreYou { .. } => None,
+            PacketType::Handshake { message_nonce, .. } => Some(message_nonce),
         }
     }
 
@@ -411,6 +422,11 @@ impl Packet {
 
         // Any remaining bytes are message data
         let message = data[IV_LENGTH + STATIC_HEADER_LENGTH + auth_data_size as usize..].to_vec();
+
+        if !message.is_empty() && flag.is_whoareyou() {
+            // do not allow extra bytes being sent in WHOAREYOU messages
+            return Err(PacketError::UnknownPacket);
+        }
 
         Ok(Packet {
             iv: u128::from_be_bytes(iv[..].try_into().expect("IV_LENGTH must be 16 bytes")),
