@@ -600,39 +600,27 @@ impl Handler {
         // Check if we know the ENR, if not request it and flag the session as awaiting an ENR.
         match request_call.contact.clone() {
             NodeContact::Enr(enr) => {
-                // Verify the ENR and establish or fail a session.
-                if self.verify_enr(&enr, &node_address) {
-                    // Send the Auth response
-                    trace!(
-                        "Sending Authentication response to node: {}",
-                        request_call
-                            .contact
-                            .node_address()
-                            .expect("Sanitized contact")
-                    );
-                    request_call.packet = auth_packet.clone();
-                    request_call.handshake_sent = true;
-                    // Reinsert the request_call
-                    self.insert_active_request(request_call);
-                    self.send(node_address.socket_addr, auth_packet).await;
+                let node_address = request_call
+                    .contact
+                    .node_address()
+                    .expect("Request call's are sanitized. Must have NodeAddress");
 
-                    // Notify the application the session has been established
-                    self.outbound_channel
-                        .send(HandlerResponse::Established(*enr))
-                        .await
-                        .unwrap_or_else(|_| ());
-                } else {
-                    // IP's or NodeAddress don't match. Drop the session.
-                    // TODO: Blacklist the peer
-                    debug!(
-                        "Session has invalid ENR. Enr socket: {:?}, {}",
-                        enr.udp_socket(),
-                        node_address
-                    );
-                    self.fail_request(request_call, RequestError::InvalidRemoteEnr)
-                        .await;
-                    return;
-                }
+                // Send the Auth response
+                trace!(
+                    "Sending Authentication response to node: {}",
+                    node_address
+                );
+                request_call.packet = auth_packet.clone();
+                request_call.handshake_sent = true;
+                // Reinsert the request_call
+                self.insert_active_request(request_call);
+                self.send(node_address.socket_addr, auth_packet).await;
+
+                // Notify the application the session has been established
+                self.outbound_channel
+                    .send(HandlerResponse::Established(*enr))
+                    .await
+                    .unwrap_or_else(|_| ());
             }
             NodeContact::Raw { .. } => {
                 // Don't know the ENR. Establish the session, but request an ENR also
