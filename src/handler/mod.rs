@@ -606,10 +606,7 @@ impl Handler {
                     .expect("Request call's are sanitized. Must have NodeAddress");
 
                 // Send the Auth response
-                trace!(
-                    "Sending Authentication response to node: {}",
-                    node_address
-                );
+                trace!("Sending Authentication response to node: {}", node_address);
                 request_call.packet = auth_packet.clone();
                 request_call.handshake_sent = true;
                 // Reinsert the request_call
