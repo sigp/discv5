@@ -825,7 +825,9 @@ mod tests {
     fn encode_decode_find_node_request() {
         let request = Message::Request(Request {
             id: 1,
-            body: RequestBody::FindNode { distance: 1337 },
+            body: RequestBody::FindNode {
+                distances: vec![1337],
+            },
         });
 
         let encoded = request.clone().encode();

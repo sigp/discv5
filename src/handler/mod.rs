@@ -381,7 +381,7 @@ impl Handler {
                 request_call.request,
                 node_address
             );
-            self.send(node_address.socket_addr, request_call.packet.clone())
+            self.send(node_address.clone(), request_call.packet.clone())
                 .await;
             request_call.retries += 1;
             self.active_requests.insert(node_address, request_call);
@@ -432,7 +432,7 @@ impl Handler {
         let call = RequestCall::new(contact, packet.clone(), request);
         // let the filter know we are expecting a response
         self.add_expected_response(node_address.socket_addr);
-        self.send(node_address.socket_addr, packet).await;
+        self.send(node_address.clone(), packet).await;
         self.active_requests.insert(node_address, call);
         Ok(())
     }
@@ -449,7 +449,7 @@ impl Handler {
                     return;
                 }
             };
-            self.send(node_address.socket_addr, packet).await;
+            self.send(node_address, packet).await;
         } else {
             // Either the session is being established or has expired. We simply drop the
             // response in this case.
@@ -488,7 +488,7 @@ impl Handler {
         let enr_seq = remote_enr.clone().map_or_else(|| 0, |enr| enr.seq());
         let id_nonce: IdNonce = rand::random();
         let packet = Packet::new_whoareyou(self.node_id, message_nonce, id_nonce, enr_seq);
-        self.send(node_address.socket_addr, packet).await;
+        self.send(node_address.clone(), packet).await;
         self.active_challenges.insert(
             node_address,
             Challenge {
@@ -594,7 +594,7 @@ impl Handler {
                     request_call.handshake_sent = true;
                     // Reinsert the request_call
                     self.insert_active_request(request_call);
-                    self.send(node_address.socket_addr, auth_packet).await;
+                    self.send(node_address.clone(), auth_packet).await;
 
                     // Notify the application the session has been established
                     self.outbound_channel
@@ -629,7 +629,7 @@ impl Handler {
                 request_call.handshake_sent = true;
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
-                self.send(node_address.socket_addr, auth_packet).await;
+                self.send(node_address.clone(), auth_packet).await;
 
                 let id = rand::random();
                 let request = Request {
@@ -968,8 +968,11 @@ impl Handler {
     }
 
     /// Sends a packet to the send handler to be encoded and sent.
-    async fn send(&mut self, dst: SocketAddr, packet: Packet) {
-        let outbound_packet = socket::OutboundPacket { dst, packet };
+    async fn send(&mut self, node_address: NodeAddress, packet: Packet) {
+        let outbound_packet = socket::OutboundPacket {
+            node_address,
+            packet,
+        };
         self.socket
             .send
             .send(outbound_packet)
