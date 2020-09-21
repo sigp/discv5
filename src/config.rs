@@ -31,6 +31,13 @@ pub struct Discv5Config {
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
     pub enr_update: bool,
 
+    /// The maximum number of distances we allow in a find nodes request. Any request for distances
+    /// above this number will be dropped.
+    ///
+    /// This setting will also limit the maximum number of NODES responses we would allow for a
+    /// FindNodes request. The default is 3.
+    pub max_findnode_distances: usize,
+
     /// The minimum number of peer's who agree on an external IP port before updating the
     /// local ENR. Default: 10.
     pub enr_peer_update_min: usize,
@@ -74,6 +81,7 @@ impl Default for Discv5Config {
             session_timeout: Duration::from_secs(86400),
             session_cache_capacity: 1000,
             enr_update: true,
+            max_findnode_distances: 3,
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
@@ -153,6 +161,19 @@ impl Discv5ConfigBuilder {
     /// Disables the auto-update of the local ENR IP and port based on PONG responses from peers.
     pub fn disable_enr_update(&mut self) -> &mut Self {
         self.config.enr_update = false;
+        self
+    }
+
+    /// The maximum number of distances we allow in a find nodes request. Any request for distances
+    /// above this number will be dropped.
+    ///
+    /// This setting will also limit the maximum number of NODES responses we would allow for a
+    /// FindNodes request. The default is 3.
+    pub fn max_findnode_distances(&mut self, max: usize) -> &mut Self {
+        if max < 3 {
+            panic!("Setting `max_findnode_distances` to a value less than 3 will cause prevent discovery functioning as this implementation requests 3 from its peers.");
+        }
+        self.config.max_findnode_distances = max;
         self
     }
 

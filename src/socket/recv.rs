@@ -30,6 +30,7 @@ pub struct InboundPacket {
 /// Convenience objects for setting up the recv handler.
 pub struct RecvHandlerConfig {
     pub filter_config: FilterConfig,
+    pub max_findnode_distances: usize,
     pub executor: Box<dyn Executor>,
     pub recv: tokio::net::udp::RecvHalf,
     pub local_key: [u8; 16],
@@ -128,7 +129,7 @@ impl RecvHandler {
         // Construct the node address
         let node_address = NodeAddress {
             socket_addr: src,
-            node_id: packet.header.src_id.clone(),
+            node_id: packet.header.src_id,
         };
 
         // obtain any packet authenticated data

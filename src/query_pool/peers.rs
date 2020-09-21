@@ -18,7 +18,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-// This basis of this file has been taken from the rust-libp2p codebase:
+// The basis of this file has been taken from the rust-libp2p codebase:
 // https://github.com/libp2p/rust-libp2p
 
 //! Peer selection strategies for queries in the form of iterator-like state machines.
@@ -56,7 +56,7 @@ pub enum QueryState<TNodeId> {
     /// `None` indicates that the query is waiting for results and there is no
     /// new peer to contact, despite the query not being at capacity w.r.t.
     /// the permitted parallelism.
-    Waiting(Option<ReturnPeer<TNodeId>>),
+    Waiting(Option<TNodeId>),
 
     /// The query is waiting for results and is at capacity w.r.t. the
     /// permitted parallelism.
@@ -64,14 +64,4 @@ pub enum QueryState<TNodeId> {
 
     /// The query finished.
     Finished,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// The returned peer given as output when the query is in a `[QueryState::Waiting]` state.
-pub struct ReturnPeer<TNodeId> {
-    /// The key used to identify the peer.
-    pub key: TNodeId,
-
-    /// The current request iteration of this peer.
-    pub iteration: usize,
 }

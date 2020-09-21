@@ -1,5 +1,5 @@
 use enr::{CombinedKey, Enr};
-use log::debug;
+use log::{debug, warn};
 use rlp::{DecoderError, RlpStream};
 use std::net::IpAddr;
 
@@ -44,8 +44,8 @@ pub enum RequestBody {
     },
     /// A FINDNODE request.
     FindNode {
-        /// The distance of peers we expect to be returned in the response.
-        distance: u64,
+        /// The distance(s) of peers we expect to be returned in the response.
+        distances: Vec<u64>,
     },
     /// A TICKET request.
     Ticket { topic: TopicHash },
@@ -108,11 +108,14 @@ impl Request {
                 buf.extend_from_slice(&s.drain());
                 buf
             }
-            RequestBody::FindNode { distance } => {
+            RequestBody::FindNode { distances } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(id);
-                s.append(&distance);
+                s.begin_list(distances.len());
+                for distance in distances {
+                    s.append(&distance);
+                }
                 buf.extend_from_slice(&s.drain());
                 buf
             }
@@ -302,8 +305,8 @@ impl std::fmt::Display for RequestBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RequestBody::Ping { enr_seq } => write!(f, "PING: enr_seq: {}", enr_seq),
-            RequestBody::FindNode { distance } => {
-                write!(f, "FINDNODE Request: distance: {}", distance)
+            RequestBody::FindNode { distances } => {
+                write!(f, "FINDNODE Request: distance: {:?}", distances)
             }
             RequestBody::Ticket { topic } => write!(f, "TICKET: topic: {:?}", topic),
             RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
@@ -403,11 +406,18 @@ impl Message {
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
+                let distances = rlp.list_at::<u64>(1)?;
+
+                if distances.len() > 5 {
+                    warn!(
+                        "Rejected FindNode request asking for too many buckets {}, maximum 5",
+                        distances.len()
+                    );
+                    return Err(DecoderError::Custom("FINDNODE request too large"));
+                }
                 Message::Request(Request {
                     id,
-                    body: RequestBody::FindNode {
-                        distance: rlp.val_at::<u64>(1)?,
-                    },
+                    body: RequestBody::FindNode { distances },
                 })
             }
             4 => {
@@ -560,10 +570,10 @@ mod tests {
     fn ref_test_encode_request_findnode() {
         // reference input
         let id = 1;
-        let distance = 256;
+        let distances = vec![256];
         let message = Message::Request(Request {
             id,
-            body: RequestBody::FindNode { distance },
+            body: RequestBody::FindNode { distances },
         });
 
         // expected hex output

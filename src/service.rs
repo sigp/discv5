@@ -43,6 +43,9 @@ mod ip_vote;
 mod query_info;
 mod test;
 
+/// The number of distances (buckets) we simultaneously request from each peer.
+const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
+
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
     StartQuery(QueryKind, oneshot::Sender<Vec<Enr>>),
@@ -308,12 +311,9 @@ impl Service {
         let target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
+            distances_to_request: DISTANCES_TO_REQUEST_PER_PEER,
             callback,
         };
-
-        // How many times to call the rpc per node.
-        // FINDNODE requires multiple iterations as it requests a specific distance.
-        let query_iterations = target.iterations();
 
         let target_key: kbucket::Key<NodeId> = target.key();
         let known_closest_peers: Vec<kbucket::Key<NodeId>> = {
@@ -321,12 +321,8 @@ impl Service {
             kbuckets.closest_keys(&target_key).collect()
         };
         let query_config = FindNodeQueryConfig::new_from_config(&self.config);
-        self.queries.add_findnode_query(
-            query_config,
-            target,
-            known_closest_peers,
-            query_iterations,
-        );
+        self.queries
+            .add_findnode_query(query_config, target, known_closest_peers);
     }
 
     /// Internal function that starts a query.
@@ -340,12 +336,9 @@ impl Service {
         let target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
+            distances_to_request: DISTANCES_TO_REQUEST_PER_PEER,
             callback,
         };
-
-        // How many times to call the rpc per node.
-        // FINDNODE requires multiple iterations as it requests a specific distance.
-        let query_iterations = target.iterations();
 
         let target_key: kbucket::Key<NodeId> = target.key();
 
@@ -358,13 +351,8 @@ impl Service {
 
         let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
         query_config.num_results = num_nodes;
-        self.queries.add_predicate_query(
-            query_config,
-            target,
-            known_closest_peers,
-            query_iterations,
-            predicate,
-        );
+        self.queries
+            .add_predicate_query(query_config, target, known_closest_peers, predicate);
     }
 
     /// Returns an ENR if one is known for the given NodeId.
@@ -393,23 +381,8 @@ impl Service {
     fn handle_rpc_request(&mut self, node_address: NodeAddress, req: Request) {
         let id = req.id;
         match req.body {
-            RequestBody::FindNode { distance } => {
-                // if the distance is 0 send our local ENR
-                if distance == 0 {
-                    let response = Response {
-                        id,
-                        body: ResponseBody::Nodes {
-                            total: 1,
-                            nodes: vec![self.local_enr.read().clone()],
-                        },
-                    };
-                    debug!("Sending our ENR to node: {}", node_address);
-                    self.handler_send
-                        .send(HandlerRequest::Response(node_address, Box::new(response)))
-                        .unwrap_or_else(|_| ());
-                } else {
-                    self.send_nodes_response(node_address, id, distance);
-                }
+            RequestBody::FindNode { distances } => {
+                self.send_nodes_response(node_address, id, distances);
             }
             RequestBody::Ping { enr_seq } => {
                 // check if we need to update the known ENR
@@ -483,8 +456,9 @@ impl Service {
                         warn!("NodesResponse has a total larger than 5, nodes will be truncated");
                     }
 
-                    let distance_requested = match active_request.request_body {
-                        RequestBody::FindNode { distance } => distance,
+                    // These are sanitized and ordered
+                    let distances_requested = match &active_request.request_body {
+                        RequestBody::FindNode { distances } => distances,
                         _ => unreachable!(),
                     };
 
@@ -492,7 +466,7 @@ impl Service {
                     // callback and End.
                     if let Some(callback) = active_request.callback.take() {
                         // Currently only support requesting for ENR's. Verify this is the case.
-                        if distance_requested != 0 {
+                        if !distances_requested.is_empty() && distances_requested[0] != 0 {
                             error!("Retrieved a callback request that wasn't for a peer's ENR");
                             return;
                         }
@@ -509,16 +483,37 @@ impl Service {
 
                     // Filter out any nodes that are not of the correct distance
                     let peer_key: kbucket::Key<NodeId> = node_id.into();
-                    let distance_requested = match active_request.request_body {
-                        RequestBody::FindNode { distance } => distance,
-                        _ => todo!(),
-                    };
-                    if distance_requested != 0 {
+
+                    // The distances we send are sanitized an ordered.
+                    // We never send an ENR request in combination of other requests.
+                    if distances_requested.len() == 1 && distances_requested[0] == 0 {
+                        // we requested an ENR update
+                        if nodes.len() > 1 {
+                            warn!(
+                                "Peer returned more than one ENR for itself. Blacklisting {}",
+                                active_request.contact
+                            );
+                        }
+                        PERMIT_BAN_LIST.write().ban(
+                            active_request
+                                .contact
+                                .node_address()
+                                .expect("Sanitized request"),
+                        );
+                        nodes.retain(|enr| {
+                            peer_key
+                                .log2_distance(&enr.node_id().clone().into())
+                                .is_none()
+                        });
+                    } else {
                         let before_len = nodes.len();
                         nodes.retain(|enr| {
-                            peer_key.log2_distance(&enr.node_id().clone().into())
-                                == Some(distance_requested)
+                            peer_key
+                                .log2_distance(&enr.node_id().clone().into())
+                                .map(|distance| distances_requested.contains(&distance))
+                                .unwrap_or_else(|| false)
                         });
+
                         if nodes.len() < before_len {
                             // Peer sent invalid ENRs. Blacklist the Node
                             warn!(
@@ -532,13 +527,6 @@ impl Service {
                                     .expect("Sanitized request"),
                             );
                         }
-                    } else {
-                        // requested an ENR update
-                        nodes.retain(|enr| {
-                            peer_key
-                                .log2_distance(&enr.node_id().clone().into())
-                                .is_none()
-                        });
                     }
 
                     // handle the case that there is more than one response
@@ -554,7 +542,10 @@ impl Service {
                         );
                         // if there are more requests coming, store the nodes and wait for
                         // another response
-                        if current_response.count < 5 && (current_response.count as u64) < total {
+                        // We allow at most 5 responses per bucket.
+                        if current_response.count < 5 * self.config.max_findnode_distances
+                            && (current_response.count as u64) < total
+                        {
                             current_response.count += 1;
 
                             current_response.received_nodes.append(&mut nodes);
@@ -614,7 +605,7 @@ impl Service {
                         if enr.seq() < enr_seq {
                             // request an ENR update
                             debug!("Requesting an ENR update from: {}", active_request.contact);
-                            let request_body = RequestBody::FindNode { distance: 0 };
+                            let request_body = RequestBody::FindNode { distances: vec![0] };
                             let active_request = ActiveRequest {
                                 contact: active_request.contact,
                                 request_body,
@@ -679,7 +670,7 @@ impl Service {
         contact: NodeContact,
         callback: Option<oneshot::Sender<Option<Enr>>>,
     ) {
-        let request_body = RequestBody::FindNode { distance: 0 };
+        let request_body = RequestBody::FindNode { distances: vec![0] };
         let active_request = ActiveRequest {
             contact,
             request_body,
@@ -691,11 +682,30 @@ impl Service {
 
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
     /// into multiple responses to ensure the response stays below the maximum packet size.
-    fn send_nodes_response(&mut self, node_address: NodeAddress, rpc_id: u64, distance: u64) {
-        let nodes: Vec<Enr> = {
+    fn send_nodes_response(
+        &mut self,
+        node_address: NodeAddress,
+        rpc_id: u64,
+        mut distances: Vec<u64>,
+    ) {
+        // NOTE: At most we only allow 5 distances to be send (see the decoder). If each of these
+        // buckets are full, that equates to 80 ENR's to respond with.
+
+        let mut nodes_to_send = Vec::new();
+        distances.sort();
+        distances.dedup();
+
+        if let Some(0) = distances.first() {
+            // if the distance is 0 send our local ENR
+            nodes_to_send.push(self.local_enr.read().clone());
+            debug!("Sending our ENR to node: {}", node_address);
+            distances.remove(0);
+        }
+
+        if !distances.is_empty() {
             let mut kbuckets = self.kbuckets.write();
-            kbuckets
-                .nodes_by_distance(distance)
+            for node in kbuckets
+                .nodes_by_distances(distances)
                 .into_iter()
                 .filter_map(|entry| {
                     if entry.node.key.preimage() != &node_address.node_id {
@@ -704,10 +714,13 @@ impl Service {
                         None
                     }
                 })
-                .collect()
-        };
+            {
+                nodes_to_send.push(node);
+            }
+        }
+
         // if there are no nodes, send an empty response
-        if nodes.is_empty() {
+        if nodes_to_send.is_empty() {
             let response = Response {
                 id: rpc_id,
                 body: ResponseBody::Nodes {
@@ -728,13 +741,22 @@ impl Service {
             let mut total_size = 0;
             let mut rpc_index = 0;
             to_send_nodes.push(Vec::new());
-            for enr in nodes.into_iter() {
+            for enr in nodes_to_send.into_iter() {
                 let entry_size = enr.encode().len();
                 // Responses assume that a session is established. Thus, on top of the encoded
-                // ENR's the packet should be a regular message. A regular message has a tag (32
-                // bytes), and auth_tag (12 bytes) and the NODES response has an ID (8 bytes) and a total (8 bytes).
-                // The encryption adds the HMAC (16 bytes) and can be at most 16 bytes larger so the total packet size can be at most 92 (given AES_GCM).
-                if entry_size + total_size < MAX_PACKET_SIZE - 92 {
+                // ENR's the packet should be a regular message. A regular message has a
+                // header of 46 bytes. The find-nodes RPC requires 16 bytes for the ID and the
+                // `total` field.
+                //
+                // We could also be responding via an autheader which can take up to 282 bytes in its
+                // header.
+                // As most messages will be normal messages we will try and pack as many ENR's we
+                // can in and drop the response packet if a user requests an auth message of a very
+                // packed response.
+                //
+                // The estimated total overhead for a regular message is therefore 62 bytes.
+                //
+                if entry_size + total_size < MAX_PACKET_SIZE - 62 {
                     total_size += entry_size;
                     trace!("Adding ENR {}", enr);
                     to_send_nodes[rpc_index].push(enr);
@@ -1064,7 +1086,7 @@ impl Service {
         future::poll_fn(move |_cx| match queries.poll() {
             QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(Box::new(query))),
             QueryPoolState::Waiting(Some((query, return_peer))) => {
-                let node_id = return_peer.key;
+                let node_id = return_peer;
 
                 let request_body = match query.target().rpc_request(&return_peer) {
                     Ok(r) => r,

@@ -23,6 +23,9 @@ pub struct SocketConfig {
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
+    /// Configuration of maximum find node distances.
+    pub max_findnode_distances: usize,
+    /// The expected responses reference.
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// The key to used to decrypt message headers.
     pub local_key: [u8; 16],
@@ -76,6 +79,7 @@ impl Socket {
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {
             filter_config: config.filter_config,
+            max_findnode_distances: config.max_findnode_distances,
             executor: config.executor.clone(),
             recv: recv_udp,
             local_key: config.local_key,

@@ -219,6 +219,7 @@ impl Handler {
 
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
+            max_findnode_distances: config.max_findnode_distances,
             socket_addr: listen_socket,
             filter_config,
             local_key,
@@ -416,7 +417,7 @@ impl Handler {
             if let Some(session) = self.sessions.get_mut(&node_address) {
                 // Encrypt the message and send
                 session
-                    .encrypt_message(self.node_id.clone(), &request.clone().encode())
+                    .encrypt_message(self.node_id, &request.clone().encode())
                     .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?
             } else {
                 // No session exists, start a new handshake
@@ -486,7 +487,7 @@ impl Handler {
         // send the challenge
         let enr_seq = remote_enr.clone().map_or_else(|| 0, |enr| enr.seq());
         let id_nonce: IdNonce = rand::random();
-        let packet = Packet::new_whoareyou(self.node_id.clone(), message_nonce, id_nonce, enr_seq);
+        let packet = Packet::new_whoareyou(self.node_id, message_nonce, id_nonce, enr_seq);
         self.send(node_address.socket_addr, packet).await;
         self.active_challenges.insert(
             node_address,
@@ -633,7 +634,7 @@ impl Handler {
                 let id = rand::random();
                 let request = Request {
                     id,
-                    body: RequestBody::FindNode { distance: 0 },
+                    body: RequestBody::FindNode { distances: vec![0] },
                 };
 
                 session.awaiting_enr = Some(id);
@@ -655,6 +656,7 @@ impl Handler {
     }
 
     /// Handle a message that contains an authentication header.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_auth_message(
         &mut self,
         node_address: NodeAddress,
@@ -918,8 +920,7 @@ impl Handler {
             .contact
             .node_address()
             .expect("Can only add requests with a valid destination");
-        self.active_requests
-            .insert(node_address.clone(), request_call);
+        self.active_requests.insert(node_address, request_call);
     }
 
     fn new_session(&mut self, node_address: NodeAddress, session: Session) {
