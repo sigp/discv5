@@ -84,6 +84,8 @@ pub enum RequestError {
     EncryptionFailed(String),
     /// The multiaddr provided is invalid.
     InvalidMultiaddr(String),
+    /// Failure generating random numbers during request.
+    EntropyFailure(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq)]

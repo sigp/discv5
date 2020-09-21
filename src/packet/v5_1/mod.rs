@@ -12,9 +12,8 @@
 use crate::error::PacketError;
 use crate::Enr;
 use enr::NodeId;
-use log::debug;
 use rand::Rng;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 
 use aes_ctr::stream_cipher::{generic_array::GenericArray, NewStreamCipher, SyncStreamCipher};
 use aes_ctr::Aes128Ctr;
@@ -43,7 +42,7 @@ pub type IdNonce = [u8; ID_NONCE_LENGTH];
 #[derive(Debug, Clone, PartialEq)]
 pub struct Packet {
     /// Random data unique to the packet.
-    iv: u128,
+    pub iv: u128,
     /// Protocol header.
     pub header: PacketHeader,
     /// The message contents itself.
@@ -71,6 +70,16 @@ impl PacketHeader {
         buf.extend_from_slice(&auth_data);
 
         buf
+    }
+
+    // If the packet is not a challenge, the authenticated data is the encoded header.
+    pub fn authenticated_data(&self) -> Vec<u8> {
+        if let PacketType::WhoAreYou { .. } = self.flag {
+            return Vec::new();
+        }
+
+        // all else requires the encoded header
+        self.encode()
     }
 }
 
@@ -135,9 +144,11 @@ impl PacketType {
             } => {
                 let sig_size = id_nonce_sig.len();
                 let pubkey_size = ephem_pubkey.len();
-                let node_record = enr_record.map(|enr| rlp::encode(&enr));
-                let expected_len =
-                    15 + sig_size + pubkey_size + node_record.map(|x| x.len()).unwrap_or_default();
+                let node_record = enr_record.as_ref().map(|enr| rlp::encode(enr));
+                let expected_len = 15
+                    + sig_size
+                    + pubkey_size
+                    + node_record.as_ref().map(|x| x.len()).unwrap_or_default();
 
                 let mut auth_data = Vec::with_capacity(expected_len);
                 auth_data.extend_from_slice(&VERSION.to_be_bytes());
@@ -146,7 +157,7 @@ impl PacketType {
                 auth_data.extend_from_slice(&pubkey_size.to_be_bytes());
                 auth_data.extend_from_slice(id_nonce_sig);
                 auth_data.extend_from_slice(ephem_pubkey);
-                if let Some(node_record) = node_record.map(|enr| rlp::encode(&enr)) {
+                if let Some(node_record) = node_record {
                     auth_data.extend_from_slice(&node_record);
                 }
 
@@ -154,6 +165,13 @@ impl PacketType {
 
                 auth_data
             }
+        }
+    }
+
+    pub fn is_whoareyou(&self) -> bool {
+        match self {
+            PacketType::WhoAreYou { .. } => true,
+            _ => false,
         }
     }
 
@@ -256,7 +274,7 @@ impl PacketType {
 // of encryption/decryption and send them off to the send/recv tasks to perform the
 // encryption/decryption.
 impl Packet {
-    /// Creates an Ordinary message packet.
+    /// Creates an ordinary message packet.
     pub fn new_message(src_id: NodeId, nonce: MessageNonce, ciphertext: Vec<u8>) -> Self {
         let iv: u128 = rand::random();
 
@@ -412,7 +430,8 @@ impl Packet {
             return Err(PacketError::InvalidAuthDataSize);
         }
 
-        let auth_data = data[IV_LENGTH + STATIC_HEADER_LENGTH..auth_data_size as usize].to_vec();
+        let mut auth_data =
+            data[IV_LENGTH + STATIC_HEADER_LENGTH..auth_data_size as usize].to_vec();
         cipher.apply_keystream(&mut auth_data);
 
         let flag = PacketType::decode(static_header[40], &auth_data)?;
@@ -423,7 +442,7 @@ impl Packet {
         // Any remaining bytes are message data
         let message = data[IV_LENGTH + STATIC_HEADER_LENGTH + auth_data_size as usize..].to_vec();
 
-        if !message.is_empty() && flag.is_whoareyou() {
+        if !message.is_empty() && header.flag.is_whoareyou() {
             // do not allow extra bytes being sent in WHOAREYOU messages
             return Err(PacketError::UnknownPacket);
         }
@@ -444,8 +463,8 @@ impl Packet {
          * This was split into its own library, but brought back to allow re-use of the cipher when
          * performing decryption
          */
-        let key = GenericArray::clone_from_slice(&self.header.src_id.raw()[..16]);
-        let nonce = GenericArray::clone_from_slice(&self.iv.to_be_bytes());
+        let mut key = GenericArray::clone_from_slice(&self.header.src_id.raw()[..16]);
+        let mut nonce = GenericArray::clone_from_slice(&self.iv.to_be_bytes());
 
         let mut cipher = Aes128Ctr::new(&key, &nonce);
         cipher.apply_keystream(&mut header_bytes);
@@ -455,6 +474,7 @@ impl Packet {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,3 +660,4 @@ mod tests {
     }
     */
 }
+*/

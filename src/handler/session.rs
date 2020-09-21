@@ -1,17 +1,13 @@
 use super::*;
 use crate::node_info::NodeContact;
-use crate::packet::AuthResponse;
+use crate::packet::{Packet, PacketHeader, PacketType, MESSAGE_NONCE_LENGTH};
 use enr::{CombinedKey, NodeId};
 use zeroize::Zeroize;
 
 #[derive(Zeroize, PartialEq)]
 pub(crate) struct Keys {
-    /// The Authentication response key.
-    auth_resp_key: [u8; 16],
-
     /// The encryption key.
     encryption_key: [u8; 16],
-
     /// The decryption key.
     decryption_key: [u8; 16],
 }
@@ -57,20 +53,37 @@ impl Session {
     /// key if we are awaiting a response from AuthMessage.
     pub(crate) fn encrypt_message(
         &mut self,
-        tag: Tag,
+        src_id: NodeId,
         message: &[u8],
     ) -> Result<Packet, Discv5Error> {
         self.counter += 1;
 
-        let random_nonce: [u8; 8] = rand::random();
-        let mut auth_tag: AuthTag = [0u8; crate::packet::AUTH_TAG_LENGTH];
-        auth_tag[..4].copy_from_slice(&self.counter.to_be_bytes());
-        auth_tag[4..].copy_from_slice(&random_nonce);
+        // If the message nonce length is ever set below 4 bytes this will explode. The packet
+        // size constants shouldn't be modified.
+        debug_assert!(MESSAGE_NONCE_LENGTH > 4);
+        let random_nonce: [u8; MESSAGE_NONCE_LENGTH - 4] = rand::random();
+        let mut message_nonce: MessageNonce = [0u8; crate::packet::MESSAGE_NONCE_LENGTH];
+        message_nonce[..4].copy_from_slice(&self.counter.to_be_bytes());
+        message_nonce[4..].copy_from_slice(&random_nonce);
 
-        let cipher = crypto::encrypt_message(&self.keys.encryption_key, auth_tag, message, &tag)?;
-        Ok(Packet::Message {
-            tag,
-            auth_tag,
+        // the authenticated data is the packet header
+        let header = PacketHeader {
+            src_id,
+            flag: PacketType::Message(message_nonce.clone()),
+        };
+
+        let cipher = crypto::encrypt_message(
+            &self.keys.encryption_key,
+            message_nonce,
+            message,
+            &header.encode(),
+        )?;
+
+        // construct a packet from the header and the cipher text
+        let iv: u128 = rand::random();
+        Ok(Packet {
+            iv,
+            header,
             message: cipher,
         })
     }
@@ -80,20 +93,21 @@ impl Session {
     /// the session keys are updated along with the Session state.
     pub(crate) fn decrypt_message(
         &mut self,
-        nonce: AuthTag,
+        message_nonce: MessageNonce,
         message: &[u8],
         aad: &[u8],
     ) -> Result<Vec<u8>, Discv5Error> {
         // try with the new keys
         if let Some(new_keys) = self.awaiting_keys.take() {
-            let result = crypto::decrypt_message(&new_keys.decryption_key, nonce, message, aad);
+            let result =
+                crypto::decrypt_message(&new_keys.decryption_key, message_nonce, message, aad);
             if result.is_ok() {
                 self.keys = new_keys;
                 return result;
             }
         }
         // if it failed try with the old keys
-        crypto::decrypt_message(&self.keys.decryption_key, nonce, message, aad)
+        crypto::decrypt_message(&self.keys.decryption_key, message_nonce, message, aad)
     }
 
     /* Session Helper Functions */
@@ -101,27 +115,26 @@ impl Session {
     /// Generates session keys from an authentication header. If the IP of the ENR does not match the
     /// source IP address, we consider this session untrusted. The output returns a boolean which
     /// specifies if the Session is trusted or not.
-    pub(crate) fn establish_from_header(
+    pub(crate) fn establish_from_challenge(
         local_key: Arc<RwLock<CombinedKey>>,
         local_id: &NodeId,
         remote_id: &NodeId,
         challenge: Challenge,
-        auth_header: &AuthHeader,
+        id_nonce_sig: &[u8],
+        ephem_pubkey: &[u8],
+        enr_record: Option<Enr>,
     ) -> Result<(Session, Enr), Discv5Error> {
         // generate session keys
-        let (decryption_key, encryption_key, auth_resp_key) = crypto::derive_keys_from_pubkey(
+        let (decryption_key, encryption_key) = crypto::derive_keys_from_pubkey(
             &local_key.read(),
             local_id,
             remote_id,
-            &challenge.nonce,
-            &auth_header.ephemeral_pubkey,
+            &challenge.id_nonce,
+            ephem_pubkey,
         )?;
 
-        // decrypt the authentication header
-        let auth_response = crypto::decrypt_authentication_header(&auth_resp_key, auth_header)?;
-
         // check and verify a potential ENR update
-        let session_enr = match (auth_response.node_record, challenge.remote_enr) {
+        let session_enr = match (enr_record, challenge.remote_enr) {
             (Some(new_enr), Some(known_enr)) => {
                 if new_enr.seq() > known_enr.seq() {
                     new_enr
@@ -146,15 +159,14 @@ impl Session {
         // verify the auth header nonce
         if !crypto::verify_authentication_nonce(
             &remote_public_key,
-            &auth_header.ephemeral_pubkey,
-            &challenge.nonce,
-            &auth_response.signature,
+            ephem_pubkey,
+            &challenge.id_nonce,
+            id_nonce_sig,
         ) {
             return Err(Discv5Error::InvalidSignature);
         }
 
         let keys = Keys {
-            auth_resp_key,
             encryption_key,
             decryption_key,
         };
@@ -164,20 +176,18 @@ impl Session {
 
     /// Encrypts a message and produces an AuthMessage.
     pub(crate) fn encrypt_with_header(
-        tag: Tag,
         remote_contact: &NodeContact,
         local_key: Arc<RwLock<CombinedKey>>,
         updated_enr: Option<Enr>,
         local_node_id: &NodeId,
-        id_nonce: &Nonce,
+        id_nonce: &IdNonce,
         message: &[u8],
     ) -> Result<(Packet, Session), Discv5Error> {
         // generate the session keys
-        let (encryption_key, decryption_key, auth_resp_key, ephem_pubkey) =
+        let (encryption_key, decryption_key, ephem_pubkey) =
             crypto::generate_session_keys(local_node_id, remote_contact, id_nonce)?;
 
         let keys = Keys {
-            auth_resp_key,
             encryption_key,
             decryption_key,
         };
@@ -186,31 +196,23 @@ impl Session {
         let sig = crypto::sign_nonce(&local_key.read(), id_nonce, &ephem_pubkey)
             .map_err(|_| Discv5Error::Custom("Could not sign WHOAREYOU nonce"))?;
 
-        // generate the auth response to be encrypted
-        let auth_pt = AuthResponse::new(&sig, updated_enr).encode();
-
-        // encrypt the auth response
-        let auth_response_ciphertext =
-            crypto::encrypt_message(&auth_resp_key, [0u8; 12], &auth_pt, &[])?;
-
-        // generate an auth header, with a random auth_tag
-        let auth_tag: [u8; 12] = rand::random();
-        let auth_header = AuthHeader::new(
-            auth_tag,
-            *id_nonce,
-            ephem_pubkey.to_vec(),
-            auth_response_ciphertext,
+        // build an authentication packet
+        let message_nonce: MessageNonce = rand::random();
+        let mut packet = Packet::new_authheader(
+            local_node_id.clone(),
+            message_nonce,
+            sig,
+            ephem_pubkey,
+            updated_enr,
         );
+
+        let authenticated_data = packet.header.encode();
 
         // encrypt the message
         let message_ciphertext =
-            crypto::encrypt_message(&encryption_key, auth_tag, message, &tag[..])?;
+            crypto::encrypt_message(&encryption_key, message_nonce, message, &authenticated_data)?;
 
-        let packet = Packet::AuthMessage {
-            tag,
-            auth_header,
-            message: message_ciphertext,
-        };
+        packet.message = message_ciphertext;
 
         let session = Session::new(keys);
 

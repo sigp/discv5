@@ -3,6 +3,7 @@
 //! Every UDP packet passes a filter before being processed.
 
 use super::filter::{Filter, FilterConfig};
+use crate::node_info::NodeAddress;
 use crate::packet::*;
 use crate::Executor;
 use log::{debug, trace};
@@ -17,9 +18,13 @@ pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 /// The object sent back by the Recv handler.
 pub struct InboundPacket {
     /// The originating socket addr.
-    pub src: SocketAddr,
-    /// The decoded packet.
-    pub packet: Packet,
+    pub node_address: NodeAddress,
+    /// The packet header.
+    pub header: PacketHeader,
+    /// The message of the packet.
+    pub message: Vec<u8>,
+    /// The authenticated data if required (packets that are non-challenge) packets.
+    pub authenticated_data: Vec<u8>,
 }
 
 /// Convenience objects for setting up the recv handler.
@@ -120,7 +125,21 @@ impl RecvHandler {
             return;
         }
 
-        let inbound = InboundPacket { src, packet };
+        // Construct the node address
+        let node_address = NodeAddress {
+            socket_addr: src,
+            node_id: packet.header.src_id.clone(),
+        };
+
+        // obtain any packet authenticated data
+        let authenticated_data = packet.header.authenticated_data();
+
+        let inbound = InboundPacket {
+            node_address,
+            header: packet.header,
+            message: packet.message,
+            authenticated_data,
+        };
 
         // send the filtered decoded packet to the handler.
         self.handler.send(inbound).await.unwrap_or_else(|_| ());

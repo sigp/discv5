@@ -7,7 +7,7 @@
 //! for different algorithms.
 use crate::error::Discv5Error;
 use crate::node_info::NodeContact;
-use crate::packet::{AuthHeader, AuthResponse, AuthTag, Nonce};
+use crate::packet::{IdNonce, MessageNonce};
 use aes_gcm::aead::{generic_array::GenericArray, Aead, NewAead, Payload};
 use aes_gcm::Aes128Gcm;
 use ecdh_ident::EcdhIdent;
@@ -22,7 +22,6 @@ const NODE_ID_LENGTH: usize = 32;
 const INFO_LENGTH: usize = 26 + 2 * NODE_ID_LENGTH;
 const KEY_LENGTH: usize = 16;
 const KEY_AGREEMENT_STRING: &str = "discovery v5 key agreement";
-const KNOWN_SCHEME: &str = "gcm";
 const NONCE_PREFIX: &str = "discovery-id-nonce";
 
 type Key = [u8; KEY_LENGTH];
@@ -35,8 +34,8 @@ type Key = [u8; KEY_LENGTH];
 pub(crate) fn generate_session_keys(
     local_id: &NodeId,
     contact: &NodeContact,
-    id_nonce: &Nonce,
-) -> Result<(Key, Key, Key, Vec<u8>), Discv5Error> {
+    id_nonce: &IdNonce,
+) -> Result<(Key, Key, Vec<u8>), Discv5Error> {
     let (secret, ephem_pk) = {
         match contact.public_key() {
             CombinedPublicKey::Secp256k1(remote_pk) => {
@@ -55,18 +54,18 @@ pub(crate) fn generate_session_keys(
         }
     };
 
-    let (initiator_key, responder_key, auth_resp_key) =
+    let (initiator_key, recipient_key) =
         derive_key(secret.as_ref(), local_id, &contact.node_id(), id_nonce)?;
 
-    Ok((initiator_key, responder_key, auth_resp_key, ephem_pk))
+    Ok((initiator_key, recipient_key, ephem_pk))
 }
 
 fn derive_key(
     secret: &[u8],
     first_id: &NodeId,
     second_id: &NodeId,
-    id_nonce: &Nonce,
-) -> Result<(Key, Key, Key), Discv5Error> {
+    id_nonce: &IdNonce,
+) -> Result<(Key, Key), Discv5Error> {
     let mut info = [0u8; INFO_LENGTH];
     info[0..26].copy_from_slice(KEY_AGREEMENT_STRING.as_bytes());
     info[26..26 + NODE_ID_LENGTH].copy_from_slice(&first_id.raw());
@@ -74,18 +73,16 @@ fn derive_key(
 
     let hk = Hkdf::<Sha256>::new(Some(id_nonce), secret);
 
-    let mut okm = [0u8; 3 * KEY_LENGTH];
+    let mut okm = [0u8; 2 * KEY_LENGTH];
     hk.expand(&info, &mut okm)
         .map_err(|_| Discv5Error::KeyDerivationFailed)?;
 
     let mut initiator_key: Key = Default::default();
-    let mut responder_key: Key = Default::default();
-    let mut auth_resp_key: Key = Default::default();
+    let mut recipient_key: Key = Default::default();
     initiator_key.copy_from_slice(&okm[0..KEY_LENGTH]);
-    responder_key.copy_from_slice(&okm[KEY_LENGTH..2 * KEY_LENGTH]);
-    auth_resp_key.copy_from_slice(&okm[2 * KEY_LENGTH..3 * KEY_LENGTH]);
+    recipient_key.copy_from_slice(&okm[KEY_LENGTH..2 * KEY_LENGTH]);
 
-    Ok((initiator_key, responder_key, auth_resp_key))
+    Ok((initiator_key, recipient_key))
 }
 
 /// Derives the session keys for a public key type that matches the local keypair.
@@ -93,9 +90,9 @@ pub(crate) fn derive_keys_from_pubkey(
     local_key: &CombinedKey,
     local_id: &NodeId,
     remote_id: &NodeId,
-    id_nonce: &Nonce,
+    id_nonce: &IdNonce,
     ephem_pubkey: &[u8],
-) -> Result<(Key, Key, Key), Discv5Error> {
+) -> Result<(Key, Key), Discv5Error> {
     let secret = {
         match local_key {
             CombinedKey::Secp256k1(key) => {
@@ -121,10 +118,10 @@ pub(crate) fn derive_keys_from_pubkey(
 /// signature.
 pub(crate) fn sign_nonce(
     signing_key: &CombinedKey,
-    nonce: &Nonce,
+    id_nonce: &IdNonce,
     ephem_pubkey: &[u8],
 ) -> Result<Vec<u8>, Discv5Error> {
-    let signing_nonce = generate_signing_nonce(nonce, ephem_pubkey);
+    let signing_nonce = generate_signing_nonce(id_nonce, ephem_pubkey);
 
     match signing_key {
         CombinedKey::Secp256k1(key) => {
@@ -141,10 +138,10 @@ pub(crate) fn sign_nonce(
 pub(crate) fn verify_authentication_nonce(
     remote_pubkey: &CombinedPublicKey,
     remote_ephem_pubkey: &[u8],
-    nonce: &Nonce,
+    id_nonce: &IdNonce,
     sig: &[u8],
 ) -> bool {
-    let signing_nonce = generate_signing_nonce(nonce, remote_ephem_pubkey);
+    let signing_nonce = generate_signing_nonce(id_nonce, remote_ephem_pubkey);
 
     match remote_pubkey {
         CombinedPublicKey::Secp256k1(key) => Signature::parse_slice(sig)
@@ -163,7 +160,7 @@ pub(crate) fn verify_authentication_nonce(
 /// Builds the signature for a given nonce.
 ///
 /// This takes the SHA256 hash of the nonce.
-fn generate_signing_nonce(id_nonce: &Nonce, ephem_pubkey: &[u8]) -> Vec<u8> {
+fn generate_signing_nonce(id_nonce: &IdNonce, ephem_pubkey: &[u8]) -> Vec<u8> {
     let mut nonce = NONCE_PREFIX.as_bytes().to_vec();
     nonce.append(&mut id_nonce.to_vec());
     nonce.append(&mut ephem_pubkey.to_vec());
@@ -172,27 +169,10 @@ fn generate_signing_nonce(id_nonce: &Nonce, ephem_pubkey: &[u8]) -> Vec<u8> {
 
 /* Decryption related functions */
 
-/// Verifies the encoding and nonce signature given in the authentication header. If
-/// the header contains an updated ENR, it is returned.
-pub(crate) fn decrypt_authentication_header(
-    auth_resp_key: &Key,
-    header: &AuthHeader,
-) -> Result<AuthResponse, Discv5Error> {
-    if header.auth_scheme_name != KNOWN_SCHEME {
-        return Err(Discv5Error::Custom("Invalid authentication scheme"));
-    }
-
-    // decrypt the auth-response
-    let rlp_auth_response = decrypt_message(auth_resp_key, [0u8; 12], &header.auth_response, &[])?;
-    let auth_response =
-        rlp::decode::<AuthResponse>(&rlp_auth_response).map_err(Discv5Error::RLPError)?;
-    Ok(auth_response)
-}
-
 /// Decrypt messages that are post-fixed with an authenticated MAC.
 pub(crate) fn decrypt_message(
     key: &Key,
-    nonce: AuthTag,
+    message_nonce: MessageNonce,
     msg: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>, Discv5Error> {
@@ -204,7 +184,7 @@ pub(crate) fn decrypt_message(
 
     let aead = Aes128Gcm::new(GenericArray::from_slice(key));
     let payload = Payload { msg, aad };
-    aead.decrypt(GenericArray::from_slice(&nonce), payload)
+    aead.decrypt(GenericArray::from_slice(&message_nonce), payload)
         .map_err(|_| Discv5Error::DecryptionFailed("Decryption failed"))
 }
 
@@ -214,16 +194,17 @@ pub(crate) fn decrypt_message(
 /// future.
 pub(crate) fn encrypt_message(
     key: &Key,
-    nonce: AuthTag,
+    message_nonce: MessageNonce,
     msg: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>, Discv5Error> {
     let aead = Aes128Gcm::new(GenericArray::from_slice(key));
     let payload = Payload { msg, aad };
-    aead.encrypt(GenericArray::from_slice(&nonce), payload)
+    aead.encrypt(GenericArray::from_slice(&message_nonce), payload)
         .map_err(|_| Discv5Error::DecryptionFailed("Decryption failed"))
 }
 
+/*
 #[cfg(test)]
 mod tests {
 
@@ -357,10 +338,11 @@ mod tests {
         let node1_enr = EnrBuilder::new("v4").build(&node1_key).unwrap();
         let node2_enr = EnrBuilder::new("v4").build(&node2_key).unwrap();
 
-        let nonce: Nonce = rand::random();
+        let id_nonce: IdNonce = rand::random();
 
-        let (key1, key2, key3, pk) =
-            generate_session_keys(&node1_enr.node_id(), &node2_enr.clone().into(), &nonce).unwrap();
+        let (key1, key2, pk) =
+            generate_session_keys(&node1_enr.node_id(), &node2_enr.clone().into(), &id_nonce)
+                .unwrap();
         let (key4, key5, key6) = derive_keys_from_pubkey(
             &node2_key,
             &node2_enr.node_id(),
@@ -381,7 +363,7 @@ mod tests {
         let aad: Tag = rand::random();
         let msg: Vec<u8> = vec![1, 2, 3, 4, 5, 6];
         let key: Key = rand::random();
-        let nonce: AuthTag = rand::random();
+        let nonce: MessageNonce = rand::random();
 
         let cipher = encrypt_message(&key, nonce, &msg, &aad).unwrap();
         let plain_text = decrypt_message(&key, nonce, &cipher, &aad).unwrap();
@@ -389,3 +371,4 @@ mod tests {
         assert_eq!(plain_text, msg);
     }
 }
+*/
