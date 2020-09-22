@@ -261,7 +261,7 @@ impl Service {
                             }
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
-                            trace!("RPC Request failed: id: {}, error {:?}", request_id, error);
+                            warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
                             self.rpc_failure(request_id, error);
                         }
                     }
@@ -744,9 +744,10 @@ impl Service {
             for enr in nodes_to_send.into_iter() {
                 let entry_size = enr.encode().len();
                 // Responses assume that a session is established. Thus, on top of the encoded
-                // ENR's the packet should be a regular message. A regular message has a
-                // header of 46 bytes. The find-nodes RPC requires 16 bytes for the ID and the
-                // `total` field.
+                // ENR's the packet should be a regular message. A regular message has an IV (16
+                // bytes), and a header of 55 bytes. The find-nodes RPC requires 16 bytes for the ID and the
+                // `total` field. Also there is a 16 byte HMAC for encryption and an extra byte for
+                // RLP encoding.
                 //
                 // We could also be responding via an autheader which can take up to 282 bytes in its
                 // header.
@@ -754,11 +755,16 @@ impl Service {
                 // can in and drop the response packet if a user requests an auth message of a very
                 // packed response.
                 //
-                // The estimated total overhead for a regular message is therefore 62 bytes.
+                // The estimated total overhead for a regular message is therefore 104 bytes.
                 //
-                if entry_size + total_size < MAX_PACKET_SIZE - 62 {
+                if entry_size + total_size < MAX_PACKET_SIZE - 104 {
                     total_size += entry_size;
-                    trace!("Adding ENR {}", enr);
+                    trace!(
+                        "Adding ENR {}, size {}, total size {}",
+                        enr,
+                        entry_size,
+                        total_size
+                    );
                     to_send_nodes[rpc_index].push(enr);
                 } else {
                     total_size = entry_size;

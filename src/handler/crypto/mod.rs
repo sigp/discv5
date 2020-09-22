@@ -178,14 +178,14 @@ pub(crate) fn decrypt_message(
 ) -> Result<Vec<u8>, Discv5Error> {
     if msg.len() < 16 {
         return Err(Discv5Error::DecryptionFailed(
-            "Message not long enough to contain a MAC",
+            "Message not long enough to contain a MAC".into(),
         ));
     }
 
     let aead = Aes128Gcm::new(GenericArray::from_slice(key));
     let payload = Payload { msg, aad };
     aead.decrypt(GenericArray::from_slice(&message_nonce), payload)
-        .map_err(|_| Discv5Error::DecryptionFailed("Decryption failed"))
+        .map_err(|e| Discv5Error::DecryptionFailed(e.to_string()))
 }
 
 /* Encryption related functions */
@@ -201,15 +201,13 @@ pub(crate) fn encrypt_message(
     let aead = Aes128Gcm::new(GenericArray::from_slice(key));
     let payload = Payload { msg, aad };
     aead.encrypt(GenericArray::from_slice(&message_nonce), payload)
-        .map_err(|_| Discv5Error::DecryptionFailed("Decryption failed"))
+        .map_err(|e| Discv5Error::DecryptionFailed(e.to_string()))
 }
 
-/*
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use crate::packet::Tag;
     use enr::EnrBuilder;
     use rand;
 
@@ -259,14 +257,12 @@ mod tests {
 
         let expected_first_key = hex::decode("238d8b50e4363cf603a48c6cc3542967").unwrap();
         let expected_second_key = hex::decode("bebc0183484f7e7ca2ac32e3d72c8891").unwrap();
-        let expected_auth_resp_key = hex::decode("e987ad9e414d5b4f9bfe4ff1e52f2fae").unwrap();
 
-        let (first_key, second_key, auth_resp_key) =
+        let (first_key, second_key) =
             derive_key(&secret, &first_node_id, &second_node_id, &id_nonce).unwrap();
 
         assert_eq!(first_key.to_vec(), expected_first_key);
         assert_eq!(second_key.to_vec(), expected_second_key);
-        assert_eq!(auth_resp_key.to_vec(), expected_auth_resp_key);
     }
 
     #[test]
@@ -287,26 +283,6 @@ mod tests {
         let sig = sign_nonce(&key.into(), &nonce, &ephemeral_pubkey).unwrap();
 
         assert_eq!(sig, expected_sig);
-    }
-
-    #[test]
-    fn ref_auth_pt() {
-        let nonce_bytes =
-            hex::decode("e551b1c44264ab92bc0b3c9b26293e1ba4fed9128f3c3645301e8e119f179c65")
-                .unwrap();
-        let local_secret_key =
-            hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
-                .unwrap();
-        let ephemeral_pubkey = hex::decode("9961e4c2356d61bedb83052c115d311acb3a96f5777296dcf297351130266231503061ac4aaee666073d7e5bc2c80c3f5c5b500c1cb5fd0a76abbb6b675ad157").unwrap();
-
-        let mut nonce = [0u8; 32];
-        nonce.copy_from_slice(&nonce_bytes);
-        let key = secp256k1::SecretKey::parse_slice(&local_secret_key).unwrap();
-        let sig = sign_nonce(&key.into(), &nonce, &ephemeral_pubkey).unwrap();
-
-        let auth_pt = AuthResponse::new(&sig, None).encode();
-
-        dbg!(hex::encode(auth_pt));
     }
 
     #[test]
@@ -343,24 +319,23 @@ mod tests {
         let (key1, key2, pk) =
             generate_session_keys(&node1_enr.node_id(), &node2_enr.clone().into(), &id_nonce)
                 .unwrap();
-        let (key4, key5, key6) = derive_keys_from_pubkey(
+        let (key4, key5) = derive_keys_from_pubkey(
             &node2_key,
             &node2_enr.node_id(),
             &node1_enr.node_id(),
-            &nonce,
+            &id_nonce,
             &pk,
         )
         .unwrap();
 
         assert_eq!(key1, key4);
         assert_eq!(key2, key5);
-        assert_eq!(key3, key6);
     }
 
     #[test]
     fn encrypt_decrypt() {
         // aad
-        let aad: Tag = rand::random();
+        let aad: [u8; 12] = rand::random();
         let msg: Vec<u8> = vec![1, 2, 3, 4, 5, 6];
         let key: Key = rand::random();
         let nonce: MessageNonce = rand::random();
@@ -371,4 +346,3 @@ mod tests {
         assert_eq!(plain_text, msg);
     }
 }
-*/

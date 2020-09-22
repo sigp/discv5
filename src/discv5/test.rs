@@ -162,6 +162,64 @@ fn find_seed_spread_bucket() {
     }
 }
 
+/// This is a smaller version of the star topology test designed to debug issues with queries.
+#[tokio::test]
+async fn test_discovery_three_peers() {
+    init();
+    let total_nodes = 3;
+    // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
+    let seed = 1652;
+    // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
+    let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
+    let mut nodes = build_nodes_from_keypairs(keypairs, 11200);
+    // Last node is bootstrap node in a star topology
+    let mut bootstrap_node = nodes.remove(0);
+    // target_node is not polled.
+    let target_node = nodes.pop().unwrap();
+    println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
+    println!("Target node: {}", target_node.local_enr().node_id());
+    let key: kbucket::Key<NodeId> = target_node.local_enr().node_id().into();
+    let distance = key
+        .log2_distance(&bootstrap_node.local_enr().node_id().into())
+        .unwrap();
+    println!(
+        "Distance of target_node {} relative to bootstrap {}: {}",
+        target_node.local_enr().node_id(),
+        bootstrap_node.local_enr().node_id(),
+        distance
+    );
+    for node in nodes.iter_mut() {
+        let key: kbucket::Key<NodeId> = node.local_enr().node_id().into();
+        let distance = key
+            .log2_distance(&bootstrap_node.local_enr().node_id().into())
+            .unwrap();
+        println!(
+            "Distance of node {} relative to bootstrap {}: {}",
+            node.local_enr().node_id(),
+            bootstrap_node.local_enr().node_id(),
+            distance
+        );
+        node.add_enr(bootstrap_node.local_enr().clone()).unwrap();
+        bootstrap_node.add_enr(node.local_enr().clone()).unwrap();
+    }
+
+    // Start a FINDNODE query of target
+    let target_random_node_id = target_node.local_enr().node_id();
+    nodes.push(bootstrap_node);
+    let result_nodes = nodes
+        .first_mut()
+        .unwrap()
+        .find_node(target_random_node_id)
+        .await
+        .unwrap();
+    println!(
+        "Query found {} peers, Total peers {}",
+        result_nodes.len(),
+        total_nodes
+    );
+    assert!(result_nodes.len() == total_nodes);
+}
+
 /// Test for a star topology with `num_nodes` connected to a `bootstrap_node`
 /// FINDNODE request is sent from any of the `num_nodes` nodes to a `target_node`
 /// which isn't part of the swarm.
@@ -182,14 +240,24 @@ async fn test_discovery_star_topology() {
     // target_node is not polled.
     let target_node = nodes.pop().unwrap();
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
+    let key: kbucket::Key<NodeId> = target_node.local_enr().node_id().into();
+    let distance = key
+        .log2_distance(&bootstrap_node.local_enr().node_id().into())
+        .unwrap();
     println!("Target node: {}", target_node.local_enr().node_id());
+    println!(
+        "Distance of target_node {} relative to bootstrap {}: {}",
+        target_node.local_enr().node_id(),
+        bootstrap_node.local_enr().node_id(),
+        distance
+    );
     for node in nodes.iter_mut() {
         let key: kbucket::Key<NodeId> = node.local_enr().node_id().into();
         let distance = key
             .log2_distance(&bootstrap_node.local_enr().node_id().into())
             .unwrap();
         println!(
-            "Distance of node {} relative to node {}: {}",
+            "Distance of node {} relative to bootstrap node {}: {}",
             node.local_enr().node_id(),
             bootstrap_node.local_enr().node_id(),
             distance

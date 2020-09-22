@@ -1,6 +1,6 @@
 use super::*;
 use crate::node_info::NodeContact;
-use crate::packet::{Packet, PacketHeader, PacketType, MESSAGE_NONCE_LENGTH};
+use crate::packet::{Packet, PacketHeader, PacketKind, MESSAGE_NONCE_LENGTH};
 use enr::{CombinedKey, NodeId};
 use zeroize::Zeroize;
 
@@ -68,7 +68,7 @@ impl Session {
         // the authenticated data is the packet header
         let header = PacketHeader {
             src_id,
-            flag: PacketType::Message(message_nonce),
+            kind: PacketKind::Message(message_nonce),
         };
 
         let cipher = crypto::encrypt_message(
@@ -98,6 +98,7 @@ impl Session {
     ) -> Result<Vec<u8>, Discv5Error> {
         // try with the new keys
         if let Some(new_keys) = self.awaiting_keys.take() {
+            dbg!("Trying new keys");
             let result =
                 crypto::decrypt_message(&new_keys.decryption_key, message_nonce, message, aad);
             if result.is_ok() {

@@ -30,7 +30,7 @@ pub enum Discv5Error {
     /// Failed to encrypt a message.
     EncryptionFail(String),
     /// Failed to decrypt a message.
-    DecryptionFailed(&'static str),
+    DecryptionFailed(String),
     /// The custom error has occurred.
     Custom(&'static str),
     /// A generic dynamic error occurred.

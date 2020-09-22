@@ -577,7 +577,7 @@ mod tests {
         });
 
         // expected hex output
-        let expected_output = hex::decode("03c401820100").unwrap();
+        let expected_output = hex::decode("03c501c3820100").unwrap();
 
         assert_eq!(message.encode(), expected_output);
     }

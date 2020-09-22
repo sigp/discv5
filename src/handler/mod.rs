@@ -24,7 +24,7 @@
 //! Responses come by the receiving channel in the form of a [`HandlerResponse`].
 use crate::config::Discv5Config;
 use crate::error::{Discv5Error, RequestError};
-use crate::packet::{IdNonce, MessageNonce, Packet, PacketType};
+use crate::packet::{IdNonce, MessageNonce, Packet, PacketKind};
 use crate::rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody};
 use crate::socket::Socket;
 use crate::{socket, Enr};
@@ -33,7 +33,6 @@ use futures::prelude::*;
 use log::{debug, error, trace, warn};
 use lru_time_cache::LruCache;
 use parking_lot::RwLock;
-use std::convert::TryInto;
 use std::sync::Arc;
 use std::{collections::HashMap, default::Default, net::SocketAddr, sync::atomic::Ordering};
 use tokio::sync::{mpsc, oneshot};
@@ -208,10 +207,8 @@ impl Handler {
         // Lets the underlying filter know that we are expecting a packet from this source.
         let filter_expected_responses = Arc::new(RwLock::new(HashMap::new()));
 
-        // The decrypting key
-        let local_key: [u8; 16] = enr.read().node_id().raw()[..16]
-            .try_into()
-            .expect("This is 16 bytes");
+        // The local node id
+        let node_id = enr.read().node_id();
 
         // enable the packet filter if required
         let mut filter_config = config.filter_config.clone();
@@ -222,11 +219,10 @@ impl Handler {
             max_findnode_distances: config.max_findnode_distances,
             socket_addr: listen_socket,
             filter_config,
-            local_key,
+            local_node_id: node_id,
             expected_responses: filter_expected_responses.clone(),
         };
 
-        let node_id = enr.read().node_id();
         let udp_socket = socket::Socket::new_socket(socket_config.socket_addr)?;
 
         config
@@ -300,8 +296,8 @@ impl Handler {
 
     /// Processes an inbound decoded packet.
     async fn process_inbound_packet(&mut self, inbound_packet: socket::InboundPacket) {
-        match inbound_packet.header.flag {
-            PacketType::WhoAreYou {
+        match inbound_packet.header.kind {
+            PacketKind::WhoAreYou {
                 request_nonce,
                 id_nonce,
                 enr_seq,
@@ -314,7 +310,7 @@ impl Handler {
                 )
                 .await
             }
-            PacketType::Handshake {
+            PacketKind::Handshake {
                 message_nonce,
                 id_nonce_sig,
                 ephem_pubkey,
@@ -331,7 +327,7 @@ impl Handler {
                 )
                 .await
             }
-            PacketType::Message(message_nonce) => {
+            PacketKind::Message(message_nonce) => {
                 self.handle_message(
                     inbound_packet.node_address,
                     message_nonce,
@@ -771,11 +767,12 @@ impl Handler {
                         return;
                     }
                 },
-                Err(_) => {
+                Err(e) => {
                     // We have a session, but the message could not be decrypted. It is likely the node
                     // sending this message has dropped their session. In this case, this message is a
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
+                    trace!("Decryption failed. Error {}", e);
                     debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", node_address);
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket)
                         .await;

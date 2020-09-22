@@ -33,7 +33,7 @@ pub struct RecvHandlerConfig {
     pub max_findnode_distances: usize,
     pub executor: Box<dyn Executor>,
     pub recv: tokio::net::udp::RecvHalf,
-    pub local_key: [u8; 16],
+    pub local_node_id: enr::NodeId,
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
 }
 
@@ -48,9 +48,8 @@ pub(crate) struct RecvHandler {
     filter: Filter,
     /// The buffer to accept inbound datagrams.
     recv_buffer: [u8; MAX_PACKET_SIZE],
-    /// The local key used to decrypt headers of messages. This is the first 16 bytes of our local
-    /// node id.
-    local_key: [u8; 16],
+    /// The local node id used to decrypt headers of messages.
+    node_id: enr::NodeId,
     /// The channel to send the packet handler.
     handler: mpsc::Sender<InboundPacket>,
     /// Exit channel to shutdown the recv handler.
@@ -71,7 +70,7 @@ impl RecvHandler {
             recv: config.recv,
             filter: Filter::new(&config.filter_config),
             recv_buffer: [0; MAX_PACKET_SIZE],
-            local_key: config.local_key,
+            node_id: config.local_node_id,
             expected_responses: config.expected_responses,
             handler,
             exit,
@@ -113,7 +112,7 @@ impl RecvHandler {
             return;
         }
         // Decodes the packet
-        let packet = match Packet::decode(&self.local_key, &self.recv_buffer[..length]) {
+        let packet = match Packet::decode(&self.node_id, &self.recv_buffer[..length]) {
             Ok(p) => p,
             Err(e) => {
                 debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it

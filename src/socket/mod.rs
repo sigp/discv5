@@ -27,8 +27,8 @@ pub struct SocketConfig {
     pub max_findnode_distances: usize,
     /// The expected responses reference.
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
-    /// The key to used to decrypt message headers.
-    pub local_key: [u8; 16],
+    /// The local node id used to decrypt messages.
+    pub local_node_id: enr::NodeId,
 }
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
@@ -82,7 +82,7 @@ impl Socket {
             max_findnode_distances: config.max_findnode_distances,
             executor: config.executor.clone(),
             recv: recv_udp,
-            local_key: config.local_key,
+            local_node_id: config.local_node_id,
             expected_responses: config.expected_responses,
         };
 

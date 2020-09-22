@@ -17,31 +17,6 @@ macro_rules! arc_rw {
     };
 }
 
-/*
-#[test]
-fn tag_to_src_node() {
-    let expected_output =
-        hex::decode("a888d99de6d5c666eef3bf4e23b8ad99ba7f9a3d121c072fbba4feae32251015").unwrap();
-    let tmp_dest =
-        hex::decode("8a895720954455344e9e95830ad70a1db3bbba1ad87f431de88447f4831f2753").unwrap();
-
-    // calculate the hash(dest node)
-    let mut dest = [Default::default(); 32];
-    dest[..tmp_dest.len()].copy_from_slice(&tmp_dest);
-    let dest_hash = Sha256::digest(&dest);
-
-    // calculate tag
-    let mut tag: Tag = Default::default();
-    for i in 0..32 {
-        tag[i] = dest_hash[i] ^ expected_output[i];
-    }
-
-    // calculate source node from tag and dest_hash
-    let src = Handler::src_id(&tag, dest_hash).raw();
-
-    assert_eq!(expected_output, src);
-}
-
 #[tokio::test]
 // Tests the construction and sending of a simple message
 async fn simple_session_message() {
@@ -236,4 +211,3 @@ async fn multiple_messages() {
         }
     }
 }
-*/
