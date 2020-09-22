@@ -216,7 +216,6 @@ impl Handler {
 
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
-            max_findnode_distances: config.max_findnode_distances,
             socket_addr: listen_socket,
             filter_config,
             local_node_id: node_id,

@@ -30,7 +30,6 @@ pub struct InboundPacket {
 /// Convenience objects for setting up the recv handler.
 pub struct RecvHandlerConfig {
     pub filter_config: FilterConfig,
-    pub max_findnode_distances: usize,
     pub executor: Box<dyn Executor>,
     pub recv: tokio::net::udp::RecvHalf,
     pub local_node_id: enr::NodeId,

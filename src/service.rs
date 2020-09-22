@@ -382,6 +382,11 @@ impl Service {
         let id = req.id;
         match req.body {
             RequestBody::FindNode { distances } => {
+                // We do not permit very large distances.
+                if distances.len() > self.config.max_findnode_distances {
+                    warn!("Peer sent FindNode request with too many distances. Message dropped. Sent: {}, max: {}", distances.len(), self.config.max_findnode_distances);
+                    return;
+                }
                 self.send_nodes_response(node_address, id, distances);
             }
             RequestBody::Ping { enr_seq } => {
@@ -449,11 +454,15 @@ impl Service {
             }
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
-                    // Currently a maximum of 16 peers can be returned. Datagrams have a max
-                    // size of 1280 and ENR's have a max size of 300 bytes. There should be no
-                    // more than 5 responses, to return 16 peers.
-                    if total > 5 {
-                        warn!("NodesResponse has a total larger than 5, nodes will be truncated");
+                    // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can be returned. Datagrams have a max
+                    // size of 1280 and ENR's have a max size of 300 bytes.
+                    //
+                    // Bucket sizes should be 16. In this case, there should be no more than 5*DISTANCES_TO_REQUEST_PER_PEER responses, to return all required peers.
+                    if total > 5 * DISTANCES_TO_REQUEST_PER_PEER as u64 {
+                        warn!(
+                            "NodesResponse has a total larger than {}, nodes will be truncated",
+                            DISTANCES_TO_REQUEST_PER_PEER * 5
+                        );
                     }
 
                     // These are sanitized and ordered
@@ -543,7 +552,7 @@ impl Service {
                         // if there are more requests coming, store the nodes and wait for
                         // another response
                         // We allow at most 5 responses per bucket.
-                        if current_response.count < 5 * self.config.max_findnode_distances
+                        if current_response.count < 5 * DISTANCES_TO_REQUEST_PER_PEER
                             && (current_response.count as u64) < total
                         {
                             current_response.count += 1;
@@ -756,7 +765,6 @@ impl Service {
                 // packed response.
                 //
                 // The estimated total overhead for a regular message is therefore 104 bytes.
-                //
                 if entry_size + total_size < MAX_PACKET_SIZE - 104 {
                     total_size += entry_size;
                     trace!(
