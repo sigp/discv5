@@ -119,16 +119,16 @@ impl RecvHandler {
             }
         };
 
-        // Perform packet-level filtering
-        if !permitted && !self.filter.final_pass(&src, &packet) {
-            return;
-        }
-
         // Construct the node address
         let node_address = NodeAddress {
             socket_addr: src,
             node_id: packet.header.src_id,
         };
+
+        // Perform packet-level filtering
+        if !permitted && !self.filter.final_pass(&node_address, &packet) {
+            return;
+        }
 
         // obtain any packet authenticated data
         let authenticated_data = packet.header.authenticated_data();

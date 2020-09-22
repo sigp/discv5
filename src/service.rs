@@ -44,7 +44,7 @@ mod query_info;
 mod test;
 
 /// The number of distances (buckets) we simultaneously request from each peer.
-const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
+pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {

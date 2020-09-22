@@ -1,3 +1,4 @@
+use crate::service::DISTANCES_TO_REQUEST_PER_PEER;
 use crate::{Enr, Executor, FilterConfig, PermitBanList};
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
@@ -170,8 +171,8 @@ impl Discv5ConfigBuilder {
     /// This setting will also limit the maximum number of NODES responses we would allow for a
     /// FindNodes request. The default is 3.
     pub fn max_findnode_distances(&mut self, max: usize) -> &mut Self {
-        if max < 3 {
-            panic!("Setting `max_findnode_distances` to a value less than 3 will cause prevent discovery functioning as this implementation requests 3 from its peers.");
+        if max < DISTANCES_TO_REQUEST_PER_PEER {
+            panic!("Setting `max_findnode_distances` to a value less than {} will cause prevent discovery functioning as this implementation requests {} from its peers.", DISTANCES_TO_REQUEST_PER_PEER, DISTANCES_TO_REQUEST_PER_PEER);
         }
         self.config.max_findnode_distances = max;
         self
