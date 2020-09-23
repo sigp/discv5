@@ -9,7 +9,7 @@
 //! participating node in the command line. The nodes should discover each other over a period of
 //! time. (It is probabilistic that nodes to find each other on any given query).
 //!
-//! A single instance listening on a UDP socket `127.0.0.1:9000` (with an ENR that has an empty IP
+//! A single instance listening on a UDP socket `0.0.0.0:9000` (with an ENR that has an empty IP
 //! and UDP port) can be created via:
 //!
 //! ```
@@ -25,8 +25,9 @@
 //! ```
 //! sh cargo run --example find_nodes -- 127.0.0.1 9001 <GENERATE_KEY> <BASE64_ENR>
 //! ```
-//!
-//! where `<BASE64_ENR>` is the base64 ENR given from executing the first node with an IP and port
+//! Here `127.0.0.1` represents the external IP address that others may connect to this node on. The
+//! `9001` represents the external port and the port to listen on. The `<BASE64_ENR>` is the base64
+//! ENR given from executing the first node with an IP and port
 //! given in the CLI.
 //! `<GENERATE_KEY>` is a boolean (`true` or `false`) specifying if a new key should be generated.
 //! These steps can be repeated to add further nodes to the test network.
@@ -47,13 +48,9 @@ async fn main() {
     env_logger::init();
 
     // if there is an address specified use it
-    let address = {
-        if let Some(address) = std::env::args().nth(1) {
-            address.parse::<Ipv4Addr>().unwrap()
-        } else {
-            Ipv4Addr::new(127, 0, 0, 1)
-        }
-    };
+    let address = std::env::args()
+        .nth(1)
+        .map(|addr| addr.parse::<Ipv4Addr>().unwrap());
 
     let port = {
         if let Some(udp_port) = std::env::args().nth(2) {
@@ -80,8 +77,8 @@ async fn main() {
     let enr = {
         let mut builder = enr::EnrBuilder::new("v4");
         // if an IP was specified, use it
-        if std::env::args().nth(1).is_some() {
-            builder.ip(address.into());
+        if let Some(external_address) = address {
+            builder.ip(external_address.into());
         }
         // if a port was specified, use it
         if std::env::args().nth(2).is_some() {
