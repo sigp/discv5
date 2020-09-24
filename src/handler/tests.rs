@@ -144,7 +144,7 @@ async fn multiple_messages() {
 
     let pong_response = Response {
         id: 1,
-        body: ResponseBody::Ping {
+        body: ResponseBody::Pong {
             enr_seq: 1,
             ip,
             port: sender_port,

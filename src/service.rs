@@ -419,7 +419,7 @@ impl Service {
                 let src = node_address.socket_addr;
                 let response = Response {
                     id,
-                    body: ResponseBody::Ping {
+                    body: ResponseBody::Pong {
                         enr_seq: self.local_enr.read().seq(),
                         ip: src.ip(),
                         port: src.port(),
@@ -585,7 +585,7 @@ impl Service {
 
                     self.discovered(&node_id, nodes, active_request.query_id);
                 }
-                ResponseBody::Ping { enr_seq, ip, port } => {
+                ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
                     let local_socket = self.local_enr.read().udp_socket();

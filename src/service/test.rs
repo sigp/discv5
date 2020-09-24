@@ -109,7 +109,7 @@ async fn test_updating_connection_on_ping() {
     // Add a fake request
     let response = rpc::Response {
         id: 1,
-        body: rpc::ResponseBody::Ping {
+        body: rpc::ResponseBody::Pong {
             enr_seq: 2,
             ip: ip2,
             port: 10002,
