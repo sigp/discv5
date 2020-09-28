@@ -161,6 +161,7 @@ impl Session {
             &remote_public_key,
             ephem_pubkey,
             &challenge.id_nonce,
+            &local_id,
             id_nonce_sig,
         ) {
             return Err(Discv5Error::InvalidSignature);
@@ -193,8 +194,13 @@ impl Session {
         };
 
         // construct the nonce signature
-        let sig = crypto::sign_nonce(&local_key.read(), id_nonce, &ephem_pubkey)
-            .map_err(|_| Discv5Error::Custom("Could not sign WHOAREYOU nonce"))?;
+        let sig = crypto::sign_nonce(
+            &local_key.read(),
+            id_nonce,
+            &ephem_pubkey,
+            &remote_contact.node_id(),
+        )
+        .map_err(|_| Discv5Error::Custom("Could not sign WHOAREYOU nonce"))?;
 
         // build an authentication packet
         let message_nonce: MessageNonce = rand::random();

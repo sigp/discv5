@@ -120,8 +120,9 @@ pub(crate) fn sign_nonce(
     signing_key: &CombinedKey,
     id_nonce: &IdNonce,
     ephem_pubkey: &[u8],
+    dst_id: &NodeId,
 ) -> Result<Vec<u8>, Discv5Error> {
-    let signing_nonce = generate_signing_nonce(id_nonce, ephem_pubkey);
+    let signing_nonce = generate_signing_nonce(id_nonce, ephem_pubkey, dst_id);
 
     match signing_key {
         CombinedKey::Secp256k1(key) => {
@@ -139,9 +140,10 @@ pub(crate) fn verify_authentication_nonce(
     remote_pubkey: &CombinedPublicKey,
     remote_ephem_pubkey: &[u8],
     id_nonce: &IdNonce,
+    dst_id: &NodeId,
     sig: &[u8],
 ) -> bool {
-    let signing_nonce = generate_signing_nonce(id_nonce, remote_ephem_pubkey);
+    let signing_nonce = generate_signing_nonce(id_nonce, remote_ephem_pubkey, dst_id);
 
     match remote_pubkey {
         CombinedPublicKey::Secp256k1(key) => Signature::parse_slice(sig)
@@ -160,10 +162,11 @@ pub(crate) fn verify_authentication_nonce(
 /// Builds the signature for a given nonce.
 ///
 /// This takes the SHA256 hash of the nonce.
-fn generate_signing_nonce(id_nonce: &IdNonce, ephem_pubkey: &[u8]) -> Vec<u8> {
+fn generate_signing_nonce(id_nonce: &IdNonce, ephem_pubkey: &[u8], dst_id: &NodeId) -> Vec<u8> {
     let mut nonce = NONCE_PREFIX.as_bytes().to_vec();
     nonce.append(&mut id_nonce.to_vec());
     nonce.append(&mut ephem_pubkey.to_vec());
+    nonce.append(&mut dst_id.raw().to_vec());
     Sha256::digest(&nonce).to_vec()
 }
 
@@ -208,9 +211,19 @@ pub(crate) fn encrypt_message(
 mod tests {
 
     use super::*;
-    use enr::EnrBuilder;
+    use enr::{CombinedKey, EnrBuilder, EnrKey};
     use rand;
 
+    fn hex_decode(x: &'static str) -> Vec<u8> {
+        hex::decode(x).unwrap()
+    }
+
+    fn node_key_1() -> CombinedKey {
+        CombinedKey::secp256k1_from_bytes(&mut hex_decode(
+            "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f",
+        ))
+        .unwrap()
+    }
     /* This section provides a series of reference tests for the encoding of packets */
 
     #[test]
@@ -274,13 +287,14 @@ mod tests {
         let local_secret_key =
             hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
                 .unwrap();
+        let dst_id: NodeId = node_key_1().public().into();
 
-        let expected_sig = hex::decode("c5036e702a79902ad8aa147dabfe3958b523fd6fa36cc78e2889b912d682d8d35fdea142e141f690736d86f50b39746ba2d2fc510b46f82ee08f08fd55d133a4").unwrap();
+        let expected_sig = hex::decode("a886cb70d6d946b256d3037772c30fc31fc3b22600e215f8a87b60b5c463865309b5c216902a63334c1555057b37fc8b6e705d89ae5c8c20198002310585e0f7").unwrap();
 
         let mut nonce = [0u8; 32];
         nonce.copy_from_slice(&nonce_bytes);
         let key = secp256k1::SecretKey::parse_slice(&local_secret_key).unwrap();
-        let sig = sign_nonce(&key.into(), &nonce, &ephemeral_pubkey).unwrap();
+        let sig = sign_nonce(&key.into(), &nonce, &ephemeral_pubkey, &dst_id).unwrap();
 
         assert_eq!(sig, expected_sig);
     }
