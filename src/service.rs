@@ -963,6 +963,11 @@ impl Service {
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
     fn inject_session_established(&mut self, enr: Enr) {
+        // Ignore sessions with non-contactable ENRs
+        if enr.udp_socket().is_none() {
+            return;
+        }
+
         let node_id = enr.node_id();
         debug!("Session established with Node: {}", node_id);
         self.connection_updated(node_id, Some(enr.clone()), NodeStatus::Connected);
@@ -1028,8 +1033,8 @@ impl Service {
                         }
                     } else {
                         debug!(
-                            "Failed RPC request: {} for node: {} ",
-                            active_request.request_body, active_request.contact
+                            "Failed RPC request: {} for node: {}, reason {:?} ",
+                            active_request.request_body, active_request.contact, error
                         );
                     }
                 }
