@@ -365,7 +365,12 @@ mod tests {
     use enr::{EnrKey, EnrPublicKey};
     use rand;
     use sha2::{Digest, Sha256};
-    use simple_logger;
+
+    fn init_log() {
+        let _ = simple_logger::SimpleLogger::new()
+            .with_level(log::LevelFilter::Debug)
+            .init();
+    }
 
     fn hash256_to_fixed_array(s: &'static str) -> [u8; 32] {
         let mut hasher = Sha256::new();
@@ -482,7 +487,6 @@ mod tests {
 
     #[test]
     fn encode_decode_random_packet() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
         let tag = hash256_to_fixed_array("test-tag");
         let auth_tag: [u8; AUTH_TAG_LENGTH] = rand::random();
         let random_magic: Magic = rand::random();
@@ -507,7 +511,6 @@ mod tests {
 
     #[test]
     fn encode_decode_whoareyou_packet() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
         let magic = hash256_to_fixed_array("magic");
         let id_nonce: [u8; ID_NONCE_LENGTH] = rand::random();
         let auth_tag: [u8; AUTH_TAG_LENGTH] = rand::random();
@@ -528,7 +531,7 @@ mod tests {
 
     #[test]
     fn encode_decode_auth_packet() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
+        init_log();
         let tag = hash256_to_fixed_array("test-tag");
         let magic = hash256_to_fixed_array("test-magic");
 
