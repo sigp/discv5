@@ -228,7 +228,10 @@ impl Service {
                             self.request_enr(node_contact, Some(callback));
                         }
                         ServiceRequest::RequestEventStream(callback) => {
-                            let (event_stream, event_stream_recv) = mpsc::channel(30);
+                            // the channel size needs to be large to handle many discovered peers
+                            // if we are reporting them on the event stream.
+                            let channel_size = if self.config.report_discovered_peers { 100 } else { 30 };
+                            let (event_stream, event_stream_recv) = mpsc::channel(channel_size);
                             self.event_stream = Some(event_stream);
                             if callback.send(event_stream_recv).is_err() {
                                 error!("Failed to return the event stream channel");
@@ -827,7 +830,9 @@ impl Service {
         for enr_ref in other_enr_iter.clone() {
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
-            self.send_event(Discv5Event::Discovered(enr_ref.clone()));
+            if self.config.report_discovered_peers {
+                self.send_event(Discv5Event::Discovered(enr_ref.clone()));
+            }
 
             // ignore peers that don't pass the able filter
             if (self.config.table_filter)(enr_ref) {

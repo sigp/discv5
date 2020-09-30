@@ -16,7 +16,7 @@ fn init() {
 }
 
 fn update_enr(discv5: &mut Discv5, key: &str, value: &[u8]) -> bool {
-    if let Ok(_) = discv5.enr_insert(key, value.to_vec()) {
+    if let Ok(_) = discv5.enr_insert(key, value) {
         return true;
     } else {
         return false;
@@ -305,7 +305,7 @@ async fn test_predicate_search() {
     // Predicate function for filtering enrs
     let predicate = move |enr: &Enr<CombinedKey>| {
         if let Some(v) = enr.get("attnets") {
-            return *v == required_attnet_value;
+            return v == required_attnet_value.as_slice();
         } else {
             return false;
         }

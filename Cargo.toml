@@ -15,7 +15,7 @@ exclude = [
 ]
 
 [dependencies]
-enr = { version = "0.1.1", features = ["libsecp256k1", "ed25519"] }
+enr = { version = "0.3.0", features = ["libsecp256k1", "ed25519"] }
 tokio = { version = "0.2.22", features = ["net", "stream", "time", "sync"] }
 zeroize = { version = "1.1.0", features = ["zeroize_derive"] }
 libp2p-core = { version = "0.22.1", optional = true }
