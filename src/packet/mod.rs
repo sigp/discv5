@@ -21,9 +21,9 @@ use zeroize::Zeroize;
 
 /// The packet IV length (u128).
 pub const IV_LENGTH: usize = 16;
-/// The length of the static header. (8 byte protocol id, 32 byte src-id, 1 byte kind, 2 byte
-/// authdata-size).
-pub const STATIC_HEADER_LENGTH: usize = 43;
+/// The length of the static header. (6 byte protocol id, 2 bytes version, 1 byte kind, 12 byte
+/// message nonce and a 2 byte authdata-size).
+pub const STATIC_HEADER_LENGTH: usize = 23;
 /// The message nonce length (in bytes).
 pub const MESSAGE_NONCE_LENGTH: usize = 12;
 /// The Id nonce legnth (in bytes).
@@ -32,7 +32,7 @@ pub const ID_NONCE_LENGTH: usize = 32;
 /// Protocol ID sent with each message.
 const PROTOCOL_ID: &str = "discv5  ";
 /// The version sent with each handshake.
-const VERSION: u8 = 1;
+const VERSION: u16 = 0x0001;
 
 /// Message Nonce (12 bytes).
 pub type MessageNonce = [u8; MESSAGE_NONCE_LENGTH];
@@ -384,7 +384,8 @@ impl Packet {
     /// Decodes a packet (data) given our local source id (src_key).
     pub fn decode(src_id: &NodeId, data: &[u8]) -> Result<Self, PacketError> {
         // The smallest packet must be at least this large
-        if data.len() < IV_LENGTH + STATIC_HEADER_LENGTH + MESSAGE_NONCE_LENGTH {
+        // The 24 is the smallest auth_data that can be sent (it is by a WHOAREYOU packet)
+        if data.len() < IV_LENGTH + STATIC_HEADER_LENGTH + 24 {
             return Err(PacketError::TooSmall);
         }
 
