@@ -21,18 +21,18 @@ use zeroize::Zeroize;
 
 /// The packet IV length (u128).
 pub const IV_LENGTH: usize = 16;
-/// The length of the static header. (8 byte protocol id, 32 byte src-id, 1 byte kind, 2 byte
-/// authdata-size).
-pub const STATIC_HEADER_LENGTH: usize = 43;
+/// The length of the static header. (6 byte protocol id, 2 bytes version, 1 byte kind, 12 byte
+/// message nonce and a 2 byte authdata-size).
+pub const STATIC_HEADER_LENGTH: usize = 23;
 /// The message nonce length (in bytes).
 pub const MESSAGE_NONCE_LENGTH: usize = 12;
 /// The Id nonce legnth (in bytes).
-pub const ID_NONCE_LENGTH: usize = 32;
+pub const ID_NONCE_LENGTH: usize = 16;
 
 /// Protocol ID sent with each message.
-const PROTOCOL_ID: &str = "discv5  ";
+const PROTOCOL_ID: &str = "discv5";
 /// The version sent with each handshake.
-const VERSION: u8 = 1;
+const VERSION: u16 = 0x0001;
 
 /// Message Nonce (12 bytes).
 pub type MessageNonce = [u8; MESSAGE_NONCE_LENGTH];
@@ -51,8 +51,8 @@ pub struct Packet {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketHeader {
-    /// The source NodeId of the packet.
-    pub src_id: NodeId,
+    /// The nonce of the associated message
+    pub message_nonce: MessageNonce,
     /// The type of packet this is.
     pub kind: PacketKind,
 }
@@ -63,34 +63,24 @@ impl PacketHeader {
         let auth_data = self.kind.encode();
         let mut buf = Vec::with_capacity(auth_data.len() + 8 + 32 + 1 + 2); // protocol_id size + node_id size + kind + authdata_size
         buf.extend_from_slice(PROTOCOL_ID.as_bytes());
-        buf.extend_from_slice(&self.src_id.raw());
+        buf.extend_from_slice(&self.message_nonce);
         let kind: u8 = (&self.kind).into();
         buf.extend_from_slice(&kind.to_be_bytes());
         buf.extend_from_slice(&(auth_data.len() as u16).to_be_bytes());
         buf.extend_from_slice(&auth_data);
-
         buf
-    }
-
-    // If the packet is not a challenge, the authenticated data is the encoded header.
-    pub fn authenticated_data(&self) -> Vec<u8> {
-        if let PacketKind::WhoAreYou { .. } = self.kind {
-            return Vec::new();
-        }
-
-        // all else requires the encoded header
-        self.encode()
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PacketKind {
     /// An ordinary message.
-    Message(MessageNonce),
+    Message {
+        /// The sending NodeId.
+        src_id: NodeId,
+    },
     /// A WHOAREYOU packet.
     WhoAreYou {
-        /// The request nonce the WHOAREYOU references.
-        request_nonce: MessageNonce,
         /// The ID Nonce to be verified.
         id_nonce: IdNonce,
         /// The local node's current ENR sequence number.
@@ -98,8 +88,8 @@ pub enum PacketKind {
     },
     /// A handshake message.
     Handshake {
-        /// The nonce of the message.
-        message_nonce: MessageNonce,
+        /// The sending NodeId
+        src_id: NodeId,
         /// Id-nonce signature that matches the WHOAREYOU request.
         id_nonce_sig: Vec<u8>,
         /// The ephemeral public key of the handshake.
@@ -112,7 +102,7 @@ pub enum PacketKind {
 impl Into<u8> for &PacketKind {
     fn into(self) -> u8 {
         match self {
-            PacketKind::Message(_) => 0,
+            PacketKind::Message { .. } => 0,
             PacketKind::WhoAreYou { .. } => 1,
             PacketKind::Handshake { .. } => 2,
         }
@@ -123,21 +113,16 @@ impl PacketKind {
     /// Encodes the packet type into its corresponding auth_data.
     pub fn encode(&self) -> Vec<u8> {
         match self {
-            PacketKind::Message(message_nonce) => message_nonce.to_vec(),
-            PacketKind::WhoAreYou {
-                request_nonce,
-                id_nonce,
-                enr_seq,
-            } => {
-                let mut auth_data = Vec::with_capacity(52);
-                auth_data.extend_from_slice(request_nonce);
+            PacketKind::Message { src_id } => src_id.raw(),
+            PacketKind::WhoAreYou { id_nonce, enr_seq } => {
+                let mut auth_data = Vec::with_capacity(24);
                 auth_data.extend_from_slice(id_nonce);
                 auth_data.extend_from_slice(&enr_seq.to_be_bytes());
-                debug_assert_eq!(auth_data.len(), 52);
+                debug_assert_eq!(auth_data.len(), 24);
                 auth_data
             }
             PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -145,14 +130,13 @@ impl PacketKind {
                 let sig_size = id_nonce_sig.len();
                 let pubkey_size = ephem_pubkey.len();
                 let node_record = enr_record.as_ref().map(|enr| rlp::encode(enr));
-                let expected_len = 15
+                let expected_len = 34
                     + sig_size
                     + pubkey_size
                     + node_record.as_ref().map(|x| x.len()).unwrap_or_default();
 
                 let mut auth_data = Vec::with_capacity(expected_len);
-                auth_data.extend_from_slice(&VERSION.to_be_bytes());
-                auth_data.extend_from_slice(message_nonce);
+                auth_data.extend_from_slice(&src_id.raw());
                 auth_data.extend_from_slice(&(sig_size as u8).to_be_bytes());
                 auth_data.extend_from_slice(&(pubkey_size as u8).to_be_bytes());
                 auth_data.extend_from_slice(id_nonce_sig);
@@ -160,9 +144,7 @@ impl PacketKind {
                 if let Some(node_record) = node_record {
                     auth_data.extend_from_slice(&node_record);
                 }
-
                 debug_assert_eq!(auth_data.len(), expected_len);
-
                 auth_data
             }
         }
@@ -180,23 +162,20 @@ impl PacketKind {
         match kind {
             0 => {
                 // Decoding a message packet
-                // This should only contain a 12 byte nonce.
-                if auth_data.len() != MESSAGE_NONCE_LENGTH {
+                // This should only contain a 32 byte NodeId.
+                if auth_data.len() != 32 {
                     return Err(PacketError::InvalidAuthDataSize);
                 }
-                Ok(PacketKind::Message(
-                    auth_data.try_into().expect("Must have the correct length"),
-                ))
+
+                let src_id = NodeId::parse(auth_data)?;
+                Ok(PacketKind::Message { src_id })
             }
             1 => {
-                // Decoding a WHOAREYOU packet
-                // This must be 52 bytes long.
-                if auth_data.len() != 52 {
+                // Decoding a WHOAREYOU packet authdata
+                // This must be 24 bytes long.
+                if auth_data.len() != 24 {
                     return Err(PacketError::InvalidAuthDataSize);
                 }
-                let request_nonce: MessageNonce = auth_data[..MESSAGE_NONCE_LENGTH]
-                    .try_into()
-                    .expect("MESSAGE_NONCE_LENGTH is the correct size");
                 let id_nonce: IdNonce = auth_data
                     [MESSAGE_NONCE_LENGTH..MESSAGE_NONCE_LENGTH + ID_NONCE_LENGTH]
                     .try_into()
@@ -207,46 +186,39 @@ impl PacketKind {
                         .expect("The length of the authdata must be 52 bytes"),
                 );
 
-                Ok(PacketKind::WhoAreYou {
-                    request_nonce,
-                    id_nonce,
-                    enr_seq,
-                })
+                Ok(PacketKind::WhoAreYou { id_nonce, enr_seq })
             }
             2 => {
                 // Decoding a Handshake packet
                 // Start by decoding the header
-                if auth_data.len() < 3 + MESSAGE_NONCE_LENGTH {
+                // Length must contain 2 bytes of lengths and the src id (32 bytes)
+                if auth_data.len() < 34 {
                     // The auth_data header is too short
                     return Err(PacketError::InvalidAuthDataSize);
                 }
 
-                // verify the version
-                if auth_data[0] != VERSION {
-                    return Err(PacketError::InvalidVersion(auth_data[0]));
-                }
+                // decode the src_id
+                let src_id = NodeId::parse(auth_data[1..MESSAGE_NONCE_LENGTH + 1])?;
 
                 // decode the lengths
-                let message_nonce: MessageNonce = auth_data[1..MESSAGE_NONCE_LENGTH + 1]
-                    .try_into()
-                    .expect("MESSAGE_NONCE_LENGTH is the correct size");
                 let sig_size = auth_data[MESSAGE_NONCE_LENGTH + 1];
                 let eph_key_size = auth_data[MESSAGE_NONCE_LENGTH + 2];
 
-                let sig_key_size = (sig_size + eph_key_size) as usize;
+                let total_size = (sig_size + eph_key_size) as usize;
+
                 // verify the auth data length
-                if auth_data.len() < 3 + MESSAGE_NONCE_LENGTH + sig_key_size {
+                if auth_data.len() < 34 + total_size {
                     return Err(PacketError::InvalidAuthDataSize);
                 }
 
                 let remaining_data = &auth_data[MESSAGE_NONCE_LENGTH + 3..];
 
                 let id_nonce_sig = remaining_data[0..sig_size as usize].to_vec();
-                let ephem_pubkey = remaining_data[sig_size as usize..sig_key_size].to_vec();
+                let ephem_pubkey = remaining_data[sig_size as usize..total_size].to_vec();
 
-                let enr_record = if remaining_data.len() > sig_key_size {
+                let enr_record = if remaining_data.len() > total_size {
                     Some(
-                        rlp::decode::<Enr>(&remaining_data[sig_key_size..])
+                        rlp::decode::<Enr>(&remaining_data[total_size..])
                             .map_err(PacketError::InvalidEnr)?,
                     )
                 } else {
@@ -254,7 +226,7 @@ impl PacketKind {
                 };
 
                 Ok(PacketKind::Handshake {
-                    message_nonce,
+                    src_id,
                     id_nonce_sig,
                     ephem_pubkey,
                     enr_record,
@@ -277,8 +249,8 @@ impl Packet {
         let iv: u128 = rand::random();
 
         let header = PacketHeader {
-            src_id,
-            kind: PacketKind::Message(nonce),
+            nonce,
+            kind: PacketKind::Message { src_id },
         };
 
         Packet {
@@ -288,21 +260,12 @@ impl Packet {
         }
     }
 
-    pub fn new_whoareyou(
-        src_id: NodeId,
-        request_nonce: MessageNonce,
-        id_nonce: IdNonce,
-        enr_seq: u64,
-    ) -> Self {
+    pub fn new_whoareyou(request_nonce: MessageNonce, id_nonce: IdNonce, enr_seq: u64) -> Self {
         let iv: u128 = rand::random();
 
         let header = PacketHeader {
-            src_id,
-            kind: PacketKind::WhoAreYou {
-                request_nonce,
-                id_nonce,
-                enr_seq,
-            },
+            message_nonce: request_nonce,
+            kind: PacketKind::WhoAreYou { id_nonce, enr_seq },
         };
 
         Packet {
@@ -322,9 +285,9 @@ impl Packet {
         let iv: u128 = rand::random();
 
         let header = PacketHeader {
-            src_id,
+            message_nonce,
             kind: PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -358,17 +321,13 @@ impl Packet {
     pub fn is_whoareyou(&self) -> bool {
         match &self.header.kind {
             PacketKind::WhoAreYou { .. } => true,
-            PacketKind::Message(_) | PacketKind::Handshake { .. } => false,
+            PacketKind::Message { .. } | PacketKind::Handshake { .. } => false,
         }
     }
 
     /// Returns the message nonce if one exists.
-    pub fn message_nonce(&self) -> Option<&MessageNonce> {
-        match &self.header.kind {
-            PacketKind::Message(message_nonce) => Some(message_nonce),
-            PacketKind::WhoAreYou { .. } => None,
-            PacketKind::Handshake { message_nonce, .. } => Some(message_nonce),
-        }
+    pub fn message_nonce(&self) -> &MessageNonce {
+        &self.message_nonce
     }
 
     /// Encodes a packet to bytes and performs the AES-CTR encryption.
@@ -384,7 +343,8 @@ impl Packet {
     /// Decodes a packet (data) given our local source id (src_key).
     pub fn decode(src_id: &NodeId, data: &[u8]) -> Result<Self, PacketError> {
         // The smallest packet must be at least this large
-        if data.len() < IV_LENGTH + STATIC_HEADER_LENGTH + MESSAGE_NONCE_LENGTH {
+        // The 24 is the smallest auth_data that can be sent (it is by a WHOAREYOU packet)
+        if data.len() < IV_LENGTH + STATIC_HEADER_LENGTH + 24 {
             return Err(PacketError::TooSmall);
         }
 
@@ -410,9 +370,24 @@ impl Packet {
         }
 
         // Check the protocol id
-        if &static_header[..8] != PROTOCOL_ID.as_bytes() {
+        if &static_header[..5] != PROTOCOL_ID.as_bytes() {
             return Err(PacketError::HeaderDecryptionFailed);
         }
+
+        // Check the version matches
+        let version: u16 = static_header[5..7]
+            .try_into()
+            .expect("Must be correct size");
+        if version != VERSION {
+            return Err(PacketError::InvalidVersion(version));
+        }
+
+        let flag = static_header[7];
+
+        // Obtain the message nonce
+        let message_nonce: MessageNonce = static_header[8..8 + MESSAGE_NONCE_LENGTH]
+            .try_into()
+            .expect("Must be correct size");
 
         // The decryption was successful, decrypt the remaining header
         let auth_data_size = u16::from_be_bytes(
@@ -431,10 +406,11 @@ impl Packet {
             .to_vec();
         cipher.apply_keystream(&mut auth_data);
 
-        let kind = PacketKind::decode(static_header[40], &auth_data)?;
-        let src_id = NodeId::parse(&static_header[8..40]).expect("This is exactly 32 bytes");
-
-        let header = PacketHeader { src_id, kind };
+        let kind = PacketKind::decode(flag, &auth_data)?;
+        let header = PacketHeader {
+            message_nonce,
+            kind,
+        };
 
         // Any remaining bytes are message data
         let message = data[IV_LENGTH + STATIC_HEADER_LENGTH + auth_data_size as usize..].to_vec();
@@ -497,7 +473,7 @@ impl std::fmt::Display for PacketHeader {
 impl std::fmt::Display for PacketKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PacketKind::Message(nonce) => write!(f, "Message ( {} )", hex::encode(nonce)),
+            PacketKind::Message {  src_id }  => write!(f, "Message { src_id: {} }", src_id,
             PacketKind::WhoAreYou {
                 request_nonce,
                 id_nonce,

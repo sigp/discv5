@@ -310,7 +310,7 @@ impl Handler {
                 .await
             }
             PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -326,7 +326,7 @@ impl Handler {
                 )
                 .await
             }
-            PacketKind::Message(message_nonce) => {
+            PacketKind::Message { src_id } => {
                 self.handle_message(
                     inbound_packet.node_address,
                     message_nonce,
@@ -482,7 +482,7 @@ impl Handler {
         // send the challenge
         let enr_seq = remote_enr.clone().map_or_else(|| 0, |enr| enr.seq());
         let id_nonce: IdNonce = rand::random();
-        let packet = Packet::new_whoareyou(self.node_id, message_nonce, id_nonce, enr_seq);
+        let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
         self.send(node_address.clone(), packet).await;
         self.active_challenges.insert(
             node_address,

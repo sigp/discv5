@@ -67,8 +67,8 @@ impl Session {
 
         // the authenticated data is the packet header
         let header = PacketHeader {
-            src_id,
-            kind: PacketKind::Message(message_nonce),
+            message_nonce,
+            kind: PacketKind::Message { src_id },
         };
 
         let cipher = crypto::encrypt_message(

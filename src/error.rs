@@ -59,7 +59,7 @@ pub enum PacketError {
     /// The authdata size is too large.
     InvalidAuthDataSize,
     /// The handshake is of an invalid version.
-    InvalidVersion(u8),
+    InvalidVersion(u16),
     /// The ENR sent was invalid.
     InvalidEnr(DecoderError),
 }
