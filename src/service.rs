@@ -231,7 +231,10 @@ impl Service {
                             self.request_enr(node_contact, Some(callback));
                         }
                         ServiceRequest::RequestEventStream(callback) => {
-                            let (event_stream, event_stream_recv) = mpsc::channel(30);
+                            // the channel size needs to be large to handle many discovered peers
+                            // if we are reporting them on the event stream.
+                            let channel_size = if self.config.report_discovered_peers { 100 } else { 30 };
+                            let (event_stream, event_stream_recv) = mpsc::channel(channel_size);
                             self.event_stream = Some(event_stream);
                             if callback.send(event_stream_recv).is_err() {
                                 error!("Failed to return the event stream channel");
@@ -863,7 +866,9 @@ impl Service {
         for enr_ref in other_enr_iter.clone() {
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
-            self.send_event(Discv5Event::Discovered(enr_ref.clone()));
+            if self.config.report_discovered_peers {
+                self.send_event(Discv5Event::Discovered(enr_ref.clone()));
+            }
 
             // ignore peers that don't pass the able filter
             if (self.config.table_filter)(enr_ref) {
@@ -999,6 +1004,11 @@ impl Service {
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
     fn inject_session_established(&mut self, enr: Enr) {
+        // Ignore sessions with non-contactable ENRs
+        if enr.udp_socket().is_none() {
+            return;
+        }
+
         let node_id = enr.node_id();
         debug!("Session established with Node: {}", node_id);
         self.connection_updated(node_id, Some(enr.clone()), NodeStatus::Connected);
@@ -1064,8 +1074,8 @@ impl Service {
                         }
                     } else {
                         debug!(
-                            "Failed RPC request: {} for node: {} ",
-                            active_request.request_body, active_request.contact
+                            "Failed RPC request: {} for node: {}, reason {:?} ",
+                            active_request.request_body, active_request.contact, error
                         );
                     }
                 }

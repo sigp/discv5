@@ -58,6 +58,9 @@ pub struct Discv5Config {
     /// seconds.
     pub ping_interval: Duration,
 
+    /// Reports all discovered ENR's when traversing the DHT to the event stream. Default true.
+    pub report_discovered_peers: bool,
+
     /// A set of configuration parameters for the inbound packet filter. See `FilterConfig` for
     /// default values.
     pub filter_config: FilterConfig,
@@ -88,6 +91,7 @@ impl Default for Discv5Config {
             ip_limit: false,
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
+            report_discovered_peers: true,
             filter_config: FilterConfig::default(),
             permit_ban_list: PermitBanList::default(),
             executor: None,
@@ -214,6 +218,12 @@ impl Discv5ConfigBuilder {
         self
     }
 
+    /// Disables reporting of discovered peers through the event stream.
+    pub fn disable_report_discovered_peers(&mut self) -> &mut Self {
+        self.config.report_discovered_peers = false;
+        self
+    }
+
     /// A set of configuration parameters for the inbound packet filter.
     pub fn filter_config(&mut self, config: FilterConfig) -> &mut Self {
         self.config.filter_config = config;
@@ -251,6 +261,7 @@ impl std::fmt::Debug for Discv5Config {
         let _ = builder.field("session_cache_capacity", &self.session_cache_capacity);
         let _ = builder.field("enr_update", &self.enr_update);
         let _ = builder.field("query_parallelism", &self.query_parallelism);
+        let _ = builder.field("report_discovered_peers", &self.report_discovered_peers);
         let _ = builder.field("ip_limit", &self.ip_limit);
         let _ = builder.field("ping_interval", &self.ping_interval);
         builder.finish()

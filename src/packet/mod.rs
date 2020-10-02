@@ -531,7 +531,12 @@ mod tests {
     use super::*;
     use enr::{CombinedKey, EnrKey};
     use rand;
-    use simple_logger;
+
+    fn init_log() {
+        let _ = simple_logger::SimpleLogger::new()
+            .with_level(log::LevelFilter::Debug)
+            .init();
+    }
 
     fn hex_decode(x: &'static str) -> Vec<u8> {
         hex::decode(x).unwrap()
@@ -553,6 +558,7 @@ mod tests {
 
     #[test]
     fn packet_encode_random() {
+        init_log();
         let node_id_a: NodeId = node_key_1().public().into();
         let node_id_b: NodeId = node_key_2().public().into();
 
@@ -575,6 +581,7 @@ mod tests {
 
     #[test]
     fn packet_ref_test_encode_whoareyou() {
+        init_log();
         // reference input
         let src_id: NodeId = node_key_1().public().into();
         let dst_id: NodeId = node_key_2().public().into();
@@ -611,6 +618,7 @@ mod tests {
 
     #[test]
     fn packet_encode_handshake() {
+        init_log();
         // reference input
         let src_id = NodeId::parse(&vec![3; 32]).unwrap();
         let dst_id = NodeId::parse(&vec![4; 32]).unwrap();
@@ -710,8 +718,6 @@ mod tests {
     /* This section provides functionality testing of the packets */
     #[test]
     fn packet_encode_decode_random() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
-
         let src_id: NodeId = node_key_1().public().into();
         let dst_id: NodeId = node_key_2().public().into();
 
@@ -725,8 +731,6 @@ mod tests {
 
     #[test]
     fn packet_encode_decode_whoareyou() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
-
         let src_id: NodeId = node_key_1().public().into();
         let dst_id: NodeId = node_key_2().public().into();
 
@@ -744,8 +748,6 @@ mod tests {
 
     #[test]
     fn encode_decode_auth_packet() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
-
         let src_id: NodeId = node_key_1().public().into();
         let dst_id: NodeId = node_key_2().public().into();
 
