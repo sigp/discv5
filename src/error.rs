@@ -52,6 +52,8 @@ pub enum PacketError {
     UnknownPacket,
     /// The packet size was smaller than expected.
     TooSmall,
+    /// The NodeId sent was invalid.
+    InvalidNodeId,
     /// The header has an invalid length.
     HeaderLengthInvalid(usize),
     /// The header could not be decrypted.
@@ -59,7 +61,7 @@ pub enum PacketError {
     /// The authdata size is too large.
     InvalidAuthDataSize,
     /// The handshake is of an invalid version.
-    InvalidVersion(u8),
+    InvalidVersion(u16),
     /// The ENR sent was invalid.
     InvalidEnr(DecoderError),
 }

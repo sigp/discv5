@@ -26,11 +26,11 @@ pub const IV_LENGTH: usize = 16;
 pub const STATIC_HEADER_LENGTH: usize = 23;
 /// The message nonce length (in bytes).
 pub const MESSAGE_NONCE_LENGTH: usize = 12;
-/// The Id nonce legnth (in bytes).
-pub const ID_NONCE_LENGTH: usize = 32;
+/// The Id nonce length (in bytes).
+pub const ID_NONCE_LENGTH: usize = 16;
 
 /// Protocol ID sent with each message.
-const PROTOCOL_ID: &str = "discv5  ";
+const PROTOCOL_ID: &str = "discv5";
 /// The version sent with each handshake.
 const VERSION: u16 = 0x0001;
 
@@ -51,8 +51,8 @@ pub struct Packet {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PacketHeader {
-    /// The source NodeId of the packet.
-    pub src_id: NodeId,
+    /// The nonce of the associated message
+    pub message_nonce: MessageNonce,
     /// The type of packet this is.
     pub kind: PacketKind,
 }
@@ -61,36 +61,27 @@ impl PacketHeader {
     // Encodes the header to bytes to be included into the `masked-header` of the Packet Encoding.
     pub fn encode(&self) -> Vec<u8> {
         let auth_data = self.kind.encode();
-        let mut buf = Vec::with_capacity(auth_data.len() + 8 + 32 + 1 + 2); // protocol_id size + node_id size + kind + authdata_size
+        let mut buf = Vec::with_capacity(auth_data.len() + STATIC_HEADER_LENGTH);
         buf.extend_from_slice(PROTOCOL_ID.as_bytes());
-        buf.extend_from_slice(&self.src_id.raw());
+        buf.extend_from_slice(&VERSION.to_be_bytes());
         let kind: u8 = (&self.kind).into();
         buf.extend_from_slice(&kind.to_be_bytes());
+        buf.extend_from_slice(&self.message_nonce);
         buf.extend_from_slice(&(auth_data.len() as u16).to_be_bytes());
         buf.extend_from_slice(&auth_data);
-
         buf
-    }
-
-    // If the packet is not a challenge, the authenticated data is the encoded header.
-    pub fn authenticated_data(&self) -> Vec<u8> {
-        if let PacketKind::WhoAreYou { .. } = self.kind {
-            return Vec::new();
-        }
-
-        // all else requires the encoded header
-        self.encode()
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PacketKind {
     /// An ordinary message.
-    Message(MessageNonce),
+    Message {
+        /// The sending NodeId.
+        src_id: NodeId,
+    },
     /// A WHOAREYOU packet.
     WhoAreYou {
-        /// The request nonce the WHOAREYOU references.
-        request_nonce: MessageNonce,
         /// The ID Nonce to be verified.
         id_nonce: IdNonce,
         /// The local node's current ENR sequence number.
@@ -98,8 +89,8 @@ pub enum PacketKind {
     },
     /// A handshake message.
     Handshake {
-        /// The nonce of the message.
-        message_nonce: MessageNonce,
+        /// The sending NodeId
+        src_id: NodeId,
         /// Id-nonce signature that matches the WHOAREYOU request.
         id_nonce_sig: Vec<u8>,
         /// The ephemeral public key of the handshake.
@@ -112,7 +103,7 @@ pub enum PacketKind {
 impl Into<u8> for &PacketKind {
     fn into(self) -> u8 {
         match self {
-            PacketKind::Message(_) => 0,
+            PacketKind::Message { .. } => 0,
             PacketKind::WhoAreYou { .. } => 1,
             PacketKind::Handshake { .. } => 2,
         }
@@ -123,21 +114,16 @@ impl PacketKind {
     /// Encodes the packet type into its corresponding auth_data.
     pub fn encode(&self) -> Vec<u8> {
         match self {
-            PacketKind::Message(message_nonce) => message_nonce.to_vec(),
-            PacketKind::WhoAreYou {
-                request_nonce,
-                id_nonce,
-                enr_seq,
-            } => {
-                let mut auth_data = Vec::with_capacity(52);
-                auth_data.extend_from_slice(request_nonce);
+            PacketKind::Message { src_id } => src_id.raw().to_vec(),
+            PacketKind::WhoAreYou { id_nonce, enr_seq } => {
+                let mut auth_data = Vec::with_capacity(24);
                 auth_data.extend_from_slice(id_nonce);
                 auth_data.extend_from_slice(&enr_seq.to_be_bytes());
-                debug_assert_eq!(auth_data.len(), 52);
+                debug_assert_eq!(auth_data.len(), 24);
                 auth_data
             }
             PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -145,14 +131,13 @@ impl PacketKind {
                 let sig_size = id_nonce_sig.len();
                 let pubkey_size = ephem_pubkey.len();
                 let node_record = enr_record.as_ref().map(|enr| rlp::encode(enr));
-                let expected_len = 15
+                let expected_len = 34
                     + sig_size
                     + pubkey_size
                     + node_record.as_ref().map(|x| x.len()).unwrap_or_default();
 
                 let mut auth_data = Vec::with_capacity(expected_len);
-                auth_data.extend_from_slice(&VERSION.to_be_bytes());
-                auth_data.extend_from_slice(message_nonce);
+                auth_data.extend_from_slice(&src_id.raw());
                 auth_data.extend_from_slice(&(sig_size as u8).to_be_bytes());
                 auth_data.extend_from_slice(&(pubkey_size as u8).to_be_bytes());
                 auth_data.extend_from_slice(id_nonce_sig);
@@ -160,9 +145,7 @@ impl PacketKind {
                 if let Some(node_record) = node_record {
                     auth_data.extend_from_slice(&node_record);
                 }
-
                 debug_assert_eq!(auth_data.len(), expected_len);
-
                 auth_data
             }
         }
@@ -180,23 +163,20 @@ impl PacketKind {
         match kind {
             0 => {
                 // Decoding a message packet
-                // This should only contain a 12 byte nonce.
-                if auth_data.len() != MESSAGE_NONCE_LENGTH {
+                // This should only contain a 32 byte NodeId.
+                if auth_data.len() != 32 {
                     return Err(PacketError::InvalidAuthDataSize);
                 }
-                Ok(PacketKind::Message(
-                    auth_data.try_into().expect("Must have the correct length"),
-                ))
+
+                let src_id = NodeId::parse(auth_data).map_err(|_| PacketError::InvalidNodeId)?;
+                Ok(PacketKind::Message { src_id })
             }
             1 => {
-                // Decoding a WHOAREYOU packet
-                // This must be 52 bytes long.
-                if auth_data.len() != 52 {
+                // Decoding a WHOAREYOU packet authdata
+                // This must be 24 bytes long.
+                if auth_data.len() != 24 {
                     return Err(PacketError::InvalidAuthDataSize);
                 }
-                let request_nonce: MessageNonce = auth_data[..MESSAGE_NONCE_LENGTH]
-                    .try_into()
-                    .expect("MESSAGE_NONCE_LENGTH is the correct size");
                 let id_nonce: IdNonce = auth_data
                     [MESSAGE_NONCE_LENGTH..MESSAGE_NONCE_LENGTH + ID_NONCE_LENGTH]
                     .try_into()
@@ -207,46 +187,40 @@ impl PacketKind {
                         .expect("The length of the authdata must be 52 bytes"),
                 );
 
-                Ok(PacketKind::WhoAreYou {
-                    request_nonce,
-                    id_nonce,
-                    enr_seq,
-                })
+                Ok(PacketKind::WhoAreYou { id_nonce, enr_seq })
             }
             2 => {
                 // Decoding a Handshake packet
                 // Start by decoding the header
-                if auth_data.len() < 3 + MESSAGE_NONCE_LENGTH {
+                // Length must contain 2 bytes of lengths and the src id (32 bytes)
+                if auth_data.len() < 34 {
                     // The auth_data header is too short
                     return Err(PacketError::InvalidAuthDataSize);
                 }
 
-                // verify the version
-                if auth_data[0] != VERSION {
-                    return Err(PacketError::InvalidVersion(auth_data[0]));
-                }
+                // decode the src_id
+                let src_id = NodeId::parse(&auth_data[1..MESSAGE_NONCE_LENGTH + 1])
+                    .map_err(|_| PacketError::InvalidNodeId)?;
 
                 // decode the lengths
-                let message_nonce: MessageNonce = auth_data[1..MESSAGE_NONCE_LENGTH + 1]
-                    .try_into()
-                    .expect("MESSAGE_NONCE_LENGTH is the correct size");
                 let sig_size = auth_data[MESSAGE_NONCE_LENGTH + 1];
                 let eph_key_size = auth_data[MESSAGE_NONCE_LENGTH + 2];
 
-                let sig_key_size = (sig_size + eph_key_size) as usize;
+                let total_size = (sig_size + eph_key_size) as usize;
+
                 // verify the auth data length
-                if auth_data.len() < 3 + MESSAGE_NONCE_LENGTH + sig_key_size {
+                if auth_data.len() < 34 + total_size {
                     return Err(PacketError::InvalidAuthDataSize);
                 }
 
                 let remaining_data = &auth_data[MESSAGE_NONCE_LENGTH + 3..];
 
                 let id_nonce_sig = remaining_data[0..sig_size as usize].to_vec();
-                let ephem_pubkey = remaining_data[sig_size as usize..sig_key_size].to_vec();
+                let ephem_pubkey = remaining_data[sig_size as usize..total_size].to_vec();
 
-                let enr_record = if remaining_data.len() > sig_key_size {
+                let enr_record = if remaining_data.len() > total_size {
                     Some(
-                        rlp::decode::<Enr>(&remaining_data[sig_key_size..])
+                        rlp::decode::<Enr>(&remaining_data[total_size..])
                             .map_err(PacketError::InvalidEnr)?,
                     )
                 } else {
@@ -254,7 +228,7 @@ impl PacketKind {
                 };
 
                 Ok(PacketKind::Handshake {
-                    message_nonce,
+                    src_id,
                     id_nonce_sig,
                     ephem_pubkey,
                     enr_record,
@@ -273,12 +247,12 @@ impl PacketKind {
 // encryption/decryption.
 impl Packet {
     /// Creates an ordinary message packet.
-    pub fn new_message(src_id: NodeId, nonce: MessageNonce, ciphertext: Vec<u8>) -> Self {
+    pub fn new_message(src_id: NodeId, message_nonce: MessageNonce, ciphertext: Vec<u8>) -> Self {
         let iv: u128 = rand::random();
 
         let header = PacketHeader {
-            src_id,
-            kind: PacketKind::Message(nonce),
+            message_nonce,
+            kind: PacketKind::Message { src_id },
         };
 
         Packet {
@@ -288,21 +262,12 @@ impl Packet {
         }
     }
 
-    pub fn new_whoareyou(
-        src_id: NodeId,
-        request_nonce: MessageNonce,
-        id_nonce: IdNonce,
-        enr_seq: u64,
-    ) -> Self {
+    pub fn new_whoareyou(request_nonce: MessageNonce, id_nonce: IdNonce, enr_seq: u64) -> Self {
         let iv: u128 = rand::random();
 
         let header = PacketHeader {
-            src_id,
-            kind: PacketKind::WhoAreYou {
-                request_nonce,
-                id_nonce,
-                enr_seq,
-            },
+            message_nonce: request_nonce,
+            kind: PacketKind::WhoAreYou { id_nonce, enr_seq },
         };
 
         Packet {
@@ -322,9 +287,9 @@ impl Packet {
         let iv: u128 = rand::random();
 
         let header = PacketHeader {
-            src_id,
+            message_nonce,
             kind: PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -358,22 +323,35 @@ impl Packet {
     pub fn is_whoareyou(&self) -> bool {
         match &self.header.kind {
             PacketKind::WhoAreYou { .. } => true,
-            PacketKind::Message(_) | PacketKind::Handshake { .. } => false,
+            PacketKind::Message { .. } | PacketKind::Handshake { .. } => false,
+        }
+    }
+
+    /// Non-challenge (WHOAREYOU) packets contain the src_id of the node. This function returns the
+    /// src_id in this case.
+    pub fn src_id(&self) -> Option<NodeId> {
+        match self.header.kind {
+            PacketKind::Message { src_id } => Some(src_id),
+            PacketKind::WhoAreYou { .. } => None,
+            PacketKind::Handshake { src_id, .. } => Some(src_id),
         }
     }
 
     /// Returns the message nonce if one exists.
-    pub fn message_nonce(&self) -> Option<&MessageNonce> {
-        match &self.header.kind {
-            PacketKind::Message(message_nonce) => Some(message_nonce),
-            PacketKind::WhoAreYou { .. } => None,
-            PacketKind::Handshake { message_nonce, .. } => Some(message_nonce),
-        }
+    pub fn message_nonce(&self) -> &MessageNonce {
+        &self.header.message_nonce
+    }
+
+    /// Generates the authenticated data for this packet.
+    pub fn authenticated_data(&self) -> Vec<u8> {
+        let mut authenticated_data = self.iv.to_be_bytes().to_vec();
+        authenticated_data.extend_from_slice(&self.header.encode());
+        authenticated_data
     }
 
     /// Encodes a packet to bytes and performs the AES-CTR encryption.
     pub fn encode(self, dst_id: &NodeId) -> Vec<u8> {
-        let header = self.generate_header(dst_id);
+        let header = self.encrypt_header(dst_id);
         let mut buf = Vec::with_capacity(IV_LENGTH + header.len() + self.message.len());
         buf.extend_from_slice(&self.iv.to_be_bytes());
         buf.extend_from_slice(&header);
@@ -381,8 +359,29 @@ impl Packet {
         buf
     }
 
+    /// Creates the masked header of a packet performing the required AES-CTR encryption.
+    fn encrypt_header(&self, dst_id: &NodeId) -> Vec<u8> {
+        let mut header_bytes = self.header.encode();
+
+        /* Encryption is done inline
+         *
+         * This was split into its own library, but brought back to allow re-use of the cipher when
+         * performing decryption
+         */
+        let mut key = GenericArray::clone_from_slice(&dst_id.raw()[..16]);
+        let mut nonce = GenericArray::clone_from_slice(&self.iv.to_be_bytes());
+
+        let mut cipher = Aes128Ctr::new(&key, &nonce);
+        cipher.apply_keystream(&mut header_bytes);
+        key.zeroize();
+        nonce.zeroize();
+        header_bytes
+    }
+
     /// Decodes a packet (data) given our local source id (src_key).
-    pub fn decode(src_id: &NodeId, data: &[u8]) -> Result<Self, PacketError> {
+    ///
+    /// This also returns the authenticated data for further decryption in the handler.
+    pub fn decode(src_id: &NodeId, data: &[u8]) -> Result<(Self, Vec<u8>), PacketError> {
         // The smallest packet must be at least this large
         // The 24 is the smallest auth_data that can be sent (it is by a WHOAREYOU packet)
         if data.len() < IV_LENGTH + STATIC_HEADER_LENGTH + 24 {
@@ -411,9 +410,26 @@ impl Packet {
         }
 
         // Check the protocol id
-        if &static_header[..8] != PROTOCOL_ID.as_bytes() {
+        if &static_header[..5] != PROTOCOL_ID.as_bytes() {
             return Err(PacketError::HeaderDecryptionFailed);
         }
+
+        // Check the version matches
+        let version = u16::from_be_bytes(
+            static_header[5..7]
+                .try_into()
+                .expect("Must be correct size"),
+        );
+        if version != VERSION {
+            return Err(PacketError::InvalidVersion(version));
+        }
+
+        let flag = static_header[7];
+
+        // Obtain the message nonce
+        let message_nonce: MessageNonce = static_header[8..8 + MESSAGE_NONCE_LENGTH]
+            .try_into()
+            .expect("Must be correct size");
 
         // The decryption was successful, decrypt the remaining header
         let auth_data_size = u16::from_be_bytes(
@@ -432,10 +448,12 @@ impl Packet {
             .to_vec();
         cipher.apply_keystream(&mut auth_data);
 
-        let kind = PacketKind::decode(static_header[40], &auth_data)?;
-        let src_id = NodeId::parse(&static_header[8..40]).expect("This is exactly 32 bytes");
+        let kind = PacketKind::decode(flag, &auth_data)?;
 
-        let header = PacketHeader { src_id, kind };
+        let header = PacketHeader {
+            message_nonce,
+            kind,
+        };
 
         // Any remaining bytes are message data
         let message = data[IV_LENGTH + STATIC_HEADER_LENGTH + auth_data_size as usize..].to_vec();
@@ -445,30 +463,18 @@ impl Packet {
             return Err(PacketError::UnknownPacket);
         }
 
-        Ok(Packet {
+        // build the authenticated data
+        let mut authenticated_data = iv.to_vec();
+        authenticated_data.extend_from_slice(&static_header);
+        authenticated_data.extend_from_slice(&auth_data);
+
+        let packet = Packet {
             iv: u128::from_be_bytes(iv[..].try_into().expect("IV_LENGTH must be 16 bytes")),
             header,
             message,
-        })
-    }
+        };
 
-    /// Creates the masked header of a packet performing the required AES-CTR encryption.
-    fn generate_header(&self, dst_id: &NodeId) -> Vec<u8> {
-        let mut header_bytes = self.header.encode();
-
-        /* Encryption is done inline
-         *
-         * This was split into its own library, but brought back to allow re-use of the cipher when
-         * performing decryption
-         */
-        let mut key = GenericArray::clone_from_slice(&dst_id.raw()[..16]);
-        let mut nonce = GenericArray::clone_from_slice(&self.iv.to_be_bytes());
-
-        let mut cipher = Aes128Ctr::new(&key, &nonce);
-        cipher.apply_keystream(&mut header_bytes);
-        key.zeroize();
-        nonce.zeroize();
-        header_bytes
+        Ok((packet, authenticated_data))
     }
 }
 
@@ -488,8 +494,8 @@ impl std::fmt::Display for PacketHeader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PacketHeader {{ src_id: {}, kind: {} }}",
-            hex::encode(self.src_id.raw()),
+            "PacketHeader {{ message_nonce: {}, kind: {} }}",
+            hex::encode(self.message_nonce),
             self.kind.to_string()
         )
     }
@@ -498,27 +504,22 @@ impl std::fmt::Display for PacketHeader {
 impl std::fmt::Display for PacketKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PacketKind::Message(nonce) => write!(f, "Message ( {} )", hex::encode(nonce)),
-            PacketKind::WhoAreYou {
-                request_nonce,
-                id_nonce,
-                enr_seq,
-            } => write!(
+            PacketKind::Message { src_id } => write!(f, "Message {{ src_id: {} }}", src_id),
+            PacketKind::WhoAreYou { id_nonce, enr_seq } => write!(
                 f,
-                "WhoAreYou {{ request_nonce: {} , id_nonce: {}, enr_seq: {} }}",
-                hex::encode(request_nonce),
+                "WhoAreYou {{ id_nonce: {}, enr_seq: {} }}",
                 hex::encode(id_nonce),
                 enr_seq
             ),
             PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
             } => write!(
                 f,
-                "Handshake {{ message_nonce: {}, id_nonce_sig: {}, ephem_pubkey: {}, enr_record {:?}",
-                hex::encode(message_nonce),
+                "Handshake {{ src_id : {}, id_nonce_sig: {}, ephem_pubkey: {}, enr_record {:?}",
+                hex::encode(src_id.raw()),
                 hex::encode(id_nonce_sig),
                 hex::encode(ephem_pubkey),
                 enr_record
@@ -565,9 +566,10 @@ mod tests {
 
         let expected_result = hex::decode("0000000000000000000000000000000b4f3ab1857252d94edf25b8bda34d42d8260ec07cfbb0b826e8067831b5af17ad5566dc48f0d48d73b9942b9bb5d5d5c9e08a3585038c4d010101010101010101010101").unwrap();
         let iv = 11u128;
+        let message_nonce = [12u8; MESSAGE_NONCE_LENGTH];
         let header = PacketHeader {
-            src_id: node_id_a,
-            kind: PacketKind::Message([12u8; MESSAGE_NONCE_LENGTH]),
+            message_nonce,
+            kind: PacketKind::Message { src_id: node_id_a },
         };
         let message = [1u8; 12].to_vec();
         let packet = Packet {
@@ -584,7 +586,6 @@ mod tests {
     fn packet_ref_test_encode_whoareyou() {
         init_log();
         // reference input
-        let src_id: NodeId = node_key_1().public().into();
         let dst_id: NodeId = node_key_2().public().into();
         let request_nonce: MessageNonce = hex_decode("0102030405060708090a0b0c")[..]
             .try_into()
@@ -600,12 +601,8 @@ mod tests {
         let expected_output = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3ecb9ad5e368892ec562137bf19c6d0a9191a5651c4f415117bdfa0c7ab86af62b7a9784eceb28008d03ede83bd1369631f9f3d8da0b45").unwrap();
 
         let header = PacketHeader {
-            src_id,
-            kind: PacketKind::WhoAreYou {
-                request_nonce,
-                id_nonce,
-                enr_seq,
-            },
+            message_nonce: request_nonce,
+            kind: PacketKind::WhoAreYou { id_nonce, enr_seq },
         };
 
         let packet = Packet {
@@ -632,9 +629,9 @@ mod tests {
         let expected_output = hex::decode("0000000000000000000000000000000035a14bcdb8448e04f25747c7493c12d052da4583e19f19d5fe5a8d438a4b5b518dfead9d80200875c33d42d29bed582c1d561390390af686d994770f24d8da18605ff3f5b60b090c61515093a88ef4c02186f7d1b5c9a88fdb8cfae239f13e451758751561b439d8044e27cecdf646f2aa1c9ecbd5faf37eb6794f6337f4b2a885391e631f72deb808c63bf0b0faed23d7117f7a2e1f98c28bd017").unwrap();
 
         let header = PacketHeader {
-            src_id,
+            message_nonce,
             kind: PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -671,9 +668,9 @@ mod tests {
         let expected_output = hex::decode("0000000000000000000000000000000035a14bcdb8448e045bfec0dda3cb8cd3d28f5dc8cae1ef446ec303591d35d45c767284d6d58594cdc33dc4d29bed582c1d561390390af686d994770f24d8da18605ff3f5b60b090c61515093a88ef4c02186f7d1b5c9a88fdb8cfae239f13e451758751561b439d8044e27cecdf646f2aa1c9ecbd5faf37eb6794f6337f4b2a885391e631f72deb808c63bf0b0faed23d7117f7a2e1f98c28bd01774f273648aacc15fec7016235dfb3ace8f8ffd6f63ea1958d5cbe6ca51c9ec78d8bf1b4f326b4dfd90fec9ea5a4aed319818bb4ec872986bd559d8b56cf4589d22e0fe1cbd6f63358ab38c7637d3e45a233ed56dadb635603abd38cfb1ad7ad358bda590c9544ee00782b475477e47f5e0b986988b76101b4da99b018e80c76c0d0de15cabfe").unwrap();
 
         let header = PacketHeader {
-            src_id,
+            message_nonce,
             kind: PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -699,8 +696,8 @@ mod tests {
 
         let message_nonce: MessageNonce = [52u8; MESSAGE_NONCE_LENGTH];
         let header = PacketHeader {
-            src_id,
-            kind: PacketKind::Message(message_nonce),
+            message_nonce,
+            kind: PacketKind::Message { src_id },
         };
         let ciphertext = vec![23; 12];
 
@@ -725,24 +722,25 @@ mod tests {
         let packet = Packet::new_random(&src_id).unwrap();
 
         let encoded_packet = packet.clone().encode(&dst_id);
-        let decoded_packet = Packet::decode(&dst_id, &encoded_packet).unwrap();
+        let (decoded_packet, _authenticated_data) =
+            Packet::decode(&dst_id, &encoded_packet).unwrap();
 
         assert_eq!(decoded_packet, packet);
     }
 
     #[test]
     fn packet_encode_decode_whoareyou() {
-        let src_id: NodeId = node_key_1().public().into();
         let dst_id: NodeId = node_key_2().public().into();
 
         let message_nonce: MessageNonce = rand::random();
         let id_nonce: IdNonce = rand::random();
         let enr_seq: u64 = rand::random();
 
-        let packet = Packet::new_whoareyou(src_id, message_nonce, id_nonce, enr_seq);
+        let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
 
         let encoded_packet = packet.clone().encode(&dst_id);
-        let decoded_packet = Packet::decode(&dst_id, &encoded_packet).unwrap();
+        let (decoded_packet, _authenticated_data) =
+            Packet::decode(&dst_id, &encoded_packet).unwrap();
 
         assert_eq!(decoded_packet, packet);
     }
@@ -761,7 +759,8 @@ mod tests {
             Packet::new_authheader(src_id, message_nonce, id_nonce_sig, pubkey, enr_record);
 
         let encoded_packet = packet.clone().encode(&dst_id);
-        let decoded_packet = Packet::decode(&dst_id, &encoded_packet).unwrap();
+        let (decoded_packet, _authenticated_data) =
+            Packet::decode(&dst_id, &encoded_packet).unwrap();
 
         assert_eq!(decoded_packet, packet);
     }
@@ -776,8 +775,8 @@ mod tests {
         let iv = 0u128;
 
         let header = PacketHeader {
-            src_id,
-            kind: PacketKind::Message(message_nonce),
+            message_nonce,
+            kind: PacketKind::Message { src_id },
         };
         let ciphertext = hex_decode("b84102ed931f66d180cbb4219f369a24f4e6b24d7bdc2a04");
         let expected_packet = Packet {
@@ -788,7 +787,7 @@ mod tests {
 
         let decoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3fcba22b1e9472d43c9ae48d04689eb84102ed931f66d180cbb4219f369a24f4e6b24d7bdc2a04").unwrap();
 
-        let packet = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
+        let (packet, _auth_data) = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
 
@@ -805,9 +804,9 @@ mod tests {
         let iv = 0u128;
 
         let header = PacketHeader {
-            src_id,
+            message_nonce,
             kind: PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -823,7 +822,7 @@ mod tests {
 
         let decoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3dcb21d51e9472d43c9ae48d04689ef4d3d2602a5e89ac340f9e81e722b1d7dac2578d520dd5bc6dc1e38ad3ab33012be1a5d259267a0947bf242219834c5702d1c694c0ceb4a6a27b5d68bd2c2e32e6cb9696706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef52417d9c40a31564e8d5f31a7f08c38045ff5e30d9661838b1eabee9f1e561120bc7fccc3d4569a69fdf04f31230ae4be20404467d9ea9ab3cd").unwrap();
 
-        let packet = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
+        let (packet, _auth_data) = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
 
@@ -840,9 +839,9 @@ mod tests {
         let iv = 0u128;
 
         let header = PacketHeader {
-            src_id,
+            message_nonce,
             kind: PacketKind::Handshake {
-                message_nonce,
+                src_id,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
@@ -858,7 +857,7 @@ mod tests {
 
         let decoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3dcaa0d51e9472d43c9ae48d04689ef4d3d2602a5e89ac340f9e81e722b1d7dac2578d520dd5bc6dc1e38ad3ab33012be1a5d259267a0947bf242219834c5702d1c694c0ceb4a6a27b5d68bd2c2e32e6cb9696706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef52417d9c40a31564e8d5f31a7f08c38045ff5e30d9661838b1eabee9f1e561120bcc4d9f2f9c839152b4ab970e029b2395b97e8c3aa8d3b497ee98a15e865bcd34effa8b83eb6396bca60ad8f0bff1e047e278454bc2b3d6404c12106a9d0b6107fc2383976fc05fbda2c954d402c28c8fb53a2b3a4b111c286ba2ac4ff880168323c6e97b01dbcbeef4f234e5849f75ab007217c919820aaa1c8a7926d3625917fccc3d4569a69fd8aca026be87afab8e8e645d1ee888992").unwrap();
 
-        let packet = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
+        let (packet, _auth_data) = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
 }
