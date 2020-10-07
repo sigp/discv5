@@ -118,11 +118,11 @@ pub(crate) fn derive_keys_from_pubkey(
 /// signature.
 pub(crate) fn sign_nonce(
     signing_key: &CombinedKey,
-    id_nonce: &IdNonce,
+    challenge_data: &[u8],
     ephem_pubkey: &[u8],
     dst_id: &NodeId,
 ) -> Result<Vec<u8>, Discv5Error> {
-    let signing_nonce = generate_signing_nonce(id_nonce, ephem_pubkey, dst_id);
+    let signing_nonce = generate_signing_nonce(challenge_data, ephem_pubkey, dst_id);
 
     match signing_key {
         CombinedKey::Secp256k1(key) => {
@@ -139,11 +139,11 @@ pub(crate) fn sign_nonce(
 pub(crate) fn verify_authentication_nonce(
     remote_pubkey: &CombinedPublicKey,
     remote_ephem_pubkey: &[u8],
-    id_nonce: &IdNonce,
+    challenge_data: &[u8],
     dst_id: &NodeId,
     sig: &[u8],
 ) -> bool {
-    let signing_nonce = generate_signing_nonce(id_nonce, remote_ephem_pubkey, dst_id);
+    let signing_nonce = generate_signing_nonce(challenge_data, remote_ephem_pubkey, dst_id);
 
     match remote_pubkey {
         CombinedPublicKey::Secp256k1(key) => Signature::parse_slice(sig)
@@ -159,15 +159,15 @@ pub(crate) fn verify_authentication_nonce(
     }
 }
 
-/// Builds the signature for a given nonce.
+/// Builds the signature for a given challenge data.
 ///
 /// This takes the SHA256 hash of the nonce.
-fn generate_signing_nonce(id_nonce: &IdNonce, ephem_pubkey: &[u8], dst_id: &NodeId) -> Vec<u8> {
-    let mut nonce = NONCE_PREFIX.as_bytes().to_vec();
-    nonce.append(&mut id_nonce.to_vec());
-    nonce.append(&mut ephem_pubkey.to_vec());
-    nonce.append(&mut dst_id.raw().to_vec());
-    Sha256::digest(&nonce).to_vec()
+fn generate_signing_nonce(challenge_data: &[u8], ephem_pubkey: &[u8], dst_id: &NodeId) -> Vec<u8> {
+    let mut data = NONCE_PREFIX.as_bytes().to_vec();
+    data.extend_from_slice(challenge_data);
+    data.extend_from_slice(ephem_pubkey);
+    data.extend_from_slice(&dst_id.raw().to_vec());
+    Sha256::digest(&data).to_vec()
 }
 
 /* Decryption related functions */
@@ -211,6 +211,7 @@ pub(crate) fn encrypt_message(
 mod tests {
 
     use super::*;
+    use crate::packet::ID_NONCE_LENGTH;
     use enr::{CombinedKey, EnrBuilder, EnrKey};
     use rand;
 
@@ -266,7 +267,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        let id_nonce = [1; 32];
+        let id_nonce = [1; ID_NONCE_LENGTH];
 
         let expected_first_key = hex::decode("238d8b50e4363cf603a48c6cc3542967").unwrap();
         let expected_second_key = hex::decode("bebc0183484f7e7ca2ac32e3d72c8891").unwrap();
@@ -283,15 +284,18 @@ mod tests {
         let nonce_bytes =
             hex::decode("a77e3aa0c144ae7c0a3af73692b7d6e5b7a2fdc0eda16e8d5e6cb0d08e88dd04")
                 .unwrap();
-        let ephemeral_pubkey = hex::decode("9961e4c2356d61bedb83052c115d311acb3a96f5777296dcf297351130266231503061ac4aaee666073d7e5bc2c80c3f5c5b500c1cb5fd0a76abbb6b675ad157").unwrap();
+        let ephemeral_pubkey =
+            hex::decode("0x039961e4c2356d61bedb83052c115d311acb3a96f5777296dcf297351130266231")
+                .unwrap();
         let local_secret_key =
-            hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
+            hex::decode("0xfb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
                 .unwrap();
         let dst_id: NodeId = node_key_1().public().into();
 
-        let expected_sig = hex::decode("a886cb70d6d946b256d3037772c30fc31fc3b22600e215f8a87b60b5c463865309b5c216902a63334c1555057b37fc8b6e705d89ae5c8c20198002310585e0f7").unwrap();
+        let expected_sig = hex::decode("0x94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6").unwrap();
 
-        let mut nonce = [0u8; 32];
+        let challenge_data = hex::decode("0x000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").unwrap();
+
         nonce.copy_from_slice(&nonce_bytes);
         let key = secp256k1::SecretKey::parse_slice(&local_secret_key).unwrap();
         let sig = sign_nonce(&key.into(), &nonce, &ephemeral_pubkey, &dst_id).unwrap();

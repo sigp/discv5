@@ -18,12 +18,12 @@ pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 /// The object sent back by the Recv handler.
 pub struct InboundPacket {
     /// The originating socket addr.
-    pub node_address: NodeAddress,
+    pub src_address: SocketAddr,
     /// The packet header.
     pub header: PacketHeader,
     /// The message of the packet.
     pub message: Vec<u8>,
-    /// The authenticated data if required (packets that are non-challenge) packets.
+    /// The authenticated data of the packet.
     pub authenticated_data: Vec<u8>,
 }
 
@@ -100,41 +100,43 @@ impl RecvHandler {
 
     /// Handles in incoming packet. Passes through the filter, decodes and sends to the packet
     /// handler.
-    async fn handle_inbound(&mut self, src: SocketAddr, length: usize) {
+    async fn handle_inbound(&mut self, src_address: SocketAddr, length: usize) {
         // Permit all expected responses
-        let permitted = self.expected_responses.read().get(&src).is_some();
+        let permitted = self.expected_responses.read().get(&src_address).is_some();
 
         // Perform the first run of the filter. This checks for rate limits and black listed IP
         // addresses.
-        if !permitted && !self.filter.initial_pass(&src) {
-            trace!("Packet filtered from source: {:?}", src);
+        if !permitted && !self.filter.initial_pass(&src_address) {
+            trace!("Packet filtered from source: {:?}", src_address);
             return;
         }
         // Decodes the packet
-        let packet = match Packet::decode(&self.node_id, &self.recv_buffer[..length]) {
-            Ok(p) => p,
-            Err(e) => {
-                debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it
+        let (packet, authenticated_data) =
+            match Packet::decode(&self.node_id, &self.recv_buffer[..length]) {
+                Ok(p) => p,
+                Err(e) => {
+                    debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it
+                    return;
+                }
+            };
+
+        // If this is not a challenge packet, we immediately know its src_id and so pass it
+        // through the second filter.
+        if let Some(node_id) = packet.src_id() {
+            // Construct the node address
+            let node_address = NodeAddress {
+                socket_addr: src_address,
+                node_id,
+            };
+
+            // Perform packet-level filtering
+            if !permitted && !self.filter.final_pass(&node_address, &packet) {
                 return;
             }
-        };
-
-        // Construct the node address
-        let node_address = NodeAddress {
-            socket_addr: src,
-            node_id: packet.header.src_id,
-        };
-
-        // Perform packet-level filtering
-        if !permitted && !self.filter.final_pass(&node_address, &packet) {
-            return;
         }
 
-        // obtain any packet authenticated data
-        let authenticated_data = packet.header.authenticated_data();
-
         let inbound = InboundPacket {
-            node_address,
+            src_address,
             header: packet.header,
             message: packet.message,
             authenticated_data,

@@ -65,21 +65,24 @@ impl Session {
         message_nonce[..4].copy_from_slice(&self.counter.to_be_bytes());
         message_nonce[4..].copy_from_slice(&random_nonce);
 
-        // the authenticated data is the packet header
+        // the authenticated data is the IV concatenated with the packet header
+        let iv: u128 = rand::random();
         let header = PacketHeader {
             message_nonce,
             kind: PacketKind::Message { src_id },
         };
 
+        let mut authenticated_data = iv.to_be_bytes().to_vec();
+        authenticated_data.extend_from_slice(&header.encode());
+
         let cipher = crypto::encrypt_message(
             &self.keys.encryption_key,
             message_nonce,
             message,
-            &header.encode(),
+            &authenticated_data,
         )?;
 
         // construct a packet from the header and the cipher text
-        let iv: u128 = rand::random();
         Ok(Packet {
             iv,
             header,
@@ -183,6 +186,7 @@ impl Session {
         local_node_id: &NodeId,
         id_nonce: &IdNonce,
         message: &[u8],
+        challenge_data: &[u8],
     ) -> Result<(Packet, Session), Discv5Error> {
         // generate the session keys
         let (encryption_key, decryption_key, ephem_pubkey) =
@@ -196,7 +200,7 @@ impl Session {
         // construct the nonce signature
         let sig = crypto::sign_nonce(
             &local_key.read(),
-            id_nonce,
+            challenge_data,
             &ephem_pubkey,
             &remote_contact.node_id(),
         )
@@ -212,7 +216,10 @@ impl Session {
             updated_enr,
         );
 
-        let authenticated_data = packet.header.encode();
+        // Create the authenticated data for the new packet.
+
+        let mut authenticated_data = packet.iv.to_be_bytes().to_vec();
+        authenticated_data.extend_from_slice(&packet.header.encode());
 
         // encrypt the message
         let message_ciphertext =

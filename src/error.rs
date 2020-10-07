@@ -52,6 +52,8 @@ pub enum PacketError {
     UnknownPacket,
     /// The packet size was smaller than expected.
     TooSmall,
+    /// The NodeId sent was invalid.
+    InvalidNodeId,
     /// The header has an invalid length.
     HeaderLengthInvalid(usize),
     /// The header could not be decrypted.
