@@ -199,12 +199,11 @@ impl PacketKind {
                 if auth_data.len() != 24 {
                     return Err(PacketError::InvalidAuthDataSize);
                 }
-                let id_nonce: IdNonce = auth_data
-                    [MESSAGE_NONCE_LENGTH..MESSAGE_NONCE_LENGTH + ID_NONCE_LENGTH]
+                let id_nonce: IdNonce = auth_data[..ID_NONCE_LENGTH]
                     .try_into()
                     .expect("ID_NONCE_LENGTH must be the correct size");
                 let enr_seq = u64::from_be_bytes(
-                    auth_data[MESSAGE_NONCE_LENGTH + ID_NONCE_LENGTH..]
+                    auth_data[ID_NONCE_LENGTH..]
                         .try_into()
                         .expect("The length of the authdata must be 52 bytes"),
                 );
@@ -221,21 +220,21 @@ impl PacketKind {
                 }
 
                 // decode the src_id
-                let src_id = NodeId::parse(&auth_data[1..MESSAGE_NONCE_LENGTH + 1])
-                    .map_err(|_| PacketError::InvalidNodeId)?;
+                let src_id =
+                    NodeId::parse(&auth_data[..32]).map_err(|_| PacketError::InvalidNodeId)?;
 
                 // decode the lengths
-                let sig_size = auth_data[MESSAGE_NONCE_LENGTH + 1];
-                let eph_key_size = auth_data[MESSAGE_NONCE_LENGTH + 2];
+                let sig_size = auth_data[32] as usize;
+                let eph_key_size = auth_data[32 + 1] as usize;
 
-                let total_size = (sig_size + eph_key_size) as usize;
+                let total_size = sig_size + eph_key_size;
 
                 // verify the auth data length
                 if auth_data.len() < 34 + total_size {
                     return Err(PacketError::InvalidAuthDataSize);
                 }
 
-                let remaining_data = &auth_data[MESSAGE_NONCE_LENGTH + 3..];
+                let remaining_data = &auth_data[32 + 2..];
 
                 let id_nonce_sig = remaining_data[0..sig_size as usize].to_vec();
                 let ephem_pubkey = remaining_data[sig_size as usize..total_size].to_vec();
@@ -432,13 +431,15 @@ impl Packet {
         }
 
         // Check the protocol id
-        if &static_header[..5] != PROTOCOL_ID.as_bytes() {
+        if &static_header[..6] != PROTOCOL_ID.as_bytes() {
+            dbg!(static_header);
+            dbg!(PROTOCOL_ID.as_bytes());
             return Err(PacketError::HeaderDecryptionFailed);
         }
 
         // Check the version matches
         let version = u16::from_be_bytes(
-            static_header[5..7]
+            static_header[6..8]
                 .try_into()
                 .expect("Must be correct size"),
         );
@@ -446,10 +447,10 @@ impl Packet {
             return Err(PacketError::InvalidVersion(version));
         }
 
-        let flag = static_header[7];
+        let flag = static_header[8];
 
         // Obtain the message nonce
-        let message_nonce: MessageNonce = static_header[8..8 + MESSAGE_NONCE_LENGTH]
+        let message_nonce: MessageNonce = static_header[9..9 + MESSAGE_NONCE_LENGTH]
             .try_into()
             .expect("Must be correct size");
 
