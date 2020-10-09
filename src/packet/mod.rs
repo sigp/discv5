@@ -39,6 +39,28 @@ pub type MessageNonce = [u8; MESSAGE_NONCE_LENGTH];
 /// The nonce sent in a WHOAREYOU packet.
 pub type IdNonce = [u8; ID_NONCE_LENGTH];
 
+// This is the WHOAREYOU authenticated data.
+pub struct ChallengeData([u8; 63]);
+
+impl std::convert::TryFrom<Vec<u8>> for ChallengeData {
+    type Error = ();
+
+    fn try_from(data: Vec<u8>) -> Result<Self, ()> {
+        if data.len() != 63 {
+            return Err(());
+        }
+        let mut result = [0; 63];
+        result.copy_from_slice(&data);
+        Ok(ChallengeData(result))
+    }
+}
+
+impl AsRef<[u8]> for ChallengeData {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Packet {
     /// Random data unique to the packet.

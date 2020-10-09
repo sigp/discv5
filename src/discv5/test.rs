@@ -68,6 +68,7 @@ fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Disc
     nodes
 }
 
+/*
 /// Generate `n` deterministic keypairs from a given seed.
 fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
     let mut keypairs = Vec::new();
@@ -492,4 +493,6 @@ async fn test_bucket_limits() {
         discv5.kbuckets.read().iter_ref().collect::<Vec<_>>().len(),
         bucket_limit
     );
+
 }
+*/

@@ -24,7 +24,7 @@
 //! Responses come by the receiving channel in the form of a [`HandlerResponse`].
 use crate::config::Discv5Config;
 use crate::error::{Discv5Error, RequestError};
-use crate::packet::{IdNonce, MessageNonce, Packet, PacketKind};
+use crate::packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind};
 use crate::rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody};
 use crate::socket::Socket;
 use crate::{socket, Enr};
@@ -33,6 +33,7 @@ use futures::prelude::*;
 use log::{debug, error, trace, warn};
 use lru_time_cache::LruCache;
 use parking_lot::RwLock;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use std::{collections::HashMap, default::Default, net::SocketAddr, sync::atomic::Ordering};
 use tokio::sync::{mpsc, oneshot};
@@ -111,7 +112,7 @@ pub enum HandlerResponse {
 pub struct WhoAreYouRef(pub NodeAddress, MessageNonce);
 
 pub(crate) struct Challenge {
-    id_nonce: IdNonce,
+    data: ChallengeData,
     remote_enr: Option<Enr>,
 }
 
@@ -302,12 +303,14 @@ impl Handler {
         let message_nonce = inbound_packet.header.message_nonce;
         match inbound_packet.header.kind {
             PacketKind::WhoAreYou { id_nonce, enr_seq } => {
+                let challenge_data = ChallengeData::try_from(inbound_packet.authenticated_data)
+                    .expect("Must be correct size");
                 self.handle_challenge(
                     inbound_packet.src_address,
                     message_nonce,
                     id_nonce,
                     enr_seq,
-                    &inbound_packet.authenticated_data,
+                    challenge_data,
                 )
                 .await
             }
@@ -496,11 +499,13 @@ impl Handler {
         let enr_seq = remote_enr.clone().map_or_else(|| 0, |enr| enr.seq());
         let id_nonce: IdNonce = rand::random();
         let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
+        let challenge_data = ChallengeData::try_from(packet.authenticated_data())
+            .expect("Must be the correct challenge size");
         self.send(node_address.clone(), packet).await;
         self.active_challenges.insert(
             node_address,
             Challenge {
-                id_nonce,
+                data: challenge_data,
                 remote_enr,
             },
         );
@@ -515,7 +520,7 @@ impl Handler {
         request_nonce: MessageNonce,
         id_nonce: IdNonce,
         enr_seq: u64,
-        challenge_data: &[u8],
+        challenge_data: ChallengeData,
     ) {
         // Check that this challenge matches a known active request.
         // If this message passes all the requisite checks, a request call is returned.
@@ -594,9 +599,8 @@ impl Handler {
             self.key.clone(),
             updated_enr,
             &self.node_id,
-            &id_nonce,
+            &challenge_data,
             &(request_call.request.clone().encode()),
-            challenge_data,
         ) {
             Ok(v) => v,
             Err(e) => {

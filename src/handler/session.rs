@@ -1,6 +1,6 @@
 use super::*;
 use crate::node_info::NodeContact;
-use crate::packet::{Packet, PacketHeader, PacketKind, MESSAGE_NONCE_LENGTH};
+use crate::packet::{ChallengeData, Packet, PacketHeader, PacketKind, MESSAGE_NONCE_LENGTH};
 use enr::{CombinedKey, NodeId};
 use zeroize::Zeroize;
 
@@ -132,7 +132,7 @@ impl Session {
             &local_key.read(),
             local_id,
             remote_id,
-            &challenge.id_nonce,
+            &challenge.data,
             ephem_pubkey,
         )?;
 
@@ -163,7 +163,7 @@ impl Session {
         if !crypto::verify_authentication_nonce(
             &remote_public_key,
             ephem_pubkey,
-            &challenge.id_nonce,
+            &challenge.data,
             &local_id,
             id_nonce_sig,
         ) {
@@ -184,13 +184,12 @@ impl Session {
         local_key: Arc<RwLock<CombinedKey>>,
         updated_enr: Option<Enr>,
         local_node_id: &NodeId,
-        id_nonce: &IdNonce,
+        challenge_data: &ChallengeData,
         message: &[u8],
-        challenge_data: &[u8],
     ) -> Result<(Packet, Session), Discv5Error> {
         // generate the session keys
         let (encryption_key, decryption_key, ephem_pubkey) =
-            crypto::generate_session_keys(local_node_id, remote_contact, id_nonce)?;
+            crypto::generate_session_keys(local_node_id, remote_contact, challenge_data)?;
 
         let keys = Keys {
             encryption_key,

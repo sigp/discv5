@@ -664,7 +664,7 @@ mod tests {
         let id = 1;
         let total = 1;
         // ENR needs to be constructed from a keypair
-        let key: CombinedKey = secp256k1::SecretKey::parse_slice(
+        let key: CombinedKey = k256::ecdsa::SigningKey::new(
             &hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
                 .unwrap(),
         )
