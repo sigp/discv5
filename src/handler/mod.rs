@@ -302,13 +302,12 @@ impl Handler {
     async fn process_inbound_packet(&mut self, inbound_packet: socket::InboundPacket) {
         let message_nonce = inbound_packet.header.message_nonce;
         match inbound_packet.header.kind {
-            PacketKind::WhoAreYou { id_nonce, enr_seq } => {
+            PacketKind::WhoAreYou { enr_seq, .. } => {
                 let challenge_data = ChallengeData::try_from(inbound_packet.authenticated_data)
                     .expect("Must be correct size");
                 self.handle_challenge(
                     inbound_packet.src_address,
                     message_nonce,
-                    id_nonce,
                     enr_seq,
                     challenge_data,
                 )
@@ -443,7 +442,11 @@ impl Handler {
         let call = RequestCall::new(contact, packet.clone(), request);
         // let the filter know we are expecting a response
         self.add_expected_response(node_address.socket_addr);
+        let nonce = *packet.message_nonce();
         self.send(node_address.clone(), packet).await;
+
+        self.active_requests_nonce_mapping
+            .insert(nonce, node_address.clone());
         self.active_requests.insert(node_address, call);
         Ok(())
     }
@@ -501,6 +504,7 @@ impl Handler {
         let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
         let challenge_data = ChallengeData::try_from(packet.authenticated_data())
             .expect("Must be the correct challenge size");
+        debug!("Sending WHOAREYOU to {}", node_address);
         self.send(node_address.clone(), packet).await;
         self.active_challenges.insert(
             node_address,
@@ -518,7 +522,6 @@ impl Handler {
         &mut self,
         src_address: SocketAddr,
         request_nonce: MessageNonce,
-        id_nonce: IdNonce,
         enr_seq: u64,
         challenge_data: ChallengeData,
     ) {

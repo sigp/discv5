@@ -68,18 +68,17 @@ fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Disc
     nodes
 }
 
-/*
 /// Generate `n` deterministic keypairs from a given seed.
 fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
     let mut keypairs = Vec::new();
     for i in 0..n {
         let sk = {
             let rng = &mut rand_xorshift::XorShiftRng::seed_from_u64(seed + i as u64);
-            let mut b = [0; secp256k1::util::SECRET_KEY_SIZE];
+            let mut b = [0; 32];
             loop {
                 // until a value is given within the curve order
                 rng.fill_bytes(&mut b);
-                if let Ok(k) = secp256k1::SecretKey::parse(&mut b) {
+                if let Ok(k) = k256::ecdsa::SigningKey::new(&b) {
                     break k;
                 }
             }
@@ -493,6 +492,4 @@ async fn test_bucket_limits() {
         discv5.kbuckets.read().iter_ref().collect::<Vec<_>>().len(),
         bucket_limit
     );
-
 }
-*/

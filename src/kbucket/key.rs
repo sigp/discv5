@@ -27,10 +27,7 @@ use enr::NodeId;
 use uint::construct_uint;
 //use libp2p_core::PeerId;
 //use multihash::Multihash;
-use sha2::{
-    digest::generic_array::{typenum::U32, GenericArray},
-    Digest, Sha256,
-};
+use sha2::digest::generic_array::{typenum::U32, GenericArray};
 
 construct_uint! {
     /// 256-bit unsigned integer.

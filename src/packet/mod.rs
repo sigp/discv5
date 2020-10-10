@@ -587,7 +587,7 @@ mod tests {
         let node_id_a: NodeId = node_key_1().public().into();
         let node_id_b: NodeId = node_key_2().public().into();
 
-        let expected_result = hex::decode("0000000000000000000000000000000b4f3ab1857252d94edf25b8bda34d42d8260ec07cfbb0b826e8067831b5af17ad5566dc48f0d48d73b9942b9bb5d5d5c9e08a3585038c4d010101010101010101010101").unwrap();
+        let expected_result = hex::decode("0000000000000000000000000000000b4f3ab1857252f96f758330a846b5d3d4a954d738dfcd6d1ed118ecc1d54f9b20fbf2be28db87805b23193e03c455d73d63ac71dfa91ffa010101010101010101010101").unwrap();
         let iv = 11u128;
         let message_nonce = [12u8; MESSAGE_NONCE_LENGTH];
         let header = PacketHeader {
@@ -602,6 +602,7 @@ mod tests {
         };
 
         let encoded = packet.encode(&node_id_b);
+        dbg!(hex::encode(&encoded));
         assert_eq!(expected_result, encoded);
     }
 
@@ -613,15 +614,14 @@ mod tests {
         let request_nonce: MessageNonce = hex_decode("0102030405060708090a0b0c")[..]
             .try_into()
             .unwrap();
-        let id_nonce: IdNonce =
-            hex_decode("0102030405060708090a0b0c0d0e0f1000000000000000000000000000000000")[..]
-                .try_into()
-                .unwrap();
+        let id_nonce: IdNonce = hex_decode("0102030405060708090a0b0c0d0e0f10")[..]
+            .try_into()
+            .unwrap();
         let enr_seq = 0u64;
         let iv = 0u128;
 
         // expected hex output
-        let expected_output = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3ecb9ad5e368892ec562137bf19c6d0a9191a5651c4f415117bdfa0c7ab86af62b7a9784eceb28008d03ede83bd1369631f9f3d8da0b45").unwrap();
+        let expected_output = hex::decode("00000000000000000000000000000000088b3d434277464933a1ccc59f5967ad1d6035f15e528627dde75cd68292f9e6c27d6b66c8100a873fcbaed4e16b8d").unwrap();
 
         let header = PacketHeader {
             message_nonce: request_nonce,
@@ -649,7 +649,7 @@ mod tests {
         let enr_record = None;
         let iv = 0u128;
 
-        let expected_output = hex::decode("0000000000000000000000000000000035a14bcdb8448e04f25747c7493c12d052da4583e19f19d5fe5a8d438a4b5b518dfead9d80200875c33d42d29bed582c1d561390390af686d994770f24d8da18605ff3f5b60b090c61515093a88ef4c02186f7d1b5c9a88fdb8cfae239f13e451758751561b439d8044e27cecdf646f2aa1c9ecbd5faf37eb6794f6337f4b2a885391e631f72deb808c63bf0b0faed23d7117f7a2e1f98c28bd017").unwrap();
+        let expected_output = hex::decode("0000000000000000000000000000000035a14bcdb844ae25f36070f07e0b25e765ed72b4d69c99d5fe5a8d438a4b5b518dfead9d80200875c23e31d0acda6f1b2a6124a70e3dc1f2b8b0770f24d8da18605ff3f5b60b090c61515093a88ef4c02186f7d1b5c9a88fdb8cfae239f13e451758751561b439d8044e27cecdf646f2aa1c9ecbd5faf37eb67a4f6337f4b2a885391e631f72deb808c63bf0b0faed23d7117f7a2e1f98c28bd0").unwrap();
 
         let header = PacketHeader {
             message_nonce,
@@ -679,16 +679,10 @@ mod tests {
         let message_nonce: MessageNonce = [52u8; MESSAGE_NONCE_LENGTH];
         let id_nonce_sig = vec![5u8; 64];
         let ephem_pubkey = vec![6u8; 33];
-        let enr_record = Some(
-            enr::EnrBuilder::new("v4")
-                .ip("127.0.0.1".parse().unwrap())
-                .tcp(9000)
-                .build(&node_key_1)
-                .unwrap(),
-        );
+        let enr_record: Option<Enr> = Some("enr:-IS4QHXuNmr1vGEGVGDcy_sG2BZ7a3A7mbKS812BK_9rToQiF1Lfknsi5o0xKLnGJbTzBssJCzMcIj8SOiu1O9dnfZEBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQMT0UIR4Ch7I2GhYViQqbUhIIBUbQoleuTP-Wz1NJksuYN0Y3CCIyg".parse().unwrap());
         let iv = 0u128;
 
-        let expected_output = hex::decode("0000000000000000000000000000000035a14bcdb8448e045bfec0dda3cb8cd3d28f5dc8cae1ef446ec303591d35d45c767284d6d58594cdc33dc4d29bed582c1d561390390af686d994770f24d8da18605ff3f5b60b090c61515093a88ef4c02186f7d1b5c9a88fdb8cfae239f13e451758751561b439d8044e27cecdf646f2aa1c9ecbd5faf37eb6794f6337f4b2a885391e631f72deb808c63bf0b0faed23d7117f7a2e1f98c28bd01774f273648aacc15fec7016235dfb3ace8f8ffd6f63ea1958d5cbe6ca51c9ec78d8bf1b4f326b4dfd90fec9ea5a4aed319818bb4ec872986bd559d8b56cf4589d22e0fe1cbd6f63358ab38c7637d3e45a233ed56dadb635603abd38cfb1ad7ad358bda590c9544ee00782b475477e47f5e0b986988b76101b4da99b018e80c76c0d0de15cabfe").unwrap();
+        let expected_output = hex::decode("0000000000000000000000000000000035a14bcdb844ae25f36070f07e0b25e765ed72b4d69d137c57dd97a97dd558d1d8e6e6b6fed699e55bb02b47d25562e0a6486ff2aba179f2b8b0770f24d8da18605ff3f5b60b090c61515093a88ef4c02186f7d1b5c9a88fdb8cfae239f13e451758751561b439d8044e27cecdf646f2aa1c9ecbd5faf37eb67a4f6337f4b2a885391e631f72deb808c63bf0b0faed23d7117f7a2e1f98c28bd0e908ce8b51cc89e592ed2efa671b8efd49e1ce8fd567fdb06ed308267d31f6bd75827812d21e8aa5a6c025e69b67faea57a15c1c9324d16938c4ebe71dba0bd5d7b00bb6de3e846ed37ef13a9d2e271f25233f5d97bbb026223dbe6595210f6a11cbee54589a0c0c20c7bb7c4c5bea46553480e1b7d4e83b2dd8305aac3b15fd9b1a1e13fda0").unwrap();
 
         let header = PacketHeader {
             message_nonce,
@@ -706,7 +700,6 @@ mod tests {
             message: Vec::new(),
         };
         let encoded = packet.encode(&dst_id);
-        // println!("{}", hex::encode(&encoded));
         assert_eq!(encoded, expected_output);
     }
 
@@ -724,7 +717,7 @@ mod tests {
         };
         let ciphertext = vec![23; 12];
 
-        let expected_output = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3fcba2e0d55fb91ff7512f46cfa355171717171717171717171717").unwrap();
+        let expected_output = hex::decode("00000000000000000000000000000000088b3d43427746493294faf2af68559e215d0bce6652be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da171717171717171717171717").unwrap();
 
         let packet = Packet {
             iv,
@@ -732,7 +725,6 @@ mod tests {
             message: ciphertext,
         };
         let encoded = packet.encode(&dst_id);
-        //println!("{}", hex::encode(&encoded));
         assert_eq!(encoded, expected_output);
     }
 
@@ -801,16 +793,16 @@ mod tests {
             message_nonce,
             kind: PacketKind::Message { src_id },
         };
-        let ciphertext = hex_decode("b84102ed931f66d180cbb4219f369a24f4e6b24d7bdc2a04");
+        let ciphertext = hex_decode("b84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc");
         let expected_packet = Packet {
             iv,
             header,
             message: ciphertext,
         };
 
-        let decoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3fcba22b1e9472d43c9ae48d04689eb84102ed931f66d180cbb4219f369a24f4e6b24d7bdc2a04").unwrap();
+        let encoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc").unwrap();
 
-        let (packet, _auth_data) = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
+        let (packet, _auth_data) = Packet::decode(&dst_id, &encoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
 
@@ -821,8 +813,9 @@ mod tests {
         let message_nonce: MessageNonce = hex_decode("ffffffffffffffffffffffff")[..]
             .try_into()
             .unwrap();
-        let id_nonce_sig = hex_decode("c14a44c1e56c122877e65606ad2ce92d1ad6e13e946d4ce0673b90e237bdd05c2181fc714c008686a08eb4df52faab7614a469576e9ab1363377a7de100aedc2");
-        let ephem_pubkey = hex_decode("9a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a50f497889e4a9c74f48321875f8601ec65650fa0922fda04d69089b79af7f5533");
+        let id_nonce_sig = hex_decode("c0a04b36f276172afc66a62848eb0769800c670c4edbefab8f26785e7fda6b56506a3f27ca72a75b106edd392a2cbf8a69272f5c1785c36d1de9d98a0894b2db");
+        let ephem_pubkey =
+            hex_decode("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5");
         let enr_record = None;
         let iv = 0u128;
 
@@ -836,14 +829,14 @@ mod tests {
             },
         };
 
-        let message = hex_decode("7fccc3d4569a69fdf04f31230ae4be20404467d9ea9ab3cd");
+        let message = hex_decode("f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d839cf8");
         let expected_packet = Packet {
             iv,
             header,
             message,
         };
 
-        let decoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3dcb21d51e9472d43c9ae48d04689ef4d3d2602a5e89ac340f9e81e722b1d7dac2578d520dd5bc6dc1e38ad3ab33012be1a5d259267a0947bf242219834c5702d1c694c0ceb4a6a27b5d68bd2c2e32e6cb9696706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef52417d9c40a31564e8d5f31a7f08c38045ff5e30d9661838b1eabee9f1e561120bc7fccc3d4569a69fdf04f31230ae4be20404467d9ea9ab3cd").unwrap();
+        let decoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfba776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d839cf8").unwrap();
 
         let (packet, _auth_data) = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
@@ -856,8 +849,9 @@ mod tests {
         let message_nonce: MessageNonce = hex_decode("ffffffffffffffffffffffff")[..]
             .try_into()
             .unwrap();
-        let id_nonce_sig = hex_decode("c14a44c1e56c122877e65606ad2ce92d1ad6e13e946d4ce0673b90e237bdd05c2181fc714c008686a08eb4df52faab7614a469576e9ab1363377a7de100aedc2");
-        let ephem_pubkey = hex_decode("9a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a50f497889e4a9c74f48321875f8601ec65650fa0922fda04d69089b79af7f5533");
+        let id_nonce_sig = hex_decode("a439e69918e3f53f555d8ca4838fbe8abeab56aa55b056a2ac4d49c157ee719240a93f56c9fccfe7742722a92b3f2dfa27a5452f5aca8adeeab8c4d5d87df555");
+        let ephem_pubkey =
+            hex_decode("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5");
         let enr_record = Some("enr:-H24QBfhsHORjaMtZAZCx2LA4ngWmOSXH4qzmnd0atrYPwHnb_yHTFkkgIu-fFCJCILCuKASh6CwgxLR1ToX1Rf16ycBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQMT0UIR4Ch7I2GhYViQqbUhIIBUbQoleuTP-Wz1NJksuQ".parse::<Enr>().unwrap());
         let iv = 0u128;
 
@@ -871,16 +865,16 @@ mod tests {
             },
         };
 
-        let message = hex_decode("7fccc3d4569a69fd8aca026be87afab8e8e645d1ee888992");
+        let message = hex_decode("08d65093ccab5aa596a34d7511401987662d8cf62b139471");
         let expected_packet = Packet {
             iv,
             header,
             message,
         };
 
-        let decoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342776668980a4adf72a8fcaa963f24b27a2f6bb44c7ed5ca10e87de130f94d2390b9853c3dcaa0d51e9472d43c9ae48d04689ef4d3d2602a5e89ac340f9e81e722b1d7dac2578d520dd5bc6dc1e38ad3ab33012be1a5d259267a0947bf242219834c5702d1c694c0ceb4a6a27b5d68bd2c2e32e6cb9696706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef52417d9c40a31564e8d5f31a7f08c38045ff5e30d9661838b1eabee9f1e561120bcc4d9f2f9c839152b4ab970e029b2395b97e8c3aa8d3b497ee98a15e865bcd34effa8b83eb6396bca60ad8f0bff1e047e278454bc2b3d6404c12106a9d0b6107fc2383976fc05fbda2c954d402c28c8fb53a2b3a4b111c286ba2ac4ff880168323c6e97b01dbcbeef4f234e5849f75ab007217c919820aaa1c8a7926d3625917fccc3d4569a69fd8aca026be87afab8e8e645d1ee888992").unwrap();
+        let encoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad539c8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb23698868350aaad22e3ab8dd034f548a1c43cd246be98562fafa0a1fa86d8e7a3b95ae78cc2b988ded6a5b59eb83ad58097252188b902b21481e30e5e285f19735796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524e0ed04c3c21e39b1868e1ca8105e585ec17315e755e6cfc4dd6cb7fd8e1a1f55e49b4b5eb024221482105346f3c82b15fdaae36a3bb12a494683b4a3c7f2ae41306252fed84785e2bbff3b022812d0882f06978df84a80d443972213342d04b9048fc3b1d5fcb1df0f822152eced6da4d3f6df27e70e4539717307a0208cd208d65093ccab5aa596a34d7511401987662d8cf62b139471").unwrap();
 
-        let (packet, _auth_data) = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
+        let (packet, _auth_data) = Packet::decode(&dst_id, &encoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
 }
