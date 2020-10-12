@@ -61,8 +61,9 @@
 //!    });
 //! ```
 
-use crate::error::{Discv5Error, QueryError};
+use crate::error::{Discv5Error, QueryError, RequestError};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
+use crate::node_info::NodeContact;
 use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::{Discv5Config, Enr};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
@@ -73,10 +74,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 #[cfg(feature = "libp2p")]
-use {
-    crate::error::RequestError, crate::node_info::NodeContact, libp2p_core::Multiaddr,
-    std::convert::TryFrom,
-};
+use {libp2p_core::Multiaddr, std::convert::TryFrom};
 
 // Create lazy static variable for the global permit/ban list
 use crate::metrics::{Metrics, METRICS};
@@ -384,7 +382,7 @@ impl Discv5 {
     pub fn request_enr(
         &mut self,
         multiaddr: impl std::convert::TryInto<Multiaddr> + 'static,
-    ) -> impl Future<Output = Result<Option<Enr>, RequestError>> + 'static {
+    ) -> impl Future<Output = Result<Enr, RequestError>> + 'static {
         let channel = self.clone_channel();
 
         async move {
@@ -407,9 +405,41 @@ impl Discv5 {
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
-            Ok(callback_recv
+            callback_recv
                 .await
-                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?)
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
+    }
+
+    /// Request a TALK message from a node, identified via the ENR.
+    pub fn talk_req(
+        &mut self,
+        enr: Enr,
+        protocol: Vec<u8>,
+        request: Vec<u8>,
+    ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static {
+        // convert the ENR to a node_contact.
+        let node_contact = NodeContact::from(enr);
+
+        // the service will verify if this node is contactable, we just send it and
+        // await a response.
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+
+        async move {
+            let mut channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+            let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
         }
     }
 

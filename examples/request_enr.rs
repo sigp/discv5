@@ -48,13 +48,10 @@ async fn main() {
 
     // search for the ENR
     match discv5.request_enr(multiaddr).await {
-        Ok(Some(enr)) => {
+        Ok(enr) => {
             println!("ENR Found:");
             println!("Base64:{}", enr.to_base64());
             println!("{}", enr);
-        }
-        Ok(None) => {
-            println!("No ENR response");
         }
         Err(e) => {
             println!("Error:{:?}", e);

@@ -49,7 +49,13 @@ pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
     StartQuery(QueryKind, oneshot::Sender<Vec<Enr>>),
-    FindEnr(NodeContact, oneshot::Sender<Option<Enr>>),
+    FindEnr(NodeContact, oneshot::Sender<Result<Enr, RequestError>>),
+    Talk(
+        NodeContact,
+        Vec<u8>,
+        Vec<u8>,
+        oneshot::Sender<Result<Vec<u8>, RequestError>>,
+    ),
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
@@ -104,10 +110,13 @@ pub struct Service {
     /// The channel of messages sent by the controlling discv5 wrapper.
     discv5_recv: mpsc::Receiver<ServiceRequest>,
 
+    /// The exit channel for the service.
     exit: oneshot::Receiver<()>,
+
     /// An interval to check and ping all nodes in the routing table.
     ping_heartbeat: Interval,
 
+    /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 }
 
@@ -119,9 +128,16 @@ struct ActiveRequest {
     pub request_body: RequestBody,
     /// The query ID if the request was related to a query.
     pub query_id: Option<QueryId>,
-    /// Channel callback if this request was from a user level request. The only kind is for an ENR
-    /// request.
-    pub callback: Option<oneshot::Sender<Option<Enr>>>,
+    /// Channel callback if this request was from a user level request.
+    pub callback: Option<CallbackResponse>,
+}
+
+/// The kinds of responses we can send back to the discv5 layer.
+pub enum CallbackResponse {
+    // A response to a requested ENR.
+    Enr(oneshot::Sender<Result<Enr, RequestError>>),
+    /// A response from a TALK request
+    Talk(oneshot::Sender<Result<Vec<u8>, RequestError>>),
 }
 
 /// For multiple responses to a FindNodes request, this keeps track of the request count
@@ -229,6 +245,9 @@ impl Service {
                         }
                         ServiceRequest::FindEnr(node_contact, callback) => {
                             self.request_enr(node_contact, Some(callback));
+                        }
+                        ServiceRequest::Talk(node_contact, protocol, request, callback) => {
+                            self.talk_request(node_contact, protocol, request, callback);
                         }
                         ServiceRequest::RequestEventStream(callback) => {
                             // the channel size needs to be large to handle many discovered peers
@@ -433,7 +452,25 @@ impl Service {
                     .send(HandlerRequest::Response(node_address, Box::new(response)))
                     .unwrap_or_else(|_| ());
             }
-            _ => {} //TODO: Implement all RPC methods
+            RequestBody::Talk { protocol, request } => {
+                // Send the callback's response to this protocol.
+                let response = (self.config.talkreq_callback)(&protocol, &request);
+                let response = Response {
+                    id,
+                    body: ResponseBody::Talk { response },
+                };
+
+                debug!("Sending TALK response to {}", node_address);
+                self.handler_send
+                    .send(HandlerRequest::Response(node_address, Box::new(response)))
+                    .unwrap_or_else(|_| ());
+            }
+            RequestBody::RegisterTopic { .. } => {
+                debug!("Received RegisterTopic request which is unimplemented");
+            }
+            RequestBody::TopicQuery { .. } => {
+                debug!("Received TopicQuery request which is unimplemented");
+            }
         }
     }
 
@@ -476,7 +513,7 @@ impl Service {
 
                     // This could be an ENR request from the outer service. If so respond to the
                     // callback and End.
-                    if let Some(callback) = active_request.callback.take() {
+                    if let Some(CallbackResponse::Enr(callback)) = active_request.callback.take() {
                         // Currently only support requesting for ENR's. Verify this is the case.
                         if !distances_requested.is_empty() && distances_requested[0] != 0 {
                             error!("Retrieved a callback request that wasn't for a peer's ENR");
@@ -489,7 +526,10 @@ impl Service {
                                 active_request.contact
                             );
                         }
-                        callback.send(nodes.pop()).unwrap_or_else(|_| ());
+                        let response = nodes.pop().ok_or_else(|| {
+                            RequestError::InvalidEnr("Peer did not return an ENR".into())
+                        });
+                        callback.send(response).unwrap_or_else(|_| ());
                         return;
                     }
 
@@ -629,7 +669,21 @@ impl Service {
                         self.connection_updated(node_id, Some(enr), NodeStatus::Connected);
                     }
                 }
-                _ => {} //TODO: Implement all RPC methods
+                ResponseBody::Talk { response } => {
+                    // Send the response to the user
+                    match active_request.callback {
+                        Some(CallbackResponse::Talk(callback)) => {
+                            callback.send(Ok(response)).unwrap_or_else(|_| ());
+                        }
+                        _ => error!("Invalid callback for response"),
+                    }
+                }
+                ResponseBody::Ticket { .. } => {
+                    error!("Received a TICKET response. This is unimplemented and should be unreachable.");
+                }
+                ResponseBody::RegisterConfirmation { .. } => {
+                    error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
+                }
             }
         } else {
             warn!(
@@ -680,14 +734,33 @@ impl Service {
     fn request_enr(
         &mut self,
         contact: NodeContact,
-        callback: Option<oneshot::Sender<Option<Enr>>>,
+        callback: Option<oneshot::Sender<Result<Enr, RequestError>>>,
     ) {
         let request_body = RequestBody::FindNode { distances: vec![0] };
         let active_request = ActiveRequest {
             contact,
             request_body,
             query_id: None,
-            callback,
+            callback: callback.map(CallbackResponse::Enr),
+        };
+        self.send_rpc_request(active_request);
+    }
+
+    /// Requests a TALK message from the peer.
+    fn talk_request(
+        &mut self,
+        contact: NodeContact,
+        protocol: Vec<u8>,
+        request: Vec<u8>,
+        callback: oneshot::Sender<Result<Vec<u8>, RequestError>>,
+    ) {
+        let request_body = RequestBody::Talk { protocol, request };
+
+        let active_request = ActiveRequest {
+            contact,
+            request_body,
+            query_id: None,
+            callback: Some(CallbackResponse::Talk(callback)),
         };
         self.send_rpc_request(active_request);
     }
@@ -1023,9 +1096,23 @@ impl Service {
         if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
-            if let Some(callback) = active_request.callback {
-                callback.send(None).unwrap_or_else(|_| ());
-                return;
+            match active_request.callback {
+                Some(CallbackResponse::Enr(callback)) => {
+                    callback
+                        .send(Err(error))
+                        .unwrap_or_else(|_| debug!("Couldn't send TALK error response to user"));
+                    return;
+                }
+                Some(CallbackResponse::Talk(callback)) => {
+                    // return the error
+                    callback
+                        .send(Err(error))
+                        .unwrap_or_else(|_| debug!("Couldn't send TALK error response to user"));
+                    return;
+                }
+                None => {
+                    // no callback to send too
+                }
             }
 
             let node_id = active_request.contact.node_id();
