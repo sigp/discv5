@@ -145,8 +145,8 @@ impl RequestCall {
         }
     }
 
-    fn id(&self) -> u64 {
-        self.request.id
+    fn id(&self) -> &RequestId {
+        &self.request.id
     }
 }
 
@@ -275,7 +275,7 @@ impl Handler {
                 Some(handler_request) = &mut self.inbound_channel.next() => {
                     match handler_request {
                         HandlerRequest::Request(contact, request) => {
-                           let id = request.id;
+                           let id = request.id.clone();
                            if let Err(request_error) =  self.send_request(contact, *request).await {
                                // If the sending failed report to the application
                                self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await.unwrap_or_else(|_| ());
@@ -668,9 +668,9 @@ impl Handler {
                 self.insert_active_request(request_call);
                 self.send(node_address.clone(), auth_packet).await;
 
-                let id = rand::random();
+                let id = RequestId::random();
                 let request = Request {
-                    id,
+                    id: id.clone(),
                     body: RequestBody::FindNode { distances: vec![0] },
                 };
 
@@ -842,8 +842,8 @@ impl Handler {
                 Message::Response(response) => {
                     // Sessions could be awaiting an ENR response. Check if this response matches
                     // these
-                    if let Some(request_id) = session.awaiting_enr {
-                        if response.id == request_id {
+                    if let Some(request_id) = session.awaiting_enr.as_ref() {
+                        if &response.id == request_id {
                             session.awaiting_enr = None;
                             match response.body {
                                 ResponseBody::Nodes { mut nodes, .. } => {
@@ -889,7 +889,7 @@ impl Handler {
     async fn handle_response(&mut self, node_address: NodeAddress, response: Response) {
         // Find a matching request, if any
         if let Some(mut request_call) = self.active_requests.remove(&node_address) {
-            if request_call.id() != response.id {
+            if request_call.id() != &response.id {
                 trace!(
                     "Received an RPC Response to an unknown request. Likely late response. {}",
                     node_address

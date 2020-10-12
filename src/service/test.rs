@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::kbucket;
+use crate::rpc::RequestId;
 use crate::{
     handler::Handler,
     kbucket::{KBucketsTable, NodeStatus},
@@ -108,7 +109,7 @@ async fn test_updating_connection_on_ping() {
 
     // Add a fake request
     let response = rpc::Response {
-        id: 1,
+        id: RequestId(vec![1]),
         body: rpc::ResponseBody::Pong {
             enr_seq: 2,
             ip: ip2,
@@ -116,10 +117,13 @@ async fn test_updating_connection_on_ping() {
         },
     };
 
+    let node_contact = NodeContact::Enr(Box::new(enr2));
+    let expected_return_addr = node_contact.node_address().unwrap();
+
     service.active_requests.insert(
-        1,
+        RequestId(vec![1]),
         ActiveRequest {
-            contact: NodeContact::Enr(Box::new(enr2)),
+            contact: node_contact,
             request_body: rpc::RequestBody::Ping { enr_seq: 2 },
             query_id: Some(QueryId(1)),
             callback: None,
@@ -127,7 +131,7 @@ async fn test_updating_connection_on_ping() {
     );
 
     // Handle the ping and expect the disconnected Node to become connected
-    service.handle_rpc_response(response);
+    service.handle_rpc_response(expected_return_addr, response);
     let buckets = service.kbuckets.read();
     let node = buckets.iter_ref().next().unwrap();
     assert_eq!(node.status, NodeStatus::Connected);

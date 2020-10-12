@@ -269,8 +269,8 @@ impl Service {
                         HandlerResponse::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
                             }
-                        HandlerResponse::Response(_, response) => {
-                                self.handle_rpc_response(*response);
+                        HandlerResponse::Response(node_address, response) => {
+                                self.handle_rpc_response(node_address, *response);
                             }
                         HandlerResponse::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
@@ -470,15 +470,24 @@ impl Service {
     }
 
     /// Processes an RPC response from a peer.
-    fn handle_rpc_response(&mut self, response: Response) {
+    fn handle_rpc_response(&mut self, node_address: NodeAddress, response: Response) {
         // verify we know of the rpc_id
-        let id = response.id;
+        let id = response.id.clone();
 
         if let Some(mut active_request) = self.active_requests.remove(&id) {
             debug!(
                 "Received RPC response: {} to request: {} from: {}",
                 response.body, active_request.request_body, active_request.contact
             );
+
+            // Check that the responder matches the expected request
+            if let Ok(request_node_address) = active_request.contact.node_address() {
+                if request_node_address != node_address {
+                    warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", request_node_address, node_address, id);
+                    return;
+                }
+            }
+
             let node_id = active_request.contact.node_id();
             if !response.match_request(&active_request.request_body) {
                 warn!(
@@ -765,7 +774,7 @@ impl Service {
     fn send_nodes_response(
         &mut self,
         node_address: NodeAddress,
-        rpc_id: u64,
+        rpc_id: RequestId,
         mut distances: Vec<u64>,
     ) {
         // NOTE: At most we only allow 5 distances to be send (see the decoder). If each of these
@@ -855,7 +864,7 @@ impl Service {
             let responses: Vec<Response> = to_send_nodes
                 .into_iter()
                 .map(|nodes| Response {
-                    id: rpc_id,
+                    id: rpc_id.clone(),
                     body: ResponseBody::Nodes {
                         total: (rpc_index + 1) as u64,
                         nodes,
@@ -903,9 +912,9 @@ impl Service {
     /// Sends generic RPC requests. Each request gets added to known outputs, awaiting a response.
     fn send_rpc_request(&mut self, active_request: ActiveRequest) {
         // Generate a random rpc_id which is matched per node id
-        let id: u64 = rand::random();
+        let id = RequestId::random();
         let request: Request = Request {
-            id,
+            id: id.clone(),
             body: active_request.request_body.clone(),
         };
         let contact = active_request.contact.clone();

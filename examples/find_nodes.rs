@@ -97,7 +97,9 @@ async fn main() {
     }
 
     // default configuration with packet filtering
-    let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
+    // let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
+    // default configuration without packet filtering
+    let config = Discv5ConfigBuilder::new().build();
 
     // the address to listen on
     let socket_addr = SocketAddr::new("0.0.0.0".parse().expect("valid ip"), port);

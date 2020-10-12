@@ -380,4 +380,27 @@ mod tests {
 
         assert_eq!(plain_text, msg);
     }
+
+    #[test]
+    fn decrypt_ref_test_ping() {
+        let dst_id: NodeId = node_key_2().public().into();
+        let encoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc").unwrap();
+        let (_packet, auth_data) =
+            crate::packet::Packet::decode(&dst_id, &encoded_ref_packet).unwrap();
+
+        let ciphertext = hex::decode("b84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc").unwrap();
+        let read_key = hex::decode("00000000000000000000000000000000").unwrap();
+        let mut key = [0u8; 16];
+        key.copy_from_slice(&read_key);
+        let byte_nonce = hex::decode("ffffffffffffffffffffffff").unwrap();
+        let mut nonce = [0u8; 12];
+        nonce.copy_from_slice(&byte_nonce);
+
+        let message = decrypt_message(&key, nonce, &ciphertext, &auth_data).unwrap();
+        dbg!(&message);
+        dbg!(hex::encode(&message));
+        let rpc = crate::rpc::Message::decode(message).unwrap();
+
+        println!("{}", rpc);
+    }
 }

@@ -5,8 +5,34 @@ use std::net::IpAddr;
 
 type TopicHash = [u8; 32];
 
-/// Wrapping type for requests.
-pub type RequestId = u64;
+/// Type to manage the request IDs.
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
+pub struct RequestId(pub Vec<u8>);
+
+impl Into<Vec<u8>> for RequestId {
+    fn into(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl RequestId {
+    /// Decodes the ID from a raw bytes.
+    pub fn decode(data: Vec<u8>) -> Result<Self, DecoderError> {
+        if data.len() > 8 {
+            return Err(DecoderError::Custom("Invalid ID length"));
+        }
+        Ok(RequestId(data))
+    }
+
+    pub fn random() -> Self {
+        let rand: u64 = rand::random();
+        RequestId(rand.to_be_bytes().to_vec())
+    }
+
+    pub fn as_bytes(&self) -> &Vec<u8> {
+        &self.0
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 /// A combined type representing requests and responses.
@@ -117,7 +143,7 @@ impl Request {
             RequestBody::Ping { enr_seq } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&enr_seq);
                 buf.extend_from_slice(&s.drain());
                 buf
@@ -125,7 +151,7 @@ impl Request {
             RequestBody::FindNode { distances } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.begin_list(distances.len());
                 for distance in distances {
                     s.append(&distance);
@@ -136,7 +162,7 @@ impl Request {
             RequestBody::Talk { protocol, request } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&protocol);
                 s.append(&request);
                 buf.extend_from_slice(&s.drain());
@@ -145,7 +171,7 @@ impl Request {
             RequestBody::RegisterTopic { topic, enr, ticket } => {
                 let mut s = RlpStream::new();
                 s.begin_list(4);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&topic);
                 s.append(&enr);
                 s.append(&ticket);
@@ -155,7 +181,7 @@ impl Request {
             RequestBody::TopicQuery { topic } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&topic.to_vec());
                 buf.extend_from_slice(&s.drain());
                 buf
@@ -228,7 +254,7 @@ impl Response {
                 };
                 let mut s = RlpStream::new();
                 s.begin_list(4);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&enr_seq);
                 s.append(&ip_bytes);
                 s.append(&port);
@@ -238,7 +264,7 @@ impl Response {
             ResponseBody::Nodes { total, nodes } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&total);
 
                 if nodes.is_empty() {
@@ -255,7 +281,7 @@ impl Response {
             ResponseBody::Talk { response } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&response);
                 buf.extend_from_slice(&s.drain());
                 buf
@@ -263,7 +289,7 @@ impl Response {
             ResponseBody::Ticket { ticket, wait_time } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&ticket.to_vec());
                 s.append(&wait_time);
                 buf.extend_from_slice(&s.drain());
@@ -272,12 +298,18 @@ impl Response {
             ResponseBody::RegisterConfirmation { topic } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id);
+                s.append(id.as_bytes());
                 s.append(&topic);
                 buf.extend_from_slice(&s.drain());
                 buf
             }
         }
+    }
+}
+
+impl std::fmt::Display for RequestId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 
@@ -387,7 +419,7 @@ impl Message {
             }
         })?;
 
-        let id = rlp.val_at::<u64>(0)?;
+        let id = RequestId::decode(rlp.val_at::<Vec<u8>>(0)?)?;
 
         let message = match msg_type {
             1 => {
@@ -399,6 +431,7 @@ impl Message {
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
+                dbg!("HERE");
                 Message::Request(Request {
                     id,
                     body: RequestBody::Ping {
@@ -602,7 +635,7 @@ mod tests {
     #[test]
     fn ref_test_encode_request_ping() {
         // reference input
-        let id = 1;
+        let id = RequestId(vec![1]);
         let enr_seq = 1;
         let message = Message::Request(Request {
             id,
@@ -612,13 +645,14 @@ mod tests {
         // expected hex output
         let expected_output = hex::decode("01c20101").unwrap();
 
+        dbg!(hex::encode(message.clone().encode()));
         assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
     fn ref_test_encode_request_findnode() {
         // reference input
-        let id = 1;
+        let id = RequestId(vec![1]);
         let distances = vec![256];
         let message = Message::Request(Request {
             id,
@@ -627,6 +661,7 @@ mod tests {
 
         // expected hex output
         let expected_output = hex::decode("03c501c3820100").unwrap();
+        dbg!(hex::encode(message.clone().encode()));
 
         assert_eq!(message.encode(), expected_output);
     }
@@ -634,7 +669,7 @@ mod tests {
     #[test]
     fn ref_test_encode_response_ping() {
         // reference input
-        let id = 1;
+        let id = RequestId(vec![1]);
         let enr_seq = 1;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let port = 5000;
@@ -646,13 +681,14 @@ mod tests {
         // expected hex output
         let expected_output = hex::decode("02ca0101847f000001821388").unwrap();
 
+        dbg!(hex::encode(message.clone().encode()));
         assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
     fn ref_test_encode_response_nodes_empty() {
         // reference input
-        let id = 1;
+        let id = RequestId(vec![1]);
         let total = 1;
 
         // expected hex output
@@ -671,7 +707,7 @@ mod tests {
     #[test]
     fn ref_test_encode_response_nodes() {
         // reference input
-        let id = 1;
+        let id = RequestId(vec![1]);
         let total = 1;
 
         let enr = "-HW4QCjfjuCfSmIJHxqLYfGKrSz-Pq3G81DVJwd_muvFYJiIOkf0bGtJu7kZVCOPnhSTMneyvR4MRbF3G5TNB4wy2ssBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
@@ -685,13 +721,14 @@ mod tests {
                 nodes: vec![enr],
             },
         });
+        dbg!(hex::encode(message.clone().encode()));
         assert_eq!(message.encode(), expected_output);
     }
 
     #[test]
     fn ref_test_encode_response_nodes_multiple() {
         // reference input
-        let id = 1;
+        let id = RequestId(vec![1]);
         let total = 1;
         let enr = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
 
@@ -707,6 +744,7 @@ mod tests {
                 nodes: vec![enr, enr2],
             },
         });
+        dbg!(hex::encode(message.clone().encode()));
         assert_eq!(message.encode(), expected_output);
     }
 
@@ -734,8 +772,9 @@ mod tests {
 
     #[test]
     fn encode_decode_ping_request() {
+        let id = RequestId(vec![1]);
         let request = Message::Request(Request {
-            id: 1,
+            id,
             body: RequestBody::Ping { enr_seq: 15 },
         });
 
@@ -747,8 +786,9 @@ mod tests {
 
     #[test]
     fn encode_decode_ping_response() {
+        let id = RequestId(vec![1]);
         let request = Message::Response(Response {
-            id: 1,
+            id,
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: "127.0.0.1".parse().unwrap(),
@@ -764,8 +804,9 @@ mod tests {
 
     #[test]
     fn encode_decode_find_node_request() {
+        let id = RequestId(vec![1]);
         let request = Message::Request(Request {
-            id: 1,
+            id,
             body: RequestBody::FindNode {
                 distances: vec![12],
             },
@@ -796,8 +837,9 @@ mod tests {
             .unwrap();
 
         let enr_list = vec![enr1, enr2, enr3];
+        let id = RequestId(vec![1]);
         let request = Message::Response(Response {
-            id: 1,
+            id,
             body: ResponseBody::Nodes {
                 total: 1,
                 nodes: enr_list,
@@ -812,8 +854,9 @@ mod tests {
 
     #[test]
     fn encode_decode_ticket_request() {
+        let id = RequestId(vec![1]);
         let request = Message::Request(Request {
-            id: 1,
+            id,
             body: RequestBody::Talk {
                 protocol: vec![17u8; 32],
                 request: vec![1, 2, 3],

@@ -61,7 +61,7 @@ async fn simple_session_message() {
     .unwrap();
 
     let send_message = Box::new(Request {
-        id: 1,
+        id: RequestId(vec![1]),
         body: RequestBody::Ping { enr_seq: 1 },
     });
 
@@ -138,12 +138,12 @@ async fn multiple_messages() {
     .unwrap();
 
     let send_message = Box::new(Request {
-        id: 1,
+        id: RequestId(vec![1]),
         body: RequestBody::Ping { enr_seq: 1 },
     });
 
     let pong_response = Response {
-        id: 1,
+        id: RequestId(vec![1]),
         body: ResponseBody::Pong {
             enr_seq: 1,
             ip,
