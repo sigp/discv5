@@ -404,11 +404,6 @@ impl Service {
         let id = req.id;
         match req.body {
             RequestBody::FindNode { distances } => {
-                // We do not permit very large distances.
-                if distances.len() > self.config.max_findnode_distances {
-                    warn!("Peer sent FindNode request with too many distances. Message dropped. Sent: {}, max: {}", distances.len(), self.config.max_findnode_distances);
-                    return;
-                }
                 self.send_nodes_response(node_address, id, distances);
             }
             RequestBody::Ping { enr_seq } => {
@@ -790,7 +785,7 @@ impl Service {
         if !distances.is_empty() {
             let mut kbuckets = self.kbuckets.write();
             for node in kbuckets
-                .nodes_by_distances(distances)
+                .nodes_by_distances(distances, self.config.max_nodes_response)
                 .into_iter()
                 .filter_map(|entry| {
                     if entry.node.key.preimage() != &node_address.node_id {

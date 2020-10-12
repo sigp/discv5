@@ -453,13 +453,23 @@ impl Message {
                 }
                 let distances = rlp.list_at::<u64>(1)?;
 
-                if distances.len() > 5 {
+                if distances.len() > 10 {
                     warn!(
-                        "Rejected FindNode request asking for too many buckets {}, maximum 5",
+                        "Rejected FindNode request asking for too many buckets {}, maximum 10",
                         distances.len()
                     );
                     return Err(DecoderError::Custom("FINDNODE request too large"));
                 }
+                for distance in distances.iter() {
+                    if distance > &256u64 {
+                        warn!(
+                            "Rejected FindNode request asking for unknown distance {}, maximum 256",
+                            distance
+                        );
+                        return Err(DecoderError::Custom("FINDNODE request distance invalid"));
+                    }
+                }
+
                 Message::Request(Request {
                     id,
                     body: RequestBody::FindNode { distances },
@@ -757,7 +767,7 @@ mod tests {
         let request = Message::Request(Request {
             id: 1,
             body: RequestBody::FindNode {
-                distances: vec![1337],
+                distances: vec![12],
             },
         });
 

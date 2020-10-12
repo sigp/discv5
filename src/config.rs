@@ -1,4 +1,3 @@
-use crate::service::DISTANCES_TO_REQUEST_PER_PEER;
 use crate::{Enr, Executor, FilterConfig, PermitBanList};
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
@@ -32,12 +31,8 @@ pub struct Discv5Config {
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
     pub enr_update: bool,
 
-    /// The maximum number of distances we allow in a find nodes request. Any request for distances
-    /// above this number will be dropped.
-    ///
-    /// This setting will also limit the maximum number of NODES responses we would allow for a
-    /// FindNodes request. The default is 3.
-    pub max_findnode_distances: usize,
+    /// The maximum number of nodes we return to a find nodes request. The default is 16.
+    pub max_nodes_response: usize,
 
     /// The minimum number of peer's who agree on an external IP port before updating the
     /// local ENR. Default: 10.
@@ -90,7 +85,7 @@ impl Default for Discv5Config {
             session_timeout: Duration::from_secs(86400),
             session_cache_capacity: 1000,
             enr_update: true,
-            max_findnode_distances: 3,
+            max_nodes_response: 16,
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
@@ -175,16 +170,9 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// The maximum number of distances we allow in a find nodes request. Any request for distances
-    /// above this number will be dropped.
-    ///
-    /// This setting will also limit the maximum number of NODES responses we would allow for a
-    /// FindNodes request. The default is 3.
-    pub fn max_findnode_distances(&mut self, max: usize) -> &mut Self {
-        if max < DISTANCES_TO_REQUEST_PER_PEER {
-            panic!("Setting `max_findnode_distances` to a value less than {} will cause prevent discovery functioning as this implementation requests {} from its peers.", DISTANCES_TO_REQUEST_PER_PEER, DISTANCES_TO_REQUEST_PER_PEER);
-        }
-        self.config.max_findnode_distances = max;
+    /// The maximum number of nodes we response to a find nodes request.
+    pub fn max_nodes_response(&mut self, max: usize) -> &mut Self {
+        self.config.max_nodes_response = max;
         self
     }
 

@@ -244,6 +244,7 @@ where
     pub fn nodes_by_distances<'a>(
         &'a mut self,
         log2_distances: Vec<u64>,
+        max_nodes: usize,
     ) -> Vec<EntryRefView<'a, TNodeId, TVal>> {
         let distances = log2_distances
             .into_iter()
@@ -262,6 +263,8 @@ where
 
         // find the matching nodes
         let mut matching_nodes = Vec::new();
+
+        // Note we search via distance in order
         for distance in distances {
             let bucket = &self.buckets[(distance - 1) as usize];
             for node in bucket.iter().map(|(n, status)| {
@@ -272,6 +275,10 @@ where
                 EntryRefView { node, status }
             }) {
                 matching_nodes.push(node);
+                // Exit early if we have found enough nodes
+                if matching_nodes.len() >= max_nodes {
+                    return matching_nodes;
+                }
             }
         }
         matching_nodes
