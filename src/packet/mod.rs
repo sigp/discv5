@@ -432,8 +432,6 @@ impl Packet {
 
         // Check the protocol id
         if &static_header[..6] != PROTOCOL_ID.as_bytes() {
-            dbg!(static_header);
-            dbg!(PROTOCOL_ID.as_bytes());
             return Err(PacketError::HeaderDecryptionFailed);
         }
 

@@ -963,10 +963,8 @@ impl Handler {
             .node_address()
             .expect("Can only add requests with a valid destination");
         // adds the mapping of message nonce to node address
-        self.active_requests_nonce_mapping.insert(
-            request_call.packet.message_nonce().clone(),
-            node_address.clone(),
-        );
+        self.active_requests_nonce_mapping
+            .insert(*request_call.packet.message_nonce(), node_address.clone());
         self.active_requests.insert(node_address, request_call);
     }
 

@@ -431,7 +431,6 @@ impl Message {
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                dbg!("HERE");
                 Message::Request(Request {
                     id,
                     body: RequestBody::Ping {
