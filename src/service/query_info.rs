@@ -27,7 +27,7 @@ pub struct QueryInfo {
 /// Additional information about the query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryType {
-    /// The user requested a `FIND_PEER` query to be performed. It should be reported when finished.
+    /// The user requested a `FIND_NODE` query to be performed. It should be reported when finished.
     FindNode(NodeId),
 }
 
