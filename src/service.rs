@@ -423,10 +423,7 @@ impl Service {
                         }
                     }
                     // don't know of the ENR, request the update
-                    _ => {
-                        // The ENR is no longer in our table, we stop responding to PING's
-                        return;
-                    }
+                    _ => {}
                 }
                 if let Some(enr) = to_request_enr {
                     self.request_enr(enr, None);
