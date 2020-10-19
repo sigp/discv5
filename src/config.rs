@@ -8,7 +8,7 @@ pub struct Discv5Config {
     /// Whether to enable the incoming packet filter. Default: false.
     pub enable_packet_filter: bool,
 
-    /// The request timeout for each UDP request. Default: 4 seconds.
+    /// The request timeout for each UDP request. Default: 2 seconds.
     pub request_timeout: Duration,
 
     /// The timeout after which a `QueryPeer` in an ongoing query is marked unresponsive.
@@ -31,6 +31,9 @@ pub struct Discv5Config {
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
     pub enr_update: bool,
 
+    /// The maximum number of nodes we return to a find nodes request. The default is 16.
+    pub max_nodes_response: usize,
+
     /// The minimum number of peer's who agree on an external IP port before updating the
     /// local ENR. Default: 10.
     pub enr_peer_update_min: usize,
@@ -45,6 +48,11 @@ pub struct Discv5Config {
     /// A filter used to decide whether to insert nodes into our local routing table. Nodes can be
     /// excluded if they do not pass this filter. The default is to accept all nodes.
     pub table_filter: fn(&Enr) -> bool,
+
+    /// The callback for handling TALKREQ requests. The input to this callback is the protocol and
+    /// the output is the response sent back to the requester.
+    // This is a temporary measure and this may change in the future.
+    pub talkreq_callback: fn(&[u8], &[u8]) -> Vec<u8>,
 
     /// The time between pings to ensure connectivity amongst connected nodes. Default: 300
     /// seconds.
@@ -70,17 +78,19 @@ impl Default for Discv5Config {
     fn default() -> Self {
         Self {
             enable_packet_filter: false,
-            request_timeout: Duration::from_secs(4),
+            request_timeout: Duration::from_secs(1),
             query_peer_timeout: Duration::from_secs(2),
             query_timeout: Duration::from_secs(60),
             request_retries: 1,
             session_timeout: Duration::from_secs(86400),
             session_cache_capacity: 1000,
             enr_update: true,
+            max_nodes_response: 16,
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
             table_filter: |_| true,
+            talkreq_callback: |_, _| Vec::new(),
             ping_interval: Duration::from_secs(300),
             report_discovered_peers: true,
             filter_config: FilterConfig::default(),
@@ -160,6 +170,12 @@ impl Discv5ConfigBuilder {
         self
     }
 
+    /// The maximum number of nodes we response to a find nodes request.
+    pub fn max_nodes_response(&mut self, max: usize) -> &mut Self {
+        self.config.max_nodes_response = max;
+        self
+    }
+
     /// The minimum number of peer's who agree on an external IP port before updating the
     /// local ENR.
     pub fn enr_peer_update_min(&mut self, min: usize) -> &mut Self {
@@ -187,6 +203,13 @@ impl Discv5ConfigBuilder {
     /// excluded if they do not pass this filter.
     pub fn table_filter(&mut self, filter: fn(&Enr) -> bool) -> &mut Self {
         self.config.table_filter = filter;
+        self
+    }
+
+    /// The callback function for handling TALK requests. The input is the protocol in bytes and the request data in bytes and
+    /// the output will be the response sent back to the requester.
+    pub fn talkreq_callback(&mut self, callback: fn(&[u8], &[u8]) -> Vec<u8>) -> &mut Self {
+        self.config.talkreq_callback = callback;
         self
     }
 

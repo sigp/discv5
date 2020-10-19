@@ -7,23 +7,62 @@
 //!
 //! To run this example simply run:
 //! ```
-//! $ cargo run --example simple_server <BASE64ENR>
+//! $ cargo run --example simple_server -- <ENR-IP> <ENR-PORT> <BASE64ENR>
 //! ```
 
 use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config, Discv5Event};
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 
 #[tokio::main]
 async fn main() {
     // allows detailed logging with the RUST_LOG env variable
-    env_logger::init();
+    let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("info"))
+        .unwrap();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter_layer)
+        .try_init();
+
+    // if there is an address specified use it
+    let address = std::env::args()
+        .nth(1)
+        .map(|addr| addr.parse::<Ipv4Addr>().unwrap());
+
+    let port = {
+        if let Some(udp_port) = std::env::args().nth(2) {
+            u16::from_str_radix(&udp_port, 10).unwrap()
+        } else {
+            9000
+        }
+    };
 
     // listening address and port
     let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
 
     let enr_key = CombinedKey::generate_secp256k1();
+
     // construct a local ENR
-    let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
+    let enr = {
+        let mut builder = enr::EnrBuilder::new("v4");
+        // if an IP was specified, use it
+        if let Some(external_address) = address {
+            builder.ip(external_address.into());
+        }
+        // if a port was specified, use it
+        if std::env::args().nth(2).is_some() {
+            builder.udp(port);
+        }
+        builder.build(&enr_key).unwrap()
+    };
+
+    // if the ENR is useful print it
+    println!("Node Id: {}", enr.node_id());
+    if enr.udp_socket().is_some() {
+        println!("Base64 ENR: {}", enr.to_base64());
+        println!("IP: {}, UDP_PORT:{}", enr.ip().unwrap(), enr.udp().unwrap());
+    } else {
+        println!("ENR is not printed as no IP:PORT was specified");
+    }
 
     // default configuration
     let config = Discv5Config::default();
@@ -32,7 +71,7 @@ async fn main() {
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
-    if let Some(base64_enr) = std::env::args().nth(1) {
+    if let Some(base64_enr) = std::env::args().nth(3) {
         match base64_enr.parse::<enr::Enr<enr::CombinedKey>>() {
             Ok(enr) => {
                 println!(

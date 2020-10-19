@@ -39,9 +39,6 @@ pub struct FindNodeQuery<TNodeId> {
     /// The closest peers to the target, ordered by increasing distance.
     closest_peers: BTreeMap<Distance, QueryPeer<TNodeId>>,
 
-    /// Maximum RPC iterations per peer.
-    iterations: usize,
-
     /// The number of peers for which the query is currently waiting for results.
     num_waiting: usize,
 
@@ -94,7 +91,6 @@ where
         config: FindNodeQueryConfig,
         target_key: Key<TNodeId>,
         known_closest_peers: I,
-        iterations: usize,
     ) -> Self
     where
         I: IntoIterator<Item = Key<TNodeId>>,
@@ -120,7 +116,6 @@ where
             target_key,
             progress,
             closest_peers,
-            iterations,
             num_waiting: 0,
         }
     }
@@ -149,7 +144,7 @@ where
         let distance = key.distance(&self.target_key);
 
         // Mark the peer's progress, the total nodes it has returned and it's current iteration.
-        // If iterations have been completed and the node returned peers, mark it as succeeded.
+        // If the node returned peers, mark it as succeeded.
         match self.closest_peers.entry(distance) {
             Entry::Vacant(..) => return,
             Entry::Occupied(mut e) => match e.get().state {
@@ -158,34 +153,17 @@ where
                     self.num_waiting -= 1;
                     let peer = e.get_mut();
                     peer.peers_returned += closer_peers.len();
-                    if peer.peers_returned >= self.config.num_results
-                        || self.iterations == peer.iteration
-                    {
-                        // mark the peer as succeeded
-                        peer.state = QueryPeerState::Succeeded;
-                    } else {
-                        // still have iteration's to complete
-                        peer.iteration += 1;
-                        peer.state = QueryPeerState::PendingIteration;
-                    }
+                    // mark the peer as succeeded
+                    peer.state = QueryPeerState::Succeeded;
                 }
                 QueryPeerState::Unresponsive => {
                     let peer = e.get_mut();
                     peer.peers_returned += closer_peers.len();
-                    if peer.peers_returned >= self.config.num_results
-                        || self.iterations == peer.iteration
-                    {
-                        // mark the peer as succeeded
-                        peer.state = QueryPeerState::Succeeded;
-                    } else {
-                        // still have iteration's to complete
-                        peer.iteration += 1;
-                        peer.state = QueryPeerState::PendingIteration;
-                    }
+                    // mark the peer as succeeded
+                    peer.state = QueryPeerState::Succeeded;
                 }
                 QueryPeerState::NotContacted
                 | QueryPeerState::Failed
-                | QueryPeerState::PendingIteration
                 | QueryPeerState::Succeeded => return,
             },
         }
@@ -210,7 +188,7 @@ where
         self.progress = match self.progress {
             QueryProgress::Iterating { no_progress } => {
                 let no_progress = if progress { 0 } else { no_progress + 1 };
-                if no_progress >= self.config.parallelism * self.iterations {
+                if no_progress >= self.config.parallelism {
                     QueryProgress::Stalled
                 } else {
                     QueryProgress::Iterating { no_progress }
@@ -278,17 +256,14 @@ where
 
         for peer in self.closest_peers.values_mut() {
             match peer.state {
-                QueryPeerState::PendingIteration | QueryPeerState::NotContacted => {
+                QueryPeerState::NotContacted => {
                     // This peer is waiting to be reiterated.
                     if !at_capacity {
                         let timeout = now + self.config.peer_timeout;
                         peer.state = QueryPeerState::Waiting(timeout);
                         self.num_waiting += 1;
-                        let return_peer = ReturnPeer {
-                            key: peer.key.preimage().clone(),
-                            iteration: peer.iteration,
-                        };
-                        return QueryState::Waiting(Some(return_peer));
+                        let peer = peer.key.preimage().clone();
+                        return QueryState::Waiting(Some(peer));
                     } else {
                         return QueryState::WaitingAtCapacity;
                     }
@@ -455,9 +430,6 @@ enum QueryPeerState {
     /// of the iterator until and unless it responds.
     Unresponsive,
 
-    /// The peer is waiting to to begin another iteration.
-    PendingIteration,
-
     /// Obtaining a result from the peer has failed.
     ///
     /// This is a final state, reached as a result of a call to `on_failure`.
@@ -491,8 +463,7 @@ mod tests {
             num_results: g.gen_range(1, 25),
             peer_timeout: Duration::from_secs(g.gen_range(10, 30)),
         };
-        let iterations = 1;
-        FindNodeQuery::with_config(config, target.into(), known_closest_peers, iterations)
+        FindNodeQuery::with_config(config, target.into(), known_closest_peers)
     }
 
     fn sorted(target: &Key<NodeId>, peers: &Vec<Key<NodeId>>) -> bool {
@@ -572,7 +543,7 @@ mod tests {
                 for k in expected.iter() {
                     match query.next(now) {
                         QueryState::Finished => break 'finished,
-                        QueryState::Waiting(Some(p)) => assert_eq!(&p.key, k.preimage()),
+                        QueryState::Waiting(Some(p)) => assert_eq!(&p, k.preimage()),
                         QueryState::Waiting(None) => panic!("Expected another peer."),
                         QueryState::WaitingAtCapacity => panic!("Unexpectedly reached capacity."),
                     }
@@ -654,15 +625,15 @@ mod tests {
                 QueryState::Waiting(Some(p)) => p.clone(),
                 _ => panic!("No peer."),
             };
-            query.on_success(&peer1.key, closer.clone());
+            query.on_success(&peer1, closer.clone());
             // Duplicate result from the same peer.
-            query.on_success(&peer1.key, closer.clone());
+            query.on_success(&peer1, closer.clone());
 
             // If there is a second peer, let it also report the same "closer" peer.
             match query.next(now) {
                 QueryState::Waiting(Some(p)) => {
                     let peer2 = p.clone();
-                    query.on_success(&peer2.key, closer.clone())
+                    query.on_success(&peer2, closer.clone())
                 }
                 QueryState::Finished => {}
                 _ => panic!("Unexpectedly query state."),
@@ -696,7 +667,7 @@ mod tests {
                 .into_preimage();
             // Poll the query for the first peer to be in progress.
             match query.next(now) {
-                QueryState::Waiting(Some(id)) => assert_eq!(id.key, peer),
+                QueryState::Waiting(Some(id)) => assert_eq!(id, peer),
                 _ => panic!(),
             }
 

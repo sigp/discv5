@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::kbucket;
+use crate::rpc::RequestId;
 use crate::{
     handler::Handler,
     kbucket::{KBucketsTable, NodeStatus},
@@ -21,7 +22,9 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 
 fn init() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 }
 
 fn build_service(
@@ -108,18 +111,21 @@ async fn test_updating_connection_on_ping() {
 
     // Add a fake request
     let response = rpc::Response {
-        id: 1,
-        body: rpc::ResponseBody::Ping {
+        id: RequestId(vec![1]),
+        body: rpc::ResponseBody::Pong {
             enr_seq: 2,
             ip: ip2,
             port: 10002,
         },
     };
 
+    let node_contact = NodeContact::Enr(Box::new(enr2));
+    let expected_return_addr = node_contact.node_address().unwrap();
+
     service.active_requests.insert(
-        1,
+        RequestId(vec![1]),
         ActiveRequest {
-            contact: NodeContact::Enr(Box::new(enr2)),
+            contact: node_contact,
             request_body: rpc::RequestBody::Ping { enr_seq: 2 },
             query_id: Some(QueryId(1)),
             callback: None,
@@ -127,7 +133,7 @@ async fn test_updating_connection_on_ping() {
     );
 
     // Handle the ping and expect the disconnected Node to become connected
-    service.handle_rpc_response(response);
+    service.handle_rpc_response(expected_return_addr, response);
     let buckets = service.kbuckets.read();
     let node = buckets.iter_ref().next().unwrap();
     assert_eq!(node.status, NodeStatus::Connected);

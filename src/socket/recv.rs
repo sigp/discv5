@@ -3,23 +3,28 @@
 //! Every UDP packet passes a filter before being processed.
 
 use super::filter::{Filter, FilterConfig};
+use crate::node_info::NodeAddress;
 use crate::packet::*;
 use crate::Executor;
-use log::{debug, trace};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, trace};
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 
 /// The object sent back by the Recv handler.
 pub struct InboundPacket {
     /// The originating socket addr.
-    pub src: SocketAddr,
-    /// The decoded packet.
-    pub packet: Packet,
+    pub src_address: SocketAddr,
+    /// The packet header.
+    pub header: PacketHeader,
+    /// The message of the packet.
+    pub message: Vec<u8>,
+    /// The authenticated data of the packet.
+    pub authenticated_data: Vec<u8>,
 }
 
 /// Convenience objects for setting up the recv handler.
@@ -27,7 +32,7 @@ pub struct RecvHandlerConfig {
     pub filter_config: FilterConfig,
     pub executor: Box<dyn Executor>,
     pub recv: tokio::net::udp::RecvHalf,
-    pub whoareyou_magic: [u8; MAGIC_LENGTH],
+    pub local_node_id: enr::NodeId,
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
 }
 
@@ -42,8 +47,8 @@ pub(crate) struct RecvHandler {
     filter: Filter,
     /// The buffer to accept inbound datagrams.
     recv_buffer: [u8; MAX_PACKET_SIZE],
-    /// WhoAreYou Magic Value. Used to decode raw WHOAREYOU packets.
-    whoareyou_magic: [u8; MAGIC_LENGTH],
+    /// The local node id used to decrypt headers of messages.
+    node_id: enr::NodeId,
     /// The channel to send the packet handler.
     handler: mpsc::Sender<InboundPacket>,
     /// Exit channel to shutdown the recv handler.
@@ -64,7 +69,7 @@ impl RecvHandler {
             recv: config.recv,
             filter: Filter::new(&config.filter_config),
             recv_buffer: [0; MAX_PACKET_SIZE],
-            whoareyou_magic: config.whoareyou_magic,
+            node_id: config.local_node_id,
             expected_responses: config.expected_responses,
             handler,
             exit,
@@ -95,31 +100,47 @@ impl RecvHandler {
 
     /// Handles in incoming packet. Passes through the filter, decodes and sends to the packet
     /// handler.
-    async fn handle_inbound(&mut self, src: SocketAddr, length: usize) {
+    async fn handle_inbound(&mut self, src_address: SocketAddr, length: usize) {
         // Permit all expected responses
-        let permitted = self.expected_responses.read().get(&src).is_some();
+        let permitted = self.expected_responses.read().get(&src_address).is_some();
 
         // Perform the first run of the filter. This checks for rate limits and black listed IP
         // addresses.
-        if !permitted && !self.filter.initial_pass(&src) {
-            trace!("Packet filtered from source: {:?}", src);
+        if !permitted && !self.filter.initial_pass(&src_address) {
+            trace!("Packet filtered from source: {:?}", src_address);
             return;
         }
         // Decodes the packet
-        let packet = match Packet::decode(&self.recv_buffer[..length], &self.whoareyou_magic) {
-            Ok(p) => p,
-            Err(e) => {
-                debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it
+        let (packet, authenticated_data) =
+            match Packet::decode(&self.node_id, &self.recv_buffer[..length]) {
+                Ok(p) => p,
+                Err(e) => {
+                    debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it
+                    return;
+                }
+            };
+
+        // If this is not a challenge packet, we immediately know its src_id and so pass it
+        // through the second filter.
+        if let Some(node_id) = packet.src_id() {
+            // Construct the node address
+            let node_address = NodeAddress {
+                socket_addr: src_address,
+                node_id,
+            };
+
+            // Perform packet-level filtering
+            if !permitted && !self.filter.final_pass(&node_address, &packet) {
                 return;
             }
-        };
-
-        // Perform packet-level filtering
-        if !permitted && !self.filter.final_pass(&src, &packet) {
-            return;
         }
 
-        let inbound = InboundPacket { src, packet };
+        let inbound = InboundPacket {
+            src_address,
+            header: packet.header,
+            message: packet.message,
+            authenticated_data,
+        };
 
         // send the filtered decoded packet to the handler.
         self.handler.send(inbound).await.unwrap_or_else(|_| ());

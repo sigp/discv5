@@ -1,4 +1,3 @@
-use crate::packet::*;
 use crate::Executor;
 use parking_lot::RwLock;
 use recv::*;
@@ -24,9 +23,10 @@ pub struct SocketConfig {
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
+    /// The expected responses reference.
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
-    /// The WhoAreYou magic packet.
-    pub whoareyou_magic: [u8; MAGIC_LENGTH],
+    /// The local node id used to decrypt messages.
+    pub local_node_id: enr::NodeId,
 }
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
@@ -79,7 +79,7 @@ impl Socket {
             filter_config: config.filter_config,
             executor: config.executor.clone(),
             recv: recv_udp,
-            whoareyou_magic: config.whoareyou_magic,
+            local_node_id: config.local_node_id,
             expected_responses: config.expected_responses,
         };
 

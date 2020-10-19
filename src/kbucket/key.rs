@@ -27,10 +27,7 @@ use enr::NodeId;
 use uint::construct_uint;
 //use libp2p_core::PeerId;
 //use multihash::Multihash;
-use sha2::{
-    digest::generic_array::{typenum::U32, GenericArray},
-    Digest, Sha256,
-};
+use sha2::digest::generic_array::{typenum::U32, GenericArray};
 
 construct_uint! {
     /// 256-bit unsigned integer.
@@ -67,18 +64,6 @@ impl<TPeerId> AsRef<Key<TPeerId>> for Key<TPeerId> {
 }
 
 impl<T> Key<T> {
-    /// Construct a new `Key` by hashing the bytes of the given `preimage`.
-    ///
-    /// The preimage of type `T` is preserved. See [`Key::preimage`] and
-    /// [`Key::into_preimage`].
-    pub fn _new(preimage: T) -> Key<T>
-    where
-        T: AsRef<[u8]>,
-    {
-        let hash = Sha256::digest(preimage.as_ref());
-        Key { preimage, hash }
-    }
-
     /// Construct a new `Key` by providing the raw 32 byte hash.
     pub fn new_raw(preimage: T, hash: GenericArray<u8, U32>) -> Key<T> {
         Key { preimage, hash }
@@ -96,8 +81,8 @@ impl<T> Key<T> {
 
     /// Computes the distance of the keys according to the XOR metric.
     pub fn distance<U>(&self, other: &Key<U>) -> Distance {
-        let a = U256::from(self.hash.as_ref());
-        let b = U256::from(other.hash.as_ref());
+        let a = U256::from(self.hash.as_slice());
+        let b = U256::from(other.hash.as_slice());
         Distance(a ^ b)
     }
 

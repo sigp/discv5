@@ -9,7 +9,7 @@
 //! participating node in the command line. The nodes should discover each other over a period of
 //! time. (It is probabilistic that nodes to find each other on any given query).
 //!
-//! A single instance listening on a UDP socket `127.0.0.1:9000` (with an ENR that has an empty IP
+//! A single instance listening on a UDP socket `0.0.0.0:9000` (with an ENR that has an empty IP
 //! and UDP port) can be created via:
 //!
 //! ```
@@ -25,8 +25,9 @@
 //! ```
 //! sh cargo run --example find_nodes -- 127.0.0.1 9001 <GENERATE_KEY> <BASE64_ENR>
 //! ```
-//!
-//! where `<BASE64_ENR>` is the base64 ENR given from executing the first node with an IP and port
+//! Here `127.0.0.1` represents the external IP address that others may connect to this node on. The
+//! `9001` represents the external port and the port to listen on. The `<BASE64_ENR>` is the base64
+//! ENR given from executing the first node with an IP and port
 //! given in the CLI.
 //! `<GENERATE_KEY>` is a boolean (`true` or `false`) specifying if a new key should be generated.
 //! These steps can be repeated to add further nodes to the test network.
@@ -44,16 +45,17 @@ use std::{
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("info"))
+        .unwrap();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter_layer)
+        .try_init();
 
     // if there is an address specified use it
-    let address = {
-        if let Some(address) = std::env::args().nth(1) {
-            address.parse::<Ipv4Addr>().unwrap()
-        } else {
-            Ipv4Addr::new(127, 0, 0, 1)
-        }
-    };
+    let address = std::env::args()
+        .nth(1)
+        .map(|addr| addr.parse::<Ipv4Addr>().unwrap());
 
     let port = {
         if let Some(udp_port) = std::env::args().nth(2) {
@@ -66,7 +68,7 @@ async fn main() {
     // A fixed key for testing
     let raw_key =
         hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291").unwrap();
-    let secret_key = secp256k1::SecretKey::parse_slice(&raw_key).unwrap();
+    let secret_key = k256::ecdsa::SigningKey::new(&raw_key).unwrap();
     let mut enr_key = CombinedKey::from(secret_key);
 
     // use a random key if specified
@@ -80,8 +82,8 @@ async fn main() {
     let enr = {
         let mut builder = enr::EnrBuilder::new("v4");
         // if an IP was specified, use it
-        if std::env::args().nth(1).is_some() {
-            builder.ip(address.into());
+        if let Some(external_address) = address {
+            builder.ip(external_address.into());
         }
         // if a port was specified, use it
         if std::env::args().nth(2).is_some() {
@@ -100,7 +102,9 @@ async fn main() {
     }
 
     // default configuration with packet filtering
-    let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
+    // let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
+    // default configuration without packet filtering
+    let config = Discv5ConfigBuilder::new().build();
 
     // the address to listen on
     let socket_addr = SocketAddr::new("0.0.0.0".parse().expect("valid ip"), port);

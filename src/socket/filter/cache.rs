@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-/// The time window that the size of the cache is enforced for. I.e if the size 5 and
+/// The time window that the size of the cache is enforced for. I.e if the size is 5 and
 /// ENFORCED_SIZE_TIME is 1, this will allow 5 entries per second. This MUST be less than the
-/// `CACHE_TIME`.
+/// cache's `time_window`.
 pub const ENFORCED_SIZE_TIME: u64 = 1;
 
 pub struct ReceivedPacket<T> {
@@ -16,10 +16,11 @@ pub struct ReceivedPacket<T> {
 pub struct ReceivedPacketCache<T> {
     /// The size of the cache.
     size: usize,
-    /// The cache stores CACHE_TIME seconds worth of information to calculate a moving average.
+    /// The cache stores `time_window` seconds worth of information to calculate a moving average.
     /// This variable keeps track the number of elements in the cache within the
     /// ENFORCED_SIZE_TIME.
     time_window: u64,
+    /// This stores the current number of messages that are within the `ENFORCED_SIZE_TIME`.
     within_enforced_time: usize,
     /// The underlying data structure.
     inner: VecDeque<ReceivedPacket<T>>,
@@ -57,12 +58,14 @@ impl<T> ReceivedPacketCache<T> {
         self.within_enforced_time = count;
     }
 
-    pub fn insert_reset(&mut self, content: T) -> bool {
+    /// Inserts an element into the cache, removing any expired elements.
+    pub fn cache_insert(&mut self, content: T) -> bool {
         self.reset();
-        self.insert(content)
+        self.internal_insert(content)
     }
 
-    pub fn insert(&mut self, content: T) -> bool {
+    /// Inserts an element into the cache without removing expired elements.
+    fn internal_insert(&mut self, content: T) -> bool {
         if self.within_enforced_time >= self.size {
             // The cache is full
             false
