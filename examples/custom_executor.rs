@@ -9,7 +9,7 @@
 //! $ cargo run --example custom_executor <BASE64ENR>
 //! ```
 
-use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder, Discv5Event, TokioExecutor};
+use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder, Discv5Event};
 use std::net::SocketAddr;
 
 fn main() {
@@ -24,21 +24,14 @@ fn main() {
     let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
 
     // build the tokio executor
-    let mut runtime = tokio::runtime::Builder::new()
-        .threaded_scheduler()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .thread_name("Discv5-example")
         .enable_all()
         .build()
         .unwrap();
 
-    // Any struct that implements the Executor trait can be used to spawn the discv5 tasks. We
-    // use the one provided by discv5 here.
-    let executor = TokioExecutor(runtime.handle().clone());
-
-    // default configuration
-    let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(executor))
-        .build();
+    // default configuration - uses the current executor
+    let config = Discv5ConfigBuilder::new().build();
 
     // construct the discv5 server
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
@@ -61,11 +54,11 @@ fn main() {
         }
     }
 
-    // start the discv5 service
-    discv5.start(listen_addr).unwrap();
-    println!("Server started");
-
     runtime.block_on(async {
+        // start the discv5 service
+        discv5.start(listen_addr).unwrap();
+        println!("Server started");
+
         // get an event stream
         let mut event_stream = discv5.event_stream().await.unwrap();
 

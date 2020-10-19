@@ -14,7 +14,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::time::delay_queue::{self, DelayQueue};
+use tokio_util::time::delay_queue::{self, DelayQueue};
 
 pub struct HashMapDelay<K, V>
 where

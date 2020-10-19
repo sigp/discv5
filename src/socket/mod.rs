@@ -71,8 +71,9 @@ impl Socket {
     ) -> Result<Self, std::io::Error> {
         let socket = tokio::net::UdpSocket::from_std(socket)?;
 
-        // split the UDP socket
-        let (recv_udp, send_udp) = socket.split();
+        // Arc the udp socket for the send/recv tasks.
+        let recv_udp = Arc::new(socket);
+        let send_udp = recv_udp.clone();
 
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {

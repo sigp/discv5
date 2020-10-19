@@ -5,7 +5,7 @@ use crate::{Discv5ConfigBuilder, TokioExecutor};
 use enr::EnrBuilder;
 use std::net::IpAddr;
 use std::time::Duration;
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
@@ -30,7 +30,7 @@ async fn simple_session_message() {
     let key2 = CombinedKey::generate_secp256k1();
 
     let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(TokioExecutor(tokio::runtime::Handle::current())))
+        .executor(Box::new(TokioExecutor::default()))
         .build();
 
     let sender_enr = EnrBuilder::new("v4")
@@ -90,7 +90,7 @@ async fn simple_session_message() {
 
     tokio::select! {
         _ = receiver => {}
-        _ = delay_for(Duration::from_millis(100)) => {
+        _ = sleep(Duration::from_millis(100)) => {
             panic!("Test timed out");
         }
     }
@@ -107,9 +107,8 @@ async fn multiple_messages() {
     let key2 = CombinedKey::generate_secp256k1();
 
     let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(TokioExecutor(tokio::runtime::Handle::current())))
+        .executor(Box::new(TokioExecutor::default()))
         .build();
-
     let sender_enr = EnrBuilder::new("v4")
         .ip(ip)
         .udp(sender_port)
@@ -142,6 +141,13 @@ async fn multiple_messages() {
         body: RequestBody::Ping { enr_seq: 1 },
     });
 
+    // sender to send the first message then await for the session to be established
+    let _ = sender_handler.send(HandlerRequest::Request(
+        receiver_enr.clone().into(),
+        send_message.clone(),
+    ));
+
+    /*
     let pong_response = Response {
         id: RequestId(vec![1]),
         body: ResponseBody::Pong {
@@ -153,11 +159,6 @@ async fn multiple_messages() {
 
     let messages_to_send = 5usize;
 
-    // sender to send the first message then await for the session to be established
-    let _ = sender_handler.send(HandlerRequest::Request(
-        receiver_enr.clone().into(),
-        send_message.clone(),
-    ));
 
     let mut message_count = 0usize;
     let recv_send_message = send_message.clone();
@@ -198,16 +199,30 @@ async fn multiple_messages() {
                         return;
                     }
                 }
-                _ => continue,
+                x => {
+                    dbg!(x);
+                    continue;
+                }
             }
         }
     };
+    */
+
+    let sleep_future = sleep(tokio::time::Duration::from_millis(100));
+
+    dbg!("Awaiting");
+    sleep_future.await;
+    dbg!("Never waking up");
+
+    /*
+    let mut sleep_future = sleep(Duration::from_millis(100));
 
     tokio::select! {
-        _ = sender => {}
-        _ = receiver => {}
-        _ = delay_for(Duration::from_millis(100)) => {
+        _ = sender => {dbg!("Thing");}
+        _ = receiver => {dbg!("Otherthing");}
+        _ = &mut sleep_future => {
             panic!("Test timed out");
         }
     }
+    */
 }

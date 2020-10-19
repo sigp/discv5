@@ -386,7 +386,7 @@ impl Discv5 {
         let channel = self.clone_channel();
 
         async move {
-            let mut channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
             // Sanitize the multiaddr
 
             // The multiaddr must support the udp protocol and be of an appropriate key type.
@@ -427,7 +427,7 @@ impl Discv5 {
         let channel = self.clone_channel();
 
         async move {
-            let mut channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);
 
@@ -457,7 +457,7 @@ impl Discv5 {
         let channel = self.clone_channel();
 
         async move {
-            let mut channel = channel.map_err(|_| QueryError::ServiceNotStarted)?;
+            let channel = channel.map_err(|_| QueryError::ServiceNotStarted)?;
             let (callback_send, callback_recv) = oneshot::channel();
 
             let query_kind = QueryKind::FindNode { target_node };
@@ -500,7 +500,7 @@ impl Discv5 {
         let channel = self.clone_channel();
 
         async move {
-            let mut channel = channel.map_err(|_| QueryError::ServiceNotStarted)?;
+            let channel = channel.map_err(|_| QueryError::ServiceNotStarted)?;
             let (callback_send, callback_recv) = oneshot::channel();
 
             let query_kind = QueryKind::Predicate {
@@ -528,7 +528,7 @@ impl Discv5 {
         let channel = self.clone_channel();
 
         async move {
-            let mut channel = channel?;
+            let channel = channel?;
 
             let (callback_send, callback_recv) = oneshot::channel();
 
