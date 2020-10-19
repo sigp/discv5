@@ -5,14 +5,15 @@ use crate::Discv5;
 use crate::*;
 use enr::NodeId;
 use enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
-use env_logger;
 use rand_core::{RngCore, SeedableRng};
 use rand_xorshift;
 use std::net::Ipv4Addr;
 use std::{collections::HashMap, net::IpAddr};
 
 fn init() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 }
 
 fn update_enr(discv5: &mut Discv5, key: &str, value: &[u8]) -> bool {

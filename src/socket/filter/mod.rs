@@ -6,10 +6,10 @@ use crate::node_info::NodeAddress;
 use crate::packet::Packet;
 use cache::ReceivedPacketCache;
 use enr::NodeId;
-use log::{debug, warn};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
+use tracing::{debug, warn};
 
 mod cache;
 mod config;

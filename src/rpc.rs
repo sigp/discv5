@@ -1,7 +1,7 @@
 use enr::{CombinedKey, Enr};
-use log::{debug, warn};
 use rlp::{DecoderError, RlpStream};
 use std::net::IpAddr;
+use tracing::{debug, warn};
 
 type TopicHash = [u8; 32];
 

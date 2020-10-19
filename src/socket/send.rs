@@ -1,8 +1,8 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
 use crate::packet::*;
 use crate::{node_info::NodeAddress, Executor};
-use log::{debug, trace};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, trace, warn};
 
 pub struct OutboundPacket {
     /// The destination node address
@@ -53,7 +53,7 @@ impl SendHandler {
                 Some(packet) = self.handler_recv.recv() => {
                     let encoded_packet = packet.packet.encode(&packet.node_address.node_id);
                     if encoded_packet.len() > crate::socket::MAX_PACKET_SIZE {
-                        log::warn!("Sending packet larger than max size: {} max: {}", encoded_packet.len(), crate::socket::MAX_PACKET_SIZE);
+                        warn!("Sending packet larger than max size: {} max: {}", encoded_packet.len(), crate::socket::MAX_PACKET_SIZE);
                     }
                     if let Err(e) = self.send.send_to(&encoded_packet, &packet.node_address.socket_addr).await {
                         trace!("Could not send packet. Error: {:?}", e);

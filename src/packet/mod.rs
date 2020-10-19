@@ -556,9 +556,9 @@ mod tests {
     use rand;
 
     fn init_log() {
-        let _ = simple_logger::SimpleLogger::new()
-            .with_level(log::LevelFilter::Debug)
-            .init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
     }
 
     fn hex_decode(x: &'static str) -> Vec<u8> {

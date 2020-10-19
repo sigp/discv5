@@ -29,7 +29,6 @@ use crate::{Discv5Config, Discv5Event};
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
-use log::{debug, error, info, trace, warn};
 use parking_lot::RwLock;
 use rpc::*;
 use std::collections::HashMap;
@@ -38,6 +37,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
+use tracing::{debug, error, info, trace, warn};
 
 mod ip_vote;
 mod query_info;

@@ -67,11 +67,11 @@ use crate::node_info::NodeContact;
 use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::{Discv5Config, Enr};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
-use log::warn;
 use parking_lot::RwLock;
 use std::future::Future;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, warn};
 
 #[cfg(feature = "libp2p")]
 use {libp2p_core::Multiaddr, std::convert::TryFrom};
@@ -181,11 +181,11 @@ impl Discv5 {
     pub fn shutdown(&mut self) {
         if let Some(exit) = self.service_exit.take() {
             if exit.send(()).is_err() {
-                log::debug!("Discv5 service already shutdown");
+                debug!("Discv5 service already shutdown");
             }
             self.service_channel = None;
         } else {
-            log::debug!("Service is already shutdown");
+            debug!("Service is already shutdown");
         }
     }
 

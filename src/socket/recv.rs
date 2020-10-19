@@ -6,12 +6,12 @@ use super::filter::{Filter, FilterConfig};
 use crate::node_info::NodeAddress;
 use crate::packet::*;
 use crate::Executor;
-use log::{debug, trace};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, trace};
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 

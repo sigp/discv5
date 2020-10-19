@@ -8,7 +8,9 @@ use std::time::Duration;
 use tokio::time::delay_for;
 
 fn init() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 }
 
 macro_rules! arc_rw {

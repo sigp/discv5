@@ -30,13 +30,13 @@ use crate::socket::Socket;
 use crate::{socket, Enr};
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
-use log::{debug, error, trace, warn};
 use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::{collections::HashMap, default::Default, net::SocketAddr, sync::atomic::Ordering};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, error, trace, warn};
 
 mod crypto;
 mod hashmap_delay;
