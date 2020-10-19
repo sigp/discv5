@@ -595,8 +595,9 @@ impl Service {
                         );
                         // if there are more requests coming, store the nodes and wait for
                         // another response
-                        // We allow at most 5 responses per bucket.
-                        if current_response.count < 5 * DISTANCES_TO_REQUEST_PER_PEER
+                        // We allow for implementations to send at a minimum 3 nodes per response.
+                        // We allow for the number of nodes to be returned as the maximum we emit.
+                        if current_response.count < self.config.max_nodes_response / 3 + 1
                             && (current_response.count as u64) < total
                         {
                             current_response.count += 1;
@@ -944,7 +945,7 @@ impl Service {
                 self.send_event(Discv5Event::Discovered(enr_ref.clone()));
             }
 
-            // ignore peers that don't pass the able filter
+            // ignore peers that don't pass the table filter
             if (self.config.table_filter)(enr_ref) {
                 let key = kbucket::Key::from(enr_ref.node_id());
                 if !self.config.ip_limit
@@ -991,6 +992,8 @@ impl Service {
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
                 query.on_success(source, &other_enr_iter.cloned().collect::<Vec<_>>())
+            } else {
+                warn!("Response returned for ended query {:?}", query_id)
             }
         }
     }
