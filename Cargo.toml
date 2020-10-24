@@ -18,7 +18,7 @@ exclude = [
 enr = { version = "0.4.0", features = ["k256", "ed25519"] }
 tokio = { version = "0.2.22", features = ["net", "stream", "time", "sync"] }
 zeroize = { version = "1.1.1", features = ["zeroize_derive"] }
-libp2p-core = { version = "0.22.1", optional = true }
+libp2p-core = { version = "0.23", optional = true }
 multihash = { version = "0.11.4", optional = true }
 futures = "0.3.6"
 uint = { version = "0.8.5", default-features = false }
@@ -34,9 +34,9 @@ smallvec = "1.4.2"
 parking_lot = "0.11.0"
 lru_time_cache = "0.11.1"
 lazy_static = "1.4.0"
-aes-gcm = "0.7.0"
+aes-gcm = "0.8"
 socket2 = "0.3.15"
-aes-ctr = "0.5.0"
+aes-ctr = "0.6"
 k256 = { version = "0.5.9", features = ["zeroize", "ecdh", "sha2"] }
 tracing = { version = "0.1.21", features = ["log"] }
 tracing-subscriber = "0.2.13"
