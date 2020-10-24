@@ -9,14 +9,15 @@
 //!
 //! [`Packet`]: enum.Packet.html
 
-use crate::error::PacketError;
-use crate::Enr;
+use crate::{error::PacketError, Enr};
 use enr::NodeId;
 use rand::Rng;
 use std::convert::TryInto;
 
-use aes_ctr::stream_cipher::{generic_array::GenericArray, NewStreamCipher, SyncStreamCipher};
-use aes_ctr::Aes128Ctr;
+use aes_ctr::{
+    cipher::{generic_array::GenericArray, NewStreamCipher, SyncStreamCipher},
+    Aes128Ctr,
+};
 use zeroize::Zeroize;
 
 /// The packet IV length (u128).
