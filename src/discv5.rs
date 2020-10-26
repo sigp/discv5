@@ -11,55 +11,6 @@
 //! specified UDP socket.
 //!
 //! The server can be shutdown using the [`shutdown()`] function.
-//!
-//! ## Example
-//!
-//! Running and executing a discovery query (with a pre-built executor):
-//!
-//! ```rust
-//!    use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, Discv5ConfigBuilder};
-//!    use std::net::SocketAddr;
-//!
-//!    // listening address and port
-//!    let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
-//!
-//!    // construct a local ENR
-//!    let enr_key = CombinedKey::generate_secp256k1();
-//!    let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
-//!
-//!    // build the tokio executor
-//!    let mut runtime = tokio::runtime::Builder::new()
-//!        .threaded_scheduler()
-//!        .thread_name("Discv5-example")
-//!        .enable_all()
-//!        .build()
-//!        .unwrap();
-//!
-//!    // Any struct that implements the Executor trait can be used to spawn the discv5 tasks. We
-//!    // use the one provided by discv5 here.
-//!    let executor = TokioExecutor(runtime.handle().clone());
-//!
-//!    // default configuration
-//!    let config = Discv5ConfigBuilder::new()
-//!         .executor(Box::new(executor))
-//!         .build();
-//!
-//!    // construct the discv5 server
-//!    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-//!
-//!    // In order to bootstrap the routing table an external ENR should be added
-//!    // This can be done via add_enr. I.e.:
-//!    // discv5.add_enr(<ENR>)
-//!
-//!    // start the discv5 server
-//!    discv5.start(listen_addr);
-//!
-//!    // run a find_node query
-//!    runtime.block_on(async {
-//!       let found_nodes = discv5.find_node(NodeId::random()).await.unwrap();
-//!       println!("Found nodes: {:?}", found_nodes);
-//!    });
-//! ```
 
 use crate::error::{Discv5Error, QueryError, RequestError};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
@@ -67,11 +18,11 @@ use crate::node_info::NodeContact;
 use crate::service::{QueryKind, Service, ServiceRequest};
 use crate::{Discv5Config, Enr};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
-use log::warn;
 use parking_lot::RwLock;
 use std::future::Future;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, warn};
 
 #[cfg(feature = "libp2p")]
 use {libp2p_core::Multiaddr, std::convert::TryFrom};
@@ -158,7 +109,7 @@ impl Discv5 {
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
-    pub fn start(&mut self, listen_socket: SocketAddr) -> Result<(), Discv5Error> {
+    pub async fn start(&mut self, listen_socket: SocketAddr) -> Result<(), Discv5Error> {
         if self.service_channel.is_some() {
             warn!("Service is already started");
             return Err(Discv5Error::ServiceAlreadyStarted);
@@ -171,7 +122,8 @@ impl Discv5 {
             self.kbuckets.clone(),
             self.config.clone(),
             listen_socket,
-        )?;
+        )
+        .await?;
         self.service_exit = Some(service_exit);
         self.service_channel = Some(service_channel);
         Ok(())
@@ -181,11 +133,11 @@ impl Discv5 {
     pub fn shutdown(&mut self) {
         if let Some(exit) = self.service_exit.take() {
             if exit.send(()).is_err() {
-                log::debug!("Discv5 service already shutdown");
+                debug!("Discv5 service already shutdown");
             }
             self.service_channel = None;
         } else {
-            log::debug!("Service is already shutdown");
+            debug!("Service is already shutdown");
         }
     }
 

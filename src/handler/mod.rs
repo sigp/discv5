@@ -30,13 +30,13 @@ use crate::socket::Socket;
 use crate::{socket, Enr};
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
-use log::{debug, error, trace, warn};
 use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::{collections::HashMap, default::Default, net::SocketAddr, sync::atomic::Ordering};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, error, trace, warn};
 
 mod crypto;
 mod hashmap_delay;
@@ -195,7 +195,7 @@ type HandlerReturn = (
 );
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
-    pub(crate) fn spawn(
+    pub(crate) async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
@@ -226,14 +226,15 @@ impl Handler {
             expected_responses: filter_expected_responses.clone(),
         };
 
-        let udp_socket = socket::Socket::new_socket(socket_config.socket_addr)?;
+        // Attempt to bind to the socket before spinning up the send/recv tasks.
+        let socket = socket::Socket::new_socket(&socket_config.socket_addr).await?;
 
         config
             .executor
             .clone()
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
-                let socket = match socket::Socket::new(udp_socket, socket_config) {
+                let socket = match socket::Socket::new(socket, socket_config) {
                     Ok(v) => v,
                     Err(e) => {
                         error!("Could not bind UDP socket. {}", e);

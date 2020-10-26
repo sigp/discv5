@@ -29,7 +29,6 @@ use crate::{Discv5Config, Discv5Event};
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
-use log::{debug, error, info, trace, warn};
 use parking_lot::RwLock;
 use rpc::*;
 use std::collections::HashMap;
@@ -38,6 +37,7 @@ use std::sync::Arc;
 use std::task::Poll;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Interval;
+use tracing::{debug, error, info, trace, warn};
 
 mod ip_vote;
 mod query_info;
@@ -164,7 +164,7 @@ impl Service {
     /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
     /// as IP addresses and ports which we wish to broadcast to other nodes via this discovery
     /// mechanism.
-    pub fn spawn(
+    pub async fn spawn(
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
@@ -184,7 +184,8 @@ impl Service {
             enr_key.clone(),
             listen_socket,
             config.clone(),
-        )?;
+        )
+        .await?;
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
@@ -283,7 +284,11 @@ impl Service {
                             }
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
-                            warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
+                            if let RequestError::Timeout = error {
+                                debug!("RPC Request timed out. id: {}", request_id);
+                            } else {
+                                warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
+                            }
                             self.rpc_failure(request_id, error);
                         }
                     }
@@ -595,8 +600,9 @@ impl Service {
                         );
                         // if there are more requests coming, store the nodes and wait for
                         // another response
-                        // We allow at most 5 responses per bucket.
-                        if current_response.count < 5 * DISTANCES_TO_REQUEST_PER_PEER
+                        // We allow for implementations to send at a minimum 3 nodes per response.
+                        // We allow for the number of nodes to be returned as the maximum we emit.
+                        if current_response.count < self.config.max_nodes_response / 3 + 1
                             && (current_response.count as u64) < total
                         {
                             current_response.count += 1;
@@ -944,7 +950,7 @@ impl Service {
                 self.send_event(Discv5Event::Discovered(enr_ref.clone()));
             }
 
-            // ignore peers that don't pass the able filter
+            // ignore peers that don't pass the table filter
             if (self.config.table_filter)(enr_ref) {
                 let key = kbucket::Key::from(enr_ref.node_id());
                 if !self.config.ip_limit
@@ -991,6 +997,8 @@ impl Service {
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
                 query.on_success(source, &other_enr_iter.cloned().collect::<Vec<_>>())
+            } else {
+                warn!("Response returned for ended query {:?}", query_id)
             }
         }
     }

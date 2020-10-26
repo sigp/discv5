@@ -78,8 +78,8 @@ impl Default for Discv5Config {
     fn default() -> Self {
         Self {
             enable_packet_filter: false,
-            request_timeout: Duration::from_secs(2),
-            query_peer_timeout: Duration::from_millis(500),
+            request_timeout: Duration::from_secs(1),
+            query_peer_timeout: Duration::from_secs(2),
             query_timeout: Duration::from_secs(60),
             request_retries: 1,
             session_timeout: Duration::from_secs(86400),
@@ -245,7 +245,11 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    pub fn build(&self) -> Discv5Config {
+    pub fn build(&mut self) -> Discv5Config {
+        // If an executor is not provided, assume a current tokio runtime is running.
+        if self.config.executor.is_none() {
+            self.config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
+        };
         self.config.clone()
     }
 }

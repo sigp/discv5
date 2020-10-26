@@ -9,14 +9,15 @@
 //!
 //! [`Packet`]: enum.Packet.html
 
-use crate::error::PacketError;
-use crate::Enr;
+use crate::{error::PacketError, Enr};
 use enr::NodeId;
 use rand::Rng;
 use std::convert::TryInto;
 
-use aes_ctr::stream_cipher::{generic_array::GenericArray, NewStreamCipher, SyncStreamCipher};
-use aes_ctr::Aes128Ctr;
+use aes_ctr::{
+    cipher::{generic_array::GenericArray, NewStreamCipher, SyncStreamCipher},
+    Aes128Ctr,
+};
 use zeroize::Zeroize;
 
 /// The packet IV length (u128).
@@ -556,9 +557,9 @@ mod tests {
     use rand;
 
     fn init_log() {
-        let _ = simple_logger::SimpleLogger::new()
-            .with_level(log::LevelFilter::Debug)
-            .init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .try_init();
     }
 
     fn hex_decode(x: &'static str) -> Vec<u8> {

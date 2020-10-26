@@ -8,7 +8,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 fn init() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 }
 
 macro_rules! arc_rw {
@@ -50,6 +52,7 @@ async fn simple_session_message() {
         sender_enr.udp_socket().unwrap(),
         config.clone(),
     )
+    .await
     .unwrap();
 
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
@@ -58,6 +61,7 @@ async fn simple_session_message() {
         receiver_enr.udp_socket().unwrap(),
         config,
     )
+    .await
     .unwrap();
 
     let send_message = Box::new(Request {
@@ -106,9 +110,7 @@ async fn multiple_messages() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(TokioExecutor::default()))
-        .build();
+    let config = Discv5ConfigBuilder::new().build();
     let sender_enr = EnrBuilder::new("v4")
         .ip(ip)
         .udp(sender_port)
@@ -126,6 +128,7 @@ async fn multiple_messages() {
         sender_enr.udp_socket().unwrap(),
         config.clone(),
     )
+    .await
     .unwrap();
 
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
@@ -134,6 +137,7 @@ async fn multiple_messages() {
         receiver_enr.udp_socket().unwrap(),
         config,
     )
+    .await
     .unwrap();
 
     let send_message = Box::new(Request {
@@ -147,7 +151,6 @@ async fn multiple_messages() {
         send_message.clone(),
     ));
 
-    /*
     let pong_response = Response {
         id: RequestId(vec![1]),
         body: ResponseBody::Pong {
@@ -158,7 +161,6 @@ async fn multiple_messages() {
     };
 
     let messages_to_send = 5usize;
-
 
     let mut message_count = 0usize;
     let recv_send_message = send_message.clone();
@@ -206,7 +208,6 @@ async fn multiple_messages() {
             }
         }
     };
-    */
 
     let sleep_future = sleep(tokio::time::Duration::from_millis(100));
 
@@ -214,7 +215,6 @@ async fn multiple_messages() {
     sleep_future.await;
     dbg!("Never waking up");
 
-    /*
     let mut sleep_future = sleep(Duration::from_millis(100));
 
     tokio::select! {
@@ -224,5 +224,4 @@ async fn multiple_messages() {
             panic!("Test timed out");
         }
     }
-    */
 }

@@ -22,10 +22,12 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 
 fn init() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 }
 
-fn build_service(
+async fn build_service(
     local_enr: Arc<RwLock<Enr<CombinedKey>>>,
     enr_key: Arc<RwLock<CombinedKey>>,
     listen_socket: SocketAddr,
@@ -40,6 +42,7 @@ fn build_service(
         listen_socket,
         config.clone(),
     )
+    .await
     .unwrap();
 
     let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
@@ -94,7 +97,8 @@ async fn test_updating_connection_on_ping() {
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
         socket_addr,
-    );
+    )
+    .await;
     // Set up service with one disconnected node
     let key = kbucket::Key::from(enr2.node_id());
     if let kbucket::Entry::Absent(entry) = service.kbuckets.write().entry(&key) {

@@ -45,7 +45,12 @@ use std::{
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("info"))
+        .unwrap();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter_layer)
+        .try_init();
 
     // if there is an address specified use it
     let address = std::env::args()
@@ -126,7 +131,7 @@ async fn main() {
     }
 
     // start the discv5 service
-    discv5.start(socket_addr).unwrap();
+    discv5.start(socket_addr).await.unwrap();
 
     // construct a 30 second interval to search for new peers.
     let mut query_interval = tokio::time::interval(Duration::from_secs(60));

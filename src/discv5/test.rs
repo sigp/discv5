@@ -5,14 +5,15 @@ use crate::Discv5;
 use crate::*;
 use enr::NodeId;
 use enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
-use env_logger;
 use rand_core::{RngCore, SeedableRng};
 use rand_xorshift;
 use std::net::Ipv4Addr;
 use std::{collections::HashMap, net::IpAddr};
 
 fn init() {
-    let _ = env_logger::builder().is_test(true).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
 }
 
 fn update_enr(discv5: &mut Discv5, key: &str, value: &[u8]) -> bool {
@@ -23,7 +24,7 @@ fn update_enr(discv5: &mut Discv5, key: &str, value: &[u8]) -> bool {
     }
 }
 
-fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
+async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
     let mut nodes = Vec::new();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
@@ -39,14 +40,14 @@ fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
         // transport for building a swarm
         let socket_addr = enr.udp_socket().unwrap();
         let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-        discv5.start(socket_addr).unwrap();
+        discv5.start(socket_addr).await.unwrap();
         nodes.push(discv5);
     }
     nodes
 }
 
 /// Build `n` swarms using passed keypairs.
-fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Discv5> {
+async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Discv5> {
     let mut nodes = Vec::new();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
@@ -62,7 +63,7 @@ fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Disc
 
         let socket_addr = enr.udp_socket().unwrap();
         let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-        discv5.start(socket_addr).unwrap();
+        discv5.start(socket_addr).await.unwrap();
         nodes.push(discv5);
     }
     nodes
@@ -171,7 +172,7 @@ async fn test_discovery_three_peers() {
     let seed = 1652;
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
-    let mut nodes = build_nodes_from_keypairs(keypairs, 11200);
+    let mut nodes = build_nodes_from_keypairs(keypairs, 11200).await;
     // Last node is bootstrap node in a star topology
     let mut bootstrap_node = nodes.remove(0);
     // target_node is not polled.
@@ -234,7 +235,7 @@ async fn test_discovery_star_topology() {
     let seed = 1652;
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
-    let mut nodes = build_nodes_from_keypairs(keypairs, 11000);
+    let mut nodes = build_nodes_from_keypairs(keypairs, 11000).await;
     // Last node is bootstrap node in a star topology
     let mut bootstrap_node = nodes.remove(0);
     // target_node is not polled.
@@ -287,7 +288,7 @@ async fn test_findnode_query() {
     init();
     // build a collection of 8 nodes
     let total_nodes = 8;
-    let mut nodes = build_nodes(total_nodes, 30000);
+    let mut nodes = build_nodes(total_nodes, 30000).await;
     let node_enrs: Vec<Enr<CombinedKey>> = nodes.iter().map(|n| n.local_enr().clone()).collect();
 
     // link the nodes together
@@ -337,7 +338,7 @@ async fn test_predicate_search() {
     let seed = 1652;
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
-    let mut nodes = build_nodes_from_keypairs(keypairs, 12000);
+    let mut nodes = build_nodes_from_keypairs(keypairs, 12000).await;
     // Last node is bootstrap node in a star topology
     let mut bootstrap_node = nodes.remove(0);
     // target_node is not polled.

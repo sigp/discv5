@@ -14,7 +14,12 @@ use std::net::SocketAddr;
 
 fn main() {
     // allows detailed logging with the RUST_LOG env variable
-    env_logger::init();
+    let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("info"))
+        .unwrap();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter_layer)
+        .try_init();
 
     // listening address and port
     let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
@@ -56,7 +61,7 @@ fn main() {
 
     runtime.block_on(async {
         // start the discv5 service
-        discv5.start(listen_addr).unwrap();
+        discv5.start(listen_addr).await.unwrap();
         println!("Server started");
 
         // get an event stream

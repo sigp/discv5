@@ -101,7 +101,6 @@ impl Session {
     ) -> Result<Vec<u8>, Discv5Error> {
         // try with the new keys
         if let Some(new_keys) = self.awaiting_keys.take() {
-            dbg!("Trying new keys");
             let result =
                 crypto::decrypt_message(&new_keys.decryption_key, message_nonce, message, aad);
             if result.is_ok() {

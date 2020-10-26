@@ -38,39 +38,21 @@ pub struct Socket {
 }
 
 impl Socket {
-    // Creates a std UDP Socket which can be called outside of a tokio execution environment. These
-    // verifies the creation of the socket. Once established we create the underlying Recv and Send
-    // Handlers with the `new()` function.
-    pub(crate) fn new_socket(
-        socket_addr: SocketAddr,
-    ) -> Result<std::net::UdpSocket, std::io::Error> {
-        // set up the UDP socket
-        let socket = {
-            let domain = match socket_addr {
-                SocketAddr::V4(_) => socket2::Domain::ipv4(),
-
-                SocketAddr::V6(_) => socket2::Domain::ipv6(),
-            };
-            socket2::Socket::new(
-                domain,
-                socket2::Type::dgram(),
-                Some(socket2::Protocol::udp()),
-            )?
-        };
-        socket.reuse_address()?;
-        socket.bind(&socket_addr.into())?;
-        Ok(socket.into_udp_socket())
+    /// This creates and binds a new UDP socket.
+    // In general this function can be expanded to handle more advanced socket creation.
+    pub(crate) async fn new_socket(
+        socket: &SocketAddr,
+    ) -> Result<tokio::net::UdpSocket, std::io::Error> {
+        tokio::net::UdpSocket::bind(socket).await
     }
 
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
     /// This needs to be run inside of a tokio executor.
     pub(crate) fn new(
-        socket: std::net::UdpSocket,
+        socket: tokio::net::UdpSocket,
         config: SocketConfig,
     ) -> Result<Self, std::io::Error> {
-        let socket = tokio::net::UdpSocket::from_std(socket)?;
-
         // Arc the udp socket for the send/recv tasks.
         let recv_udp = Arc::new(socket);
         let send_udp = recv_udp.clone();
