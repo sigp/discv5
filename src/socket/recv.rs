@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 
@@ -147,6 +147,6 @@ impl RecvHandler {
         self.handler
             .send(inbound)
             .await
-            .unwrap_or_else(|e| log::warn!("Could not send packet to handler: {}", e));
+            .unwrap_or_else(|e| warn!("Could not send packet to handler: {}", e));
     }
 }

@@ -1,7 +1,7 @@
 #![cfg(test)]
 use super::*;
 use crate::rpc::{Request, Response};
-use crate::{Discv5ConfigBuilder, TokioExecutor};
+use crate::Discv5ConfigBuilder;
 use enr::EnrBuilder;
 use std::net::IpAddr;
 use std::time::Duration;
@@ -31,9 +31,7 @@ async fn simple_session_message() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(TokioExecutor::default()))
-        .build();
+    let config = Discv5ConfigBuilder::new().build();
 
     let sender_enr = EnrBuilder::new("v4")
         .ip(ip)
@@ -201,25 +199,18 @@ async fn multiple_messages() {
                         return;
                     }
                 }
-                x => {
-                    dbg!(x);
+                _ => {
                     continue;
                 }
             }
         }
     };
 
-    let sleep_future = sleep(tokio::time::Duration::from_millis(100));
-
-    dbg!("Awaiting");
-    sleep_future.await;
-    dbg!("Never waking up");
-
     let mut sleep_future = sleep(Duration::from_millis(100));
 
     tokio::select! {
-        _ = sender => {dbg!("Thing");}
-        _ = receiver => {dbg!("Otherthing");}
+        _ = sender => {}
+        _ = receiver => {}
         _ = &mut sleep_future => {
             panic!("Test timed out");
         }

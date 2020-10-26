@@ -13,7 +13,7 @@ pub struct Discv5Config {
 
     /// The timeout after which a `QueryPeer` in an ongoing query is marked unresponsive.
     /// Unresponsive peers don't count towards the parallelism limits for a query.
-    /// Hence, we may potentially end up making more requests to good peers. Default: 500 milliseconds.
+    /// Hence, we may potentially end up making more requests to good peers. Default: 2 seconds.
     pub query_peer_timeout: Duration,
 
     /// The timeout for an entire query. Any peers discovered for this query are returned. Default 60 seconds.
