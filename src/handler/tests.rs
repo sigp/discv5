@@ -1,11 +1,11 @@
 #![cfg(test)]
 use super::*;
 use crate::rpc::{Request, Response};
-use crate::{Discv5ConfigBuilder, TokioExecutor};
+use crate::Discv5ConfigBuilder;
 use enr::EnrBuilder;
 use std::net::IpAddr;
 use std::time::Duration;
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 fn init() {
     let _ = tracing_subscriber::fmt()
@@ -31,9 +31,7 @@ async fn simple_session_message() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(TokioExecutor(tokio::runtime::Handle::current())))
-        .build();
+    let config = Discv5ConfigBuilder::new().build();
 
     let sender_enr = EnrBuilder::new("v4")
         .ip(ip)
@@ -52,6 +50,7 @@ async fn simple_session_message() {
         sender_enr.udp_socket().unwrap(),
         config.clone(),
     )
+    .await
     .unwrap();
 
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
@@ -60,6 +59,7 @@ async fn simple_session_message() {
         receiver_enr.udp_socket().unwrap(),
         config,
     )
+    .await
     .unwrap();
 
     let send_message = Box::new(Request {
@@ -92,7 +92,7 @@ async fn simple_session_message() {
 
     tokio::select! {
         _ = receiver => {}
-        _ = delay_for(Duration::from_millis(100)) => {
+        _ = sleep(Duration::from_millis(100)) => {
             panic!("Test timed out");
         }
     }
@@ -108,10 +108,7 @@ async fn multiple_messages() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(TokioExecutor(tokio::runtime::Handle::current())))
-        .build();
-
+    let config = Discv5ConfigBuilder::new().build();
     let sender_enr = EnrBuilder::new("v4")
         .ip(ip)
         .udp(sender_port)
@@ -129,6 +126,7 @@ async fn multiple_messages() {
         sender_enr.udp_socket().unwrap(),
         config.clone(),
     )
+    .await
     .unwrap();
 
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
@@ -137,12 +135,19 @@ async fn multiple_messages() {
         receiver_enr.udp_socket().unwrap(),
         config,
     )
+    .await
     .unwrap();
 
     let send_message = Box::new(Request {
         id: RequestId(vec![1]),
         body: RequestBody::Ping { enr_seq: 1 },
     });
+
+    // sender to send the first message then await for the session to be established
+    let _ = sender_handler.send(HandlerRequest::Request(
+        receiver_enr.clone().into(),
+        send_message.clone(),
+    ));
 
     let pong_response = Response {
         id: RequestId(vec![1]),
@@ -154,12 +159,6 @@ async fn multiple_messages() {
     };
 
     let messages_to_send = 5usize;
-
-    // sender to send the first message then await for the session to be established
-    let _ = sender_handler.send(HandlerRequest::Request(
-        receiver_enr.clone().into(),
-        send_message.clone(),
-    ));
 
     let mut message_count = 0usize;
     let recv_send_message = send_message.clone();
@@ -200,15 +199,19 @@ async fn multiple_messages() {
                         return;
                     }
                 }
-                _ => continue,
+                _ => {
+                    continue;
+                }
             }
         }
     };
 
+    let mut sleep_future = sleep(Duration::from_millis(100));
+
     tokio::select! {
         _ = sender => {}
         _ = receiver => {}
-        _ = delay_for(Duration::from_millis(100)) => {
+        _ = &mut sleep_future => {
             panic!("Test timed out");
         }
     }

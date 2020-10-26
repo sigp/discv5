@@ -164,7 +164,7 @@ impl Service {
     /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
     /// as IP addresses and ports which we wish to broadcast to other nodes via this discovery
     /// mechanism.
-    pub fn spawn(
+    pub async fn spawn(
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
@@ -184,7 +184,8 @@ impl Service {
             enr_key.clone(),
             listen_socket,
             config.clone(),
-        )?;
+        )
+        .await?;
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
@@ -283,7 +284,11 @@ impl Service {
                             }
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
-                            warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
+                            if let RequestError::Timeout = error {
+                                debug!("RPC Request timed out. id: {}", request_id);
+                            } else {
+                                warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
+                            }
                             self.rpc_failure(request_id, error);
                         }
                     }

@@ -1,6 +1,8 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
 use crate::packet::*;
 use crate::{node_info::NodeAddress, Executor};
+use std::sync::Arc;
+use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, trace, warn};
 
@@ -14,7 +16,7 @@ pub struct OutboundPacket {
 /// The main task that handles inbound UDP packets.
 pub(crate) struct SendHandler {
     /// The UDP send socket.
-    send: tokio::net::udp::SendHalf,
+    send: Arc<UdpSocket>,
     /// The channel to respond to send requests.
     handler_recv: mpsc::Receiver<OutboundPacket>,
     /// Exit channel to shutdown the handler.
@@ -27,7 +29,7 @@ impl SendHandler {
     /// shutdown the handler.
     pub(crate) fn spawn(
         executor: Box<dyn Executor>,
-        send: tokio::net::udp::SendHalf,
+        send: Arc<UdpSocket>,
     ) -> (mpsc::Sender<OutboundPacket>, oneshot::Sender<()>) {
         let (exit_send, exit) = oneshot::channel();
         let (handler_send, handler_recv) = mpsc::channel(30);

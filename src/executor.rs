@@ -27,16 +27,16 @@ impl Clone for Box<dyn Executor + Send + Sync> {
 }
 
 #[derive(Clone)]
-pub struct TokioExecutor(pub tokio::runtime::Handle);
+pub struct TokioExecutor;
 
 impl Executor for TokioExecutor {
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        self.0.spawn(future);
+        tokio::task::spawn(future);
     }
 }
 
 impl Default for TokioExecutor {
     fn default() -> Self {
-        TokioExecutor(tokio::runtime::Handle::current())
+        TokioExecutor
     }
 }

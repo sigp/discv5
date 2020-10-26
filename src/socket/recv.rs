@@ -10,8 +10,9 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 
@@ -31,7 +32,7 @@ pub struct InboundPacket {
 pub struct RecvHandlerConfig {
     pub filter_config: FilterConfig,
     pub executor: Box<dyn Executor>,
-    pub recv: tokio::net::udp::RecvHalf,
+    pub recv: Arc<UdpSocket>,
     pub local_node_id: enr::NodeId,
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
 }
@@ -39,7 +40,7 @@ pub struct RecvHandlerConfig {
 /// The main task that handles inbound UDP packets.
 pub(crate) struct RecvHandler {
     /// The UDP recv socket.
-    recv: tokio::net::udp::RecvHalf,
+    recv: Arc<UdpSocket>,
     /// The list of waiting responses. These are used to allow incoming packets from sources
     /// that we are expected a response from bypassing the rate-limit filters.
     expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
@@ -143,6 +144,9 @@ impl RecvHandler {
         };
 
         // send the filtered decoded packet to the handler.
-        self.handler.send(inbound).await.unwrap_or_else(|_| ());
+        self.handler
+            .send(inbound)
+            .await
+            .unwrap_or_else(|e| warn!("Could not send packet to handler: {}", e));
     }
 }

@@ -245,7 +245,11 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    pub fn build(&self) -> Discv5Config {
+    pub fn build(&mut self) -> Discv5Config {
+        // If an executor is not provided, assume a current tokio runtime is running.
+        if self.config.executor.is_none() {
+            self.config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
+        };
         self.config.clone()
     }
 }
