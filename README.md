@@ -48,21 +48,14 @@ A simple example of creating this service is as follows:
    let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
 
    // build the tokio executor
-   let mut runtime = tokio::runtime::Builder::new()
-       .threaded_scheduler()
+   let mut runtime = tokio::runtime::Builder::new_multi_thread()
        .thread_name("Discv5-example")
        .enable_all()
        .build()
        .unwrap();
 
-   // Any struct that implements the Executor trait can be used to spawn the discv5 tasks. We
-   // use the one provided by discv5 here.
-   let executor = TokioExecutor(runtime.handle().clone());
-
    // default configuration
-   let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(executor))
-        .build();
+   let config = Discv5ConfigBuilder::new().build();
 
    // construct the discv5 server
    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
@@ -72,7 +65,7 @@ A simple example of creating this service is as follows:
    // discv5.add_enr(<ENR>)
 
    // start the discv5 server
-   discv5.start(listen_addr).unwrap();
+   runtime.block_on(discv5.start(listen_addr));
 
    // run a find_node query
    runtime.block_on(async {
