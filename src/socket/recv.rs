@@ -14,8 +14,6 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, trace, warn};
 
-pub(crate) const MAX_PACKET_SIZE: usize = 1280;
-
 /// The object sent back by the Recv handler.
 pub struct InboundPacket {
     /// The originating socket addr.

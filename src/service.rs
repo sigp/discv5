@@ -23,7 +23,7 @@ use crate::query_pool::{
     FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
 };
 use crate::rpc;
-use crate::socket::MAX_PACKET_SIZE;
+use crate::packet::MAX_PACKET_SIZE;
 use crate::Enr;
 use crate::{Discv5Config, Discv5Event};
 use enr::{CombinedKey, NodeId};

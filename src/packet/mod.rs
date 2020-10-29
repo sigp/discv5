@@ -35,6 +35,7 @@ const PROTOCOL_ID: &str = "discv5";
 /// The version sent with each handshake.
 const VERSION: u16 = 0x0001;
 
+pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 // The smallest packet must be at least this large
 // The 24 is the smallest auth_data that can be sent (it is by a WHOAREYOU packet)
 pub(crate) const MIN_PACKET_SIZE: usize = IV_LENGTH + STATIC_HEADER_LENGTH + 24;
