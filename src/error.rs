@@ -50,6 +50,8 @@ impl From<std::io::Error> for Discv5Error {
 pub enum PacketError {
     /// The packet type is unknown.
     UnknownPacket,
+    /// The packet size was larger than expected.
+    TooLarge,
     /// The packet size was smaller than expected.
     TooSmall,
     /// The NodeId sent was invalid.

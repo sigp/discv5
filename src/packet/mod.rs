@@ -409,6 +409,9 @@ impl Packet {
     ///
     /// This also returns the authenticated data for further decryption in the handler.
     pub fn decode(src_id: &NodeId, data: &[u8]) -> Result<(Self, Vec<u8>), PacketError> {
+        if data.len() > MAX_PACKET_SIZE {
+            return Err(PacketError::TooLarge);
+        }
         if data.len() < MIN_PACKET_SIZE {
             return Err(PacketError::TooSmall);
         }
