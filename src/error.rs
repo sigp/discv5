@@ -45,7 +45,7 @@ impl From<std::io::Error> for Discv5Error {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// Types of packet errors.
 pub enum PacketError {
     /// The packet type is unknown.

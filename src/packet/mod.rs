@@ -882,4 +882,17 @@ mod tests {
         let (packet, _auth_data) = Packet::decode(&dst_id, &encoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
+
+    #[test]
+    fn packet_decode_invalid_packet_size() {
+        let src_id: NodeId = node_key_1().public().into();
+
+        let data = [0; MAX_PACKET_SIZE + 1];
+        let result = Packet::decode(&src_id, &data);
+        assert_eq!(result, Err(PacketError::TooLarge));
+
+        let data = [0; MIN_PACKET_SIZE - 1];
+        let result = Packet::decode(&src_id, &data);
+        assert_eq!(result, Err(PacketError::TooSmall));
+    }
 }
