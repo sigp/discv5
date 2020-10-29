@@ -35,6 +35,10 @@ const PROTOCOL_ID: &str = "discv5";
 /// The version sent with each handshake.
 const VERSION: u16 = 0x0001;
 
+// The smallest packet must be at least this large
+// The 24 is the smallest auth_data that can be sent (it is by a WHOAREYOU packet)
+pub(crate) const MIN_PACKET_SIZE: usize = IV_LENGTH + STATIC_HEADER_LENGTH + 24;
+
 /// Message Nonce (12 bytes).
 pub type MessageNonce = [u8; MESSAGE_NONCE_LENGTH];
 /// The nonce sent in a WHOAREYOU packet.
@@ -404,9 +408,7 @@ impl Packet {
     ///
     /// This also returns the authenticated data for further decryption in the handler.
     pub fn decode(src_id: &NodeId, data: &[u8]) -> Result<(Self, Vec<u8>), PacketError> {
-        // The smallest packet must be at least this large
-        // The 24 is the smallest auth_data that can be sent (it is by a WHOAREYOU packet)
-        if data.len() < IV_LENGTH + STATIC_HEADER_LENGTH + 24 {
+        if data.len() < MIN_PACKET_SIZE {
             return Err(PacketError::TooSmall);
         }
 

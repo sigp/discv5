@@ -57,6 +57,9 @@ impl SendHandler {
                     if encoded_packet.len() > crate::socket::MAX_PACKET_SIZE {
                         warn!("Sending packet larger than max size: {} max: {}", encoded_packet.len(), crate::socket::MAX_PACKET_SIZE);
                     }
+                    if encoded_packet.len() < MIN_PACKET_SIZE {
+                        warn!("Sending packet smaller than min size: {} min: {}", encoded_packet.len(), MIN_PACKET_SIZE);
+                    }
                     if let Err(e) = self.send.send_to(&encoded_packet, &packet.node_address.socket_addr).await {
                         trace!("Could not send packet. Error: {:?}", e);
                     }
