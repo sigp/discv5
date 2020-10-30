@@ -19,11 +19,11 @@ use crate::error::RequestError;
 use crate::handler::{Handler, HandlerRequest, HandlerResponse};
 use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
 use crate::node_info::{NodeAddress, NodeContact};
+use crate::packet::MAX_PACKET_SIZE;
 use crate::query_pool::{
     FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
 };
 use crate::rpc;
-use crate::packet::MAX_PACKET_SIZE;
 use crate::Enr;
 use crate::{Discv5Config, Discv5Event};
 use enr::{CombinedKey, NodeId};
