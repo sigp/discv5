@@ -23,9 +23,11 @@
 
 mod peers;
 
-pub(crate) use peers::closest::{FindNodeQuery, FindNodeQueryConfig};
-pub(crate) use peers::predicate::{PredicateQuery, PredicateQueryConfig};
 pub use peers::QueryState;
+pub(crate) use peers::{
+    closest::{FindNodeQuery, FindNodeQueryConfig},
+    predicate::{PredicateQuery, PredicateQueryConfig},
+};
 
 use crate::kbucket::{Key, PredicateKey};
 use fnv::FnvHashMap;

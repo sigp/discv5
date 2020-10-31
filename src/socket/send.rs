@@ -1,9 +1,10 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
-use crate::packet::*;
-use crate::{node_info::NodeAddress, Executor};
+use crate::{node_info::NodeAddress, packet::*, Executor};
 use std::sync::Arc;
-use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc, oneshot},
+};
 use tracing::{debug, trace, warn};
 
 pub struct OutboundPacket {

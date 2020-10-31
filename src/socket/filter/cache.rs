@@ -1,5 +1,7 @@
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 /// The time window that the size of the cache is enforced for. I.e if the size is 5 and
 /// ENFORCED_SIZE_TIME is 1, this will allow 5 entries per second. This MUST be less than the

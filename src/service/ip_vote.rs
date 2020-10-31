@@ -1,8 +1,10 @@
 use enr::NodeId;
 use fnv::FnvHashMap;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 /// The timeout before a report/vote expires. Currently set to a 5 minute window.
 const PING_VOTE_TIMEOUT: u64 = 300;

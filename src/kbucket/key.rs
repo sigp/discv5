@@ -24,10 +24,8 @@
 #![allow(clippy::all)]
 
 use enr::NodeId;
-use uint::construct_uint;
-//use libp2p_core::PeerId;
-//use multihash::Multihash;
 use sha2::digest::generic_array::{typenum::U32, GenericArray};
+use uint::construct_uint;
 
 construct_uint! {
     /// 256-bit unsigned integer.

@@ -1,6 +1,4 @@
-use crate::kbucket::Key;
-use crate::rpc::RequestBody;
-use crate::Enr;
+use crate::{kbucket::Key, rpc::RequestBody, Enr};
 use enr::NodeId;
 use sha2::digest::generic_array::GenericArray;
 use smallvec::SmallVec;
