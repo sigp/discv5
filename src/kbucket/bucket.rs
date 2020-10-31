@@ -493,18 +493,15 @@ mod tests {
                     value: (),
                 };
                 let full = bucket.num_entries() == MAX_NODES_PER_BUCKET;
-                match bucket.insert(node, status) {
-                    InsertResult::Inserted => {
-                        let vec = match status {
-                            NodeStatus::Connected => &mut connected,
-                            NodeStatus::Disconnected => &mut disconnected,
-                        };
-                        if full {
-                            vec.pop_front();
-                        }
-                        vec.push_back((status, key.clone()));
+                if let InsertResult::Inserted = bucket.insert(node, status) {
+                    let vec = match status {
+                        NodeStatus::Connected => &mut connected,
+                        NodeStatus::Disconnected => &mut disconnected,
+                    };
+                    if full {
+                        vec.pop_front();
                     }
-                    _ => {}
+                    vec.push_back((status, key.clone()));
                 }
             }
 
@@ -627,7 +624,7 @@ mod tests {
 
         // The pending node has been discarded.
         assert!(bucket.pending().is_none());
-        assert!(bucket.iter().all(|(n, _)| &n.key != &key));
+        assert!(bucket.iter().all(|(n, _)| n.key != key));
 
         // The initially disconnected node is now the most-recently connected.
         assert_eq!(
@@ -667,7 +664,7 @@ mod tests {
                 NodeStatus::Disconnected => bucket.first_connected_pos.unwrap_or(num_nodes) - 1,
             };
             expected.remove(pos);
-            expected.insert(expected_pos, (key.clone(), status));
+            expected.insert(expected_pos, (key, status));
             let actual = bucket
                 .iter()
                 .map(|(n, s)| (n.key.clone(), s))

@@ -784,7 +784,7 @@ impl Service {
         // buckets are full, that equates to 80 ENR's to respond with.
 
         let mut nodes_to_send = Vec::new();
-        distances.sort();
+        distances.sort_unstable();
         distances.dedup();
 
         if let Some(0) = distances.first() {
