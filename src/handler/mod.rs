@@ -22,19 +22,26 @@
 //!
 //! Requests to the handler can be made via the sending channel using a [`HandlerRequest`].
 //! Responses come by the receiving channel in the form of a [`HandlerResponse`].
-use crate::config::Discv5Config;
-use crate::error::{Discv5Error, RequestError};
-use crate::packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind};
-use crate::rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody};
-use crate::socket::Socket;
-use crate::{socket, Enr};
+use crate::{
+    config::Discv5Config,
+    error::{Discv5Error, RequestError},
+    packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
+    rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
+    socket,
+    socket::Socket,
+    Enr,
+};
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use lru_time_cache::LruCache;
 use parking_lot::RwLock;
-use std::convert::TryFrom;
-use std::sync::Arc;
-use std::{collections::HashMap, default::Default, net::SocketAddr, sync::atomic::Ordering};
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    default::Default,
+    net::SocketAddr,
+    sync::{atomic::Ordering, Arc},
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
 

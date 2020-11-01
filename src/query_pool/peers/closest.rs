@@ -22,11 +22,15 @@
 // https://github.com/libp2p/rust-libp2p
 //
 use super::*;
-use crate::config::Discv5Config;
-use crate::kbucket::{Distance, Key, MAX_NODES_PER_BUCKET};
-use std::collections::btree_map::{BTreeMap, Entry};
-use std::iter::FromIterator;
-use std::time::{Duration, Instant};
+use crate::{
+    config::Discv5Config,
+    kbucket::{Distance, Key, MAX_NODES_PER_BUCKET},
+};
+use std::{
+    collections::btree_map::{BTreeMap, Entry},
+    iter::FromIterator,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug, Clone)]
 pub struct FindNodeQuery<TNodeId> {

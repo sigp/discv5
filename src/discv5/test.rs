@@ -1,14 +1,13 @@
 #![cfg(test)]
 
-use crate::kbucket;
-use crate::Discv5;
-use crate::*;
-use enr::NodeId;
-use enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
+use crate::{kbucket, Discv5, *};
+use enr::{CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use rand_xorshift;
-use std::net::Ipv4Addr;
-use std::{collections::HashMap, net::IpAddr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr},
+};
 
 fn init() {
     let _ = tracing_subscriber::fmt()

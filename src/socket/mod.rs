@@ -2,9 +2,7 @@ use crate::Executor;
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::sync::{mpsc, oneshot};
 
 mod filter;

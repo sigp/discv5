@@ -1,23 +1,23 @@
 #![cfg(test)]
 
-use crate::kbucket;
-use crate::rpc::RequestId;
 use crate::{
     handler::Handler,
+    kbucket,
     kbucket::{KBucketsTable, NodeStatus},
     node_info::NodeContact,
     query_pool::{QueryId, QueryPool},
     rpc,
+    rpc::RequestId,
     service::{ActiveRequest, Service},
     Discv5ConfigBuilder,
 };
 use enr::{CombinedKey, Enr, EnrBuilder};
 use parking_lot::RwLock;
-use std::sync::Arc;
-use std::time::Duration;
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
 
