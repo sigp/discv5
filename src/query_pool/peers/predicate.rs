@@ -1,9 +1,13 @@
 use super::*;
-use crate::config::Discv5Config;
-use crate::kbucket::{Distance, Key, PredicateKey, MAX_NODES_PER_BUCKET};
-use std::collections::btree_map::{BTreeMap, Entry};
-use std::iter::FromIterator;
-use std::time::{Duration, Instant};
+use crate::{
+    config::Discv5Config,
+    kbucket::{Distance, Key, PredicateKey, MAX_NODES_PER_BUCKET},
+};
+use std::{
+    collections::btree_map::{BTreeMap, Entry},
+    iter::FromIterator,
+    time::{Duration, Instant},
+};
 
 pub(crate) struct PredicateQuery<TNodeId, TResult> {
     /// The target key we are looking for

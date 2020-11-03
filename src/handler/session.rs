@@ -1,6 +1,8 @@
 use super::*;
-use crate::node_info::NodeContact;
-use crate::packet::{ChallengeData, Packet, PacketHeader, PacketKind, MESSAGE_NONCE_LENGTH};
+use crate::{
+    node_info::NodeContact,
+    packet::{ChallengeData, Packet, PacketHeader, PacketKind, MESSAGE_NONCE_LENGTH},
+};
 use enr::{CombinedKey, NodeId};
 use zeroize::Zeroize;
 

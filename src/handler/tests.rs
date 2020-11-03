@@ -1,10 +1,11 @@
 #![cfg(test)]
 use super::*;
-use crate::rpc::{Request, Response};
-use crate::Discv5ConfigBuilder;
+use crate::{
+    rpc::{Request, Response},
+    Discv5ConfigBuilder,
+};
 use enr::EnrBuilder;
-use std::net::IpAddr;
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 use tokio::time::sleep;
 
 fn init() {

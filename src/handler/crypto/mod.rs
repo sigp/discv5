@@ -5,17 +5,23 @@
 //! There is no abstraction in this module as the specification explicitly defines a singular
 //! encryption and key-derivation algorithms. Future versions may abstract some of these to allow
 //! for different algorithms.
-use crate::error::Discv5Error;
-use crate::node_info::NodeContact;
-use crate::packet::{ChallengeData, MessageNonce};
-use aes_gcm::aead::{generic_array::GenericArray, Aead, NewAead, Payload};
-use aes_gcm::Aes128Gcm;
+use crate::{
+    error::Discv5Error,
+    node_info::NodeContact,
+    packet::{ChallengeData, MessageNonce},
+};
+use aes_gcm::{
+    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+    Aes128Gcm,
+};
 use ecdh::ecdh;
 use enr::{
     k256::{
         self,
-        ecdsa::signature::{DigestSigner, DigestVerifier, Signature as _},
-        ecdsa::Signature,
+        ecdsa::{
+            signature::{DigestSigner, DigestVerifier, Signature as _},
+            Signature,
+        },
     },
     CombinedKey, CombinedPublicKey, NodeId,
 };

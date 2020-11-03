@@ -1,8 +1,10 @@
 use enr::NodeId;
 use parking_lot::RwLock;
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 lazy_static! {
     pub static ref METRICS: InternalMetrics = InternalMetrics::default();

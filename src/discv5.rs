@@ -12,15 +12,16 @@
 //!
 //! The server can be shutdown using the [`shutdown()`] function.
 
-use crate::error::{Discv5Error, QueryError, RequestError};
-use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
-use crate::node_info::NodeContact;
-use crate::service::{QueryKind, Service, ServiceRequest};
-use crate::{Discv5Config, Enr};
+use crate::{
+    error::{Discv5Error, QueryError, RequestError},
+    kbucket::{self, ip_limiter, KBucketsTable, NodeStatus},
+    node_info::NodeContact,
+    service::{QueryKind, Service, ServiceRequest},
+    Discv5Config, Enr,
+};
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
-use std::future::Future;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
