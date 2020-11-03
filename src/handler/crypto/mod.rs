@@ -222,10 +222,8 @@ pub(crate) fn encrypt_message(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use enr::{CombinedKey, EnrBuilder, EnrKey};
-    use rand;
     use std::convert::TryInto;
 
     fn hex_decode(x: &'static str) -> Vec<u8> {
@@ -289,13 +287,8 @@ mod tests {
         let expected_first_key = hex::decode("dccc82d81bd610f4f76d3ebe97a40571").unwrap();
         let expected_second_key = hex::decode("ac74bb8773749920b0d3a8881c173ec5").unwrap();
 
-        let (first_key, second_key) = derive_key(
-            &secret,
-            &first_node_id,
-            &second_node_id,
-            &challenge_data.into(),
-        )
-        .unwrap();
+        let (first_key, second_key) =
+            derive_key(&secret, &first_node_id, &second_node_id, &challenge_data).unwrap();
 
         assert_eq!(first_key.to_vec(), expected_first_key);
         assert_eq!(second_key.to_vec(), expected_second_key);

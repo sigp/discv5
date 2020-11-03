@@ -174,10 +174,7 @@ impl PacketKind {
     }
 
     pub fn is_whoareyou(&self) -> bool {
-        match self {
-            PacketKind::WhoAreYou { .. } => true,
-            _ => false,
-        }
+        matches!(self, PacketKind::WhoAreYou { .. })
     }
 
     /// Decodes auth data, given the kind byte.
@@ -553,7 +550,6 @@ impl std::fmt::Display for PacketKind {
 mod tests {
     use super::*;
     use enr::{CombinedKey, EnrKey};
-    use rand;
 
     fn init_log() {
         let _ = tracing_subscriber::fmt()
@@ -639,8 +635,8 @@ mod tests {
     fn packet_encode_handshake() {
         init_log();
         // reference input
-        let src_id = NodeId::parse(&vec![3; 32]).unwrap();
-        let dst_id = NodeId::parse(&vec![4; 32]).unwrap();
+        let src_id = NodeId::parse(&[3; 32]).unwrap();
+        let dst_id = NodeId::parse(&[4; 32]).unwrap();
         let message_nonce: MessageNonce = [52u8; MESSAGE_NONCE_LENGTH];
         let id_nonce_sig = vec![5u8; 64];
         let ephem_pubkey = vec![6u8; 33];
@@ -673,7 +669,7 @@ mod tests {
         // reference input
         let node_key_1 = node_key_1();
         let src_id: NodeId = node_key_1.public().into();
-        let dst_id = NodeId::parse(&vec![4; 32]).unwrap();
+        let dst_id = NodeId::parse(&[4; 32]).unwrap();
         let message_nonce: MessageNonce = [52u8; MESSAGE_NONCE_LENGTH];
         let id_nonce_sig = vec![5u8; 64];
         let ephem_pubkey = vec![6u8; 33];
