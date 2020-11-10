@@ -763,7 +763,7 @@ impl Handler {
                 Err(Discv5Error::InvalidChallengeSignature(challenge)) => {
                     warn!(
                         "Authentication header contained invalid signature. Ignoring packet from: {}",
-                        node_address 
+                        node_address
                     );
                     // insert back the challenge
                     self.active_challenges.insert(node_address, challenge);
