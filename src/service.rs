@@ -26,8 +26,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc,
-    Discv5Config, Discv5Event, Enr,
+    rpc, Discv5Config, Discv5Event, Enr,
 };
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
