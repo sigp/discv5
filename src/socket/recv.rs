@@ -3,15 +3,13 @@
 //! Every UDP packet passes a filter before being processed.
 
 use super::filter::{Filter, FilterConfig};
-use crate::node_info::NodeAddress;
-use crate::packet::*;
-use crate::Executor;
+use crate::{node_info::NodeAddress, packet::*, Executor};
 use parking_lot::RwLock;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc, oneshot},
+};
 use tracing::{debug, trace, warn};
 
 /// The object sent back by the Recv handler.

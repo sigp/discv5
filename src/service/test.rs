@@ -1,23 +1,23 @@
 #![cfg(test)]
 
-use crate::kbucket;
-use crate::rpc::RequestId;
 use crate::{
     handler::Handler,
+    kbucket,
     kbucket::{KBucketsTable, NodeStatus},
     node_info::NodeContact,
     query_pool::{QueryId, QueryPool},
     rpc,
+    rpc::RequestId,
     service::{ActiveRequest, Service},
     Discv5ConfigBuilder,
 };
 use enr::{CombinedKey, Enr, EnrBuilder};
 use parking_lot::RwLock;
-use std::sync::Arc;
-use std::time::Duration;
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -79,14 +79,14 @@ async fn test_updating_connection_on_ping() {
     let enr_key1 = CombinedKey::generate_secp256k1();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
-        .ip(ip.clone().into())
+        .ip(ip)
         .udp(10001)
         .build(&enr_key1)
         .unwrap();
     let ip2: IpAddr = "127.0.0.1".parse().unwrap();
     let enr_key2 = CombinedKey::generate_secp256k1();
     let enr2 = EnrBuilder::new("v4")
-        .ip(ip2.clone().into())
+        .ip(ip2)
         .udp(10002)
         .build(&enr_key2)
         .unwrap();

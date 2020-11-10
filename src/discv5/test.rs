@@ -1,14 +1,12 @@
 #![cfg(test)]
 
-use crate::kbucket;
-use crate::Discv5;
-use crate::*;
-use enr::NodeId;
-use enr::{CombinedKey, Enr, EnrBuilder, EnrKey};
+use crate::{kbucket, Discv5, *};
+use enr::{CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
-use rand_xorshift;
-use std::net::Ipv4Addr;
-use std::{collections::HashMap, net::IpAddr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr},
+};
 
 fn init() {
     let _ = tracing_subscriber::fmt()
@@ -17,11 +15,7 @@ fn init() {
 }
 
 fn update_enr(discv5: &mut Discv5, key: &str, value: &[u8]) -> bool {
-    if let Ok(_) = discv5.enr_insert(key, value) {
-        return true;
-    } else {
-        return false;
-    }
+    discv5.enr_insert(key, value).is_ok()
 }
 
 async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
@@ -33,7 +27,7 @@ async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
         let config = Discv5Config::default();
 
         let enr = EnrBuilder::new("v4")
-            .ip(ip.clone().into())
+            .ip(ip)
             .udp(port)
             .build(&enr_key)
             .unwrap();
@@ -56,7 +50,7 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
 
         let config = Discv5ConfigBuilder::new().build();
         let enr = EnrBuilder::new("v4")
-            .ip(ip.clone().into())
+            .ip(ip)
             .udp(port)
             .build(&enr_key)
             .unwrap();
@@ -289,7 +283,7 @@ async fn test_findnode_query() {
     // build a collection of 8 nodes
     let total_nodes = 8;
     let mut nodes = build_nodes(total_nodes, 30000).await;
-    let node_enrs: Vec<Enr<CombinedKey>> = nodes.iter().map(|n| n.local_enr().clone()).collect();
+    let node_enrs: Vec<Enr<CombinedKey>> = nodes.iter().map(|n| n.local_enr()).collect();
 
     // link the nodes together
     for (node, previous_node_enr) in nodes.iter_mut().skip(1).zip(node_enrs.clone()) {
@@ -308,14 +302,14 @@ async fn test_findnode_query() {
     let found_nodes = nodes
         .last_mut()
         .unwrap()
-        .find_node(target_random_node_id.clone())
+        .find_node(target_random_node_id)
         .await
         .unwrap();
 
     // build expectations
     let expected_node_ids: Vec<NodeId> = node_enrs
         .iter()
-        .map(|enr| enr.node_id().clone())
+        .map(|enr| enr.node_id())
         .take(total_nodes - 1)
         .collect();
 
@@ -374,9 +368,9 @@ async fn test_predicate_search() {
     // Predicate function for filtering enrs
     let predicate = move |enr: &Enr<CombinedKey>| {
         if let Some(v) = enr.get("attnets") {
-            return v == required_attnet_value.as_slice();
+            v == required_attnet_value.as_slice()
         } else {
-            return false;
+            false
         }
     };
     nodes.push(bootstrap_node);
@@ -409,7 +403,7 @@ async fn test_table_limits() {
     let enr_key: CombinedKey = keypairs.remove(0);
     let config = Discv5ConfigBuilder::new().ip_limit().build();
     let enr = EnrBuilder::new("v4")
-        .ip(ip.clone().into())
+        .ip(ip)
         .udp(9050)
         .build(&enr_key)
         .unwrap();
@@ -423,7 +417,7 @@ async fn test_table_limits() {
             let ip: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8));
             let enr_key: CombinedKey = keypairs.remove(0);
             EnrBuilder::new("v4")
-                .ip(ip.clone().into())
+                .ip(ip)
                 .udp(9050 + i as u16)
                 .build(&enr_key)
                 .unwrap()
@@ -433,10 +427,7 @@ async fn test_table_limits() {
         discv5.add_enr(enr.clone()).unwrap();
     }
     // Number of entries should be `table_limit`, i.e one node got restricted
-    assert_eq!(
-        discv5.kbuckets.read().iter_ref().collect::<Vec<_>>().len(),
-        table_limit
-    );
+    assert_eq!(discv5.kbuckets.read().iter_ref().count(), table_limit);
 }
 
 // Each bucket can have maximum 2 nodes in the same /24 subnet
@@ -445,7 +436,7 @@ async fn test_bucket_limits() {
     let enr_key = CombinedKey::generate_secp256k1();
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
-        .ip(ip.clone().into())
+        .ip(ip)
         .udp(9500)
         .build(&enr_key)
         .unwrap();
@@ -475,7 +466,7 @@ async fn test_bucket_limits() {
             let kp = &keys[i - 1];
             let ip: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8));
             EnrBuilder::new("v4")
-                .ip(ip.clone().into())
+                .ip(ip)
                 .udp(9500 + i as u16)
                 .build(kp)
                 .unwrap()
@@ -489,8 +480,5 @@ async fn test_bucket_limits() {
     }
 
     // Number of entries should be equal to `bucket_limit`.
-    assert_eq!(
-        discv5.kbuckets.read().iter_ref().collect::<Vec<_>>().len(),
-        bucket_limit
-    );
+    assert_eq!(discv5.kbuckets.read().iter_ref().count(), bucket_limit);
 }

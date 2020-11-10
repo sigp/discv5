@@ -13,30 +13,32 @@
 //! supported as the ECDH procedure isn't specified in the specification. Therefore, only
 //! secp256k1 keys are supported currently.
 
-use self::ip_vote::IpVote;
-use self::query_info::{QueryInfo, QueryType};
-use crate::error::RequestError;
-use crate::handler::{Handler, HandlerRequest, HandlerResponse};
-use crate::kbucket::{self, ip_limiter, KBucketsTable, NodeStatus};
-use crate::node_info::{NodeAddress, NodeContact};
-use crate::packet::MAX_PACKET_SIZE;
-use crate::query_pool::{
-    FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
+use self::{
+    ip_vote::IpVote,
+    query_info::{QueryInfo, QueryType},
 };
-use crate::rpc;
-use crate::Enr;
-use crate::{Discv5Config, Discv5Event};
+use crate::{
+    error::RequestError,
+    handler::{Handler, HandlerRequest, HandlerResponse},
+    kbucket::{self, ip_limiter, KBucketsTable, NodeStatus},
+    node_info::{NodeAddress, NodeContact},
+    packet::MAX_PACKET_SIZE,
+    query_pool::{
+        FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
+    },
+    rpc,
+    Discv5Config, Discv5Event, Enr,
+};
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
 use parking_lot::RwLock;
 use rpc::*;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::task::Poll;
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::Interval;
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Interval,
+};
 use tracing::{debug, error, info, trace, warn};
 
 mod ip_vote;
@@ -784,7 +786,7 @@ impl Service {
         // buckets are full, that equates to 80 ENR's to respond with.
 
         let mut nodes_to_send = Vec::new();
-        distances.sort();
+        distances.sort_unstable();
         distances.dedup();
 
         if let Some(0) = distances.first() {

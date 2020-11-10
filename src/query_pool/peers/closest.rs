@@ -22,11 +22,15 @@
 // https://github.com/libp2p/rust-libp2p
 //
 use super::*;
-use crate::config::Discv5Config;
-use crate::kbucket::{Distance, Key, MAX_NODES_PER_BUCKET};
-use std::collections::btree_map::{BTreeMap, Entry};
-use std::iter::FromIterator;
-use std::time::{Duration, Instant};
+use crate::{
+    config::Discv5Config,
+    kbucket::{Distance, Key, MAX_NODES_PER_BUCKET},
+};
+use std::{
+    collections::btree_map::{BTreeMap, Entry},
+    iter::FromIterator,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug, Clone)]
 pub struct FindNodeQuery<TNodeId> {
@@ -466,7 +470,7 @@ mod tests {
         FindNodeQuery::with_config(config, target.into(), known_closest_peers)
     }
 
-    fn sorted(target: &Key<NodeId>, peers: &Vec<Key<NodeId>>) -> bool {
+    fn sorted(target: &Key<NodeId>, peers: &[Key<NodeId>]) -> bool {
         peers
             .windows(2)
             .all(|w| w[0].distance(&target) < w[1].distance(&target))
@@ -489,10 +493,9 @@ mod tests {
             .map(|e| (e.key.clone(), &e.state))
             .unzip();
 
-        let none_contacted = states.iter().all(|s| match s {
-            QueryPeerState::NotContacted => true,
-            _ => false,
-        });
+        let none_contacted = states
+            .iter()
+            .all(|s| matches!(s, QueryPeerState::NotContacted));
 
         assert!(none_contacted, "Unexpected peer state in new query.");
         assert!(
@@ -529,7 +532,7 @@ mod tests {
             let mut num_failures = 0;
 
             'finished: loop {
-                if expected.len() == 0 {
+                if expected.is_empty() {
                     break;
                 }
                 // Split off the next up to `parallelism` expected peers.
@@ -563,7 +566,7 @@ mod tests {
                         let num_closer = rng.gen_range(0, query.config.num_results + 1);
                         let closer_peers = random_nodes(num_closer).collect::<Vec<_>>();
                         // let _: () = remaining;
-                        remaining.extend(closer_peers.iter().map(|x| Key::from(x.clone())));
+                        remaining.extend(closer_peers.iter().map(|x| Key::from(*x)));
                         query.on_success(k.preimage(), closer_peers);
                     } else {
                         num_failures += 1;
@@ -585,10 +588,7 @@ mod tests {
             // Determine if all peers have been contacted by the query. This _must_ be
             // the case if the query finished with fewer than the requested number
             // of results.
-            let all_contacted = query.closest_peers.values().all(|e| match e.state {
-                QueryPeerState::NotContacted | QueryPeerState::Waiting { .. } => false,
-                _ => true,
-            });
+            let all_contacted = query.closest_peers.values().all(|e| !matches!(e.state, QueryPeerState::NotContacted | QueryPeerState::Waiting { .. }));
 
             let target_key = query.target_key.clone();
             let num_results = query.config.num_results;
@@ -621,9 +621,10 @@ mod tests {
             let closer: Vec<NodeId> = random_nodes(1).collect();
 
             // A first peer reports a "closer" peer.
-            let peer1 = match query.next(now) {
-                QueryState::Waiting(Some(p)) => p.clone(),
-                _ => panic!("No peer."),
+            let peer1 = if let QueryState::Waiting(Some(p)) = query.next(now) {
+                p
+            } else {
+                panic!("No peer.");
             };
             query.on_success(&peer1, closer.clone());
             // Duplicate result from the same peer.
@@ -632,7 +633,7 @@ mod tests {
             // If there is a second peer, let it also report the same "closer" peer.
             match query.next(now) {
                 QueryState::Waiting(Some(p)) => {
-                    let peer2 = p.clone();
+                    let peer2 = p;
                     query.on_success(&peer2, closer.clone())
                 }
                 QueryState::Finished => {}
@@ -672,7 +673,7 @@ mod tests {
             }
 
             // Artificially advance the clock.
-            now = now + query.config.peer_timeout;
+            now += query.config.peer_timeout;
 
             // Advancing the query again should mark the first peer as unresponsive.
             let _ = query.next(now);

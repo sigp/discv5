@@ -5,17 +5,23 @@
 //! There is no abstraction in this module as the specification explicitly defines a singular
 //! encryption and key-derivation algorithms. Future versions may abstract some of these to allow
 //! for different algorithms.
-use crate::error::Discv5Error;
-use crate::node_info::NodeContact;
-use crate::packet::{ChallengeData, MessageNonce};
-use aes_gcm::aead::{generic_array::GenericArray, Aead, NewAead, Payload};
-use aes_gcm::Aes128Gcm;
+use crate::{
+    error::Discv5Error,
+    node_info::NodeContact,
+    packet::{ChallengeData, MessageNonce},
+};
+use aes_gcm::{
+    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+    Aes128Gcm,
+};
 use ecdh::ecdh;
 use enr::{
     k256::{
         self,
-        ecdsa::signature::{DigestSigner, DigestVerifier, Signature as _},
-        ecdsa::Signature,
+        ecdsa::{
+            signature::{DigestSigner, DigestVerifier, Signature as _},
+            Signature,
+        },
     },
     CombinedKey, CombinedPublicKey, NodeId,
 };
@@ -216,10 +222,8 @@ pub(crate) fn encrypt_message(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use enr::{CombinedKey, EnrBuilder, EnrKey};
-    use rand;
     use std::convert::TryInto;
 
     fn hex_decode(x: &'static str) -> Vec<u8> {
@@ -283,13 +287,8 @@ mod tests {
         let expected_first_key = hex::decode("dccc82d81bd610f4f76d3ebe97a40571").unwrap();
         let expected_second_key = hex::decode("ac74bb8773749920b0d3a8881c173ec5").unwrap();
 
-        let (first_key, second_key) = derive_key(
-            &secret,
-            &first_node_id,
-            &second_node_id,
-            &challenge_data.into(),
-        )
-        .unwrap();
+        let (first_key, second_key) =
+            derive_key(&secret, &first_node_id, &second_node_id, &challenge_data).unwrap();
 
         assert_eq!(first_key.to_vec(), expected_first_key);
         assert_eq!(second_key.to_vec(), expected_second_key);

@@ -1,14 +1,9 @@
 //! A filter which decides whether to accept/reject incoming UDP packets.
 
-use crate::discv5::PERMIT_BAN_LIST;
-use crate::metrics::METRICS;
-use crate::node_info::NodeAddress;
-use crate::packet::Packet;
+use crate::{discv5::PERMIT_BAN_LIST, metrics::METRICS, node_info::NodeAddress, packet::Packet};
 use cache::ReceivedPacketCache;
 use enr::NodeId;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::atomic::Ordering;
+use std::{collections::HashMap, net::SocketAddr, sync::atomic::Ordering};
 use tracing::{debug, warn};
 
 mod cache;

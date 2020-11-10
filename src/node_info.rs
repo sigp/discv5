@@ -48,10 +48,7 @@ impl NodeContact {
     }
 
     pub fn is_enr(&self) -> bool {
-        match self {
-            NodeContact::Enr(_) => true,
-            _ => false,
-        }
+        matches!(self, NodeContact::Enr(_))
     }
 
     pub fn udp_socket(&self) -> Result<SocketAddr, &'static str> {
@@ -127,13 +124,13 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
                 _ => return Err("The key type is not supported"),
             };
 
-        return Ok(NodeContact::Raw {
+        Ok(NodeContact::Raw {
             public_key: Box::new(public_key.clone()),
             node_address: Box::new(NodeAddress {
                 socket_addr: SocketAddr::new(ip_addr, udp_port),
                 node_id: public_key.into(),
             }),
-        });
+        })
     }
 }
 

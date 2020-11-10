@@ -204,38 +204,14 @@ impl Response {
     /// Determines if the response is a valid response to the given request.
     pub fn match_request(&self, req: &RequestBody) -> bool {
         match self.body {
-            ResponseBody::Pong { .. } => {
-                if let RequestBody::Ping { .. } = req {
-                    true
-                } else {
-                    false
-                }
+            ResponseBody::Pong { .. } => matches!(req, RequestBody::Ping { .. }),
+            ResponseBody::Nodes { .. } => {
+                matches!(req, RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. })
             }
-            ResponseBody::Nodes { .. } => match req {
-                RequestBody::FindNode { .. } => true,
-                RequestBody::TopicQuery { .. } => true,
-                _ => false,
-            },
-            ResponseBody::Talk { .. } => {
-                if let RequestBody::Talk { .. } = req {
-                    true
-                } else {
-                    false
-                }
-            }
-            ResponseBody::Ticket { .. } => {
-                if let RequestBody::RegisterTopic { .. } = req {
-                    true
-                } else {
-                    false
-                }
-            }
+            ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),
+            ResponseBody::Ticket { .. } => matches!(req, RequestBody::RegisterTopic { .. }),
             ResponseBody::RegisterConfirmation { .. } => {
-                if let RequestBody::RegisterTopic { .. } = req {
-                    true
-                } else {
-                    false
-                }
+                matches!(req, RequestBody::RegisterTopic { .. })
             }
         }
     }

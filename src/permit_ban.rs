@@ -1,7 +1,6 @@
 use crate::node_info::NodeAddress;
 use enr::NodeId;
-use std::collections::HashSet;
-use std::net::IpAddr;
+use std::{collections::HashSet, net::IpAddr};
 
 #[derive(Debug, Clone)]
 pub struct PermitBanList {
