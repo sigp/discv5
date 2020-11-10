@@ -1,3 +1,4 @@
+use crate::handler::Challenge;
 use rlp::DecoderError;
 
 #[derive(Debug)]
@@ -15,8 +16,8 @@ pub enum Discv5Error {
     InvalidRemotePublicKey,
     /// The secret key does not match the provided ENR.
     InvalidSecretKey,
-    /// An invalid signature was received.
-    InvalidSignature,
+    /// An invalid signature was received for a challenge.
+    InvalidChallengeSignature(Challenge),
     /// The Service channel has been closed early.
     ServiceChannelClosed,
     /// The discv5 service is not running.
