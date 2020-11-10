@@ -22,12 +22,11 @@ use crate::{
     handler::{Handler, HandlerRequest, HandlerResponse},
     kbucket::{self, ip_limiter, KBucketsTable, NodeStatus},
     node_info::{NodeAddress, NodeContact},
+    packet::MAX_PACKET_SIZE,
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc,
-    socket::MAX_PACKET_SIZE,
-    Discv5Config, Discv5Event, Enr,
+    rpc, Discv5Config, Discv5Event, Enr,
 };
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;

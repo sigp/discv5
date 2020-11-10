@@ -34,6 +34,11 @@ const PROTOCOL_ID: &str = "discv5";
 /// The version sent with each handshake.
 const VERSION: u16 = 0x0001;
 
+pub(crate) const MAX_PACKET_SIZE: usize = 1280;
+// The smallest packet must be at least this large
+// The 24 is the smallest auth_data that can be sent (it is by a WHOAREYOU packet)
+const MIN_PACKET_SIZE: usize = IV_LENGTH + STATIC_HEADER_LENGTH + 24;
+
 /// Message Nonce (12 bytes).
 pub type MessageNonce = [u8; MESSAGE_NONCE_LENGTH];
 /// The nonce sent in a WHOAREYOU packet.
@@ -400,9 +405,10 @@ impl Packet {
     ///
     /// This also returns the authenticated data for further decryption in the handler.
     pub fn decode(src_id: &NodeId, data: &[u8]) -> Result<(Self, Vec<u8>), PacketError> {
-        // The smallest packet must be at least this large
-        // The 24 is the smallest auth_data that can be sent (it is by a WHOAREYOU packet)
-        if data.len() < IV_LENGTH + STATIC_HEADER_LENGTH + 24 {
+        if data.len() > MAX_PACKET_SIZE {
+            return Err(PacketError::TooLarge);
+        }
+        if data.len() < MIN_PACKET_SIZE {
             return Err(PacketError::TooSmall);
         }
 
@@ -870,5 +876,18 @@ mod tests {
 
         let (packet, _auth_data) = Packet::decode(&dst_id, &encoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
+    }
+
+    #[test]
+    fn packet_decode_invalid_packet_size() {
+        let src_id: NodeId = node_key_1().public().into();
+
+        let data = [0; MAX_PACKET_SIZE + 1];
+        let result = Packet::decode(&src_id, &data);
+        assert_eq!(result, Err(PacketError::TooLarge));
+
+        let data = [0; MIN_PACKET_SIZE - 1];
+        let result = Packet::decode(&src_id, &data);
+        assert_eq!(result, Err(PacketError::TooSmall));
     }
 }
