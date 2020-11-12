@@ -14,7 +14,7 @@ pub struct OutboundPacket {
     pub packet: Packet,
 }
 
-/// The main task that handles inbound UDP packets.
+/// The main task that handles outbound UDP packets.
 pub(crate) struct SendHandler {
     /// The UDP send socket.
     send: Arc<UdpSocket>,
