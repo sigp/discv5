@@ -128,6 +128,45 @@ impl Session {
         ephem_pubkey: &[u8],
         enr_record: Option<Enr>,
     ) -> Result<(Session, Enr), Discv5Error> {
+        // check and verify a potential ENR update
+
+        // Duplicate code here to avoid cloning an ENR
+        let remote_public_key = {
+            let enr = match (enr_record.as_ref(), challenge.remote_enr.as_ref()) {
+                (Some(new_enr), Some(known_enr)) => {
+                    if new_enr.seq() > known_enr.seq() {
+                        new_enr
+                    } else {
+                        known_enr
+                    }
+                }
+                (Some(new_enr), None) => new_enr,
+                (None, Some(known_enr)) => known_enr,
+                (None, None) => {
+                    warn!(
+                "Peer did not respond with their ENR. Session could not be established. Node: {}",
+                remote_id
+            );
+                    return Err(Discv5Error::SessionNotEstablished);
+                }
+            };
+            enr.public_key()
+        };
+
+        // verify the auth header nonce
+        if !crypto::verify_authentication_nonce(
+            &remote_public_key,
+            ephem_pubkey,
+            &challenge.data,
+            &local_id,
+            id_nonce_sig,
+        ) {
+            return Err(Discv5Error::InvalidChallengeSignature(challenge));
+        }
+
+        // The keys are derived after the message has been verified to prevent potential extra work
+        // for invalid messages.
+
         // generate session keys
         let (decryption_key, encryption_key) = crypto::derive_keys_from_pubkey(
             &local_key.read(),
@@ -137,7 +176,13 @@ impl Session {
             ephem_pubkey,
         )?;
 
-        // check and verify a potential ENR update
+        let keys = Keys {
+            encryption_key,
+            decryption_key,
+        };
+
+        // Takes ownership of the provided ENRs - Slightly annoying code duplication, but avoids
+        // cloning ENRs
         let session_enr = match (enr_record, challenge.remote_enr) {
             (Some(new_enr), Some(known_enr)) => {
                 if new_enr.seq() > known_enr.seq() {
@@ -148,32 +193,7 @@ impl Session {
             }
             (Some(new_enr), None) => new_enr,
             (None, Some(known_enr)) => known_enr,
-            (None, None) => {
-                warn!(
-                "Peer did not respond with their ENR. Session could not be established. Node: {}",
-                remote_id
-            );
-                return Err(Discv5Error::SessionNotEstablished);
-            }
-        };
-
-        // ENR must exist here
-        let remote_public_key = session_enr.public_key();
-
-        // verify the auth header nonce
-        if !crypto::verify_authentication_nonce(
-            &remote_public_key,
-            ephem_pubkey,
-            &challenge.data,
-            &local_id,
-            id_nonce_sig,
-        ) {
-            return Err(Discv5Error::InvalidSignature);
-        }
-
-        let keys = Keys {
-            encryption_key,
-            decryption_key,
+            (None, None) => unreachable!("Checked in the first match above"),
         };
 
         Ok((Session::new(keys), session_enr))

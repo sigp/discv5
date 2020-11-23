@@ -118,13 +118,14 @@ pub enum HandlerResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhoAreYouRef(pub NodeAddress, MessageNonce);
 
-pub(crate) struct Challenge {
+#[derive(Debug)]
+pub struct Challenge {
     data: ChallengeData,
     remote_enr: Option<Enr>,
 }
 
-#[derive(Debug)]
 /// A request to a node that we are waiting for a response.
+#[derive(Debug)]
 pub(crate) struct RequestCall {
     contact: NodeContact,
     /// The raw discv5 packet sent.
@@ -758,6 +759,14 @@ impl Handler {
                         self.fail_session(&node_address, RequestError::InvalidRemoteEnr)
                             .await;
                     }
+                }
+                Err(Discv5Error::InvalidChallengeSignature(challenge)) => {
+                    warn!(
+                        "Authentication header contained invalid signature. Ignoring packet from: {}",
+                        node_address
+                    );
+                    // insert back the challenge
+                    self.active_challenges.insert(node_address, challenge);
                 }
                 Err(e) => {
                     warn!(

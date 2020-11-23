@@ -47,6 +47,12 @@ pub type IdNonce = [u8; ID_NONCE_LENGTH];
 // This is the WHOAREYOU authenticated data.
 pub struct ChallengeData([u8; 63]);
 
+impl std::fmt::Debug for ChallengeData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
+
 impl std::convert::TryFrom<Vec<u8>> for ChallengeData {
     type Error = ();
 
