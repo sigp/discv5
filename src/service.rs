@@ -135,7 +135,7 @@ struct ActiveRequest {
 
 /// The kinds of responses we can send back to the discv5 layer.
 pub enum CallbackResponse {
-    // A response to a requested ENR.
+    /// A response to a requested ENR.
     Enr(oneshot::Sender<Result<Enr, RequestError>>),
     /// A response from a TALK request
     Talk(oneshot::Sender<Result<Vec<u8>, RequestError>>),
