@@ -81,7 +81,7 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
     type Error = &'static str;
 
     fn try_from(multiaddr: Multiaddr) -> Result<Self, Self::Error> {
-        // The multiaddr must contain either the ip4 or ip6 protocols, the UDP protocol and the P@P
+        // The multiaddr must contain either the ip4 or ip6 protocols, the UDP protocol and the P2P
         // protocol with either secp256k1 or ed25519 keys.
 
         // perform a single pass and try to fill all required protocols from the multiaddr
