@@ -53,10 +53,10 @@ impl std::fmt::Debug for ChallengeData {
     }
 }
 
-impl std::convert::TryFrom<Vec<u8>> for ChallengeData {
+impl std::convert::TryFrom<&[u8]> for ChallengeData {
     type Error = ();
 
-    fn try_from(data: Vec<u8>) -> Result<Self, ()> {
+    fn try_from(data: &[u8]) -> Result<Self, ()> {
         if data.len() != 63 {
             return Err(());
         }
