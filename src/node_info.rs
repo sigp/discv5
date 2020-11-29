@@ -53,9 +53,9 @@ impl NodeContact {
 
     pub fn udp_socket(&self) -> Result<SocketAddr, &'static str> {
         match self {
-            NodeContact::Enr(ref enr) => enr
+            NodeContact::Enr(enr) => enr
                 .udp_socket()
-                .ok_or_else(|| "ENR does not contain an IP and UDP port"),
+                .ok_or("ENR does not contain an IP and UDP port"),
             NodeContact::Raw { node_address, .. } => Ok(node_address.socket_addr),
         }
     }
@@ -99,9 +99,9 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
             }
         }
 
-        let udp_port = udp_port.ok_or_else(|| "A UDP port must be specified in the multiaddr")?;
-        let ip_addr = ip_addr.ok_or_else(|| "An IP address must be specified in the multiaddr")?;
-        let multihash = p2p.ok_or_else(|| "The p2p protocol must be specified in the multiaddr")?;
+        let udp_port = udp_port.ok_or("A UDP port must be specified in the multiaddr")?;
+        let ip_addr = ip_addr.ok_or("An IP address must be specified in the multiaddr")?;
+        let multihash = p2p.ok_or("The p2p protocol must be specified in the multiaddr")?;
 
         // verify the correct key type
         if multihash.algorithm() != multihash::Code::Identity {

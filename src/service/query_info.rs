@@ -33,7 +33,7 @@ impl QueryInfo {
         let request = match self.query_type {
             QueryType::FindNode(ref node_id) => {
                 let distances = findnode_log2distance(node_id, peer, self.distances_to_request)
-                    .ok_or_else(|| "Requested a node find itself")?;
+                    .ok_or("Requested a node find itself")?;
                 RequestBody::FindNode { distances }
             }
         };

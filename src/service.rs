@@ -277,11 +277,11 @@ impl Service {
                         HandlerResponse::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr))).unwrap_or_else(|_| ());
+                                let _ = self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr)));
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, None)).unwrap_or_else(|_| ());
+                                let _ = self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, None));
                             }
                         }
                         HandlerResponse::RequestFailed(request_id, error) => {
@@ -446,9 +446,9 @@ impl Service {
                     },
                 };
                 debug!("Sending PONG response to {}", node_address);
-                self.handler_send
-                    .send(HandlerRequest::Response(node_address, Box::new(response)))
-                    .unwrap_or_else(|_| ());
+                let _ = self
+                    .handler_send
+                    .send(HandlerRequest::Response(node_address, Box::new(response)));
             }
             RequestBody::Talk { protocol, request } => {
                 // Send the callback's response to this protocol.
@@ -459,9 +459,9 @@ impl Service {
                 };
 
                 debug!("Sending TALK response to {}", node_address);
-                self.handler_send
-                    .send(HandlerRequest::Response(node_address, Box::new(response)))
-                    .unwrap_or_else(|_| ());
+                let _ = self
+                    .handler_send
+                    .send(HandlerRequest::Response(node_address, Box::new(response)));
             }
             RequestBody::RegisterTopic { .. } => {
                 debug!("Received RegisterTopic request which is unimplemented");
@@ -536,7 +536,7 @@ impl Service {
                         let response = nodes.pop().ok_or_else(|| {
                             RequestError::InvalidEnr("Peer did not return an ENR".into())
                         });
-                        callback.send(response).unwrap_or_else(|_| ());
+                        let _ = callback.send(response);
                         return;
                     }
 
@@ -681,7 +681,7 @@ impl Service {
                     // Send the response to the user
                     match active_request.callback {
                         Some(CallbackResponse::Talk(callback)) => {
-                            callback.send(Ok(response)).unwrap_or_else(|_| ());
+                            let _ = callback.send(Ok(response));
                         }
                         _ => error!("Invalid callback for response"),
                     }
@@ -825,9 +825,9 @@ impl Service {
                 "Sending empty FINDNODES response to: {}",
                 node_address.node_id
             );
-            self.handler_send
-                .send(HandlerRequest::Response(node_address, Box::new(response)))
-                .unwrap_or_else(|_| ());
+            let _ = self
+                .handler_send
+                .send(HandlerRequest::Response(node_address, Box::new(response)));
         } else {
             // build the NODES response
             let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
@@ -882,12 +882,10 @@ impl Service {
                     node_address,
                     response
                 );
-                self.handler_send
-                    .send(HandlerRequest::Response(
-                        node_address.clone(),
-                        Box::new(response),
-                    ))
-                    .unwrap_or_else(|_| ());
+                let _ = self.handler_send.send(HandlerRequest::Response(
+                    node_address.clone(),
+                    Box::new(response),
+                ));
             }
         }
     }
@@ -925,9 +923,9 @@ impl Service {
         self.active_requests.insert(id, active_request);
         debug!("Sending RPC {} to node: {}", request, contact);
 
-        self.handler_send
-            .send(HandlerRequest::Request(contact, Box::new(request)))
-            .unwrap_or_else(|_| ());
+        let _ = self
+            .handler_send
+            .send(HandlerRequest::Request(contact, Box::new(request)));
     }
 
     fn send_event(&mut self, event: Discv5Event) {
