@@ -287,7 +287,7 @@ impl Handler {
                            let id = request.id.clone();
                            if let Err(request_error) =  self.send_request(contact, *request).await {
                                // If the sending failed report to the application
-                               self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await.unwrap_or_else(|_| ());
+                               let _ = self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await;
                            }
                         }
                         HandlerRequest::Response(dst, response) => self.send_response(dst, *response).await,
@@ -684,9 +684,7 @@ impl Handler {
                 };
 
                 session.awaiting_enr = Some(id);
-                self.send_request(contact, request)
-                    .await
-                    .unwrap_or_else(|_| ());
+                let _ = self.send_request(contact, request).await;
             }
         }
         self.new_session(node_address, session);
@@ -737,10 +735,10 @@ impl Handler {
                     if self.verify_enr(&enr, &node_address) {
                         // Session is valid
                         // Notify the application
-                        self.outbound_channel
+                        let _ = self
+                            .outbound_channel
                             .send(HandlerResponse::Established(enr))
-                            .await
-                            .unwrap_or_else(|_| ());
+                            .await;
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
                             node_address,
@@ -798,9 +796,7 @@ impl Handler {
                     entry.remove();
                 }
                 trace!("Sending next awaiting message. Node: {}", request.0);
-                self.send_request(request.0, request.1)
-                    .await
-                    .unwrap_or_else(|_| ());
+                let _ = self.send_request(request.0, request.1).await;
             }
         }
     }
@@ -837,10 +833,10 @@ impl Handler {
                         .await;
                     // spawn a WHOAREYOU event to check for highest known ENR
                     let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-                    self.outbound_channel
+                    let _ = self
+                        .outbound_channel
                         .send(HandlerResponse::WhoAreYou(whoareyou_ref))
-                        .await
-                        .unwrap_or_else(|_| ());
+                        .await;
                     return;
                 }
             };
@@ -851,10 +847,10 @@ impl Handler {
             match message {
                 Message::Request(request) => {
                     // report the request to the application
-                    self.outbound_channel
+                    let _ = self
+                        .outbound_channel
                         .send(HandlerResponse::Request(node_address, Box::new(request)))
-                        .await
-                        .unwrap_or_else(|_| ());
+                        .await;
                 }
                 Message::Response(response) => {
                     // Sessions could be awaiting an ENR response. Check if this response matches
@@ -868,10 +864,10 @@ impl Handler {
                                     if let Some(enr) = nodes.pop() {
                                         if self.verify_enr(&enr, &node_address) {
                                             // Notify the application
-                                            self.outbound_channel
+                                            let _ = self
+                                                .outbound_channel
                                                 .send(HandlerResponse::Established(enr))
-                                                .await
-                                                .unwrap_or_else(|_| ());
+                                                .await;
                                             return;
                                         }
                                     }
@@ -894,10 +890,10 @@ impl Handler {
             trace!("Requesting a WHOAREYOU packet to be sent.");
             // spawn a WHOAREYOU event to check for highest known ENR
             let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-            self.outbound_channel
+            let _ = self
+                .outbound_channel
                 .send(HandlerResponse::WhoAreYou(whoareyou_ref))
-                .await
-                .unwrap_or_else(|_| ());
+                .await;
         }
     }
 
@@ -930,10 +926,10 @@ impl Handler {
                             // add back the request and send the response
                             self.active_requests
                                 .insert(node_address.clone(), request_call);
-                            self.outbound_channel
+                            let _ = self
+                                .outbound_channel
                                 .send(HandlerResponse::Response(node_address, Box::new(response)))
-                                .await
-                                .unwrap_or_else(|_| ());
+                                .await;
                             return;
                         }
                     } else {
@@ -942,10 +938,10 @@ impl Handler {
                         // add back the request and send the response
                         self.active_requests
                             .insert(node_address.clone(), request_call);
-                        self.outbound_channel
+                        let _ = self
+                            .outbound_channel
                             .send(HandlerResponse::Response(node_address, Box::new(response)))
-                            .await
-                            .unwrap_or_else(|_| ());
+                            .await;
                         return;
                     }
                 }
@@ -958,13 +954,13 @@ impl Handler {
             self.remove_expected_response(node_address.socket_addr);
 
             // The request matches report the response
-            self.outbound_channel
+            let _ = self
+                .outbound_channel
                 .send(HandlerResponse::Response(
                     node_address.clone(),
                     Box::new(response),
                 ))
-                .await
-                .unwrap_or_else(|_| ());
+                .await;
             self.send_next_request(node_address).await;
         } else {
             // This is likely a late response and we have already failed the request. These get
@@ -1003,10 +999,10 @@ impl Handler {
             .remove(request_call.packet.message_nonce());
         // Fail the current request
         let request_id = request_call.request.id;
-        self.outbound_channel
+        let _ = self
+            .outbound_channel
             .send(HandlerResponse::RequestFailed(request_id, error.clone()))
-            .await
-            .unwrap_or_else(|_| ());
+            .await;
 
         let node_address = request_call
             .contact
@@ -1025,10 +1021,10 @@ impl Handler {
             .remove(&node_address)
             .unwrap_or_else(Vec::new)
         {
-            self.outbound_channel
+            let _ = self
+                .outbound_channel
                 .send(HandlerResponse::RequestFailed(request.1.id, error.clone()))
-                .await
-                .unwrap_or_else(|_| ());
+                .await;
         }
     }
 
@@ -1038,10 +1034,6 @@ impl Handler {
             node_address,
             packet,
         };
-        self.socket
-            .send
-            .send(outbound_packet)
-            .await
-            .unwrap_or_else(|_| ());
+        let _ = self.socket.send.send(outbound_packet).await;
     }
 }
