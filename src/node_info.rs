@@ -4,7 +4,7 @@ use enr::{CombinedPublicKey, NodeId};
 use std::net::SocketAddr;
 
 #[cfg(feature = "libp2p")]
-use libp2p_core::{identity::PublicKey, multiaddr::Protocol, Multiaddr};
+use libp2p_core::{identity::PublicKey, multiaddr::Protocol, multihash, Multiaddr};
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
@@ -81,7 +81,7 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
     type Error = &'static str;
 
     fn try_from(multiaddr: Multiaddr) -> Result<Self, Self::Error> {
-        // The multiaddr must contain either the ip4 or ip6 protocols, the UDP protocol and the P@P
+        // The multiaddr must contain either the ip4 or ip6 protocols, the UDP protocol and the P2P
         // protocol with either secp256k1 or ed25519 keys.
 
         // perform a single pass and try to fill all required protocols from the multiaddr
@@ -104,12 +104,12 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
         let multihash = p2p.ok_or("The p2p protocol must be specified in the multiaddr")?;
 
         // verify the correct key type
-        if multihash.algorithm() != multihash::Code::Identity {
+        if multihash.code() != u64::from(multihash::Code::Identity) {
             return Err("The key type is unsupported");
         }
 
         let public_key: CombinedPublicKey =
-            match PublicKey::from_protobuf_encoding(&multihash.as_bytes()[2..])
+            match PublicKey::from_protobuf_encoding(&multihash.to_bytes()[2..])
                 .map_err(|_| "Invalid public key")?
             {
                 PublicKey::Secp256k1(pk) => {

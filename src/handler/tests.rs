@@ -45,7 +45,7 @@ async fn simple_session_message() {
         .build(&key2)
         .unwrap();
 
-    let (_exit_send, sender_handler, _) = Handler::spawn(
+    let (_exit_send, sender_send, _sender_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
         sender_enr.udp_socket().unwrap(),
@@ -54,7 +54,7 @@ async fn simple_session_message() {
     .await
     .unwrap();
 
-    let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
+    let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_enr.udp_socket().unwrap(),
@@ -68,14 +68,14 @@ async fn simple_session_message() {
         body: RequestBody::Ping { enr_seq: 1 },
     });
 
-    let _ = sender_handler.send(HandlerRequest::Request(
+    let _ = sender_send.send(HandlerRequest::Request(
         receiver_enr.into(),
         send_message.clone(),
     ));
 
     let receiver = async move {
         loop {
-            if let Some(message) = receiver_handler.recv().await {
+            if let Some(message) = receiver_recv.recv().await {
                 match message {
                     HandlerResponse::WhoAreYou(wru_ref) => {
                         let _ = recv_send
@@ -93,7 +93,7 @@ async fn simple_session_message() {
 
     tokio::select! {
         _ = receiver => {}
-        _ = sleep(Duration::from_millis(100)) => {
+        _ = sleep(Duration::from_millis(500)) => {
             panic!("Test timed out");
         }
     }
