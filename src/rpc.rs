@@ -29,7 +29,7 @@ impl RequestId {
         RequestId(rand.to_be_bytes().to_vec())
     }
 
-    pub fn as_bytes(&self) -> &Vec<u8> {
+    pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 }
@@ -143,7 +143,7 @@ impl Request {
             RequestBody::Ping { enr_seq } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id.as_bytes());
+                s.append(&id.as_bytes());
                 s.append(&enr_seq);
                 buf.extend_from_slice(&s.drain());
                 buf
@@ -151,7 +151,7 @@ impl Request {
             RequestBody::FindNode { distances } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id.as_bytes());
+                s.append(&id.as_bytes());
                 s.begin_list(distances.len());
                 for distance in distances {
                     s.append(&distance);
@@ -162,7 +162,7 @@ impl Request {
             RequestBody::Talk { protocol, request } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
-                s.append(id.as_bytes());
+                s.append(&id.as_bytes());
                 s.append(&protocol);
                 s.append(&request);
                 buf.extend_from_slice(&s.drain());
@@ -171,7 +171,7 @@ impl Request {
             RequestBody::RegisterTopic { topic, enr, ticket } => {
                 let mut s = RlpStream::new();
                 s.begin_list(4);
-                s.append(id.as_bytes());
+                s.append(&id.as_bytes());
                 s.append(&topic);
                 s.append(&enr);
                 s.append(&ticket);
@@ -181,8 +181,8 @@ impl Request {
             RequestBody::TopicQuery { topic } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id.as_bytes());
-                s.append(&topic.to_vec());
+                s.append(&id.as_bytes());
+                s.append(&(&topic as &[u8]));
                 buf.extend_from_slice(&s.drain());
                 buf
             }
@@ -224,15 +224,14 @@ impl Response {
         let id = &self.id;
         match self.body {
             ResponseBody::Pong { enr_seq, ip, port } => {
-                let ip_bytes = match ip {
-                    IpAddr::V4(addr) => addr.octets().to_vec(),
-                    IpAddr::V6(addr) => addr.octets().to_vec(),
-                };
                 let mut s = RlpStream::new();
                 s.begin_list(4);
-                s.append(id.as_bytes());
+                s.append(&id.as_bytes());
                 s.append(&enr_seq);
-                s.append(&ip_bytes);
+                match ip {
+                    IpAddr::V4(addr) => s.append(&(&addr.octets() as &[u8])),
+                    IpAddr::V6(addr) => s.append(&(&addr.octets() as &[u8])),
+                };
                 s.append(&port);
                 buf.extend_from_slice(&s.drain());
                 buf
@@ -240,7 +239,7 @@ impl Response {
             ResponseBody::Nodes { total, nodes } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
-                s.append(id.as_bytes());
+                s.append(&id.as_bytes());
                 s.append(&total);
 
                 if nodes.is_empty() {
@@ -257,7 +256,7 @@ impl Response {
             ResponseBody::Talk { response } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id.as_bytes());
+                s.append(&id.as_bytes());
                 s.append(&response);
                 buf.extend_from_slice(&s.drain());
                 buf
@@ -265,8 +264,8 @@ impl Response {
             ResponseBody::Ticket { ticket, wait_time } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
-                s.append(id.as_bytes());
-                s.append(&ticket.to_vec());
+                s.append(&id.as_bytes());
+                s.append(&ticket);
                 s.append(&wait_time);
                 buf.extend_from_slice(&s.drain());
                 buf
@@ -274,7 +273,7 @@ impl Response {
             ResponseBody::RegisterConfirmation { topic } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
-                s.append(id.as_bytes());
+                s.append(&id.as_bytes());
                 s.append(&topic);
                 buf.extend_from_slice(&s.drain());
                 buf
@@ -378,7 +377,7 @@ impl Message {
         }
     }
 
-    pub fn decode(data: Vec<u8>) -> Result<Self, DecoderError> {
+    pub fn decode(data: &[u8]) -> Result<Self, DecoderError> {
         if data.len() < 3 {
             return Err(DecoderError::RlpIsTooShort);
         }
@@ -730,7 +729,7 @@ mod tests {
         let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
         let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
 
-        let decoded = Message::decode(input).unwrap();
+        let decoded = Message::decode(&input).unwrap();
 
         match decoded {
             Message::Response(response) => match response.body {
@@ -754,7 +753,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -772,7 +771,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -788,7 +787,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -822,7 +821,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -839,7 +838,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }

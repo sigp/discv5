@@ -282,7 +282,7 @@ mod tests {
         let first_node_id: NodeId = node_key_1().public().into();
         let second_node_id: NodeId = node_key_2().public().into();
 
-        let challenge_data: ChallengeData = hex::decode("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").unwrap().try_into().unwrap();
+        let challenge_data: ChallengeData = hex::decode("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").unwrap().as_slice().try_into().unwrap();
 
         let expected_first_key = hex::decode("dccc82d81bd610f4f76d3ebe97a40571").unwrap();
         let expected_second_key = hex::decode("ac74bb8773749920b0d3a8881c173ec5").unwrap();
@@ -308,7 +308,7 @@ mod tests {
 
         let expected_sig = hex::decode("94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6").unwrap();
 
-        let challenge_data = ChallengeData::try_from(hex::decode("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").unwrap()).unwrap();
+        let challenge_data = ChallengeData::try_from(hex::decode("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").unwrap().as_slice()).unwrap();
         let key = k256::ecdsa::SigningKey::new(&local_secret_key).unwrap();
         let sig = sign_nonce(&key.into(), &challenge_data, &ephemeral_pubkey, &dst_id).unwrap();
 
@@ -345,7 +345,7 @@ mod tests {
         let node2_enr = EnrBuilder::new("v4").build(&node2_key).unwrap();
 
         let challenge_data = vec![1; 63];
-        let challenge_data = ChallengeData::try_from(challenge_data).unwrap();
+        let challenge_data = ChallengeData::try_from(challenge_data.as_slice()).unwrap();
 
         let (key1, key2, pk) = generate_session_keys(
             &node1_enr.node_id(),
@@ -398,7 +398,7 @@ mod tests {
         let message = decrypt_message(&key, nonce, &ciphertext, &auth_data).unwrap();
         dbg!(&message);
         dbg!(hex::encode(&message));
-        let rpc = crate::rpc::Message::decode(message).unwrap();
+        let rpc = crate::rpc::Message::decode(&message).unwrap();
 
         println!("{}", rpc);
     }

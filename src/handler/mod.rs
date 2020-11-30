@@ -312,8 +312,9 @@ impl Handler {
         let message_nonce = inbound_packet.header.message_nonce;
         match inbound_packet.header.kind {
             PacketKind::WhoAreYou { enr_seq, .. } => {
-                let challenge_data = ChallengeData::try_from(inbound_packet.authenticated_data)
-                    .expect("Must be correct size");
+                let challenge_data =
+                    ChallengeData::try_from(inbound_packet.authenticated_data.as_slice())
+                        .expect("Must be correct size");
                 self.handle_challenge(
                     inbound_packet.src_address,
                     message_nonce,
@@ -335,11 +336,11 @@ impl Handler {
                 self.handle_auth_message(
                     node_address,
                     message_nonce,
-                    id_nonce_sig,
-                    ephem_pubkey,
+                    &id_nonce_sig,
+                    &ephem_pubkey,
                     enr_record,
                     &inbound_packet.message,
-                    inbound_packet.authenticated_data, // This is required for authenticated data in decryption.
+                    &inbound_packet.authenticated_data, // This is required for authenticated data in decryption.
                 )
                 .await
             }
@@ -352,7 +353,7 @@ impl Handler {
                     node_address,
                     message_nonce,
                     &inbound_packet.message,
-                    inbound_packet.authenticated_data,
+                    &inbound_packet.authenticated_data,
                 )
                 .await
             }
@@ -511,7 +512,7 @@ impl Handler {
         let enr_seq = remote_enr.clone().map_or_else(|| 0, |enr| enr.seq());
         let id_nonce: IdNonce = rand::random();
         let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
-        let challenge_data = ChallengeData::try_from(packet.authenticated_data())
+        let challenge_data = ChallengeData::try_from(packet.authenticated_data().as_slice())
             .expect("Must be the correct challenge size");
         debug!("Sending WHOAREYOU to {}", node_address);
         self.send(node_address.clone(), packet).await;
@@ -705,11 +706,11 @@ impl Handler {
         &mut self,
         node_address: NodeAddress,
         message_nonce: MessageNonce,
-        id_nonce_sig: Vec<u8>,
-        ephem_pubkey: Vec<u8>,
+        id_nonce_sig: &[u8],
+        ephem_pubkey: &[u8],
         enr_record: Option<Enr>,
         message: &[u8],
-        authenticated_data: Vec<u8>,
+        authenticated_data: &[u8],
     ) {
         // Needs to match an outgoing challenge packet (so we have the required nonce to be signed). If it doesn't we drop the packet.
         // This will lead to future outgoing challenges if they proceed to send further encrypted
@@ -744,7 +745,7 @@ impl Handler {
                             node_address,
                             message_nonce,
                             message,
-                            authenticated_data,
+                            &authenticated_data,
                         )
                         .await;
                     } else {
@@ -808,14 +809,14 @@ impl Handler {
         node_address: NodeAddress,
         message_nonce: MessageNonce,
         message: &[u8],
-        authenticated_data: Vec<u8>,
+        authenticated_data: &[u8],
     ) {
         // check if we have an available session
         if let Some(session) = self.sessions.get_mut(&node_address) {
             // attempt to decrypt and process the message.
             let message = match session.decrypt_message(message_nonce, message, &authenticated_data)
             {
-                Ok(m) => match Message::decode(m) {
+                Ok(m) => match Message::decode(&m) {
                     Ok(p) => p,
                     Err(e) => {
                         warn!("Failed to decode message. Error: {:?}", e);
