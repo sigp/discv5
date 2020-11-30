@@ -18,7 +18,7 @@ exclude = [
 enr = { version = "0.4.0", features = ["k256", "ed25519"] }
 tokio = { version = "0.3.4", features = ["net", "stream", "sync"] }
 tokio-util = { version = "0.5.0", features = ["time"] }
-libp2p-core = { version = "0.25.0", git = "https://github.com/libp2p/rust-libp2p", optional = true }
+libp2p-core = { version = "0.25.1", optional = true }
 zeroize = { version = "1.1.1", features = ["zeroize_derive"] }
 futures = "0.3.8"
 uint = { version = "0.8.5", default-features = false }
