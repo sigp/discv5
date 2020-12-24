@@ -233,7 +233,7 @@ impl Service {
                     }
                     return;
                 }
-                Some(service_request) = &mut self.discv5_recv.next() => {
+                Some(service_request) = self.discv5_recv.recv() => {
                     match service_request {
                         ServiceRequest::StartQuery(query, callback) => {
                             match query {
@@ -263,7 +263,7 @@ impl Service {
                         }
                     }
                 }
-                Some(event) = &mut self.handler_recv.next() => {
+                Some(event) = self.handler_recv.recv() => {
                     match event {
                         HandlerResponse::Established(enr) => {
                             self.inject_session_established(enr);
@@ -327,7 +327,7 @@ impl Service {
                         }
                     }
                 }
-                _ = self.ping_heartbeat.next() => {
+                _ = self.ping_heartbeat.tick() => {
                     self.ping_connected_peers();
                 }
             }

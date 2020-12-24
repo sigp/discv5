@@ -138,7 +138,7 @@ async fn main() {
 
     loop {
         tokio::select! {
-            _ = query_interval.next() => {
+            _ = query_interval.tick() => {
                 // pick a random node target
                 let target_random_node_id = enr::NodeId::random();
                 // get metrics

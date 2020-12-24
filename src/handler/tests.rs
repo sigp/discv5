@@ -166,7 +166,7 @@ async fn multiple_messages() {
 
     let sender = async move {
         loop {
-            match sender_handler_recv.next().await {
+            match sender_handler_recv.recv().await {
                 Some(HandlerResponse::Established(_)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
@@ -183,7 +183,7 @@ async fn multiple_messages() {
 
     let receiver = async move {
         loop {
-            match receiver_handler.next().await {
+            match receiver_handler.recv().await {
                 Some(HandlerResponse::WhoAreYou(wru_ref)) => {
                     let _ = recv_send
                         .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())));
@@ -207,12 +207,12 @@ async fn multiple_messages() {
         }
     };
 
-    let mut sleep_future = sleep(Duration::from_millis(100));
+    let sleep_future = sleep(Duration::from_millis(100));
 
     tokio::select! {
         _ = sender => {}
         _ = receiver => {}
-        _ = &mut sleep_future => {
+        _ = sleep_future => {
             panic!("Test timed out");
         }
     }

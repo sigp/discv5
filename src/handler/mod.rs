@@ -281,7 +281,7 @@ impl Handler {
     async fn start(&mut self) {
         loop {
             tokio::select! {
-                Some(handler_request) = &mut self.inbound_channel.next() => {
+                Some(handler_request) = self.inbound_channel.recv() => {
                     match handler_request {
                         HandlerRequest::Request(contact, request) => {
                            let id = request.id.clone();
@@ -294,7 +294,7 @@ impl Handler {
                         HandlerRequest::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                     }
                 }
-                Some(inbound_packet) = self.socket.recv.next() => {
+                Some(inbound_packet) = self.socket.recv.recv() => {
                     self.process_inbound_packet(inbound_packet).await;
                 }
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
