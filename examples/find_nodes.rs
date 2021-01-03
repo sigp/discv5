@@ -37,7 +37,6 @@
 //!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
 use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder};
-use futures::prelude::*;
 use std::{
     net::{Ipv4Addr, SocketAddr},
     time::Duration,
@@ -138,7 +137,7 @@ async fn main() {
 
     loop {
         tokio::select! {
-            _ = query_interval.next() => {
+            _ = query_interval.tick() => {
                 // pick a random node target
                 let target_random_node_id = enr::NodeId::random();
                 // get metrics

@@ -16,8 +16,9 @@ exclude = [
 
 [dependencies]
 enr = { version = "0.4.0", features = ["k256", "ed25519"] }
-tokio = { version = "0.3.4", features = ["net", "stream", "sync"] }
-tokio-util = { version = "0.5.0", features = ["time"] }
+tokio = { version = "1.0", features = ["net", "sync", "macros"] }
+tokio-stream = "0.1.0"
+tokio-util = { version = "0.6.0", features = ["time"] }
 libp2p-core = { version = "0.25.1", optional = true }
 zeroize = { version = "1.1.1", features = ["zeroize_derive"] }
 futures = "0.3.8"
@@ -45,8 +46,8 @@ quickcheck = "0.9.2"
 env_logger = "0.8.2"
 hex-literal = "0.3.1"
 simple_logger = "1.11.0"
-tokio-util = { version = "0.5.0", features = ["time"] }
-tokio = { version = "0.3.4", features = ["full"] }
+tokio-util = { version = "0.6.0", features = ["time"] }
+tokio = { version = "1.0", features = ["full"] }
 rand_xorshift = "0.2.0"
 rand_core = "0.5.1"
 
