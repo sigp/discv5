@@ -203,6 +203,26 @@ impl Discv5 {
         self.kbuckets.write().remove(key)
     }
 
+    /// Mark a node in the routing table as `Disconnnected`.
+    ///
+    /// A `Disconnected` node will be present in the routing table and will be only
+    /// used if there are no other `Connected` peers in the bucket.
+    /// Returns `true` if node was in table and `false` otherwise.
+    pub fn disconnect_node(&mut self, node_id: &NodeId) -> bool {
+        let key = &kbucket::Key::from(*node_id);
+        match self.kbuckets.write().entry(key) {
+            kbucket::Entry::Present(entry, _) => {
+                entry.update(NodeStatus::Disconnected);
+                true
+            }
+            kbucket::Entry::Pending(entry, _) => {
+                entry.update(NodeStatus::Disconnected);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Returns the number of connected peers that exist in the routing table.
     pub fn connected_peers(&self) -> usize {
         self.kbuckets
