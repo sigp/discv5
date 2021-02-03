@@ -835,7 +835,7 @@ impl Service {
             let mut rpc_index = 0;
             to_send_nodes.push(Vec::new());
             for enr in nodes_to_send.into_iter() {
-                let entry_size = enr.encode().len();
+                let entry_size = rlp::encode(&enr).len();
                 // Responses assume that a session is established. Thus, on top of the encoded
                 // ENR's the packet should be a regular message. A regular message has an IV (16
                 // bytes), and a header of 55 bytes. The find-nodes RPC requires 16 bytes for the ID and the

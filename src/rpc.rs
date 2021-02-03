@@ -145,7 +145,7 @@ impl Request {
                 s.begin_list(2);
                 s.append(&id.as_bytes());
                 s.append(&enr_seq);
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
             RequestBody::FindNode { distances } => {
@@ -156,7 +156,7 @@ impl Request {
                 for distance in distances {
                     s.append(&distance);
                 }
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
             RequestBody::Talk { protocol, request } => {
@@ -165,7 +165,7 @@ impl Request {
                 s.append(&id.as_bytes());
                 s.append(&protocol);
                 s.append(&request);
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
@@ -175,7 +175,7 @@ impl Request {
                 s.append(&topic);
                 s.append(&enr);
                 s.append(&ticket);
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
             RequestBody::TopicQuery { topic } => {
@@ -183,7 +183,7 @@ impl Request {
                 s.begin_list(2);
                 s.append(&id.as_bytes());
                 s.append(&(&topic as &[u8]));
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
         }
@@ -233,7 +233,7 @@ impl Response {
                     IpAddr::V6(addr) => s.append(&(&addr.octets() as &[u8])),
                 };
                 s.append(&port);
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
             ResponseBody::Nodes { total, nodes } => {
@@ -250,7 +250,7 @@ impl Response {
                         s.append(&node);
                     }
                 }
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
             ResponseBody::Talk { response } => {
@@ -258,7 +258,7 @@ impl Response {
                 s.begin_list(2);
                 s.append(&id.as_bytes());
                 s.append(&response);
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
             ResponseBody::Ticket { ticket, wait_time } => {
@@ -267,7 +267,7 @@ impl Response {
                 s.append(&id.as_bytes());
                 s.append(&ticket);
                 s.append(&wait_time);
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
             ResponseBody::RegisterConfirmation { topic } => {
@@ -275,7 +275,7 @@ impl Response {
                 s.begin_list(2);
                 s.append(&id.as_bytes());
                 s.append(&topic);
-                buf.extend_from_slice(&s.drain());
+                buf.extend_from_slice(&s.out());
                 buf
             }
         }

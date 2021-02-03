@@ -107,7 +107,7 @@ pub(crate) fn derive_keys_from_pubkey(
             CombinedKey::Secp256k1(key) => {
                 // convert remote pubkey into secp256k1 public key
                 // the key type should match our own node record
-                let remote_pubkey = k256::ecdsa::VerifyKey::new(ephem_pubkey)
+                let remote_pubkey = k256::ecdsa::VerifyingKey::from_sec1_bytes(ephem_pubkey)
                     .map_err(|_| Discv5Error::InvalidRemotePublicKey)?;
                 ecdh(&remote_pubkey, &key)
             }
@@ -258,8 +258,8 @@ mod tests {
             hex::decode("033b11a2a1f214567e1537ce5e509ffd9b21373247f2a3ff6841f4976f53165e7e")
                 .unwrap();
 
-        let remote_pk = k256::ecdsa::VerifyKey::new(&remote_pubkey).unwrap();
-        let local_sk = k256::ecdsa::SigningKey::new(&local_secret_key).unwrap();
+        let remote_pk = k256::ecdsa::VerifyingKey::from_sec1_bytes(&remote_pubkey).unwrap();
+        let local_sk = k256::ecdsa::SigningKey::from_bytes(&local_secret_key).unwrap();
 
         let secret = ecdh(&remote_pk, &local_sk);
         assert_eq!(secret, expected_secret);
@@ -274,8 +274,8 @@ mod tests {
             hex::decode("0317931e6e0840220642f230037d285d122bc59063221ef3226b1f403ddc69ca91")
                 .unwrap();
 
-        let remote_pk = k256::ecdsa::VerifyKey::new(&dest_pubkey).unwrap();
-        let local_sk = k256::ecdsa::SigningKey::new(&ephem_key).unwrap();
+        let remote_pk = k256::ecdsa::VerifyingKey::from_sec1_bytes(&dest_pubkey).unwrap();
+        let local_sk = k256::ecdsa::SigningKey::from_bytes(&ephem_key).unwrap();
 
         let secret = ecdh(&remote_pk, &local_sk);
 
@@ -309,7 +309,7 @@ mod tests {
         let expected_sig = hex::decode("94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6").unwrap();
 
         let challenge_data = ChallengeData::try_from(hex::decode("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").unwrap().as_slice()).unwrap();
-        let key = k256::ecdsa::SigningKey::new(&local_secret_key).unwrap();
+        let key = k256::ecdsa::SigningKey::from_bytes(&local_secret_key).unwrap();
         let sig = sign_nonce(&key.into(), &challenge_data, &ephemeral_pubkey, &dst_id).unwrap();
 
         assert_eq!(sig, expected_sig);
