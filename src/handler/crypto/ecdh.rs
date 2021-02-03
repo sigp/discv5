@@ -1,22 +1,21 @@
 //! Implements the static ecdh algorithm required by discv5 in terms of the `k256` library.
 use k256::{
-    ecdsa::{SigningKey, VerifyKey},
-    elliptic_curve::sec1::FromEncodedPoint,
+    ecdsa::{SigningKey, VerifyingKey},
+    elliptic_curve::sec1::ToEncodedPoint,
 };
 
-pub fn ecdh(public_key: &VerifyKey, secret_key: &SigningKey) -> Vec<u8> {
-    k256::elliptic_curve::ecdh::PublicKey::from(
-        (k256::ProjectivePoint::from(
-            k256::elliptic_curve::AffinePoint::<k256::Secp256k1>::from_encoded_point(
-                &k256::elliptic_curve::ecdh::PublicKey::from_bytes(public_key.to_bytes().as_ref())
-                    .unwrap(),
-            )
-            .unwrap(),
-        ) * k256::SecretKey::from_bytes(secret_key.to_bytes())
+pub fn ecdh(public_key: &VerifyingKey, secret_key: &SigningKey) -> Vec<u8> {
+    k256::PublicKey::from_affine(
+        (&k256::PublicKey::from_sec1_bytes(public_key.to_bytes().as_ref())
             .unwrap()
-            .secret_scalar())
+            .to_projective()
+            * k256::SecretKey::from_bytes(secret_key.to_bytes())
+                .unwrap()
+                .secret_scalar())
         .to_affine(),
     )
+    .unwrap()
+    .to_encoded_point(true)
     .as_bytes()
     .to_vec()
 }

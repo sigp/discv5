@@ -324,6 +324,7 @@ impl Discv5 {
         self.local_enr
             .write()
             .insert(key, value, &self.enr_key.read())
+            .map(|v| v.map(|v| v.to_vec()))
     }
 
     /// Returns an iterator over all ENR node IDs of nodes currently contained in the routing table.
