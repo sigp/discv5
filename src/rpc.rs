@@ -1,6 +1,6 @@
 use enr::{CombinedKey, Enr};
 use rlp::{DecoderError, RlpStream};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
 
 type TopicHash = [u8; 32];
@@ -435,7 +435,12 @@ impl Message {
                     16 => {
                         let mut ip = [0u8; 16];
                         ip.copy_from_slice(&ip_bytes);
-                        IpAddr::from(ip)
+                        let ipv6 = Ipv6Addr::from(ip);
+                        // If the ipv6 is ipv4 compatible/mapped, simply return the ipv4.
+                        match ipv6.to_ipv4() {
+                            Some(ipv4) => IpAddr::V4(ipv4),
+                            None => IpAddr::V6(ipv6),
+                        }
                     }
                     _ => {
                         debug!("Ping Response has incorrect byte length for IP");
