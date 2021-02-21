@@ -206,7 +206,10 @@ impl Response {
         match self.body {
             ResponseBody::Pong { .. } => matches!(req, RequestBody::Ping { .. }),
             ResponseBody::Nodes { .. } => {
-                matches!(req, RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. })
+                matches!(
+                    req,
+                    RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. }
+                )
             }
             ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),
             ResponseBody::Ticket { .. } => matches!(req, RequestBody::RegisterTopic { .. }),
