@@ -588,7 +588,12 @@ mod tests {
             // Determine if all peers have been contacted by the query. This _must_ be
             // the case if the query finished with fewer than the requested number
             // of results.
-            let all_contacted = query.closest_peers.values().all(|e| !matches!(e.state, QueryPeerState::NotContacted | QueryPeerState::Waiting { .. }));
+            let all_contacted = query.closest_peers.values().all(|e| {
+                !matches!(
+                    e.state,
+                    QueryPeerState::NotContacted | QueryPeerState::Waiting { .. }
+                )
+            });
 
             let target_key = query.target_key.clone();
             let num_results = query.config.num_results;
