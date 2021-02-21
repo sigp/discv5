@@ -639,22 +639,27 @@ impl Service {
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
-                    let local_socket = self.local_enr.read().udp_socket();
-                    if let Some(ref mut ip_votes) = self.ip_votes {
-                        ip_votes.insert(node_id, socket);
-                        if let Some(majority_socket) = ip_votes.majority() {
-                            if Some(majority_socket) != local_socket {
-                                info!("Local UDP socket updated to: {}", majority_socket);
-                                self.send_event(Discv5Event::SocketUpdated(majority_socket));
-                                // Update the UDP socket
-                                if self
-                                    .local_enr
-                                    .write()
-                                    .set_udp_socket(majority_socket, &self.enr_key.read())
-                                    .is_ok()
-                                {
-                                    // alert known peers to our updated enr
-                                    self.ping_connected_peers();
+                    //
+                    // only attempt the majority-update if the peer supplies an ipv4 address to
+                    // mitigate https://github.com/sigp/lighthouse/issues/2215
+                    if socket.is_ipv4() {
+                        let local_socket = self.local_enr.read().udp_socket();
+                        if let Some(ref mut ip_votes) = self.ip_votes {
+                            ip_votes.insert(node_id, socket);
+                            if let Some(majority_socket) = ip_votes.majority() {
+                                if Some(majority_socket) != local_socket {
+                                    info!("Local UDP socket updated to: {}", majority_socket);
+                                    self.send_event(Discv5Event::SocketUpdated(majority_socket));
+                                    // Update the UDP socket
+                                    if self
+                                        .local_enr
+                                        .write()
+                                        .set_udp_socket(majority_socket, &self.enr_key.read())
+                                        .is_ok()
+                                    {
+                                        // alert known peers to our updated enr
+                                        self.ping_connected_peers();
+                                    }
                                 }
                             }
                         }
