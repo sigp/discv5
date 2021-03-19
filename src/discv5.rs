@@ -19,7 +19,7 @@ use crate::{
         NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
-    service::{QueryKind, Service, ServiceRequest},
+    service::{QueryKind, Service, ServiceRequest, TalkReqHandler},
     Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
@@ -128,7 +128,11 @@ impl Discv5 {
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
-    pub async fn start(&mut self, listen_socket: SocketAddr) -> Result<(), Discv5Error> {
+    pub async fn start(
+        &mut self,
+        listen_socket: SocketAddr,
+        talkreq_handler: Option<Box<dyn TalkReqHandler>>,
+    ) -> Result<(), Discv5Error> {
         if self.service_channel.is_some() {
             warn!("Service is already started");
             return Err(Discv5Error::ServiceAlreadyStarted);
@@ -141,6 +145,7 @@ impl Discv5 {
             self.kbuckets.clone(),
             self.config.clone(),
             listen_socket,
+            talkreq_handler,
         )
         .await?;
         self.service_exit = Some(service_exit);

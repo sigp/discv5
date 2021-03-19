@@ -34,6 +34,7 @@ use crate::{
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
+use hashset_delay::HashSetDelay;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll};
@@ -45,7 +46,10 @@ mod ip_vote;
 mod query_info;
 mod test;
 
-use hashset_delay::HashSetDelay;
+/// A handler trait for Protocols using `TalkReq` message
+pub trait TalkReqHandler: Send {
+    fn talkreq_response(&self, protocol: &[u8], req: &[u8]) -> Vec<u8>;
+}
 
 /// The number of distances (buckets) we simultaneously request from each peer.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
@@ -119,6 +123,9 @@ pub struct Service {
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
+
+    /// TalkReq protocol handler
+    talkreq_handler: Option<Box<dyn TalkReqHandler>>,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -171,6 +178,7 @@ impl Service {
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
         listen_socket: SocketAddr,
+        talkreq_handler: Option<Box<dyn TalkReqHandler>>,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
@@ -216,6 +224,7 @@ impl Service {
                     event_stream: None,
                     exit,
                     config: config.clone(),
+                    talkreq_handler,
                 };
 
                 info!("Discv5 Service started");
@@ -469,8 +478,12 @@ impl Service {
                     .send(HandlerRequest::Response(node_address, Box::new(response)));
             }
             RequestBody::Talk { protocol, request } => {
-                // Send the callback's response to this protocol.
-                let response = (self.config.talkreq_callback)(&protocol, &request);
+                // If a talkreq handler has been registered, send the response, else return empty bytes
+                let response = if let Some(handler) = &self.talkreq_handler {
+                    handler.talkreq_response(&protocol, &request)
+                } else {
+                    vec![]
+                };
                 let response = Response {
                     id,
                     body: ResponseBody::Talk { response },
