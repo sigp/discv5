@@ -217,6 +217,31 @@ impl Discv5 {
         self.kbuckets.write().remove(key)
     }
 
+    /// Returns a vector of closest nodes by the given distances.
+    pub fn nodes_by_distance(&self, mut distances: Vec<u64>) -> Vec<Enr> {
+        let mut nodes_to_send = Vec::new();
+        distances.sort_unstable();
+        distances.dedup();
+
+        if let Some(0) = distances.first() {
+            // if the distance is 0 send our local ENR
+            nodes_to_send.push(self.local_enr.read().clone());
+            distances.remove(0);
+        }
+
+        if !distances.is_empty() {
+            let mut kbuckets = self.kbuckets.write();
+            for node in kbuckets
+                .nodes_by_distances(distances, self.config.max_nodes_response)
+                .into_iter()
+                .map(|entry| entry.node.value.clone())
+            {
+                nodes_to_send.push(node);
+            }
+        }
+        nodes_to_send
+    }
+
     /// Mark a node in the routing table as `Disconnnected`.
     ///
     /// A `Disconnected` node will be present in the routing table and will be only
