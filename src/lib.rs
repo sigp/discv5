@@ -85,7 +85,7 @@
 //!    // discv5.add_enr(<ENR>)
 //!
 //!    // start the discv5 server
-//!    runtime.block_on(discv5.start(listen_addr));
+//!    runtime.block_on(discv5.start(listen_addr, None));
 //!
 //!    // run a find_node query
 //!    runtime.block_on(async {

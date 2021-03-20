@@ -413,7 +413,7 @@ impl Discv5 {
 
     /// Request a TALK message from a node, identified via the ENR.
     pub fn talk_req(
-        &mut self,
+        &self,
         enr: Enr,
         protocol: Vec<u8>,
         request: Vec<u8>,

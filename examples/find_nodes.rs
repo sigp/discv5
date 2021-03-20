@@ -134,7 +134,7 @@ async fn main() {
     }
 
     // start the discv5 service
-    discv5.start(socket_addr).await.unwrap();
+    discv5.start(socket_addr, None).await.unwrap();
 
     // construct a 30 second interval to search for new peers.
     let mut query_interval = tokio::time::interval(Duration::from_secs(60));

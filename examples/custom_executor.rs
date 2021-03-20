@@ -61,7 +61,7 @@ fn main() {
 
     runtime.block_on(async {
         // start the discv5 service
-        discv5.start(listen_addr).await.unwrap();
+        discv5.start(listen_addr, None).await.unwrap();
         println!("Server started");
 
         // get an event stream
