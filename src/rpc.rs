@@ -9,9 +9,9 @@ type TopicHash = [u8; 32];
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct RequestId(pub Vec<u8>);
 
-impl Into<Vec<u8>> for RequestId {
-    fn into(self) -> Vec<u8> {
-        self.0
+impl From<RequestId> for Vec<u8> {
+    fn from(id: RequestId) -> Self {
+        id.0
     }
 }
 

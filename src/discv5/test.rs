@@ -84,9 +84,9 @@ fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
     keypairs
 }
 
-fn get_distance(node1: &NodeId, node2: &NodeId) -> Option<u64> {
-    let node1: kbucket::Key<NodeId> = node1.clone().into();
-    node1.log2_distance(&node2.clone().into())
+fn get_distance(node1: NodeId, node2: NodeId) -> Option<u64> {
+    let node1: kbucket::Key<NodeId> = node1.into();
+    node1.log2_distance(&node2.into())
 }
 
 // Simple searching function to find seeds that give node ids for a range of testing and different
@@ -108,8 +108,8 @@ fn find_seed_same_bucket() {
 
         let local = node_ids[0];
 
-        for id in node_ids[1..].iter() {
-            let distance = get_distance(&local, id);
+        for &id in node_ids[1..].iter() {
+            let distance = get_distance(local, id);
             if distance != Some(256) {
                 seed += 1;
                 continue 'main;
@@ -138,8 +138,8 @@ fn find_seed_spread_bucket() {
 
         buckets = HashMap::new();
 
-        for id in node_ids[1..].iter() {
-            let distance = get_distance(&local, id);
+        for &id in node_ids[1..].iter() {
+            let distance = get_distance(local, id);
             if let Some(distance) = distance {
                 *buckets.entry(distance).or_insert_with(|| 0) += 1;
             }
@@ -287,9 +287,9 @@ async fn test_findnode_query() {
 
     // link the nodes together
     for (node, previous_node_enr) in nodes.iter_mut().skip(1).zip(node_enrs.clone()) {
-        let key: kbucket::Key<NodeId> = node.local_enr().node_id().clone().into();
+        let key: kbucket::Key<NodeId> = node.local_enr().node_id().into();
         let distance = key
-            .log2_distance(&previous_node_enr.node_id().clone().into())
+            .log2_distance(&previous_node_enr.node_id().into())
             .unwrap();
         println!("Distance of node relative to next: {}", distance);
         node.add_enr(previous_node_enr).unwrap();
@@ -448,10 +448,8 @@ async fn test_bucket_limits() {
             loop {
                 let key = CombinedKey::generate_secp256k1();
                 let enr_new = EnrBuilder::new("v4").build(&key).unwrap();
-                let node_key: kbucket::Key<NodeId> = enr.node_id().clone().into();
-                let distance = node_key
-                    .log2_distance(&enr_new.node_id().clone().into())
-                    .unwrap();
+                let node_key: kbucket::Key<NodeId> = enr.node_id().into();
+                let distance = node_key.log2_distance(&enr_new.node_id().into()).unwrap();
                 if distance == 256 {
                     keys.push(key);
                     break;

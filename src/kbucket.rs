@@ -102,9 +102,9 @@ impl<TNodeId: Clone> AsRef<Key<TNodeId>> for PredicateKey<TNodeId> {
     }
 }
 
-impl<TNodeId: Clone> Into<Key<TNodeId>> for PredicateKey<TNodeId> {
-    fn into(self) -> Key<TNodeId> {
-        self.key
+impl<TNodeId: Clone> From<PredicateKey<TNodeId>> for Key<TNodeId> {
+    fn from(key: PredicateKey<TNodeId>) -> Self {
+        key.key
     }
 }
 
@@ -243,11 +243,11 @@ where
     }
 
     /// Returns an iterator over the keys that are contained in a kbucket, specified by a log2 distance.
-    pub fn nodes_by_distances<'a>(
-        &'a mut self,
+    pub fn nodes_by_distances(
+        &mut self,
         log2_distances: Vec<u64>,
         max_nodes: usize,
-    ) -> Vec<EntryRefView<'a, TNodeId, TVal>> {
+    ) -> Vec<EntryRefView<'_, TNodeId, TVal>> {
         let distances = log2_distances
             .into_iter()
             .filter(|&d| d > 0 && d <= (NUM_BUCKETS as u64))
