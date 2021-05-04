@@ -174,7 +174,10 @@ impl Service {
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
-            Some(IpVote::new(config.enr_peer_update_min))
+            Some(IpVote::new(
+                config.enr_peer_update_min,
+                config.vote_duration,
+            ))
         } else {
             None
         };

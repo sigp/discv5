@@ -3,7 +3,12 @@
 use crate::{discv5::PERMIT_BAN_LIST, metrics::METRICS, node_info::NodeAddress, packet::Packet};
 use cache::ReceivedPacketCache;
 use enr::NodeId;
-use std::{collections::HashMap, net::SocketAddr, sync::atomic::Ordering};
+use lru::LruCache;
+use std::{
+    collections::{HashMap, HashSet},
+    net::{IpAddr, SocketAddr},
+    sync::atomic::Ordering,
+};
 use tracing::{debug, warn};
 
 mod cache;
@@ -11,23 +16,28 @@ mod config;
 pub use config::{FilterConfig, FilterConfigBuilder};
 
 /// The maximum percentage of our unsolicited requests per second limit a node is able to consume
-/// for  `NUMBER_OF_WINDOWS` duration before being banned.
+/// for `NUMBER_OF_WINDOWS` duration before being banned.
 /// This allows us to ban the IP/NodeId of an attacker spamming us with requests.
 const MAX_PERCENT_OF_LIMIT_PER_NODE: f64 = 0.9;
 /// The number of windows to remember before banning a node.
 const NUMBER_OF_WINDOWS: usize = 5;
+/// The maximum number of IPs to retain when calculating the number of nodes per IP.
+const KNOWN_ADDRS_SIZE: usize = 500;
 
 /// The packet filter which decides whether we accept or reject incoming packets.
 pub(crate) struct Filter {
     /// Configuration for the packet filter.
     config: FilterConfig,
     /// An ordered (by time) collection of recently seen packets by SocketAddr. The packet data is not
-    /// stored here. This stores a 5 seconds of history to calculate a 5 second moving average for
+    /// stored here. This stores 5 seconds of history to calculate a 5 second moving average for
     /// the metrics.
     raw_packets_received: ReceivedPacketCache<SocketAddr>,
     /// An ordered (by time) collection of seen NodeIds that have passed the first filter check and
     /// have an associated NodeId.
     received_by_node: ReceivedPacketCache<NodeId>,
+    /// Keep track of node ids per socket. If someone is using too many node-ids per IP, they can
+    /// be banned.
+    known_addrs: LruCache<IpAddr, HashSet<NodeId>>,
 }
 
 impl Filter {
@@ -42,6 +52,7 @@ impl Filter {
                 config.max_requests_per_second * NUMBER_OF_WINDOWS,
                 METRICS.moving_window,
             ),
+            known_addrs: LruCache::new(KNOWN_ADDRS_SIZE),
         }
     }
 
@@ -156,6 +167,30 @@ impl Filter {
                     .ban_nodes
                     .insert(node_address.node_id);
                 return false;
+            }
+
+            // Check the nodes per IP filter configuration
+            if let Some(max_nodes_per_ip) = self.config.max_nodes_per_ip {
+                // This option is set, store the known nodes per IP.
+                let ip = node_address.socket_addr.ip();
+                let known_nodes = {
+                    if let Some(known_nodes) = self.known_addrs.get_mut(&ip) {
+                        known_nodes.insert(node_address.node_id);
+                        known_nodes.len()
+                    } else {
+                        let mut ids = HashSet::new();
+                        ids.insert(node_address.node_id);
+                        self.known_addrs.put(ip, ids);
+                        1
+                    }
+                };
+
+                if known_nodes >= max_nodes_per_ip {
+                    warn!("IP has exceeded its node-id limit and is now banned {}", ip);
+                    PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+                    self.known_addrs.pop(&ip);
+                    return false;
+                }
             }
         }
 

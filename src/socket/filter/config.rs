@@ -11,6 +11,9 @@ pub struct FilterConfig {
     /// The maximum requests tolerated per IP per second. This must be less than
     /// `max_requests_per_second`.
     pub max_requests_per_ip_per_second: Option<f64>,
+    /// The maximum number of node-ids allowed per IP address before the IP address gets banned.
+    /// Having this set to None, disables this feature. Default value is 10.
+    pub max_nodes_per_ip: Option<usize>,
 }
 
 impl Default for FilterConfig {
@@ -20,6 +23,7 @@ impl Default for FilterConfig {
             max_requests_per_second: 10,
             max_requests_per_node_per_second: Some(10.0),
             max_requests_per_ip_per_second: Some(10.0),
+            max_nodes_per_ip: Some(10),
         }
     }
 }
