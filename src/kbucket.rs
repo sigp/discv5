@@ -301,7 +301,7 @@ where
             iter: None,
             table: self,
             buckets_iter: ClosestBucketsIter::new(distance),
-            fmap: |b: &KBucket<_, _>| -> ArrayVec<_> {
+            fmap: |b: &KBucket<_, _>| -> ArrayVec<_, MAX_NODES_PER_BUCKET> {
                 b.iter().map(|(n, _)| n.key.clone()).collect()
             },
         }
@@ -324,7 +324,7 @@ where
             iter: None,
             table: self,
             buckets_iter: ClosestBucketsIter::new(distance),
-            fmap: move |b: &KBucket<TNodeId, TVal>| -> ArrayVec<_> {
+            fmap: move |b: &KBucket<TNodeId, TVal>| -> ArrayVec<_, MAX_NODES_PER_BUCKET> {
                 b.iter()
                     .map(|(n, _)| PredicateKey {
                         key: n.key.clone(),
@@ -379,7 +379,7 @@ struct ClosestIter<'a, TTarget, TNodeId, TVal, TMap, TOut> {
     /// distance of the local key to the target.
     buckets_iter: ClosestBucketsIter,
     /// The iterator over the entries in the currently traversed bucket.
-    iter: Option<arrayvec::IntoIter<[TOut; MAX_NODES_PER_BUCKET]>>,
+    iter: Option<arrayvec::IntoIter<TOut, MAX_NODES_PER_BUCKET>>,
     /// The projection function / mapping applied on each bucket as
     /// it is encountered, producing the next `iter`ator.
     fmap: TMap,
@@ -483,7 +483,7 @@ impl<TTarget, TNodeId, TVal, TMap, TOut> Iterator
     for ClosestIter<'_, TTarget, TNodeId, TVal, TMap, TOut>
 where
     TNodeId: Clone,
-    TMap: Fn(&KBucket<TNodeId, TVal>) -> ArrayVec<[TOut; MAX_NODES_PER_BUCKET]>,
+    TMap: Fn(&KBucket<TNodeId, TVal>) -> ArrayVec<TOut, MAX_NODES_PER_BUCKET>,
     TOut: AsRef<Key<TNodeId>>,
 {
     type Item = TOut;
