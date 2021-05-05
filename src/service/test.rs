@@ -99,7 +99,6 @@ async fn build_service(
         event_stream: None,
         exit,
         config,
-        talkreq_handler: None,
     }
 }
 

@@ -85,7 +85,7 @@
 //!    // discv5.add_enr(<ENR>)
 //!
 //!    // start the discv5 server
-//!    runtime.block_on(discv5.start(listen_addr, None));
+//!    runtime.block_on(discv5.start(listen_addr));
 //!
 //!    // run a find_node query
 //!    runtime.block_on(async {
@@ -128,7 +128,7 @@ pub use error::{Discv5Error, QueryError, RequestError};
 pub use executor::{Executor, TokioExecutor};
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};
 pub use permit_ban::PermitBanList;
-pub use service::TalkReqHandler;
+pub use service::TalkRequest;
 pub use socket::{FilterConfig, FilterConfigBuilder};
 // re-export the ENR crate
 pub use enr;

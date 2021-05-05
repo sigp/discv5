@@ -19,7 +19,7 @@ use crate::{
         NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
-    service::{QueryKind, Service, ServiceRequest, TalkReqHandler},
+    service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
@@ -58,6 +58,8 @@ pub enum Discv5Event {
     },
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
+    /// A node has initiated a talk request.
+    TalkRequest(TalkRequest),
 }
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
@@ -128,11 +130,7 @@ impl Discv5 {
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
-    pub async fn start(
-        &mut self,
-        listen_socket: SocketAddr,
-        talkreq_handler: Option<Box<dyn TalkReqHandler>>,
-    ) -> Result<(), Discv5Error> {
+    pub async fn start(&mut self, listen_socket: SocketAddr) -> Result<(), Discv5Error> {
         if self.service_channel.is_some() {
             warn!("Service is already started");
             return Err(Discv5Error::ServiceAlreadyStarted);
@@ -145,7 +143,6 @@ impl Discv5 {
             self.kbuckets.clone(),
             self.config.clone(),
             listen_socket,
-            talkreq_handler,
         )
         .await?;
         self.service_exit = Some(service_exit);

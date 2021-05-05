@@ -46,9 +46,61 @@ mod ip_vote;
 mod query_info;
 mod test;
 
-/// A handler trait for Protocols using `TalkReq` message
-pub trait TalkReqHandler: Send {
-    fn talkreq_response(&self, protocol: &[u8], req: &[u8]) -> Vec<u8>;
+/// Request type for Protocols using `TalkReq` message.
+///
+/// Automatically responds with an empty body on drop if
+/// [`TalkRequest::respond`] is not called.
+#[derive(Debug)]
+pub struct TalkRequest {
+    id: RequestId,
+    node_address: NodeAddress,
+    protocol: Vec<u8>,
+    body: Vec<u8>,
+    sender: Option<mpsc::UnboundedSender<HandlerRequest>>,
+}
+
+impl Drop for TalkRequest {
+    fn drop(&mut self) {
+        let sender = match self.sender.take() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let response = Response {
+            id: self.id.clone(),
+            body: ResponseBody::Talk { response: vec![] },
+        };
+
+        debug!("Sending empty TALK response to {}", self.node_address);
+        let _ = sender.send(HandlerRequest::Response(
+            self.node_address.clone(),
+            Box::new(response),
+        ));
+    }
+}
+
+impl TalkRequest {
+    pub fn protocol(&self) -> &[u8] {
+        &self.protocol
+    }
+
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    pub fn respond(mut self, response: Vec<u8>) {
+        debug!("Sending TALK response to {}", self.node_address);
+
+        let response = Response {
+            id: self.id.clone(),
+            body: ResponseBody::Talk { response },
+        };
+
+        let _ = self.sender.take().unwrap().send(HandlerRequest::Response(
+            self.node_address.clone(),
+            Box::new(response),
+        ));
+    }
 }
 
 /// The number of distances (buckets) we simultaneously request from each peer.
@@ -123,9 +175,6 @@ pub struct Service {
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
-
-    /// TalkReq protocol handler
-    talkreq_handler: Option<Box<dyn TalkReqHandler>>,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -178,7 +227,6 @@ impl Service {
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
         listen_socket: SocketAddr,
-        talkreq_handler: Option<Box<dyn TalkReqHandler>>,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
@@ -224,7 +272,6 @@ impl Service {
                     event_stream: None,
                     exit,
                     config: config.clone(),
-                    talkreq_handler,
                 };
 
                 info!("Discv5 Service started");
@@ -478,21 +525,15 @@ impl Service {
                     .send(HandlerRequest::Response(node_address, Box::new(response)));
             }
             RequestBody::Talk { protocol, request } => {
-                // If a talkreq handler has been registered, send the response, else return empty bytes
-                let response = if let Some(handler) = &self.talkreq_handler {
-                    handler.talkreq_response(&protocol, &request)
-                } else {
-                    vec![]
-                };
-                let response = Response {
+                let req = TalkRequest {
                     id,
-                    body: ResponseBody::Talk { response },
+                    node_address,
+                    protocol,
+                    body: request,
+                    sender: Some(self.handler_send.clone()),
                 };
 
-                debug!("Sending TALK response to {}", node_address);
-                let _ = self
-                    .handler_send
-                    .send(HandlerRequest::Response(node_address, Box::new(response)));
+                self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { .. } => {
                 debug!("Received RegisterTopic request which is unimplemented");
