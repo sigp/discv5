@@ -62,36 +62,6 @@ pub enum ServiceRequest {
 
 use crate::discv5::PERMIT_BAN_LIST;
 
-pub enum QueryKind {
-    FindNode {
-        target_node: NodeId,
-    },
-    Predicate {
-        target_node: NodeId,
-        target_peer_no: usize,
-        predicate: Box<dyn Fn(&Enr) -> bool + Send>,
-    },
-}
-
-/// Entries entered into the routing table. Each node has an ENR and a connection specifying
-/// whether we contacted the node or it contacted us.
-#[derive(Debug, Clone)]
-pub struct TableEntry {
-    /// The ENR of the node.
-    pub enr: Enr,
-    /// The direction of the connection for this node.
-    pub connection: NodeConnection,
-}
-
-/// How we connected to the node.
-#[derive(Debug, Clone)]
-pub enum NodeConnection {
-    /// The node contacted us.
-    Incoming,
-    /// We contacted the node.
-    Outgoing,
-}
-
 pub struct Service {
     /// Configuration parameters.
     config: Discv5Config,
@@ -287,8 +257,8 @@ impl Service {
                 }
                 Some(event) = self.handler_recv.recv() => {
                     match event {
-                        HandlerResponse::Established(enr) => {
-                            self.inject_session_established(enr);
+                        HandlerResponse::Established(enr, direction) => {
+                            self.inject_session_established(enr,direction);
                         }
                         HandlerResponse::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
@@ -704,7 +674,7 @@ impl Service {
                             };
                             self.send_rpc_request(active_request);
                         }
-                        self.connection_updated(node_id, Some(enr), NodeStatus::Connected);
+                        self.connection_updated(node_id, ConnectionStatus::PongReceived(enr));
                     }
                 }
                 ResponseBody::Talk { response } => {
@@ -994,15 +964,15 @@ impl Service {
                             entry.remove();
                         } else {
                             if entry.value().enr.seq() < enr_ref.seq() {
-                                trace!("ENR updated: {}", enr_ref.enr);
-                                *entry.value() = enr_ref.clone();
+                                trace!("ENR updated: {}", enr_ref);
+                                entry.value().enr = enr_ref.clone();
                             }
                         }
                     }
                     kbucket::Entry::Pending(mut entry, _) => {
-                        if entry.value().enr.seq() < enr_ref.enr.seq() {
-                            trace!("ENR updated: {}", enr_ref.enr);
-                            *entry.value() = enr_ref.clone();
+                        if entry.value().enr.seq() < enr_ref.seq() {
+                            trace!("ENR updated: {}", enr_ref);
+                            entry.value().enr = enr_ref.clone();
                         }
                     }
                     kbucket::Entry::Absent(_entry) => {}
@@ -1020,18 +990,15 @@ impl Service {
                         .target_mut()
                         .untrusted_enrs
                         .iter()
-                        .position(|e| e.node_id() == enr_ref.enr.node_id())
+                        .position(|e| e.node_id() == enr_ref.node_id())
                         .is_none()
                     {
-                        query.target_mut().untrusted_enrs.push(enr_ref.enr.clone());
+                        query.target_mut().untrusted_enrs.push(enr_ref.clone());
                     }
                     peer_count += 1;
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(
-                    source,
-                    &other_enr_iter.cloned().map(|v| v.enr).collect::<Vec<_>>(),
-                )
+                query.on_success(source, &other_enr_iter.cloned().collect::<Vec<_>>())
             } else {
                 warn!("Response returned for ended query {:?}", query_id)
             }
@@ -1039,29 +1006,33 @@ impl Service {
     }
 
     /// Update the connection status of a node in the routing table.
-    fn connection_updated(
-        &mut self,
-        node_id: NodeId,
-        enr: Option<Enr>,
-        mut new_status: NodeStatus,
-    ) {
+    /// This tracks whether or not we should be pinging peers. Disconnected peers are removed from
+    /// the queue and newly added peers to the routing table are added to the queue.
+    fn connection_updated(&mut self, node_id: NodeId, mut new_status: ConnectionStatus) {
+        // Pre-filter the connection request
         let key = kbucket::Key::from(node_id);
-        if let Some(enr) = enr.as_ref() {
-            // ignore peers that don't pass the table filter
-            if !(self.config.table_filter)(enr) {
-                return;
-            }
+        match new_status {
+            ConnectionStatus::Connected(ref enr, _) | ConnectionStatus::PongReceived(ref enr) => {
+                // ignore peers that don't pass the table filter
+                if !(self.config.table_filter)(enr) {
+                    return;
+                }
 
-            // should the ENR be inserted or updated to a value that would exceed the IP limit ban
-            if self.config.ip_limit
-                && !self
-                    .kbuckets
-                    .read()
-                    .check(&key, enr, |v, o, l| ip_limiter(v, &o, l))
-            {
-                // if the node status is connected and it would exceed the ip ban, consider it
-                // disconnected to be pruned.
-                new_status = NodeStatus::Disconnected;
+                // should the ENR be inserted or updated to a value that would exceed the IP limit ban
+                if self.config.ip_limit
+                    && !self
+                        .kbuckets
+                        .read()
+                        .check(&key, enr, |v, o, l| ip_limiter(v, &o, l))
+                {
+                    // if the node status is connected and it would exceed the ip ban, consider it
+                    // disconnected to be pruned.
+                    new_status = ConnectionStatus::Disconnected;
+                }
+            }
+            ConnectionStatus::Disconnected => {
+                // If the node has disconnected, remove any ping timer for the node.
+                self.peers_to_ping.remove(node_id);
             }
         }
 
@@ -1069,28 +1040,65 @@ impl Service {
         let mut ping_peer = None;
         match self.kbuckets.write().entry(&key) {
             kbucket::Entry::Present(mut entry, old_status) => {
-                if let Some(enr) = enr {
-                    *entry.value() = enr;
+                let node_status = new_status.node_status();
+
+                // Update the ENR
+                match new_status {
+                    ConnectionStatus::Connected(enr, direction) => {
+                        entry.value().enr = enr;
+                        entry.value().connection = direction;
+                    }
+                    ConnectionStatus::PongReceived(enr) => {
+                        entry.value().enr = enr;
+                    }
+                    _ => {}
                 }
-                if old_status != new_status {
-                    entry.update(new_status);
+
+                // Update the status
+                if old_status != node_status {
+                    entry.update(node_status);
                 }
             }
             kbucket::Entry::Pending(mut entry, old_status) => {
-                if let Some(enr) = enr {
-                    *entry.value() = enr;
+                let node_status = new_status.node_status();
+
+                // Update the ENR
+                match new_status {
+                    ConnectionStatus::Connected(enr, direction) => {
+                        entry.value().enr = enr;
+                        entry.value().connection = direction;
+                    }
+                    ConnectionStatus::PongReceived(enr) => {
+                        entry.value().enr = enr;
+                    }
+                    _ => {}
                 }
-                if old_status != new_status {
-                    entry.update(new_status);
+                // Update the status
+                if old_status != node_status {
+                    entry.update(node_status);
                 }
             }
             kbucket::Entry::Absent(entry) => {
-                if new_status == NodeStatus::Connected {
-                    // Note: If an ENR is not provided, no record is added
-                    debug_assert!(enr.is_some());
-                    if let Some(enr) = enr {
-                        match entry.insert(enr, new_status) {
+                // NOTE: Disconnected nodes are not added to the routing table.
+                // We do add back nodes that are not present and we have recently received a Pong
+                // request.
+
+                match new_status {
+                    ConnectionStatus::Connected(enr, direction) => {
+                        let node_status = new_status.node_status();
+                        // The entry to be inserted.
+                        let table_entry = TableEntry {
+                            connection: direction,
+                            enr,
+                        };
+                        match entry.insert(table_entry, node_status) {
                             kbucket::InsertResult::Inserted => {
+                                // The node was inserted. Set up a regular ping interval to maintain
+                                // connection to the peer.
+                                self.peers_to_ping.insert(node_id);
+
+                                // Inform the event stream a new peer has been added to the routing
+                                // table.
                                 let event = Discv5Event::NodeInserted {
                                     node_id,
                                     replaced: None,
@@ -1099,10 +1107,42 @@ impl Service {
                             }
                             kbucket::InsertResult::Full => (),
                             kbucket::InsertResult::Pending { disconnected } => {
+                                // The least-recently connected peer that is considered disconnected.
                                 ping_peer = Some(*disconnected.preimage());
                             }
                         }
                     }
+                    ConnectionStatus::PongReceived(enr) => {
+                        // If the node isn't in the table, but we received a Pong, try to add it,
+                        // but assume its an incoming node.
+                        let node_status = new_status.node_status();
+                        // The entry to be inserted.
+                        let table_entry = TableEntry {
+                            connection: NodeConnection::Incoming,
+                            enr,
+                        };
+                        match entry.insert(table_entry, node_status) {
+                            kbucket::InsertResult::Inserted => {
+                                // The node was inserted. Set up a regular ping interval to maintain
+                                // connection to the peer.
+                                self.peers_to_ping.insert(node_id);
+
+                                // Inform the event stream a new peer has been added to the routing
+                                // table.
+                                let event = Discv5Event::NodeInserted {
+                                    node_id,
+                                    replaced: None,
+                                };
+                                event_to_send = Some(event);
+                            }
+                            kbucket::InsertResult::Full => (),
+                            kbucket::InsertResult::Pending { disconnected } => {
+                                // The least-recently connected peer that is considered disconnected.
+                                ping_peer = Some(*disconnected.preimage());
+                            }
+                        }
+                    }
+                    ConnectionStatus::Disconnected => {} // do nothing
                 }
             }
             _ => {}
@@ -1112,25 +1152,32 @@ impl Service {
             self.send_event(event);
         }
         if let Some(node_id) = ping_peer {
-            if let Some(enr) = self.find_enr(&node_id) {
-                self.send_ping(enr);
+            // Check the status of this peer. If it is an outgoing peer, we send a ping and try to
+            // reconnect. If it is a peer that contacted us, we don't try to initiate a new
+            // connection.
+            if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+                let value = entry.value();
+                if value.connection == NodeConnection::Outgoing {
+                    self.send_ping(value.enr.clone());
+                }
             }
         }
     }
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr) {
+    fn inject_session_established(&mut self, enr: Enr, direction: NodeConnection) {
         // Ignore sessions with non-contactable ENRs
         if enr.udp_socket().is_none() {
             return;
         }
 
         let node_id = enr.node_id();
-        debug!("Session established with Node: {}", node_id);
-        self.connection_updated(node_id, Some(enr.clone()), NodeStatus::Connected);
-        // send an initial ping and start the ping interval
-        self.send_ping(enr);
+        debug!(
+            "Session established with Node: {}, direction: {}",
+            node_id, direction
+        );
+        self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
@@ -1212,7 +1259,7 @@ impl Service {
                 }
             }
 
-            self.connection_updated(node_id, None, NodeStatus::Disconnected);
+            self.connection_updated(node_id, ConnectionStatus::Disconnected);
         }
     }
 
@@ -1274,4 +1321,64 @@ enum QueryEvent {
     TimedOut(Box<crate::query_pool::Query<QueryInfo, NodeId, Enr>>),
     /// The query has completed successfully.
     Finished(Box<crate::query_pool::Query<QueryInfo, NodeId, Enr>>),
+}
+
+/// The types of queries that can be made.
+pub enum QueryKind {
+    /// A FindNode query. Searches for peers that are closest to a particular target.
+    FindNode { target_node: NodeId },
+    /// A predicate query. Searches for peers that are close to a target but filtered by a specific
+    /// predicate and limited by a target peer count.
+    Predicate {
+        target_node: NodeId,
+        target_peer_no: usize,
+        predicate: Box<dyn Fn(&Enr) -> bool + Send>,
+    },
+}
+
+/// Entries entered into the routing table. Each node has an ENR and a connection specifying
+/// whether we contacted the node or it contacted us.
+#[derive(Debug, Clone)]
+struct TableEntry {
+    /// The ENR of the node.
+    enr: Enr,
+    /// The direction of the connection for this node.
+    connection: NodeConnection,
+}
+
+/// How we connected to the node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeConnection {
+    /// The node contacted us.
+    Incoming,
+    /// We contacted the node.
+    Outgoing,
+}
+
+/// Reporting the connection status of a node.
+enum ConnectionStatus {
+    /// A node has started a new connection with us.
+    Connected(Enr, NodeConnection),
+    /// We received a Pong from a new node. Do not have the connection direction.
+    PongReceived(Enr),
+    /// The node has disconnected
+    Disconnected,
+}
+
+impl ConnectionStatus {
+    fn node_status(&self) -> NodeStatus {
+        match &self {
+            ConnectionStatus::Connected(_, _) => NodeStatus::Connected,
+            ConnectionStatus::Disconnected => NodeStatus::Disconnected,
+        }
+    }
+}
+
+impl std::fmt::Display for NodeConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            NodeConnection::Incoming => write!(f, "Incoming"),
+            NodeConnection::Outgoing => write!(f, "Outgoing"),
+        }
+    }
 }
