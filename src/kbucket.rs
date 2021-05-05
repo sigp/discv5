@@ -349,11 +349,11 @@ where
     /// Checks if key and value can be inserted into the kbuckets table.
     /// A single bucket can only have `MAX_NODES_PER_SUBNET_BUCKET` nodes per /24 subnet.
     /// The entire table can only have `MAX_NODES_PER_SUBNET_TABLE` nodes per /24 subnet.
-    pub fn check(
+    pub fn check<TValue>(
         &self,
         key: &Key<TNodeId>,
-        value: &TVal,
-        f: impl Fn(&TVal, Vec<&TVal>, usize) -> bool,
+        value: TValue,
+        f: impl Fn(TValue, Vec<&TVal>, usize) -> bool,
     ) -> bool {
         let bucket = self.get_bucket(key);
         if let Some(b) = bucket {
@@ -642,25 +642,4 @@ mod tests {
         assert_eq!(Some(expected_applied), table.take_applied_pending());
         assert_eq!(None, table.take_applied_pending());
     }
-}
-
-/// Takes an `ENR` to insert and a list of other `ENR`s to compare against.
-/// Returns `true` if `ENR` can be inserted and `false` otherwise.
-/// `enr` can be inserted if the count of enrs in `others` in the same /24 subnet as `ENR`
-/// is less than `limit`.
-pub fn ip_limiter(enr: &Enr, others: &[&Enr], limit: usize) -> bool {
-    let mut allowed = true;
-    if let Some(ip) = enr.ip() {
-        let count = others.iter().flat_map(|e| e.ip()).fold(0, |acc, x| {
-            if x.octets()[0..3] == ip.octets()[0..3] {
-                acc + 1
-            } else {
-                acc
-            }
-        });
-        if count >= limit {
-            allowed = false;
-        }
-    };
-    allowed
 }

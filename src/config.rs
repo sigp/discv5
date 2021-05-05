@@ -49,10 +49,9 @@ pub struct Discv5Config {
     /// /24 subnet in the kbuckets table. This is to mitigate eclipse attacks. Default: false.
     pub ip_limit: bool,
 
-    /// Sets a minimum requirement for outgoing nodes (nodes we have dialed) to exist per-bucket. This cannot be larger
-    /// than the bucket size (16). By default, half of every bucket (8 positions) is reserved for peers that we
-    /// dial.
-    pub outgoing_bucket_limit: usize,
+    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
+    /// than the bucket size (16). By default, half of every bucket (8 positions) is the largest number of nodes that we accept that dial us.
+    pub incoming_bucket_limit: usize,
 
     /// A filter used to decide whether to insert nodes into our local routing table. Nodes can be
     /// excluded if they do not pass this filter. The default is to accept all nodes.
@@ -99,7 +98,7 @@ impl Default for Discv5Config {
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
-            outgoing_bucket_limit: 8,
+            incoming_bucket_limit: 8,
             table_filter: |_| true,
             talkreq_callback: |_, _| Vec::new(),
             ping_interval: Duration::from_secs(300),
@@ -217,11 +216,10 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Sets a minimum requirement for outgoing nodes (nodes we have dialed) to exist per-bucket. This cannot be larger
-    /// than the bucket size (16). By default, half of every bucket (8 positions) is reserved for peers that we
-    /// dial.
-    pub fn outgoing_bucket_limit(&mut self, limit: usize) -> &mut Self {
-        self.config.outgoing_bucket_limit = limit;
+    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
+    /// than the bucket size (16). By default, half of every bucket (8 positions) is the largest number of nodes that we accept that dial us.
+    pub fn incomfing_bucket_limit(&mut self, limit: usize) -> &mut Self {
+        self.config.incoming_bucket_limit = limit;
         self
     }
 
@@ -276,6 +274,9 @@ impl Discv5ConfigBuilder {
         if self.config.executor.is_none() {
             self.config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
         };
+
+        assert!(self.config.incoming_bucket_limit < MAX_NODES_PER_BUCKET);
+
         self.config.clone()
     }
 }
@@ -295,7 +296,7 @@ impl std::fmt::Debug for Discv5Config {
         let _ = builder.field("query_parallelism", &self.query_parallelism);
         let _ = builder.field("report_discovered_peers", &self.report_discovered_peers);
         let _ = builder.field("ip_limit", &self.ip_limit);
-        let _ = builder.field("outgoing_bucket_limit", &self.outgoing_bucket_limit);
+        let _ = builder.field("incoming_bucket_limit", &self.incoming_bucket_limit);
         let _ = builder.field("ping_interval", &self.ping_interval);
         builder.finish()
     }

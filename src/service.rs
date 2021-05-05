@@ -73,6 +73,25 @@ pub enum QueryKind {
     },
 }
 
+/// Entries entered into the routing table. Each node has an ENR and a connection specifying
+/// whether we contacted the node or it contacted us.
+#[derive(Debug, Clone)]
+pub struct TableEntry {
+    /// The ENR of the node.
+    pub enr: Enr,
+    /// The direction of the connection for this node.
+    pub connection: NodeConnection,
+}
+
+/// How we connected to the node.
+#[derive(Debug, Clone)]
+pub enum NodeConnection {
+    /// The node contacted us.
+    Incoming,
+    /// We contacted the node.
+    Outgoing,
+}
+
 pub struct Service {
     /// Configuration parameters.
     config: Discv5Config,
@@ -84,7 +103,7 @@ pub struct Service {
     enr_key: Arc<RwLock<CombinedKey>>,
 
     /// Storage of the ENR record for each node.
-    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+    kbuckets: Arc<RwLock<KBucketsTable<NodeId, TableEntry>>>,
 
     /// All the iterative queries we are currently performing.
     queries: QueryPool<QueryInfo, NodeId, Enr>,
@@ -168,7 +187,7 @@ impl Service {
     pub async fn spawn(
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
-        kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+        kbuckets: Arc<RwLock<KBucketsTable<NodeId, TableEntry>>>,
         config: Discv5Config,
         listen_socket: SocketAddr,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
@@ -373,10 +392,13 @@ impl Service {
 
         let target_key: kbucket::Key<NodeId> = target.key();
 
+        // Map the TableEntry to an ENR.
+        let kbucket_predicate = |e: &TableEntry| predicate(&e.enr);
+
         let known_closest_peers: Vec<kbucket::PredicateKey<NodeId>> = {
             let mut kbuckets = self.kbuckets.write();
             kbuckets
-                .closest_keys_predicate(&target_key, &predicate)
+                .closest_keys_predicate(&target_key, &kbucket_predicate)
                 .collect()
         };
 
@@ -391,7 +413,7 @@ impl Service {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
         if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
-            return Some(entry.value().clone());
+            return Some(entry.value().enr.clone());
         }
         // check the untrusted addresses for ongoing queries
         for query in self.queries.iter() {
@@ -420,14 +442,14 @@ impl Service {
                 let mut to_request_enr = None;
                 match self.kbuckets.write().entry(&node_address.node_id.into()) {
                     kbucket::Entry::Present(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            let enr = entry.value().clone();
+                        if entry.value().enr.seq() < enr_seq {
+                            let enr = entry.value().enr.clone();
                             to_request_enr = Some(enr.into());
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            let enr = entry.value().clone();
+                        if entry.value().enr.seq() < enr_seq {
+                            let enr = entry.value().enr.clone();
                             to_request_enr = Some(enr.into());
                         }
                     }
@@ -733,7 +755,7 @@ impl Service {
                 .iter()
                 .filter_map(|entry| {
                     if entry.status == NodeStatus::Connected {
-                        Some(entry.node.value.clone())
+                        Some(entry.node.value.enr.clone())
                     } else {
                         None
                     }
@@ -810,7 +832,7 @@ impl Service {
                 .into_iter()
                 .filter_map(|entry| {
                     if entry.node.key.preimage() != &node_address.node_id {
-                        Some(entry.node.value.clone())
+                        Some(entry.node.value.enr.clone())
                     } else {
                         None
                     }
@@ -958,30 +980,33 @@ impl Service {
             }
 
             // ignore peers that don't pass the table filter
-            if (self.config.table_filter)(enr_ref) {
+            if (self.config.table_filter)(&enr_ref) {
                 let key = kbucket::Key::from(enr_ref.node_id());
-                if !self.config.ip_limit
+                let ip_filter_result = !self.config.ip_limit
                     || self
                         .kbuckets
                         .read()
-                        .check(&key, enr_ref, |v, o, l| ip_limiter(v, &o, l))
-                {
-                    match self.kbuckets.write().entry(&key) {
-                        kbucket::Entry::Present(mut entry, _) => {
-                            if entry.value().seq() < enr_ref.seq() {
-                                trace!("ENR updated: {}", enr_ref);
+                        .check(&key, enr_ref, |v, o, l| ip_limiter(v, &o, l));
+                match self.kbuckets.write().entry(&key) {
+                    kbucket::Entry::Present(mut entry, _) => {
+                        if !ip_filter_result {
+                            // IP changed that violates the filter, remove the entry
+                            entry.remove();
+                        } else {
+                            if entry.value().enr.seq() < enr_ref.seq() {
+                                trace!("ENR updated: {}", enr_ref.enr);
                                 *entry.value() = enr_ref.clone();
                             }
                         }
-                        kbucket::Entry::Pending(mut entry, _) => {
-                            if entry.value().seq() < enr_ref.seq() {
-                                trace!("ENR updated: {}", enr_ref);
-                                *entry.value() = enr_ref.clone();
-                            }
-                        }
-                        kbucket::Entry::Absent(_entry) => {}
-                        _ => {}
                     }
+                    kbucket::Entry::Pending(mut entry, _) => {
+                        if entry.value().enr.seq() < enr_ref.enr.seq() {
+                            trace!("ENR updated: {}", enr_ref.enr);
+                            *entry.value() = enr_ref.clone();
+                        }
+                    }
+                    kbucket::Entry::Absent(_entry) => {}
+                    _ => {}
                 }
             }
         }
@@ -995,15 +1020,18 @@ impl Service {
                         .target_mut()
                         .untrusted_enrs
                         .iter()
-                        .position(|e| e.node_id() == enr_ref.node_id())
+                        .position(|e| e.node_id() == enr_ref.enr.node_id())
                         .is_none()
                     {
-                        query.target_mut().untrusted_enrs.push(enr_ref.clone());
+                        query.target_mut().untrusted_enrs.push(enr_ref.enr.clone());
                     }
                     peer_count += 1;
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(source, &other_enr_iter.cloned().collect::<Vec<_>>())
+                query.on_success(
+                    source,
+                    &other_enr_iter.cloned().map(|v| v.enr).collect::<Vec<_>>(),
+                )
             } else {
                 warn!("Response returned for ended query {:?}", query_id)
             }
@@ -1191,7 +1219,7 @@ impl Service {
     /// A future that maintains the routing table and inserts nodes when required. This returns the
     /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
     async fn bucket_maintenance_poll(
-        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, TableEntry>>>,
     ) -> Discv5Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.

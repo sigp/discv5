@@ -127,6 +127,11 @@ where
         self.0.bucket.update(self.0.key, status);
         Self::new(self.0.bucket, self.0.key)
     }
+
+    /// Removes the entry from the table.
+    pub fn remove(self) {
+        self.0.bucket.remove(self.0.key);
+    }
 }
 
 /// An entry waiting for a slot to be available in a bucket.
