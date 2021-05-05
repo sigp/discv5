@@ -76,7 +76,6 @@ mod key;
 
 pub use entry::*;
 
-use crate::Enr;
 use arrayvec::{self, ArrayVec};
 use bucket::KBucket;
 use std::{
@@ -86,8 +85,6 @@ use std::{
 
 /// Maximum number of k-buckets.
 const NUM_BUCKETS: usize = 256;
-/// Number of permitted nodes in the same /24 subnet
-const MAX_NODES_PER_SUBNET_TABLE: usize = 10;
 
 /// A key that can be returned from the `closest_keys` function, which indicates if the key matches the
 /// predicate or not.
@@ -343,24 +340,6 @@ where
             Some(&bucket)
         } else {
             None
-        }
-    }
-
-    /// Checks if key and value can be inserted into the kbuckets table.
-    /// A single bucket can only have `MAX_NODES_PER_SUBNET_BUCKET` nodes per /24 subnet.
-    /// The entire table can only have `MAX_NODES_PER_SUBNET_TABLE` nodes per /24 subnet.
-    pub fn check<TValue>(
-        &self,
-        key: &Key<TNodeId>,
-        value: TValue,
-        f: impl Fn(TValue, Vec<&TVal>, usize) -> bool,
-    ) -> bool {
-        let bucket = self.get_bucket(key);
-        if let Some(b) = bucket {
-            let others = self.iter_ref().map(|e| e.node.value).collect();
-            f(value, others, MAX_NODES_PER_SUBNET_TABLE) && b.check(value, f)
-        } else {
-            true
         }
     }
 }

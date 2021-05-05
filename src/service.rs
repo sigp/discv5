@@ -20,7 +20,7 @@ use self::{
 use crate::{
     error::RequestError,
     handler::{Handler, HandlerRequest, HandlerResponse},
-    kbucket::{self, ip_limiter, KBucketsTable, NodeStatus},
+    kbucket::{self, KBucketsTable, NodeStatus},
     node_info::{NodeAddress, NodeContact},
     packet::MAX_PACKET_SIZE,
     query_pool::{
@@ -34,18 +34,21 @@ use futures::prelude::*;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll};
-use tokio::{
-    sync::{mpsc, oneshot},
-    time::Interval,
-};
+use tokio::sync::{mpsc, oneshot};
+use tokio_util::time::DelayQueue;
 use tracing::{debug, error, info, trace, warn};
 
+mod filters;
 mod ip_vote;
 mod query_info;
 mod test;
 
 /// The number of distances (buckets) we simultaneously request from each peer.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
+/// Number of permitted nodes in the same /24 subnet per table.
+const MAX_NODES_PER_SUBNET_TABLE: usize = 10;
+/// The number of nodes permitted in the same /24 subnet per bucket.
+const MAX_NODES_PER_SUBNET_BUCKET: usize = 2;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
@@ -103,8 +106,8 @@ pub struct Service {
     /// The exit channel for the service.
     exit: oneshot::Receiver<()>,
 
-    /// An interval to check and ping all nodes in the routing table.
-    ping_heartbeat: Interval,
+    /// A queue of peers that require regular ping to check connectivity.
+    peers_to_ping: DelayQueue<NodeId>,
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
@@ -200,7 +203,7 @@ impl Service {
                     handler_send,
                     handler_recv,
                     handler_exit: Some(handler_exit),
-                    ping_heartbeat: tokio::time::interval(config.ping_interval),
+                    peers_to_ping: DelayQueue::new(),
                     discv5_recv,
                     event_stream: None,
                     exit,
@@ -319,8 +322,15 @@ impl Service {
                         }
                     }
                 }
-                _ = self.ping_heartbeat.tick() => {
-                    self.ping_connected_peers();
+                Some(Ok(expired_element)) = self.peers_to_ping.next() => {
+                    let node_id = expired_element.into_inner();
+                    // If the node is in the routing table, Ping it and re-queue the node.
+                    let key = kbucket::Key::from(node_id);
+                    if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+                        // The peer is in the routing table, ping it and re-queue the ping
+                        self.send_ping(entry.value().enr.clone());
+                        self.peers_to_ping.insert(node_id, self.config.ping_interval);
+                    }
                 }
             }
         }
@@ -652,7 +662,6 @@ impl Service {
                                         .set_udp_socket(majority_socket, &self.enr_key.read())
                                         .is_ok()
                                     {
-                                        // alert known peers to our updated enr
                                         self.ping_connected_peers();
                                     }
                                 }
@@ -717,6 +726,7 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
+    /// Ping all peers that are connected in the routing table.
     fn ping_connected_peers(&mut self) {
         // maintain the ping interval
         let connected_peers = {
@@ -952,31 +962,42 @@ impl Service {
             // ignore peers that don't pass the table filter
             if (self.config.table_filter)(&enr_ref) {
                 let key = kbucket::Key::from(enr_ref.node_id());
-                let ip_filter_result = !self.config.ip_limit
-                    || self
-                        .kbuckets
-                        .read()
-                        .check(&key, enr_ref, |v, o, l| ip_limiter(v, &o, l));
-                match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Present(mut entry, _) => {
-                        if !ip_filter_result {
-                            // IP changed that violates the filter, remove the entry
-                            entry.remove();
-                        } else {
-                            if entry.value().enr.seq() < enr_ref.seq() {
+
+                // If the ENR exists in the routing table and the discovered ENR has a greater
+                // sequence number, perform some filter checks before updating the enr.
+
+                let must_update_enr = match self.kbuckets.write().entry(&key) {
+                    kbucket::Entry::Present(entry, _) => entry.value().enr.seq() < enr_ref.seq(),
+                    kbucket::Entry::Pending(entry, _) => entry.value().enr.seq() < enr_ref.seq(),
+                    _ => false,
+                };
+
+                if must_update_enr {
+                    // Check we do not violate any filters.
+                    // Only the IP filter needs to be checked here
+                    let filter_success = self.check_ip_filters(enr_ref);
+                    match self.kbuckets.write().entry(&key) {
+                        kbucket::Entry::Present(mut entry, _) => {
+                            if filter_success {
                                 trace!("ENR updated: {}", enr_ref);
                                 entry.value().enr = enr_ref.clone();
+                            } else {
+                                // Remove the violating entry
+                                entry.remove();
                             }
                         }
-                    }
-                    kbucket::Entry::Pending(mut entry, _) => {
-                        if entry.value().enr.seq() < enr_ref.seq() {
-                            trace!("ENR updated: {}", enr_ref);
-                            entry.value().enr = enr_ref.clone();
+                        kbucket::Entry::Pending(mut entry, _) => {
+                            if filter_success {
+                                trace!("ENR updated: {}", enr_ref);
+                                entry.value().enr = enr_ref.clone();
+                            } else {
+                                // Remove the violating entry
+                                entry.remove();
+                            }
                         }
+                        kbucket::Entry::Absent(_entry) => {}
+                        _ => {}
                     }
-                    kbucket::Entry::Absent(_entry) => {}
-                    _ => {}
                 }
             }
         }
@@ -1012,7 +1033,7 @@ impl Service {
         // Pre-filter the connection request
         let key = kbucket::Key::from(node_id);
         match new_status {
-            ConnectionStatus::Connected(ref enr, _) | ConnectionStatus::PongReceived(ref enr) => {
+            ConnectionStatus::Connected(ref enr, _) => {
                 // ignore peers that don't pass the table filter
                 if !(self.config.table_filter)(enr) {
                     return;
@@ -1028,6 +1049,26 @@ impl Service {
                     // if the node status is connected and it would exceed the ip ban, consider it
                     // disconnected to be pruned.
                     new_status = ConnectionStatus::Disconnected;
+                    self.peers_to_ping.remove(node_id);
+                }
+            }
+            ConnectionStatus::PongReceived(ref enr) => {
+                // ignore peers that don't pass the table filter
+                if !(self.config.table_filter)(enr) {
+                    return;
+                }
+
+                // should the ENR be inserted or updated to a value that would exceed the IP limit ban
+                if self.config.ip_limit
+                    && !self
+                        .kbuckets
+                        .read()
+                        .check(&key, enr, |v, o, l| ip_limiter(v, &o, l))
+                {
+                    // if the node status is connected and it would exceed the ip ban, consider it
+                    // disconnected to be pruned.
+                    new_status = ConnectionStatus::Disconnected;
+                    self.peers_to_ping.remove(node_id);
                 }
             }
             ConnectionStatus::Disconnected => {
@@ -1309,6 +1350,42 @@ impl Service {
             QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         })
         .await
+    }
+
+    // Misc helper functions
+
+    /// If the ip filter configuration is set, checks the routing table to see if the supplied
+    /// ENR passes the filter to be added.
+    fn check_ip_filters(&self, enr: &Enr) -> bool {
+        // If the ip limit functionality isn't set, the ENR can be added
+        if !self.config.ip_limit {
+            return true;
+        }
+
+        let key = kbucket::Key::from(enr.node_id());
+
+        // Check the table-level IP filter.
+        let table_filter = filters::ip_filter(
+            enr,
+            self.kbuckets.read().iter_ref().map(|e| &e.node.value.enr),
+            MAX_NODES_PER_SUBNET_TABLE,
+        );
+
+        // Check the bucket-level IP filter.
+        let bucket_filter = {
+            if let Some(bucket) = self.kbuckets.read().get_bucket(&key) {
+                filters::ip_filter(
+                    enr,
+                    bucket.iter().map(|(node, _)| &node.value.enr),
+                    MAX_NODES_PER_SUBNET_BUCKET,
+                )
+            } else {
+                true
+            }
+        };
+
+        // If both the bucket and table level ip filters pass, return true
+        table_filter && bucket_filter
     }
 }
 

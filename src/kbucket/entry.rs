@@ -160,6 +160,11 @@ where
         self.0.bucket.update_pending(status);
         PendingEntry::new(self.0.bucket, self.0.key)
     }
+
+    /// Removes the entry from the table.
+    pub fn remove(self) {
+        self.0.bucket.remove(self.0.key);
+    }
 }
 
 /// An entry that is not present in any bucket.
