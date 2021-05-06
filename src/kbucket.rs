@@ -115,6 +115,8 @@ pub struct KBucketsTable<TNodeId, TVal> {
     /// The list of evicted entries that have been replaced with pending
     /// entries since the last call to [`KBucketsTable::take_applied_pending`].
     applied_pending: VecDeque<AppliedPending<TNodeId, TVal>>,
+    /// Filter to be applied at the table level when adding/updating a node.
+    table_filter: Option<impl Fn(TVal, impl Iterator<Item = &TVal>) -> bool>,
 }
 
 /// A (type-safe) index into a `KBucketsTable`, i.e. a non-negative integer in the
@@ -152,11 +154,18 @@ where
     /// The given `pending_timeout` specifies the duration after creation of
     /// a [`PendingEntry`] after which it becomes eligible for insertion into
     /// a full bucket, replacing the least-recently (dis)connected node.
-    pub fn new(local_key: Key<TNodeId>, pending_timeout: Duration) -> Self {
+    ///
+    /// A filter can be applied that limits entries into a bucket based on the buckets contents.
+    /// Entries that fail the filter, will not be inserted.
+    pub fn new(
+        local_key: Key<TNodeId>,
+        pending_timeout: Duration,
+        filter: Option<impl Fn(TVal, impl Iterator<&TVal>) -> bool>,
+    ) -> Self {
         KBucketsTable {
             local_key,
             buckets: (0..NUM_BUCKETS)
-                .map(|_| KBucket::new(pending_timeout))
+                .map(|_| KBucket::new(pending_timeout, filter))
                 .collect(),
             applied_pending: VecDeque::new(),
         }
@@ -506,7 +515,7 @@ mod tests {
         let local_key = Key::from(NodeId::random());
         let other_id = Key::from(NodeId::random());
 
-        let mut table = KBucketsTable::<_, ()>::new(local_key, Duration::from_secs(5));
+        let mut table = KBucketsTable::<_, ()>::new(local_key, Duration::from_secs(5), None);
         if let Entry::Absent(entry) = table.entry(&other_id) {
             match entry.insert((), NodeStatus::Connected) {
                 InsertResult::Inserted => (),
@@ -524,7 +533,8 @@ mod tests {
     #[test]
     fn update_local_id_fails() {
         let local_key = Key::from(NodeId::random());
-        let mut table = KBucketsTable::<_, ()>::new(local_key.clone(), Duration::from_secs(5));
+        let mut table =
+            KBucketsTable::<_, ()>::new(local_key.clone(), Duration::from_secs(5), None);
         match table.entry(&local_key) {
             Entry::SelfEntry => (),
             _ => panic!(),
@@ -534,7 +544,7 @@ mod tests {
     #[test]
     fn closest() {
         let local_key = Key::from(NodeId::random());
-        let mut table = KBucketsTable::<_, ()>::new(local_key, Duration::from_secs(5));
+        let mut table = KBucketsTable::<_, ()>::new(local_key, Duration::from_secs(5), None);
         let mut count = 0;
         loop {
             if count == 100 {
@@ -569,7 +579,8 @@ mod tests {
     #[test]
     fn applied_pending() {
         let local_key = Key::from(NodeId::random());
-        let mut table = KBucketsTable::<_, ()>::new(local_key.clone(), Duration::from_millis(1));
+        let mut table =
+            KBucketsTable::<_, ()>::new(local_key.clone(), Duration::from_millis(1), None);
         let expected_applied;
         let full_bucket_index;
         loop {

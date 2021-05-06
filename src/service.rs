@@ -1032,25 +1032,17 @@ impl Service {
     fn connection_updated(&mut self, node_id: NodeId, mut new_status: ConnectionStatus) {
         // Pre-filter the connection request
         let key = kbucket::Key::from(node_id);
-        match new_status {
-            ConnectionStatus::Connected(ref enr, _) => {
+
+        // Perform checks to verify this update is a valid candidate to modify the routing table.
+        let valid_candidate = match new_status {
+            ConnectionStatus::Connected(ref enr, direction) => {
                 // ignore peers that don't pass the table filter
                 if !(self.config.table_filter)(enr) {
                     return;
                 }
-
-                // should the ENR be inserted or updated to a value that would exceed the IP limit ban
-                if self.config.ip_limit
-                    && !self
-                        .kbuckets
-                        .read()
-                        .check(&key, enr, |v, o, l| ip_limiter(v, &o, l))
-                {
-                    // if the node status is connected and it would exceed the ip ban, consider it
-                    // disconnected to be pruned.
-                    new_status = ConnectionStatus::Disconnected;
-                    self.peers_to_ping.remove(node_id);
-                }
+                // Check that the insertion doesn't violate a filter. If so, treat it as a
+                // disconnected node.
+                self.check_filters(enr, direction)
             }
             ConnectionStatus::PongReceived(ref enr) => {
                 // ignore peers that don't pass the table filter
@@ -1058,75 +1050,136 @@ impl Service {
                     return;
                 }
 
-                // should the ENR be inserted or updated to a value that would exceed the IP limit ban
-                if self.config.ip_limit
-                    && !self
-                        .kbuckets
-                        .read()
-                        .check(&key, enr, |v, o, l| ip_limiter(v, &o, l))
-                {
-                    // if the node status is connected and it would exceed the ip ban, consider it
-                    // disconnected to be pruned.
-                    new_status = ConnectionStatus::Disconnected;
-                    self.peers_to_ping.remove(node_id);
-                }
+                // Check that the insertion doesn't violate a filter.
+                // We don't update direction on PongResponses, so we don't check filters relating
+                // to direction.
+                self.check_ip_filters(enr)
             }
             ConnectionStatus::Disconnected => {
                 // If the node has disconnected, remove any ping timer for the node.
-                self.peers_to_ping.remove(node_id);
+                self.peers_to_ping.remove(&node_id);
             }
-        }
+        };
 
         let mut event_to_send = None;
         let mut ping_peer = None;
         match self.kbuckets.write().entry(&key) {
             kbucket::Entry::Present(mut entry, old_status) => {
-                let node_status = new_status.node_status();
-
-                // Update the ENR
+                // Perform updates
                 match new_status {
                     ConnectionStatus::Connected(enr, direction) => {
-                        entry.value().enr = enr;
-                        entry.value().connection = direction;
+                        if valid_candidate {
+                            // update the entry
+                            entry.value().enr = enr;
+                            entry.value().connection = direction;
+                        }
+
+                        // If we have a valid candidate, or the ENR and directions match our
+                        // current records, update the status
+                        if entry.value().enr == enr && entry.value().connection == direction {
+                            if old_status != NodeStatus::Connected {
+                                entry.update(NodeStatus::Connected);
+                                self.peers_to_ping
+                                    .insert(node_id, self.config.ping_interval);
+                            }
+                        } else {
+                            // The connection cannot be added to the table and the ENR is different
+                            // to the ENR we currently know about, we cannot modify the ENR, so we
+                            // must set this node to be disconnected.
+                            entry.update(NodeStatus::Disconnected);
+                            self.peers_to_ping.remove(&node_id);
+                        }
                     }
                     ConnectionStatus::PongReceived(enr) => {
-                        entry.value().enr = enr;
+                        // Update only the ENR if the candidate is valid
+                        if valid_candidate {
+                            entry.value().enr = enr;
+                        }
+                        // Update the status if we need to
+                        if entry.value().enr == enr {
+                            if old_status != NodeStatus::Connected {
+                                entry.update(NodeStatus::Connected);
+                                self.peers_to_ping
+                                    .insert(node_id, self.config.ping_interval);
+                            }
+                        } else {
+                            // The pong gave us a new ENR which does not satisfy the table
+                            // restrictions. Mark the node as disconnected as the update makes
+                            // this node violate conditions.
+                            entry.update(NodeStatus::Disconnected);
+                            self.peers_to_ping.remove(&node_id);
+                        }
                     }
-                    _ => {}
-                }
-
-                // Update the status
-                if old_status != node_status {
-                    entry.update(node_status);
+                    ConnectionStatus::Disconnected => {
+                        // Mark the peer as disconnected.
+                        entry.update(NodeStatus::Disconnected)
+                    }
                 }
             }
             kbucket::Entry::Pending(mut entry, old_status) => {
-                let node_status = new_status.node_status();
-
-                // Update the ENR
+                // Perform updates
                 match new_status {
                     ConnectionStatus::Connected(enr, direction) => {
-                        entry.value().enr = enr;
-                        entry.value().connection = direction;
+                        if valid_candidate {
+                            // update the entry
+                            entry.value().enr = enr;
+                            entry.value().connection = direction;
+                        }
+
+                        // If we have a valid candidate, or the ENR and directions match our
+                        // current records, update the status
+                        if entry.value().enr == enr && entry.value().connection == direction {
+                            if old_status != NodeStatus::Connected {
+                                entry.update(NodeStatus::Connected);
+                                self.peers_to_ping
+                                    .insert(node_id, self.config.ping_interval);
+                            }
+                        } else {
+                            // The connection cannot be added to the table and the ENR is different
+                            // to the ENR we currently know about, we cannot modify the ENR, so we
+                            // must set this node to be disconnected.
+                            entry.update(NodeStatus::Disconnected);
+                            self.peers_to_ping.remove(&node_id);
+                        }
                     }
                     ConnectionStatus::PongReceived(enr) => {
-                        entry.value().enr = enr;
+                        // Update only the ENR if the candidate is valid. We ignore the direction.
+                        if valid_candidate {
+                            entry.value().enr = enr;
+                        }
+                        // Update the status if we need to
+                        if entry.value().enr == enr {
+                            if old_status != NodeStatus::Connected {
+                                entry.update(NodeStatus::Connected);
+                                self.peers_to_ping
+                                    .insert(node_id, self.config.ping_interval);
+                            }
+                        } else {
+                            // The pong gave us a new ENR which does not satisfy the table
+                            // restrictions. Mark the node as disconnected as the update makes
+                            // this node violate conditions.
+                            entry.update(NodeStatus::Disconnected);
+                            self.peers_to_ping.remove(&node_id);
+                        }
                     }
-                    _ => {}
-                }
-                // Update the status
-                if old_status != node_status {
-                    entry.update(node_status);
+                    ConnectionStatus::Disconnected => {
+                        // Mark the peer as disconnected.
+                        entry.update(NodeStatus::Disconnected)
+                    }
                 }
             }
             kbucket::Entry::Absent(entry) => {
                 // NOTE: Disconnected nodes are not added to the routing table.
                 // We do add back nodes that are not present and we have recently received a Pong
-                // request.
+                // request. If the update doesn't pass the validation checks, we do not add any new
+                // record.
+                if !valid_candidate {
+                    return;
+                }
 
                 match new_status {
                     ConnectionStatus::Connected(enr, direction) => {
-                        let node_status = new_status.node_status();
+
                         // The entry to be inserted.
                         let table_entry = TableEntry {
                             connection: direction,
@@ -1152,11 +1205,12 @@ impl Service {
                                 ping_peer = Some(*disconnected.preimage());
                             }
                         }
+                        }
                     }
                     ConnectionStatus::PongReceived(enr) => {
                         // If the node isn't in the table, but we received a Pong, try to add it,
                         // but assume its an incoming node.
-                        let node_status = new_status.node_status();
+                        
                         // The entry to be inserted.
                         let table_entry = TableEntry {
                             connection: NodeConnection::Incoming,
@@ -1356,13 +1410,11 @@ impl Service {
 
     /// If the ip filter configuration is set, checks the routing table to see if the supplied
     /// ENR passes the filter to be added.
-    fn check_ip_filters(&self, enr: &Enr) -> bool {
+    fn check_ip_filter(&self, enr: &Enr) -> bool {
         // If the ip limit functionality isn't set, the ENR can be added
         if !self.config.ip_limit {
             return true;
         }
-
-        let key = kbucket::Key::from(enr.node_id());
 
         // Check the table-level IP filter.
         let table_filter = filters::ip_filter(

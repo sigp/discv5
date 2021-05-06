@@ -121,6 +121,10 @@ pub struct KBucket<TNodeId, TVal> {
     /// if the least-recently connected node is not updated as being connected
     /// in the meantime.
     pending_timeout: Duration,
+
+    /// An optional filter that filters new entries given an iterator over current entries in
+    /// the bucket.
+    filter: Option<impl Fn(TVal, impl Iterator<Item = &TVal>) -> bool>,
 }
 
 /// The result of inserting an entry into a bucket.
@@ -141,6 +145,8 @@ pub enum InsertResult<TNodeId> {
         /// [`NodeStatus::Connected`].
         disconnected: Key<TNodeId>,
     },
+    /// The attempted entry failed to pass the filter.
+    FailedFilter,
     /// The entry was not inserted because the relevant bucket is full.
     Full,
 }
@@ -161,12 +167,16 @@ where
     TNodeId: Clone,
 {
     /// Creates a new `KBucket` with the given timeout for pending entries.
-    pub fn new(pending_timeout: Duration) -> Self {
+    pub fn new(
+        pending_timeout: Duration,
+        filter: Option<impl Fn(&TVal, impl Iterator<&Tval>) -> bool>,
+    ) -> Self {
         KBucket {
             nodes: ArrayVec::new(),
             first_connected_pos: None,
             pending: None,
             pending_timeout,
+            filter,
         }
     }
 
@@ -320,11 +330,20 @@ where
     ///     i.e. as the most-recently disconnected node. If there are no connected nodes,
     ///     the new node is added as the last element of the bucket.
     ///
+    /// The insert can fail if a provided bucket filter does not pass. If a node is attempted
+    /// to be inserted that doesn't pass the bucket filter, `InsertResult::FailedFilter` will be
+    /// returned.
     pub fn insert(
         &mut self,
         node: Node<TNodeId, TVal>,
         status: NodeStatus,
     ) -> InsertResult<TNodeId> {
+        // check the filter first
+        if let Some(filter) = self.filter {
+            if !filter(node.value, self.iter().map(|(node, _)| &node.value)) {
+                return InsertResult::FailedFilter;
+            }
+        }
         match status {
             NodeStatus::Connected => {
                 if self.nodes.is_full() {
@@ -420,7 +439,7 @@ mod tests {
     impl Arbitrary for KBucket<NodeId, ()> {
         fn arbitrary<G: Gen>(g: &mut G) -> KBucket<NodeId, ()> {
             let timeout = Duration::from_secs(g.gen_range(1, g.size() as u64));
-            let mut bucket = KBucket::<NodeId, ()>::new(timeout);
+            let mut bucket = KBucket::<NodeId, ()>::new(timeout, None);
             let num_nodes = g.gen_range(1, MAX_NODES_PER_BUCKET + 1);
             for _ in 0..num_nodes {
                 let key = Key::from(NodeId::random());
@@ -516,7 +535,7 @@ mod tests {
 
     #[test]
     fn full_bucket() {
-        let mut bucket = KBucket::<NodeId, ()>::new(Duration::from_secs(1));
+        let mut bucket = KBucket::<NodeId, ()>::new(Duration::from_secs(1), None);
 
         // Fill the bucket with disconnected nodes.
         fill_bucket(&mut bucket, NodeStatus::Disconnected);
@@ -590,7 +609,7 @@ mod tests {
 
     #[test]
     fn full_bucket_discard_pending() {
-        let mut bucket = KBucket::<NodeId, ()>::new(Duration::from_secs(1));
+        let mut bucket = KBucket::<NodeId, ()>::new(Duration::from_secs(1), None);
         fill_bucket(&mut bucket, NodeStatus::Disconnected);
         let (first, _) = bucket.iter().next().unwrap();
         let first_disconnected = first.clone();
