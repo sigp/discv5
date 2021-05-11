@@ -20,9 +20,9 @@ use self::{
 use crate::{
     error::RequestError,
     handler::{Handler, HandlerRequest, HandlerResponse},
-    kbucket::{self, KBucketsTable, NodeStatus},
+    kbucket::{self, KBucketsTable, NodeStatus, InsertResult, UpdateResult, FailureReason},
     node_info::{NodeAddress, NodeContact},
-    packet::MAX_PACKET_SIZE,
+:w    packet::MAX_PACKET_SIZE,
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },

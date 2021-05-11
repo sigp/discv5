@@ -235,6 +235,7 @@ pub struct AppliedPending<TNodeId, TVal> {
 impl<TNodeId, TVal> KBucket<TNodeId, TVal>
 where
     TNodeId: Clone,
+    TVal: Eq,
 {
     /// Creates a new `KBucket` with the given timeout for pending entries.
     pub fn new(
@@ -465,22 +466,26 @@ where
             match self.insert(node) {
                 InsertResult::Inserted => {
                     if modified {
-                        UpdateResult::Modified
+                        UpdateResult::Updated
                     } else {
                         UpdateResult::NotModified
                     }
                 }
-                InsertResult::FailedFilter => UpdateResult::FailedFilter, // The update could fail the bucket filter.
+                InsertResult::FailedFilter => {
+                    UpdateResult::UpdateFailed(FailureReason::BucketFilter)
+                } // The update could fail the bucket filter.
                 _ => unreachable!("The node is removed before being (re)inserted."),
             }
         } else {
             if let Some(pending) = &mut self.pending {
-                if pending.node.key == key {
+                if &pending.node.key == key {
                     pending.node.value = value;
-                    return UpdateResult::UpdatedPending;
+                    UpdateResult::UpdatedPending
+                } else {
+                    UpdateResult::UpdateFailed(FailureReason::KeyNonExistant)
                 }
             } else {
-                UpdateResult::KeyNonExistant
+                UpdateResult::UpdateFailed(FailureReason::KeyNonExistant)
             }
         }
     }
@@ -508,13 +513,13 @@ where
     /// result will return `InsertResult::TooManyIncoming`.
     pub fn insert(&mut self, node: Node<TNodeId, TVal>) -> InsertResult<TNodeId> {
         // Prevent inserting duplicate nodes.
-        if self.position(node.key).is_some() {
+        if self.position(&node.key).is_some() {
             return InsertResult::NodeExists;
         }
 
         // check bucket filter
         if let Some(filter) = self.filter {
-            if !filter(node.value, self.iter().map(|(node, _)| &node.value)) {
+            if !filter.filter(node.value, self.iter().map(|(node, _)| &node.value)) {
                 return InsertResult::FailedFilter;
             }
         }

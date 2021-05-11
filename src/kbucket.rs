@@ -111,7 +111,7 @@ impl<TNodeId: Clone> Into<Key<TNodeId>> for PredicateKey<TNodeId> {
 }
 
 /// A `KBucketsTable` represents a Kademlia routing table.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct KBucketsTable<TNodeId, TVal> {
     /// The key identifying the local peer that owns the routing table.
     local_key: Key<TNodeId>,
@@ -151,6 +151,8 @@ pub enum InsertResult<TNodeId> {
         // Returns true if the status updated promoted a disconnected node to a connected node.
         promoted_to_connected: bool,
     },
+    /// The pending slot was updated.
+    UpdatedPending,
     /// The record failed to be inserted. This can happen to not passing table/bucket filters or
     /// the bucket was full.
     Failed(FailureReason),
@@ -184,6 +186,7 @@ impl BucketIndex {
 impl<TNodeId, TVal> KBucketsTable<TNodeId, TVal>
 where
     TNodeId: Clone,
+    TVal: Eq,
 {
     /// Creates a new, empty Kademlia routing table with entries partitioned
     /// into buckets as per the Kademlia protocol.
@@ -219,7 +222,7 @@ where
                 self.applied_pending.push_back(applied)
             }
 
-            bucket.update(key, status)
+            bucket.update_status(key, status)
         } else {
             UpdateResult::NotModified // The key refers to our current node.
         }
@@ -237,7 +240,7 @@ where
             }
 
             if let Some(table_filter) = self.table_filter {
-                if !table_filter(
+                if !table_filter.filter(
                     &value,
                     self.iter()
                         .map(|entry| entry.value)
@@ -275,17 +278,21 @@ where
                     .filter(|iter_value| iter_value != value),
             ) {
                 bucket.remove(key);
-                return UpdateResult::UpdateFailed(FailureReason::TableFilter);
+                return InsertResult::Failed(FailureReason::TableFilter);
             }
 
             // If the node doesn't exist, insert it
             if bucket.position(key).is_none() {
                 let node = Node { key, value, status };
                 match bucket.insert(node) {
-                    bucket::InsertResult::NodeExists
-                    | bucket::InsertResult::Full
-                    | bucket::InsertResult::TooManyIncoming
-                    | bucket::InsertResult::FailedFilter => InsertResult::Failed,
+                    bucket::InsertResult::NodeExists => unreachable("Node must exist"),
+                    bucket::InsertResult::Full => InsertResult::Failed(FailureReason::BucketFull),
+                    bucket::InsertResult::TooManyIncoming => {
+                        InsertResult::Failed(FailureReason::TooManyIncoming)
+                    }
+                    bucket::InsertResult::FailedFilter => {
+                        InsertResult::Failed(FailureReason::BucketFilter)
+                    }
                     bucket::InsertResult::Pending { disconnected } => {
                         InsertResult::Pending { disconnected }
                     }
@@ -298,14 +305,14 @@ where
 
                 if update_status.failed() {
                     // The node was removed from the table
-                    return InsertResult::FailedFilter;
+                    return InsertResult::Failed(FailureReason::TooManyIncoming);
                 }
                 // Attempt to update the value
                 let update_value = bucket.update_value(key, value);
 
                 if update_value.failed() {
                     // The value update failed and the node was removed
-                    return InsertResult::FailedFilter;
+                    return InsertResult::Failed(FailureReason::BucketFilter);
                 }
 
                 match (update_value, update_status) {
@@ -377,16 +384,17 @@ where
 
     /// Returns an iterator over all the entries in the routing table.
     pub fn iter(&mut self) -> impl Iterator<Item = EntryRefView<'_, TNodeId, TVal>> {
+        let applied_pending = &mut self.applied_pending;
         self.buckets.iter_mut().flat_map(move |table| {
             if let Some(applied) = table.apply_pending() {
-                self.applied_pending.push_back(applied)
+                applied_pending.push_back(applied)
             }
-            table.iter().map(move |(n, status)| EntryRefView {
+            table.iter().map(move |n| EntryRefView {
                 node: NodeRefView {
                     key: &n.key,
                     value: &n.value,
                 },
-                status,
+                status: n.status,
             })
         })
     }
@@ -396,12 +404,12 @@ where
     /// takes a reference instead of a mutable reference.
     pub fn iter_ref(&self) -> impl Iterator<Item = EntryRefView<'_, TNodeId, TVal>> {
         self.buckets.iter().flat_map(move |table| {
-            table.iter().map(move |(n, status)| EntryRefView {
+            table.iter().map(move |n| EntryRefView {
                 node: NodeRefView {
                     key: &n.key,
                     value: &n.value,
                 },
-                status,
+                status: n.status,
             })
         })
     }
@@ -449,12 +457,15 @@ where
         // Note we search via distance in order
         for distance in distances {
             let bucket = &self.buckets[(distance - 1) as usize];
-            for node in bucket.iter().map(|(n, status)| {
+            for node in bucket.iter().map(|n| {
                 let node = NodeRefView {
                     key: &n.key,
                     value: &n.value,
                 };
-                EntryRefView { node, status }
+                EntryRefView {
+                    node,
+                    status: n.status,
+                }
             }) {
                 matching_nodes.push(node);
                 // Exit early if we have found enough nodes
@@ -482,7 +493,7 @@ where
             table: self,
             buckets_iter: ClosestBucketsIter::new(distance),
             fmap: |b: &KBucket<_, _>| -> ArrayVec<_, MAX_NODES_PER_BUCKET> {
-                b.iter().map(|(n, _)| n.key.clone()).collect()
+                b.iter().map(|n| n.key.clone()).collect()
             },
         }
     }
@@ -506,7 +517,7 @@ where
             buckets_iter: ClosestBucketsIter::new(distance),
             fmap: move |b: &KBucket<TNodeId, TVal>| -> ArrayVec<_, MAX_NODES_PER_BUCKET> {
                 b.iter()
-                    .map(|(n, _)| PredicateKey {
+                    .map(|n| PredicateKey {
                         key: n.key.clone(),
                         predicate_match: predicate(&n.value),
                     })
