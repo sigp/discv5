@@ -181,12 +181,10 @@ where
 
     /// Attempts to insert the entry into a bucket.
     pub fn insert(self, value: TVal, status: NodeStatus) -> InsertResult<TPeerId> {
-        self.0.bucket.insert(
-            Node {
-                key: self.0.key.clone(),
-                value,
-            },
+        self.0.bucket.insert(Node {
+            key: self.0.key.clone(),
+            value,
             status,
-        )
+        })
     }
 }

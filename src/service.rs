@@ -1030,12 +1030,45 @@ impl Service {
     /// This tracks whether or not we should be pinging peers. Disconnected peers are removed from
     /// the queue and newly added peers to the routing table are added to the queue.
     fn connection_updated(&mut self, node_id: NodeId, mut new_status: ConnectionStatus) {
-        // Pre-filter the connection request
-        let key = kbucket::Key::from(node_id);
 
         // Perform checks to verify this update is a valid candidate to modify the routing table.
-        let valid_candidate = match new_status {
+        let mut ping_peer = None;
+        new_status {
             ConnectionStatus::Connected(ref enr, direction) => {
+                // attempt to update or insert the new ENR.
+                match self.kbuckets.write().insert_or_update(node, enr) {
+                    InsertResult::Inserted => {
+                        // We added this peer to the table
+                        self.peers_to_ping.insert(node_id, self.config.ping_interval);
+                    },
+                    InsertResult::Pending { disconnected } => {
+                        ping_peer = disconnected;
+                    }
+                    InsertResult::StatusUpdated { promoted_to_connected} | InsertResult::Updated { promoted_to_connected} => {
+                        // The node was updated
+                        if promoted_to_connected {
+                            self.peers_to_ping.insert(node_id, self.config.ping_interval);
+                        }
+
+                    }
+                    InsertResult::ValueUpdated => {}
+                    InsertResult::Failed(reason) => {
+                        trace!("Could not insert node: {}, reason: {:?}", node_id, reason);
+                    }
+                }
+            },
+            ConnectionStatus::PongReceived(ref enr) => {
+                match self.kbuckets.write().update_node_value(enr) => 
+
+
+
+            }
+
+
+
+
+
+
                 // ignore peers that don't pass the table filter
                 if !(self.config.table_filter)(enr) {
                     return;
@@ -1079,8 +1112,6 @@ impl Service {
                         if entry.value().enr == enr && entry.value().connection == direction {
                             if old_status != NodeStatus::Connected {
                                 entry.update(NodeStatus::Connected);
-                                self.peers_to_ping
-                                    .insert(node_id, self.config.ping_interval);
                             }
                         } else {
                             // The connection cannot be added to the table and the ENR is different

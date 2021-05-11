@@ -41,9 +41,6 @@ pub struct PendingNode<TNodeId, TVal> {
     /// The pending node to insert.
     node: Node<TNodeId, TVal>,
 
-    /// The status of the pending node.
-    status: NodeStatus,
-
     /// The instant at which the pending node is eligible for insertion into a bucket.
     replace: Instant,
 }
@@ -55,15 +52,17 @@ pub struct PendingNode<TNodeId, TVal> {
 /// bucket.
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum NodeStatus {
-    /// The node is considered connected.
-    Connected,
+    /// The node is considered connected via an incoming negotiation.
+    ConnectedIncoming,
+    /// The node is considered connected via an outgoing negotiation.
+    ConnectedOutgoing,
     /// The node is considered disconnected.
     Disconnected,
 }
 
 impl<TNodeId, TVal> PendingNode<TNodeId, TVal> {
     pub fn status(&self) -> NodeStatus {
-        self.status
+        self.node.status
     }
 
     pub fn value_mut(&mut self) -> &mut TVal {
@@ -84,6 +83,17 @@ pub struct Node<TNodeId, TVal> {
     pub key: Key<TNodeId>,
     /// The associated value.
     pub value: TVal,
+    /// The status of the node.
+    pub status: NodeStatus,
+}
+
+impl<TNodeId, TVal> Node<TNodeId, TVal> {
+    fn is_connected(&self) -> bool {
+        match self.status {
+            NodeStatus::ConnectedOutgoing | NodeStatus::ConnectedIncoming => true,
+            NodeStatus::Disconnected => false,
+        }
+    }
 }
 
 /// The position of a node in a `KBucket`, i.e. a non-negative integer
@@ -125,6 +135,10 @@ pub struct KBucket<TNodeId, TVal> {
     /// An optional filter that filters new entries given an iterator over current entries in
     /// the bucket.
     filter: Option<impl Fn(TVal, impl Iterator<Item = &TVal>) -> bool>,
+
+    /// The maximum number of incoming connections allowed per bucket. Setting this to
+    /// MAX_NODES_PER_BUCKET means there is no restriction on incoming nodes.
+    max_incoming: usize,
 }
 
 /// The result of inserting an entry into a bucket.
@@ -147,8 +161,53 @@ pub enum InsertResult<TNodeId> {
     },
     /// The attempted entry failed to pass the filter.
     FailedFilter,
+    /// There were too many incoming nodes for this bucket.
+    TooManyIncoming,
     /// The entry was not inserted because the relevant bucket is full.
     Full,
+    /// The entry already exists.
+    NodeExists,
+}
+
+/// The result of performing an update on a kbucket/table.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateResult {
+    /// The node was updated successfully,
+    Updated,
+    /// The update promoted the node to a connected state from a disconnected state.
+    UpdatedAndPromoted,
+    /// The pending entry was updated.
+    UpdatedPending,
+    /// The update removed the node because it would violate the incoming peers condition.
+    UpdateFailed(FailureReason),
+}
+
+impl UpdateResult {
+    // The update failed.
+    pub fn failed(&self) -> bool {
+        match self {
+            UpdateResult::UpdateFailed(_) => true,
+            _ => false,
+        }
+    }
+}
+
+/// A reason for failing to update or insert a node into the bucket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailureReason {
+    /// Too many incoming nodes already in the bucket.
+    TooManyIncoming,
+    /// The node didn't pass the bucket filter.
+    BucketFilter,
+    /// The node didn't pass the table filter.
+    TableFilter,
+    /// The node didn't exist.
+    KeyNonExistant,
+    /// The bucket was full.
+    BucketFull,
+    /// Cannot update self,
+    InvalidSelfUpdate,
 }
 
 /// The result of applying a pending node to a bucket, possibly
@@ -169,6 +228,7 @@ where
     /// Creates a new `KBucket` with the given timeout for pending entries.
     pub fn new(
         pending_timeout: Duration,
+        max_incoming: usize,
         filter: Option<impl Fn(&TVal, impl Iterator<&Tval>) -> bool>,
     ) -> Self {
         KBucket {
@@ -177,6 +237,7 @@ where
             pending: None,
             pending_timeout,
             filter,
+            max_incoming,
         }
     }
 
@@ -197,11 +258,8 @@ where
     }
 
     /// Returns an iterator over the nodes in the bucket, together with their status.
-    pub fn iter(&self) -> impl Iterator<Item = (&Node<TNodeId, TVal>, NodeStatus)> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .map(move |(p, n)| (n, self.status(Position(p))))
+    pub fn iter(&self) -> impl Iterator<Item = &Node<TNodeId, TVal>> {
+        self.nodes.iter()
     }
 
     /// Inserts the pending node into the bucket, if its timeout has elapsed,
@@ -214,15 +272,32 @@ where
         if let Some(pending) = self.pending.take() {
             if pending.replace <= Instant::now() {
                 if self.nodes.is_full() {
-                    if self.status(Position(0)) == NodeStatus::Connected {
+                    // Apply bucket filters
+
+                    // Check if the bucket is full
+                    if self.nodes[0].is_connected() {
                         // The bucket is full with connected nodes. Drop the pending node.
                         return None;
                     }
+                    // Check the custom filter
+                    if let Some(filter) = self.filter {
+                        if !filter(node.value, self.iter().map(|(node, _)| &node.value)) {
+                            return None;
+                        }
+                    }
+                    // Check the incoming node restriction
+                    if let NodesStatus::ConnectedIncoming = pending.status {
+                        // Make sure this doesn't violate the incoming conditions
+                        if self.is_max_incoming() {
+                            return None;
+                        }
+                    }
+
                     // The pending node will be inserted.
                     let inserted = pending.node.key.clone();
                     // A connected pending node goes at the end of the list for
                     // the connected peers, removing the least-recently connected.
-                    if pending.status == NodeStatus::Connected {
+                    if pending.status.is_connected() {
                         let evicted = Some(self.nodes.remove(0));
                         self.first_connected_pos = self
                             .first_connected_pos
@@ -248,14 +323,14 @@ where
                 } else {
                     // There is room in the bucket, so just insert the pending node.
                     let inserted = pending.node.key.clone();
-                    match self.insert(pending.node, pending.status) {
+                    match self.insert(pending.node) {
                         InsertResult::Inserted => {
                             return Some(AppliedPending {
                                 inserted,
                                 evicted: None,
                             })
                         }
-                        _ => unreachable!("Bucket is not full."),
+                        _ => unreachable!("Bucket is not full."), // Bucket filter should already be checked
                     }
                 }
             } else {
@@ -274,8 +349,9 @@ where
     }
 
     /// Updates the status of the node referred to by the given key, if it is
-    /// in the bucket.
-    pub fn update(&mut self, key: &Key<TNodeId>, status: NodeStatus) {
+    /// in the bucket. If the node is not in the bucket, or the update would violate a bucket
+    /// filter or incoming limits, returns an update result indicating the outcome.
+    pub fn update_status(&mut self, key: &Key<TNodeId>, status: NodeStatus) -> UpdateResult {
         // Remove the node from its current position and then reinsert it
         // with the desired status, which puts it at the end of either the
         // prefix list of disconnected nodes or the suffix list of connected
@@ -283,11 +359,13 @@ where
         // respectively).
         if let Some(pos) = self.position(key) {
             // Remove the node from its current position.
-            let old_status = self.status(pos);
-            let node = self.nodes.remove(pos.0);
+            let mut node = self.nodes.remove(pos.0);
+            let old_status = node.status;
+            node.status = status;
+
             // Adjust `first_connected_pos` accordingly.
             match old_status {
-                NodeStatus::Connected => {
+                NodeStatus::ConnectedIncoming | NodeStatus::ConnectedOutgoing => {
                     if self.first_connected_pos.map_or(false, |p| p == pos.0)
                         && pos.0 == self.nodes.len()
                     {
@@ -302,13 +380,91 @@ where
             }
             // If the least-recently connected node re-establishes its
             // connected status, drop the pending node.
-            if pos == Position(0) && status == NodeStatus::Connected {
+            if pos == Position(0) && status.is_connected() {
                 self.pending = None
             }
             // Reinsert the node with the desired status.
-            match self.insert(node, status) {
-                InsertResult::Inserted => {}
+            match self.insert(node) {
+                InsertResult::Inserted => {
+                    if node.status == old_status {
+                        UpdateResult::NotModified
+                    } else if old_status == NodeStatus::Disconnected {
+                        // This means the status was updated from a disconnected state to connected
+                        // state
+                        UpdateResult::UpdatedAndPromoted;
+                    } else {
+                        UpdateResult::Updated;
+                    }
+                }
+                InsertResult::TooManyIncoming => {
+                    UpdateResult::Failed(FailureReason::TooManyIncoming)
+                } // Node could not be inserted
                 _ => unreachable!("The node is removed before being (re)inserted."),
+            }
+        } else {
+            if let Some(pending) = &mut self.pending {
+                if pending.node.key == key {
+                    pending.node.status = status;
+                    return UpdateResult::UpdatedPending;
+                }
+            } else {
+                UpdateResult::Failure(FailureReason::KeyNonExistant)
+            }
+        }
+    }
+
+    /// Updates the value of the node referred to by the given key, if it is
+    /// in the bucket. If the node is not in the bucket, or the update would violate a bucket
+    /// filter or incoming limits, returns false and removes the node from the bucket.
+    pub fn update_value(&mut self, key: &Key<TNodeId>, value: TVal) -> UpdateResult {
+        // Remove the node from its current position, check the filter and add it back in.
+
+        if let Some(pos) = self.position(key) {
+            // Remove the node from its current position.
+            let mut node = self.nodes.remove(pos.0);
+            let modified = node.value == value;
+            node.value = value;
+
+            // Adjust `first_connected_pos` accordingly.
+            match node.status {
+                NodeStatus::ConnectedIncoming | NodeStatus::ConnectedOutgoing => {
+                    if self.first_connected_pos.map_or(false, |p| p == pos.0)
+                        && pos.0 == self.nodes.len()
+                    {
+                        // It was the last connected node.
+                        self.first_connected_pos = None
+                    }
+                }
+                NodeStatus::Disconnected => {
+                    self.first_connected_pos =
+                        self.first_connected_pos.and_then(|p| p.checked_sub(1))
+                }
+            }
+            // If the least-recently connected node re-establishes its
+            // connected status, drop the pending node.
+            if pos == Position(0) && status.is_connected() {
+                self.pending = None
+            }
+            // Reinsert the node with the desired status.
+            match self.insert(node) {
+                InsertResult::Inserted => {
+                    if modified {
+                        UpdateResult::Modified
+                    } else {
+                        UpdateResult::NotModified
+                    }
+                }
+                InsertResult::FailedFilter => UpdateResult::FailedFilter, // The update could fail the bucket filter.
+                _ => unreachable!("The node is removed before being (re)inserted."),
+            }
+        } else {
+            if let Some(pending) = &mut self.pending {
+                if pending.node.key == key {
+                    pending.node.status = status;
+                    return UpdateResult::UpdatedPending;
+                }
+            } else {
+                UpdateResult::KeyNonExistant
             }
         }
     }
@@ -317,7 +473,7 @@ where
     ///
     /// The status of the node to insert determines the result as follows:
     ///
-    ///   * `NodeStatus::Connected`: If the bucket is full and either all nodes are connected
+    ///   * `NodeStatus::ConnectedIncoming` or `NodeStatus::ConnectedOutgoing`: If the bucket is full and either all nodes are connected
     ///     or there is already a pending node, insertion fails with `InsertResult::Full`.
     ///     If the bucket is full but at least one node is disconnected and there is no pending
     ///     node, the new node is inserted as pending, yielding `InsertResult::Pending`.
@@ -332,27 +488,35 @@ where
     ///
     /// The insert can fail if a provided bucket filter does not pass. If a node is attempted
     /// to be inserted that doesn't pass the bucket filter, `InsertResult::FailedFilter` will be
-    /// returned.
-    pub fn insert(
-        &mut self,
-        node: Node<TNodeId, TVal>,
-        status: NodeStatus,
-    ) -> InsertResult<TNodeId> {
-        // check the filter first
+    /// returned. Similarly, if the inserted node would violate the `max_incoming` value, the
+    /// result will return `InsertResult::TooManyIncoming`.
+    pub fn insert(&mut self, node: Node<TNodeId, TVal>) -> InsertResult<TNodeId> {
+        // Prevent inserting duplicate nodes.
+        if self.position(node.key).is_some() {
+            return InsertResult::NodeExists;
+        }
+
+        // check bucket filter
         if let Some(filter) = self.filter {
             if !filter(node.value, self.iter().map(|(node, _)| &node.value)) {
                 return InsertResult::FailedFilter;
             }
         }
-        match status {
-            NodeStatus::Connected => {
+
+        match node.status {
+            NodeStatus::ConnectedIncoming | NodeStatus::ConnectedOutgoing => {
+                if let NodeStatus::ConnectedOutgoing = status {
+                    // check the maximum counter
+                    if self.is_max_incoming() {
+                        return InsertResult::TooManyIncoming;
+                    }
+                }
                 if self.nodes.is_full() {
                     if self.first_connected_pos == Some(0) || self.pending.is_some() {
                         return InsertResult::Full;
                     } else {
                         self.pending = Some(PendingNode {
                             node,
-                            status: NodeStatus::Connected,
                             replace: Instant::now() + self.pending_timeout,
                         });
                         return InsertResult::Pending {
@@ -390,15 +554,6 @@ where
         }
     }
 
-    /// Returns the status of the node at the given position.
-    pub fn status(&self, pos: Position) -> NodeStatus {
-        if self.first_connected_pos.map_or(false, |i| pos.0 >= i) {
-            NodeStatus::Connected
-        } else {
-            NodeStatus::Disconnected
-        }
-    }
-
     /// Gets the number of entries currently in the bucket.
     pub fn num_entries(&self) -> usize {
         self.nodes.len()
@@ -426,6 +581,16 @@ where
     pub fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
         self.nodes.iter_mut().find(move |p| &p.key == key)
     }
+
+    /// Returns whether the bucket has reached its maximum capacity of incoming nodes. This is used
+    /// to determine if new nodes can be added to the bucket or not.
+    fn is_max_incoming(&self) -> bool {
+        self.nodes
+            .iter()
+            .filter(|node| node.status == NodeStatus::ConnectedIncoming)
+            .count()
+            >= self.max_incoming
+    }
 }
 
 #[cfg(test)]
@@ -443,14 +608,17 @@ mod tests {
             let num_nodes = g.gen_range(1, MAX_NODES_PER_BUCKET + 1);
             for _ in 0..num_nodes {
                 let key = Key::from(NodeId::random());
-                let node = Node {
-                    key: key.clone(),
-                    value: (),
-                };
-                let status = NodeStatus::arbitrary(g);
-                match bucket.insert(node, status) {
-                    InsertResult::Inserted => {}
-                    _ => panic!(),
+                loop {
+                    let node = Node {
+                        key: key.clone(),
+                        value: (),
+                        status: NodeStatus::arbitrary(g),
+                    };
+                    match bucket.insert(node) {
+                        InsertResult::Inserted => break,
+                        InsertResult::TooManyIncoming => {}
+                        _ => panic!(),
+                    }
                 }
             }
             bucket
@@ -459,10 +627,10 @@ mod tests {
 
     impl Arbitrary for NodeStatus {
         fn arbitrary<G: Gen>(g: &mut G) -> NodeStatus {
-            if g.gen() {
-                NodeStatus::Connected
-            } else {
-                NodeStatus::Disconnected
+            match g.gen_range(1, 3) {
+                1 => NodeStatus::ConnectedOutgoing,
+                2 => NodeStatus::ConnectedIncoming,
+                3 => NodeStatus::Disconnected,
             }
         }
     }
@@ -478,8 +646,12 @@ mod tests {
         let num_entries_start = bucket.num_entries();
         for i in 0..MAX_NODES_PER_BUCKET - num_entries_start {
             let key = Key::from(NodeId::random());
-            let node = Node { key, value: () };
-            assert_eq!(InsertResult::Inserted, bucket.insert(node, status));
+            let node = Node {
+                key,
+                value: (),
+                status,
+            };
+            assert_eq!(InsertResult::Inserted, bucket.insert(node));
             assert_eq!(bucket.num_entries(), num_entries_start + i + 1);
         }
     }
@@ -542,8 +714,12 @@ mod tests {
 
         // Trying to insert another disconnected node fails.
         let key = Key::from(NodeId::random());
-        let node = Node { key, value: () };
-        match bucket.insert(node, NodeStatus::Disconnected) {
+        let node = Node {
+            key,
+            value: (),
+            status: NodeStatus::Disconnected,
+        };
+        match bucket.insert(node) {
             InsertResult::Full => {}
             x => panic!("{:?}", x),
         }
@@ -560,8 +736,9 @@ mod tests {
             let node = Node {
                 key: key.clone(),
                 value: (),
+                status: NodeStatus::ConnectedOutgoing,
             };
-            match bucket.insert(node.clone(), NodeStatus::Connected) {
+            match bucket.insert(node.clone()) {
                 InsertResult::Pending { disconnected } => {
                     assert_eq!(disconnected, first_disconnected.key)
                 }
@@ -600,8 +777,12 @@ mod tests {
 
         // Trying to insert another connected node fails.
         let key = Key::from(NodeId::random());
-        let node = Node { key, value: () };
-        match bucket.insert(node, NodeStatus::Connected) {
+        let node = Node {
+            key,
+            value: (),
+            status: NodeStatus::ConnectedOutgoing,
+        };
+        match bucket.insert(node) {
             InsertResult::Full => {}
             x => panic!("{:?}", x),
         }
@@ -619,8 +800,9 @@ mod tests {
         let node = Node {
             key: key.clone(),
             value: (),
+            status: NodeStatus::Connected,
         };
-        if let InsertResult::Pending { disconnected } = bucket.insert(node, NodeStatus::Connected) {
+        if let InsertResult::Pending { disconnected } = bucket.insert(node) {
             assert_eq!(&disconnected, &first_disconnected.key);
         } else {
             panic!()
@@ -628,7 +810,7 @@ mod tests {
         assert!(bucket.pending().is_some());
 
         // Update the status of the first disconnected node to be connected.
-        bucket.update(&first_disconnected.key, NodeStatus::Connected);
+        bucket.update_status(&first_disconnected.key, NodeStatus::Connected);
 
         // The pending node has been discarded.
         assert!(bucket.pending().is_none());
@@ -648,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn bucket_update() {
+    fn bucket_update_status() {
         fn prop(mut bucket: KBucket<NodeId, ()>, pos: Position, status: NodeStatus) -> bool {
             let num_nodes = bucket.num_entries();
 
@@ -663,7 +845,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             // Update the node in the bucket.
-            bucket.update(&key, status);
+            bucket.update_status(&key, status);
 
             // Check that the bucket now contains the node with the new status,
             // preserving the status and relative order of all other nodes.

@@ -119,6 +119,38 @@ pub struct KBucketsTable<TNodeId, TVal> {
     table_filter: Option<impl Fn(TVal, impl Iterator<Item = &TVal>) -> bool>,
 }
 
+#[must_use]
+#[derive(Debug, Clone)]
+/// Informs if the record was inserted.
+pub enum InsertResult {
+    /// The node didn't exist and the new record was inserted.
+    Inserted,
+    /// The node was inserted into a pending state.
+    Pending {
+        /// The key of the least-recently connected entry that is currently considered
+        /// disconnected and whose corresponding peer should be checked for connectivity
+        /// in order to prevent it from being evicted. If connectivity to the peer is
+        /// re-established, the corresponding entry should be updated with
+        /// [`NodeStatus::Connected`].
+        disconnected: Key<TNodeId>,
+    },
+    /// The node existed and the status was updated.
+    StatusUpdated {
+        // Returns true if the status updated promoted a disconnected node to a connected node.
+        promoted_to_connected: bool,
+    },
+    /// The node existed and the value was updated.
+    ValueUpdated,
+    /// Both the status and value were updated.
+    Updated {
+        // Returns true if the status updated promoted a disconnected node to a connected node.
+        promoted_to_connected: bool,
+    },
+    /// The record failed to be inserted. This can happen to not passing table/bucket filters or
+    /// the bucket was full.
+    Failed(bucket::FailureReason),
+}
+
 /// A (type-safe) index into a `KBucketsTable`, i.e. a non-negative integer in the
 /// interval `[0, NUM_BUCKETS)`.
 #[derive(Copy, Clone)]
@@ -160,14 +192,149 @@ where
     pub fn new(
         local_key: Key<TNodeId>,
         pending_timeout: Duration,
-        filter: Option<impl Fn(TVal, impl Iterator<&TVal>) -> bool>,
+        max_incoming_per_bucket: usize,
+        table_filter: Option<impl Fn(TVal, impl Iterator<&TVal>) -> bool>,
     ) -> Self {
         KBucketsTable {
             local_key,
             buckets: (0..NUM_BUCKETS)
-                .map(|_| KBucket::new(pending_timeout, filter))
+                .map(|_| KBucket::new(pending_timeout, max_incoming_per_bucket, filter))
                 .collect(),
             applied_pending: VecDeque::new(),
+            table_filter,
+        }
+    }
+
+    pub fn update_node_status(&mut self, key: &Key<TNodeId>, status: NodeStatus) -> UpdateResult {
+        let index = BucketIndex::new(&self.local_key.distance(key));
+        if let Some(i) = index {
+            let bucket = &mut self.buckets[i.get()];
+            if let Some(applied) = bucket.apply_pending() {
+                self.applied_pending.push_back(applied)
+            }
+
+            bucket.update(key, status)
+        } else {
+            UpdateResult::NotModified // The key refers to our current node.
+        }
+    }
+
+    pub fn update_node_value(&mut self, key: &Key<TNodeId>, value: TVal) -> UpdateResult {
+        // Apply the table filter
+        let mut satisfy_table_filter = false;
+
+        let index = BucketIndex::new(&self.local_key.distance(key));
+        if let Some(i) = index {
+            let bucket = &mut self.buckets[i.get()];
+            if let Some(applied) = bucket.apply_pending() {
+                self.applied_pending.push_back(applied)
+            }
+
+            if let Some(table_filter) = self.table_filter {
+                if !table_filter(
+                    &value,
+                    self.iter()
+                        .map(|entry| entry.value)
+                        .filter(|iter_value| iter_value != value),
+                ) {
+                    bucket.remove(key);
+                    return UpdateResult::UpdateFailed(FailureReason::TableFilter);
+                }
+            }
+            bucket.update_value(key, value)
+        } else {
+            UpdateResult::NotModified // The key refers to our current node.
+        }
+    }
+
+    // Attempts to insert or update
+    pub fn insert_or_update(
+        &mut self,
+        key: &Key<TNodeId>,
+        value: TVal,
+        status: NodeStatus,
+    ) -> InsertResult {
+        let index = BucketIndex::new(&self.local_key.distance(key));
+        if let Some(i) = index {
+            let bucket = &mut self.buckets[i.get()];
+            if let Some(applied) = bucket.apply_pending() {
+                self.applied_pending.push_back(applied)
+            }
+
+            // Check the table filter
+            if !table_filter(
+                &value,
+                self.iter()
+                    .map(|entry| entry.value)
+                    .filter(|iter_value| iter_value != value),
+            ) {
+                bucket.remove(key);
+                return UpdateResult::UpdateFailed(FailureReason::TableFilter);
+            }
+
+            // If the node doesn't exist, insert it
+            if bucket.position(key).is_none() {
+                let node = Node { key, value, status };
+                match bucket.insert(node) {
+                    bucket::InsertResult::NodeExists
+                    | bucket::InsertResult::Full
+                    | bucket::InsertResult::TooManyIncoming
+                    | bucket::InsertResult::FailedFilter => InsertResult::Failed,
+                    bucket::InsertResult::Pending { disconnected } => {
+                        InsertResult::Pending { disconnected }
+                    }
+                    bucket::InsertResult::Inserted => InsertResult::Inserted,
+                }
+            } else {
+                // The node exists in the bucket
+                // Attempt to update the status
+                let update_status = bucket.update_status(key, status);
+
+                if update_status.failed() {
+                    // The node was removed from the table
+                    return InsertResult::FailedFilter;
+                }
+                // Attempt to update the value
+                let update_value = bucket.update_value(key, value);
+
+                if update_value.failed() {
+                    // The value update failed and the node was removed
+                    return InsertResult::FailedFilter;
+                }
+
+                match (update_value, update_status) {
+                    (UpdateResult::Updated { .. }, UpdateResult::Updated) => {
+                        InsertResult::Updated {
+                            promoted_to_connected: false,
+                        }
+                    }
+                    (UpdateResult::Updated { .. }, UpdateResult::UpdatedAndPromoted) => {
+                        InsertResult::Updated {
+                            promoted_to_connected: true,
+                        }
+                    }
+                    (UpdateResult::Updated { .. }, UpdateResult::NotModified) => {
+                        InsertResult::ValueUpdated
+                    }
+                    (UpdateResult::NotModified, UpdateResult::Updated) => {
+                        InsertResult::StatusUpdated {
+                            promoted_to_connected: false,
+                        }
+                    }
+                    (UpdateResult::NotModified, UpdateResult::UpdatedAndPromoted) => {
+                        InsertResult::StatusUpdated {
+                            promoted_to_connected: true,
+                        }
+                    }
+                    (UpdateResult::UpdatedPending, _) | (_, UpdateResult::UpdatedPending) => {
+                        InsertResult::UpdatedPending
+                    }
+                    (_, _) => unreachable!("Node must exist and pass filters by this point."),
+                }
+            }
+        } else {
+            // Cannot insert our local entry.
+            InsertResult::Failed(FailureResult::InvalidSelfUpdate)
         }
     }
 
@@ -187,6 +354,8 @@ where
 
     /// Returns an `Entry` for the given key, representing the state of the entry
     /// in the routing table.
+    /// NOTE: This must be used with caution. Modifying values manually can bypass the internal
+    /// table filters and ingoing/outgoing limits.
     pub fn entry<'a>(&'a mut self, key: &'a Key<TNodeId>) -> Entry<'a, TNodeId, TVal> {
         let index = BucketIndex::new(&self.local_key.distance(key));
         if let Some(i) = index {
@@ -202,10 +371,9 @@ where
 
     /// Returns an iterator over all the entries in the routing table.
     pub fn iter(&mut self) -> impl Iterator<Item = EntryRefView<'_, TNodeId, TVal>> {
-        let applied_pending = &mut self.applied_pending;
         self.buckets.iter_mut().flat_map(move |table| {
             if let Some(applied) = table.apply_pending() {
-                applied_pending.push_back(applied)
+                self.applied_pending.push_back(applied)
             }
             table.iter().map(move |(n, status)| EntryRefView {
                 node: NodeRefView {
@@ -596,6 +764,7 @@ mod tests {
                                         evicted: Some(Node {
                                             key: disconnected,
                                             value: (),
+                                            status: NodeStatus::Disconnected,
                                         }),
                                     };
                                     full_bucket_index = BucketIndex::new(&key.distance(&local_key));
