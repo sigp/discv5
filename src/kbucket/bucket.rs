@@ -60,6 +60,15 @@ pub enum NodeStatus {
     Disconnected,
 }
 
+impl NodeStatus {
+    fn is_connected(&self) -> bool {
+        match self {
+            NodeStatus::Disconnected => false,
+            _ => true,
+        }
+    }
+}
+
 impl<TNodeId, TVal> PendingNode<TNodeId, TVal> {
     pub fn status(&self) -> NodeStatus {
         self.node.status
@@ -103,7 +112,7 @@ pub struct Position(usize);
 
 /// A `KBucket` is a list of up to `MAX_NODES_PER_BUCKET` `Key`s and associated values,
 /// ordered from least-recently connected to most-recently connected.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct KBucket<TNodeId, TVal> {
     /// The nodes contained in the bucket.
     nodes: ArrayVec<Node<TNodeId, TVal>, MAX_NODES_PER_BUCKET>,
@@ -134,7 +143,7 @@ pub struct KBucket<TNodeId, TVal> {
 
     /// An optional filter that filters new entries given an iterator over current entries in
     /// the bucket.
-    filter: Option<impl Fn(TVal, impl Iterator<Item = &TVal>) -> bool>,
+    filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
 
     /// The maximum number of incoming connections allowed per bucket. Setting this to
     /// MAX_NODES_PER_BUCKET means there is no restriction on incoming nodes.
@@ -181,6 +190,8 @@ pub enum UpdateResult {
     UpdatedPending,
     /// The update removed the node because it would violate the incoming peers condition.
     UpdateFailed(FailureReason),
+    /// There were no changes made to the value of the node.
+    NotModified,
 }
 
 impl UpdateResult {
@@ -229,7 +240,7 @@ where
     pub fn new(
         pending_timeout: Duration,
         max_incoming: usize,
-        filter: Option<impl Fn(&TVal, impl Iterator<&Tval>) -> bool>,
+        filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
     ) -> Self {
         KBucket {
             nodes: ArrayVec::new(),
@@ -281,12 +292,15 @@ where
                     }
                     // Check the custom filter
                     if let Some(filter) = self.filter {
-                        if !filter(node.value, self.iter().map(|(node, _)| &node.value)) {
+                        if !filter.filter(
+                            &pending.node.value,
+                            self.iter().map(|(node, _)| &node.value),
+                        ) {
                             return None;
                         }
                     }
                     // Check the incoming node restriction
-                    if let NodesStatus::ConnectedIncoming = pending.status {
+                    if let NodeStatus::ConnectedIncoming = pending.status() {
                         // Make sure this doesn't violate the incoming conditions
                         if self.is_max_incoming() {
                             return None;
@@ -297,7 +311,7 @@ where
                     let inserted = pending.node.key.clone();
                     // A connected pending node goes at the end of the list for
                     // the connected peers, removing the least-recently connected.
-                    if pending.status.is_connected() {
+                    if pending.status().is_connected() {
                         let evicted = Some(self.nodes.remove(0));
                         self.first_connected_pos = self
                             .first_connected_pos
@@ -344,7 +358,7 @@ where
     /// Updates the status of the pending node, if any.
     pub fn update_pending(&mut self, status: NodeStatus) {
         if let Some(pending) = &mut self.pending {
-            pending.status = status
+            pending.node.status = status
         }
     }
 
@@ -391,24 +405,26 @@ where
                     } else if old_status == NodeStatus::Disconnected {
                         // This means the status was updated from a disconnected state to connected
                         // state
-                        UpdateResult::UpdatedAndPromoted;
+                        UpdateResult::UpdatedAndPromoted
                     } else {
-                        UpdateResult::Updated;
+                        UpdateResult::Updated
                     }
                 }
                 InsertResult::TooManyIncoming => {
-                    UpdateResult::Failed(FailureReason::TooManyIncoming)
+                    UpdateResult::UpdateFailed(FailureReason::TooManyIncoming)
                 } // Node could not be inserted
                 _ => unreachable!("The node is removed before being (re)inserted."),
             }
         } else {
             if let Some(pending) = &mut self.pending {
-                if pending.node.key == key {
+                if &pending.node.key == key {
                     pending.node.status = status;
-                    return UpdateResult::UpdatedPending;
+                    UpdateResult::UpdatedPending
+                } else {
+                    UpdateResult::UpdateFailed(FailureReason::KeyNonExistant)
                 }
             } else {
-                UpdateResult::Failure(FailureReason::KeyNonExistant)
+                UpdateResult::UpdateFailed(FailureReason::KeyNonExistant)
             }
         }
     }
@@ -442,7 +458,7 @@ where
             }
             // If the least-recently connected node re-establishes its
             // connected status, drop the pending node.
-            if pos == Position(0) && status.is_connected() {
+            if pos == Position(0) && node.status.is_connected() {
                 self.pending = None
             }
             // Reinsert the node with the desired status.
@@ -460,7 +476,7 @@ where
         } else {
             if let Some(pending) = &mut self.pending {
                 if pending.node.key == key {
-                    pending.node.status = status;
+                    pending.node.value = value;
                     return UpdateResult::UpdatedPending;
                 }
             } else {
@@ -505,7 +521,7 @@ where
 
         match node.status {
             NodeStatus::ConnectedIncoming | NodeStatus::ConnectedOutgoing => {
-                if let NodeStatus::ConnectedOutgoing = status {
+                if let NodeStatus::ConnectedOutgoing = node.status {
                     // check the maximum counter
                     if self.is_max_incoming() {
                         return InsertResult::TooManyIncoming;

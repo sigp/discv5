@@ -72,6 +72,7 @@
 
 mod bucket;
 mod entry;
+mod filter;
 mod key;
 
 pub use entry::*;
@@ -82,6 +83,10 @@ use std::{
     collections::VecDeque,
     time::{Duration, Instant},
 };
+
+pub use bucket::FailureReason;
+pub use bucket::UpdateResult;
+pub use filter::Filter;
 
 /// Maximum number of k-buckets.
 const NUM_BUCKETS: usize = 256;
@@ -116,13 +121,13 @@ pub struct KBucketsTable<TNodeId, TVal> {
     /// entries since the last call to [`KBucketsTable::take_applied_pending`].
     applied_pending: VecDeque<AppliedPending<TNodeId, TVal>>,
     /// Filter to be applied at the table level when adding/updating a node.
-    table_filter: Option<impl Fn(TVal, impl Iterator<Item = &TVal>) -> bool>,
+    table_filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
 }
 
 #[must_use]
 #[derive(Debug, Clone)]
 /// Informs if the record was inserted.
-pub enum InsertResult {
+pub enum InsertResult<TNodeId> {
     /// The node didn't exist and the new record was inserted.
     Inserted,
     /// The node was inserted into a pending state.
@@ -148,7 +153,7 @@ pub enum InsertResult {
     },
     /// The record failed to be inserted. This can happen to not passing table/bucket filters or
     /// the bucket was full.
-    Failed(bucket::FailureReason),
+    Failed(FailureReason),
 }
 
 /// A (type-safe) index into a `KBucketsTable`, i.e. a non-negative integer in the
@@ -193,12 +198,13 @@ where
         local_key: Key<TNodeId>,
         pending_timeout: Duration,
         max_incoming_per_bucket: usize,
-        table_filter: Option<impl Fn(TVal, impl Iterator<&TVal>) -> bool>,
+        table_filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
+        bucket_filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
     ) -> Self {
         KBucketsTable {
             local_key,
             buckets: (0..NUM_BUCKETS)
-                .map(|_| KBucket::new(pending_timeout, max_incoming_per_bucket, filter))
+                .map(|_| KBucket::new(pending_timeout, max_incoming_per_bucket, bucket_filter))
                 .collect(),
             applied_pending: VecDeque::new(),
             table_filter,
@@ -253,7 +259,7 @@ where
         key: &Key<TNodeId>,
         value: TVal,
         status: NodeStatus,
-    ) -> InsertResult {
+    ) -> InsertResult<TNodeId> {
         let index = BucketIndex::new(&self.local_key.distance(key));
         if let Some(i) = index {
             let bucket = &mut self.buckets[i.get()];
@@ -262,7 +268,7 @@ where
             }
 
             // Check the table filter
-            if !table_filter(
+            if !self.table_filter.filter(
                 &value,
                 self.iter()
                     .map(|entry| entry.value)
@@ -334,7 +340,7 @@ where
             }
         } else {
             // Cannot insert our local entry.
-            InsertResult::Failed(FailureResult::InvalidSelfUpdate)
+            InsertResult::Failed(FailureReason::InvalidSelfUpdate)
         }
     }
 
