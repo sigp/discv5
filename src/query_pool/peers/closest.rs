@@ -28,7 +28,6 @@ use crate::{
 };
 use std::{
     collections::btree_map::{BTreeMap, Entry},
-    iter::FromIterator,
     time::{Duration, Instant},
 };
 
@@ -100,17 +99,16 @@ where
         I: IntoIterator<Item = Key<TNodeId>>,
     {
         // Initialise the closest peers to begin the query with.
-        let closest_peers = BTreeMap::from_iter(
-            known_closest_peers
-                .into_iter()
-                .map(|key| {
-                    let key: Key<TNodeId> = key;
-                    let distance = key.distance(&target_key);
-                    let state = QueryPeerState::NotContacted;
-                    (distance, QueryPeer::new(key, state))
-                })
-                .take(config.num_results),
-        );
+        let closest_peers = known_closest_peers
+            .into_iter()
+            .map(|key| {
+                let key: Key<TNodeId> = key;
+                let distance = key.distance(&target_key);
+                let state = QueryPeerState::NotContacted;
+                (distance, QueryPeer::new(key, state))
+            })
+            .take(config.num_results)
+            .collect();
 
         // The query initially makes progress by iterating towards the target.
         let progress = QueryProgress::Iterating { no_progress: 0 };
@@ -506,9 +504,8 @@ mod tests {
             query.num_waiting, 0,
             "Unexpected peers in progress in new query."
         );
-        assert_eq!(
-            query.into_result().iter().count(),
-            0,
+        assert!(
+            query.into_result().is_empty(),
             "Unexpected closest peers in new query"
         );
     }

@@ -29,9 +29,9 @@ pub enum QueryType {
 
 impl QueryInfo {
     /// Builds an RPC Request, given the QueryInfo
-    pub(crate) fn rpc_request(&self, peer: &NodeId) -> Result<RequestBody, &'static str> {
+    pub(crate) fn rpc_request(&self, peer: NodeId) -> Result<RequestBody, &'static str> {
         let request = match self.query_type {
-            QueryType::FindNode(ref node_id) => {
+            QueryType::FindNode(node_id) => {
                 let distances = findnode_log2distance(node_id, peer, self.distances_to_request)
                     .ok_or("Requested a node find itself")?;
                 RequestBody::FindNode { distances }
@@ -58,14 +58,14 @@ impl crate::query_pool::TargetKey<NodeId> for QueryInfo {
 /// As the iteration increases, FINDNODE requests adjacent distances from the exact peer distance.
 ///
 /// As an example, if the target has a distance of 12 from the remote peer, the sequence of distances that are sent for increasing iterations would be [12, 13, 11, 14, 10, .. ].
-fn findnode_log2distance(target: &NodeId, peer: &NodeId, size: usize) -> Option<Vec<u64>> {
+fn findnode_log2distance(target: NodeId, peer: NodeId, size: usize) -> Option<Vec<u64>> {
     if size > 127 {
         // invoke and endless loop - coding error
         panic!("Iterations cannot be greater than 127");
     }
 
-    let dst_key: Key<NodeId> = peer.clone().into();
-    let distance = dst_key.log2_distance(&target.clone().into())?;
+    let dst_key: Key<NodeId> = peer.into();
+    let distance = dst_key.log2_distance(&target.into())?;
 
     let mut result_list = vec![distance];
     let mut difference = 1;
@@ -97,7 +97,7 @@ mod tests {
         let expected_distances = vec![169, 170, 168, 171, 167, 172, 166, 173, 165];
 
         assert_eq!(
-            findnode_log2distance(&target, &destination, expected_distances.len()).unwrap(),
+            findnode_log2distance(target, destination, expected_distances.len()).unwrap(),
             expected_distances
         );
     }
@@ -112,7 +112,7 @@ mod tests {
         let expected_distances = vec![4, 5, 3, 6, 2, 7, 1, 8, 0, 9, 10];
 
         assert_eq!(
-            findnode_log2distance(&target, &destination, expected_distances.len()).unwrap(),
+            findnode_log2distance(target, destination, expected_distances.len()).unwrap(),
             expected_distances
         );
     }
@@ -127,7 +127,7 @@ mod tests {
         let expected_distances = vec![252, 253, 251, 254, 250, 255, 249, 256, 248, 247, 246];
 
         assert_eq!(
-            findnode_log2distance(&target, &destination, expected_distances.len()).unwrap(),
+            findnode_log2distance(target, destination, expected_distances.len()).unwrap(),
             expected_distances
         );
     }
