@@ -143,7 +143,7 @@ pub struct KBucket<TNodeId, TVal> {
 
     /// An optional filter that filters new entries given an iterator over current entries in
     /// the bucket.
-    filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
+    filter: Option<Box<dyn Filter<TVal>>>,
 
     /// The maximum number of incoming connections allowed per bucket. Setting this to
     /// MAX_NODES_PER_BUCKET means there is no restriction on incoming nodes.
@@ -241,7 +241,7 @@ where
     pub fn new(
         pending_timeout: Duration,
         max_incoming: usize,
-        filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
+        filter: Option<Box<dyn Filter<TVal>>>,
     ) -> Self {
         KBucket {
             nodes: ArrayVec::new(),

@@ -121,7 +121,7 @@ pub struct KBucketsTable<TNodeId, TVal> {
     /// entries since the last call to [`KBucketsTable::take_applied_pending`].
     applied_pending: VecDeque<AppliedPending<TNodeId, TVal>>,
     /// Filter to be applied at the table level when adding/updating a node.
-    table_filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
+    table_filter: Option<Box<dyn Filter<TVal>>>,
 }
 
 #[must_use]
@@ -201,8 +201,8 @@ where
         local_key: Key<TNodeId>,
         pending_timeout: Duration,
         max_incoming_per_bucket: usize,
-        table_filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
-        bucket_filter: Option<Box<dyn Filter<TNodeId, TVal>>>,
+        table_filter: Option<Box<dyn Filter<TVal>>>,
+        bucket_filter: Option<Box<dyn Filter<TVal>>>,
     ) -> Self {
         KBucketsTable {
             local_key,
@@ -283,9 +283,13 @@ where
 
             // If the node doesn't exist, insert it
             if bucket.position(key).is_none() {
-                let node = Node { key, value, status };
+                let node = Node {
+                    key: key.clone(),
+                    value,
+                    status,
+                };
                 match bucket.insert(node) {
-                    bucket::InsertResult::NodeExists => unreachable("Node must exist"),
+                    bucket::InsertResult::NodeExists => unreachable!("Node must exist"),
                     bucket::InsertResult::Full => InsertResult::Failed(FailureReason::BucketFull),
                     bucket::InsertResult::TooManyIncoming => {
                         InsertResult::Failed(FailureReason::TooManyIncoming)
@@ -656,6 +660,7 @@ impl<TTarget, TNodeId, TVal, TMap, TOut> Iterator
     for ClosestIter<'_, TTarget, TNodeId, TVal, TMap, TOut>
 where
     TNodeId: Clone,
+    TVal: Eq,
     TMap: Fn(&KBucket<TNodeId, TVal>) -> ArrayVec<TOut, MAX_NODES_PER_BUCKET>,
     TOut: AsRef<Key<TNodeId>>,
 {
