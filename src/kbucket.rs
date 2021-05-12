@@ -86,8 +86,9 @@ use std::{
 
 pub use bucket::FailureReason;
 pub use bucket::UpdateResult;
-pub use filter::Filter;
+pub use filter::{Filter, IpBucketFilter, IpTableFilter};
 
+pub use bucket::MAX_NODES_PER_BUCKET;
 /// Maximum number of k-buckets.
 const NUM_BUCKETS: usize = 256;
 
@@ -112,7 +113,7 @@ impl<TNodeId: Clone> Into<Key<TNodeId>> for PredicateKey<TNodeId> {
 
 /// A `KBucketsTable` represents a Kademlia routing table.
 #[derive(Clone)]
-pub struct KBucketsTable<TNodeId, TVal> {
+pub struct KBucketsTable<TNodeId, TVal: Eq> {
     /// The key identifying the local peer that owns the routing table.
     local_key: Key<TNodeId>,
     /// The buckets comprising the routing table.
@@ -544,7 +545,7 @@ where
 
 /// An iterator over (some projection of) the closest entries in a
 /// `KBucketsTable` w.r.t. some target `Key`.
-struct ClosestIter<'a, TTarget, TNodeId, TVal, TMap, TOut> {
+struct ClosestIter<'a, TTarget, TNodeId, TVal: Eq, TMap, TOut> {
     /// A reference to the target key whose distance to the local key determines
     /// the order in which the buckets are traversed. The resulting
     /// array from projecting the entries of each bucket using `fmap` is

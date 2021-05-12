@@ -37,7 +37,7 @@ pub const MAX_NODES_PER_BUCKET: usize = 16;
 
 /// A `PendingNode` is a `Node` that is pending insertion into a `KBucket`.
 #[derive(Debug, Clone)]
-pub struct PendingNode<TNodeId, TVal> {
+pub struct PendingNode<TNodeId, TVal: Eq> {
     /// The pending node to insert.
     node: Node<TNodeId, TVal>,
 
@@ -61,7 +61,7 @@ pub enum NodeStatus {
 }
 
 impl NodeStatus {
-    fn is_connected(&self) -> bool {
+    pub fn is_connected(&self) -> bool {
         match self {
             NodeStatus::Disconnected => false,
             _ => true,
@@ -69,7 +69,7 @@ impl NodeStatus {
     }
 }
 
-impl<TNodeId, TVal> PendingNode<TNodeId, TVal> {
+impl<TNodeId, TVal: Eq> PendingNode<TNodeId, TVal> {
     pub fn status(&self) -> NodeStatus {
         self.node.status
     }
@@ -87,7 +87,7 @@ impl<TNodeId, TVal> PendingNode<TNodeId, TVal> {
 /// in the Kademlia DHT together with an associated value (e.g. contact
 /// information).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Node<TNodeId, TVal> {
+pub struct Node<TNodeId, TVal: Eq> {
     /// The key of the node, identifying the peer.
     pub key: Key<TNodeId>,
     /// The associated value.
@@ -96,7 +96,7 @@ pub struct Node<TNodeId, TVal> {
     pub status: NodeStatus,
 }
 
-impl<TNodeId, TVal> Node<TNodeId, TVal> {
+impl<TNodeId, TVal: Eq> Node<TNodeId, TVal> {
     fn is_connected(&self) -> bool {
         match self.status {
             NodeStatus::ConnectedOutgoing | NodeStatus::ConnectedIncoming => true,
@@ -113,7 +113,7 @@ pub struct Position(usize);
 /// A `KBucket` is a list of up to `MAX_NODES_PER_BUCKET` `Key`s and associated values,
 /// ordered from least-recently connected to most-recently connected.
 #[derive(Clone)]
-pub struct KBucket<TNodeId, TVal> {
+pub struct KBucket<TNodeId, TVal: Eq> {
     /// The nodes contained in the bucket.
     nodes: ArrayVec<Node<TNodeId, TVal>, MAX_NODES_PER_BUCKET>,
 
@@ -224,7 +224,7 @@ pub enum FailureReason {
 /// The result of applying a pending node to a bucket, possibly
 /// replacing an existing node.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppliedPending<TNodeId, TVal> {
+pub struct AppliedPending<TNodeId, TVal: Eq> {
     /// The key of the inserted pending node.
     pub inserted: Key<TNodeId>,
     /// The node that has been evicted from the bucket to make room for the
@@ -593,6 +593,15 @@ where
     /// Gets the position of an node in the bucket.
     pub fn position(&self, key: &Key<TNodeId>) -> Option<Position> {
         self.nodes.iter().position(|p| &p.key == key).map(Position)
+    }
+
+    /// Returns the status of the node at the given position.
+    pub fn status(&self, pos: Position) -> NodeStatus {
+        if let Some(node) = self.nodes.get(pos.0) {
+            node.status.clone()
+        } else {
+            NodeStatus::Disconnected
+        }
     }
 
     /// Gets a mutable reference to the node identified by the given key.

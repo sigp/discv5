@@ -38,17 +38,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::time::DelayQueue;
 use tracing::{debug, error, info, trace, warn};
 
-mod filters;
 mod ip_vote;
 mod query_info;
 mod test;
 
 /// The number of distances (buckets) we simultaneously request from each peer.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
-/// Number of permitted nodes in the same /24 subnet per table.
-const MAX_NODES_PER_SUBNET_TABLE: usize = 10;
-/// The number of nodes permitted in the same /24 subnet per bucket.
-const MAX_NODES_PER_SUBNET_BUCKET: usize = 2;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
@@ -76,7 +71,7 @@ pub struct Service {
     enr_key: Arc<RwLock<CombinedKey>>,
 
     /// Storage of the ENR record for each node.
-    kbuckets: Arc<RwLock<KBucketsTable<NodeId, TableEntry>>>,
+    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
 
     /// All the iterative queries we are currently performing.
     queries: QueryPool<QueryInfo, NodeId, Enr>,
@@ -160,7 +155,7 @@ impl Service {
     pub async fn spawn(
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
-        kbuckets: Arc<RwLock<KBucketsTable<NodeId, TableEntry>>>,
+        kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
         listen_socket: SocketAddr,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
@@ -328,7 +323,7 @@ impl Service {
                     let key = kbucket::Key::from(node_id);
                     if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
                         // The peer is in the routing table, ping it and re-queue the ping
-                        self.send_ping(entry.value().enr.clone());
+                        self.send_ping(entry.value().clone());
                         self.peers_to_ping.insert(node_id, self.config.ping_interval);
                     }
                 }
@@ -373,7 +368,7 @@ impl Service {
         let target_key: kbucket::Key<NodeId> = target.key();
 
         // Map the TableEntry to an ENR.
-        let kbucket_predicate = |e: &TableEntry| predicate(&e.enr);
+        let kbucket_predicate = |e: &Enr| predicate(&e);
 
         let known_closest_peers: Vec<kbucket::PredicateKey<NodeId>> = {
             let mut kbuckets = self.kbuckets.write();
@@ -393,7 +388,7 @@ impl Service {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
         if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
-            return Some(entry.value().enr.clone());
+            return Some(entry.value().clone());
         }
         // check the untrusted addresses for ongoing queries
         for query in self.queries.iter() {
@@ -422,14 +417,14 @@ impl Service {
                 let mut to_request_enr = None;
                 match self.kbuckets.write().entry(&node_address.node_id.into()) {
                     kbucket::Entry::Present(ref mut entry, _) => {
-                        if entry.value().enr.seq() < enr_seq {
-                            let enr = entry.value().enr.clone();
+                        if entry.value().seq() < enr_seq {
+                            let enr = entry.value().clone();
                             to_request_enr = Some(enr.into());
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
-                        if entry.value().enr.seq() < enr_seq {
-                            let enr = entry.value().enr.clone();
+                        if entry.value().seq() < enr_seq {
+                            let enr = entry.value().clone();
                             to_request_enr = Some(enr.into());
                         }
                     }
@@ -734,8 +729,8 @@ impl Service {
             kbuckets
                 .iter()
                 .filter_map(|entry| {
-                    if entry.status == NodeStatus::Connected {
-                        Some(entry.node.value.enr.clone())
+                    if entry.status.is_connected() {
+                        Some(entry.node.value.clone())
                     } else {
                         None
                     }
@@ -812,7 +807,7 @@ impl Service {
                 .into_iter()
                 .filter_map(|entry| {
                     if entry.node.key.preimage() != &node_address.node_id {
-                        Some(entry.node.value.enr.clone())
+                        Some(entry.node.value.clone())
                     } else {
                         None
                     }
@@ -967,35 +962,23 @@ impl Service {
                 // sequence number, perform some filter checks before updating the enr.
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Present(entry, _) => entry.value().enr.seq() < enr_ref.seq(),
-                    kbucket::Entry::Pending(entry, _) => entry.value().enr.seq() < enr_ref.seq(),
+                    kbucket::Entry::Present(entry, _) => entry.value().seq() < enr_ref.seq(),
+                    kbucket::Entry::Pending(entry, _) => entry.value().seq() < enr_ref.seq(),
                     _ => false,
                 };
 
                 if must_update_enr {
-                    // Check we do not violate any filters.
-                    // Only the IP filter needs to be checked here
-                    let filter_success = self.check_ip_filters(enr_ref);
-                    match self.kbuckets.write().entry(&key) {
-                        kbucket::Entry::Present(mut entry, _) => {
-                            if filter_success {
-                                trace!("ENR updated: {}", enr_ref);
-                                entry.value().enr = enr_ref.clone();
-                            } else {
-                                // Remove the violating entry
-                                entry.remove();
-                            }
+                    match self
+                        .kbuckets
+                        .write()
+                        .update_node_value(&key, enr_ref.clone())
+                    {
+                        UpdateResult::UpdateFailed(reason) => {
+                            debug!(
+                                "Failed to update discovered ENR. Node: {}, Reason: {:?}",
+                                source, reason
+                            );
                         }
-                        kbucket::Entry::Pending(mut entry, _) => {
-                            if filter_success {
-                                trace!("ENR updated: {}", enr_ref);
-                                entry.value().enr = enr_ref.clone();
-                            } else {
-                                // Remove the violating entry
-                                entry.remove();
-                            }
-                        }
-                        kbucket::Entry::Absent(_entry) => {}
                         _ => {}
                     }
                 }
@@ -1032,17 +1015,18 @@ impl Service {
     fn connection_updated(&mut self, node_id: NodeId, mut new_status: ConnectionStatus) {
         // Perform checks to verify this update is a valid candidate to modify the routing table.
         let mut ping_peer = None;
+        let key = kbucket::Key::from(node_id);
         match new_status {
-            ConnectionStatus::Connected(ref enr, direction) => {
+            ConnectionStatus::Connected(enr, direction) => {
                 // attempt to update or insert the new ENR.
                 match self
                     .kbuckets
                     .write()
-                    .insert_or_update(node_id, enr, direction.to_status())
+                    .insert_or_update(&key, enr, direction.to_status())
                 {
                     InsertResult::Inserted => {
                         // We added this peer to the table
-                        debug!("New connected node added to routing table: {}");
+                        debug!("New connected node added to routing table: {}", node_id);
                         self.peers_to_ping
                             .insert(node_id, self.config.ping_interval);
                         let event = Discv5Event::NodeInserted {
@@ -1053,7 +1037,7 @@ impl Service {
                         return;
                     }
                     InsertResult::Pending { disconnected } => {
-                        ping_peer = disconnected;
+                        ping_peer = Some(disconnected);
                     }
                     InsertResult::StatusUpdated {
                         promoted_to_connected,
@@ -1063,19 +1047,19 @@ impl Service {
                     } => {
                         // The node was updated
                         if promoted_to_connected {
-                            debug!("Node promoted to connected: {}");
+                            debug!("Node promoted to connected: {}", node_id);
                             self.peers_to_ping
                                 .insert(node_id, self.config.ping_interval);
                         }
                     }
-                    InsertResult::ValueUpdated => {}
+                    InsertResult::ValueUpdated | InsertResult::UpdatedPending => {}
                     InsertResult::Failed(reason) => {
                         trace!("Could not insert node: {}, reason: {:?}", node_id, reason);
                     }
                 }
             }
-            ConnectionStatus::PongReceived(ref enr) => {
-                match self.kbuckets.write().update_node_value(enr) {
+            ConnectionStatus::PongReceived(enr) => {
+                match self.kbuckets.write().update_node_value(&key, enr) {
                     UpdateResult::UpdateFailed(reason) => {
                         debug!(
                             "Could not update ENR from pong. Node: {}, reason: {:?}",
@@ -1090,19 +1074,19 @@ impl Service {
                 match self
                     .kbuckets
                     .write()
-                    .update_node_status(key, NodeStatus::Disconnected)
+                    .update_node_status(&key, NodeStatus::Disconnected)
                 {
-                    UpdateResult::Failed(reason) => match reason {
+                    UpdateResult::UpdateFailed(reason) => match reason {
                         FailureReason::KeyNonExistant => {}
                         others => {
                             warn!(
                                 "Could not update node to disconnected. Node: {}, Reason: {:?}",
-                                resaon
+                                node_id, reason
                             );
                         }
                     },
                     _ => {
-                        debug!("Node set to disconnected: {:?}", node_id)
+                        debug!("Node set to disconnected: {}", node_id)
                     }
                 }
                 self.peers_to_ping.remove(&node_id);
@@ -1110,14 +1094,9 @@ impl Service {
         };
 
         if let Some(node_id) = ping_peer {
-            // Check the status of this peer. If it is an outgoing peer, we send a ping and try to
-            // reconnect. If it is a peer that contacted us, we don't try to initiate a new
-            // connection.
-            if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
-                let value = entry.value();
-                if value.connection == NodeConnection::Outgoing {
-                    self.send_ping(value.enr.clone());
-                }
+            if let kbucket::Entry::Present(mut entry, _status) = self.kbuckets.write().entry(&key) {
+                // NOTE: We don't check the status of this peer. We try and ping outdated peers.
+                self.send_ping(entry.value().clone());
             }
         }
     }
@@ -1224,7 +1203,7 @@ impl Service {
     /// A future that maintains the routing table and inserts nodes when required. This returns the
     /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
     async fn bucket_maintenance_poll(
-        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, TableEntry>>>,
+        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
     ) -> Discv5Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.
@@ -1268,40 +1247,6 @@ impl Service {
         })
         .await
     }
-
-    // Misc helper functions
-
-    /// If the ip filter configuration is set, checks the routing table to see if the supplied
-    /// ENR passes the filter to be added.
-    fn check_ip_filter(&self, enr: &Enr) -> bool {
-        // If the ip limit functionality isn't set, the ENR can be added
-        if !self.config.ip_limit {
-            return true;
-        }
-
-        // Check the table-level IP filter.
-        let table_filter = filters::ip_filter(
-            enr,
-            self.kbuckets.read().iter_ref().map(|e| &e.node.value.enr),
-            MAX_NODES_PER_SUBNET_TABLE,
-        );
-
-        // Check the bucket-level IP filter.
-        let bucket_filter = {
-            if let Some(bucket) = self.kbuckets.read().get_bucket(&key) {
-                filters::ip_filter(
-                    enr,
-                    bucket.iter().map(|(node, _)| &node.value.enr),
-                    MAX_NODES_PER_SUBNET_BUCKET,
-                )
-            } else {
-                true
-            }
-        };
-
-        // If both the bucket and table level ip filters pass, return true
-        table_filter && bucket_filter
-    }
 }
 
 /// The result of the `query_event_poll` indicating an action is required to further progress an
@@ -1328,16 +1273,6 @@ pub enum QueryKind {
     },
 }
 
-/// Entries entered into the routing table. Each node has an ENR and a connection specifying
-/// whether we contacted the node or it contacted us.
-#[derive(Debug, Clone)]
-struct TableEntry {
-    /// The ENR of the node.
-    enr: Enr,
-    /// The direction of the connection for this node.
-    connection: NodeConnection,
-}
-
 /// How we connected to the node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeConnection {
@@ -1345,6 +1280,15 @@ pub enum NodeConnection {
     Incoming,
     /// We contacted the node.
     Outgoing,
+}
+
+impl NodeConnection {
+    fn to_status(&self) -> NodeStatus {
+        match &self {
+            NodeConnection::Incoming => NodeStatus::ConnectedIncoming,
+            NodeConnection::Outgoing => NodeStatus::ConnectedOutgoing,
+        }
+    }
 }
 
 /// Reporting the connection status of a node.
@@ -1355,15 +1299,6 @@ enum ConnectionStatus {
     PongReceived(Enr),
     /// The node has disconnected
     Disconnected,
-}
-
-impl ConnectionStatus {
-    fn node_status(&self) -> NodeStatus {
-        match &self {
-            ConnectionStatus::Connected(_, _) => NodeStatus::Connected,
-            ConnectionStatus::Disconnected => NodeStatus::Disconnected,
-        }
-    }
 }
 
 impl std::fmt::Display for NodeConnection {

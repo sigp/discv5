@@ -1,3 +1,4 @@
+use crate::kbucket::MAX_NODES_PER_BUCKET;
 use crate::{Enr, Executor, FilterConfig, PermitBanList};
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
@@ -50,7 +51,7 @@ pub struct Discv5Config {
     pub ip_limit: bool,
 
     /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
-    /// than the bucket size (16). By default, half of every bucket (8 positions) is the largest number of nodes that we accept that dial us.
+    /// than the bucket size (16). By default this is disabled (set to the maximum bucket size, 16).
     pub incoming_bucket_limit: usize,
 
     /// A filter used to decide whether to insert nodes into our local routing table. Nodes can be
@@ -98,7 +99,7 @@ impl Default for Discv5Config {
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
-            incoming_bucket_limit: 8,
+            incoming_bucket_limit: MAX_NODES_PER_BUCKET,
             table_filter: |_| true,
             talkreq_callback: |_, _| Vec::new(),
             ping_interval: Duration::from_secs(300),

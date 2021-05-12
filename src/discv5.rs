@@ -14,7 +14,7 @@
 
 use crate::{
     error::{Discv5Error, QueryError, RequestError},
-    kbucket::{self, ip_limiter, KBucketsTable, NodeStatus},
+    kbucket::{self, FailureReason, KBucketsTable, NodeStatus, UpdateResult},
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest},
     Discv5Config, Enr,
@@ -89,11 +89,26 @@ impl Discv5 {
             config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
         };
 
+        // NOTE: Currently we don't expose custom filter support in the configuration. Users can
+        // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
+        // may expose this functionality to the users if there is demand for it.
+        let (table_filter, bucket_filter) = if config.ip_limit {
+            (
+                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            )
+        } else {
+            (None, None)
+        };
+
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));
         let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
             local_enr.read().node_id().into(),
             Duration::from_secs(60),
+            config.incoming_bucket_limit,
+            table_filter,
+            bucket_filter,
         )));
 
         // Update the PermitBan list based on initial configuration
@@ -163,35 +178,23 @@ impl Discv5 {
 
         let key = kbucket::Key::from(enr.node_id());
 
-        // should the ENR be inserted or updated to a value that would exceed the IP limit ban
-        let ip_limit_ban = self.config.ip_limit
-            && !self
-                .kbuckets
-                .read()
-                .check(&key, &enr, |v, o, l| ip_limiter(v, &o, l));
-
-        match self.kbuckets.write().entry(&key) {
-            kbucket::Entry::Present(mut entry, _) => {
-                // still update an ENR, regardless of the IP limit ban
-                *entry.value() = enr;
+        match self
+            .kbuckets
+            .write()
+            .insert_or_update(&key, enr, NodeStatus::Disconnected)
+        {
+            UpdateResult::Updated
+            | UpdateResult::UpdatedAndPromoted
+            | UpdateResult::UpdatedPending
+            | UpdateResult::NotModified => Ok(()),
+            UpdateResult::UpdateFailed(FailureReason::Full) => Err("Table full"),
+            UpdateResult::UpdateFailed(FailureReason::BucketFilter) => Err("Failed bucket filter"),
+            UpdateResult::UpdateFailed(FailureReason::TableFilter) => Err("Failed table filter"),
+            UpdateResult::UpdateFailed(FailureReason::InvalidSelfUpdate) => {
+                Err("Invalid self update")
             }
-            kbucket::Entry::Pending(mut entry, _) => {
-                *entry.value() = enr;
-            }
-            kbucket::Entry::Absent(entry) => {
-                if !ip_limit_ban {
-                    match entry.insert(enr, NodeStatus::Disconnected) {
-                        kbucket::InsertResult::Inserted => {}
-                        kbucket::InsertResult::Full => {
-                            return Err("Table full");
-                        }
-                        kbucket::InsertResult::Pending { .. } => {}
-                    }
-                }
-            }
-            kbucket::Entry::SelfEntry => {}
-        };
-        Ok(())
+            UpdateResult::UpdateFailed(_) => Err("Failed to insert ENR"),
+        }
     }
 
     /// Removes a `node_id` from the routing table.
