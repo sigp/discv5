@@ -241,12 +241,7 @@ where
             }
 
             if let Some(table_filter) = self.table_filter {
-                if !table_filter.filter(
-                    &value,
-                    self.iter()
-                        .map(|entry| entry.value)
-                        .filter(|iter_value| iter_value != value),
-                ) {
+                if !table_filter.filter(&value, self.iter().map(|entry| entry.node.value)) {
                     bucket.remove(key);
                     return UpdateResult::UpdateFailed(FailureReason::TableFilter);
                 }

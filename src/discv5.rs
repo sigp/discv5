@@ -14,7 +14,7 @@
 
 use crate::{
     error::{Discv5Error, QueryError, RequestError},
-    kbucket::{self, FailureReason, KBucketsTable, NodeStatus, UpdateResult},
+    kbucket::{self, FailureReason, InsertResult, KBucketsTable, NodeStatus},
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest},
     Discv5Config, Enr,
@@ -183,17 +183,17 @@ impl Discv5 {
             .write()
             .insert_or_update(&key, enr, NodeStatus::Disconnected)
         {
-            UpdateResult::Updated
-            | UpdateResult::UpdatedAndPromoted
-            | UpdateResult::UpdatedPending
-            | UpdateResult::NotModified => Ok(()),
-            UpdateResult::UpdateFailed(FailureReason::Full) => Err("Table full"),
-            UpdateResult::UpdateFailed(FailureReason::BucketFilter) => Err("Failed bucket filter"),
-            UpdateResult::UpdateFailed(FailureReason::TableFilter) => Err("Failed table filter"),
-            UpdateResult::UpdateFailed(FailureReason::InvalidSelfUpdate) => {
-                Err("Invalid self update")
-            }
-            UpdateResult::UpdateFailed(_) => Err("Failed to insert ENR"),
+            InsertResult::Inserted
+            | InsertResult::Pending { .. }
+            | InsertResult::StatusUpdated { .. }
+            | InsertResult::ValueUpdated
+            | InsertResult::Updated { .. }
+            | InsertResult::UpdatedPending => Ok(()),
+            InsertResult::Failed(FailureReason::BucketFull) => Err("Table full"),
+            InsertResult::Failed(FailureReason::BucketFilter) => Err("Failed bucket filter"),
+            InsertResult::Failed(FailureReason::TableFilter) => Err("Failed table filter"),
+            InsertResult::Failed(FailureReason::InvalidSelfUpdate) => Err("Invalid self update"),
+            InsertResult::Failed(_) => Err("Failed to insert ENR"),
         }
     }
 
@@ -231,7 +231,7 @@ impl Discv5 {
         self.kbuckets
             .write()
             .iter()
-            .filter(|entry| entry.status == NodeStatus::Connected)
+            .filter(|entry| entry.status.is_connected())
             .count()
     }
 
