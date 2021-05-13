@@ -295,7 +295,7 @@ where
                     if let Some(filter) = self.filter {
                         if !filter.filter(
                             &pending.node.value,
-                            self.iter().map(|(node, _)| &node.value),
+                            &mut self.iter().map(|node| &node.value),
                         ) {
                             return None;
                         }
@@ -519,7 +519,7 @@ where
 
         // check bucket filter
         if let Some(filter) = self.filter {
-            if !filter.filter(node.value, self.iter().map(|(node, _)| &node.value)) {
+            if !filter.filter(&node.value, &mut self.iter().map(|node| &node.value)) {
                 return InsertResult::FailedFilter;
             }
         }
@@ -620,6 +620,21 @@ where
             .filter(|node| node.status == NodeStatus::ConnectedIncoming)
             .count()
             >= self.max_incoming
+    }
+}
+
+impl<TNodeId: std::fmt::Debug, TVal: Eq + std::fmt::Debug> std::fmt::Debug
+    for KBucket<TNodeId, TVal>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut builder = f.debug_struct("KBucket");
+        let _ = builder.field("nodes", &self.nodes);
+        let _ = builder.field("first_connected_pos", &self.first_connected_pos);
+        let _ = builder.field("pending", &self.pending);
+        let _ = builder.field("pending_timeout", &self.pending_timeout);
+        let _ = builder.field("filter", &self.filter.is_some());
+        let _ = builder.field("max_incoming", &self.max_incoming);
+        builder.finish()
     }
 }
 

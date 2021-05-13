@@ -86,7 +86,7 @@ use std::{
 
 pub use bucket::FailureReason;
 pub use bucket::UpdateResult;
-pub use filter::{Filter, IpBucketFilter, IpTableFilter};
+pub use filter::{Filter, FilterIterator, IpBucketFilter, IpTableFilter};
 
 pub use bucket::MAX_NODES_PER_BUCKET;
 /// Maximum number of k-buckets.
@@ -241,7 +241,7 @@ where
             }
 
             if let Some(table_filter) = self.table_filter {
-                if !table_filter.filter(&value, self.iter().map(|entry| entry.node.value)) {
+                if !table_filter.filter(&value, &mut self.iter().map(|entry| entry.node.value)) {
                     bucket.remove(key);
                     return UpdateResult::UpdateFailed(FailureReason::TableFilter);
                 }
@@ -267,14 +267,11 @@ where
             }
 
             // Check the table filter
-            if !self.table_filter.filter(
-                &value,
-                self.iter()
-                    .map(|entry| entry.value)
-                    .filter(|iter_value| iter_value != value),
-            ) {
-                bucket.remove(key);
-                return InsertResult::Failed(FailureReason::TableFilter);
+            if let Some(table_filter) = self.table_filter {
+                if !table_filter.filter(&value, &mut self.iter().map(|entry| entry.node.value)) {
+                    bucket.remove(key);
+                    return InsertResult::Failed(FailureReason::TableFilter);
+                }
             }
 
             // If the node doesn't exist, insert it

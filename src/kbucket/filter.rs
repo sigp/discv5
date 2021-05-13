@@ -3,16 +3,15 @@
 use crate::Enr;
 
 pub trait Filter<TVal: Eq>: FilterClone<TVal> + Send + Sync {
-    fn filter<'a>(
-        value_to_be_inserted: &'a TVal,
-        other_vals: impl Iterator<Item = &'a TVal>,
-    ) -> bool
-    where
-        Self: Sized;
+    fn filter(
+        &self,
+        value_to_be_inserted: &TVal,
+        other_vals: &mut dyn Iterator<Item = &TVal>,
+    ) -> bool;
 }
 
 /// Allow the trait objects to be cloneable.
-pub trait FilterClone<TVal> {
+pub trait FilterClone<TVal: Eq> {
     fn clone_box(&self) -> Box<dyn Filter<TVal>>;
 }
 
@@ -25,10 +24,15 @@ where
     }
 }
 
-impl<TVal> Clone for Box<dyn Filter<TVal>> {
+impl<TVal: Eq> Clone for Box<dyn Filter<TVal>> {
     fn clone(&self) -> Box<dyn Filter<TVal>> {
         self.clone_box()
     }
+}
+
+// Implementations of concrete types for the Iterators passed to the filter.
+pub struct FilterIterator<'a, TVal> {
+    pub x: Box<dyn Iterator<Item = &'a TVal>>,
 }
 
 // Implementation of an IP filter for buckets and for tables
@@ -42,9 +46,10 @@ const MAX_NODES_PER_SUBNET_BUCKET: usize = 2;
 pub struct IpTableFilter;
 
 impl Filter<Enr> for IpTableFilter {
-    fn filter<'a>(
-        value_to_be_inserted: &'a Enr,
-        other_vals: impl Iterator<Item = &'a Enr>,
+    fn filter(
+        &self,
+        value_to_be_inserted: &Enr,
+        other_vals: &mut dyn Iterator<Item = &Enr>,
     ) -> bool {
         ip_filter(value_to_be_inserted, other_vals, MAX_NODES_PER_SUBNET_TABLE)
     }
@@ -54,9 +59,10 @@ impl Filter<Enr> for IpTableFilter {
 pub struct IpBucketFilter;
 
 impl Filter<Enr> for IpBucketFilter {
-    fn filter<'a>(
-        value_to_be_inserted: &'a Enr,
-        other_vals: impl Iterator<Item = &'a Enr>,
+    fn filter(
+        &self,
+        value_to_be_inserted: &Enr,
+        other_vals: &mut dyn Iterator<Item = &Enr>,
     ) -> bool {
         ip_filter(
             value_to_be_inserted,
@@ -66,9 +72,9 @@ impl Filter<Enr> for IpBucketFilter {
     }
 }
 
-fn ip_filter<'a>(
-    value_to_be_inserted: &'a Enr,
-    other_vals: impl Iterator<Item = &'a Enr>,
+fn ip_filter(
+    value_to_be_inserted: &Enr,
+    other_vals: &mut dyn Iterator<Item = &Enr>,
     limit: usize,
 ) -> bool {
     if let Some(ip) = value_to_be_inserted.ip() {

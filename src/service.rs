@@ -35,26 +35,36 @@ use parking_lot::RwLock;
 use rpc::*;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll};
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::time::DelayQueue;
 use tracing::{debug, error, info, trace, warn};
 
+mod hashset_delay;
 mod ip_vote;
 mod query_info;
 mod test;
+
+use hashset_delay::HashSetDelay;
 
 /// The number of distances (buckets) we simultaneously request from each peer.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
+    /// A request to start a query. There are two types of queries:
+    /// - A FindNode Query - Searches for peers using a random target.
+    /// - A Predicate Query - Searches for peers closest to a random target that match a specified
+    /// predicate.
     StartQuery(QueryKind, oneshot::Sender<Vec<Enr>>),
+    /// Find the ENR of a node given its multiaddr.
     FindEnr(NodeContact, oneshot::Sender<Result<Enr, RequestError>>),
+    /// The TALK discv5 RPC function.
     Talk(
         NodeContact,
         Vec<u8>,
         Vec<u8>,
         oneshot::Sender<Result<Vec<u8>, RequestError>>,
     ),
+    /// Sets up an event stream where the discv5 server will return various events such as
+    /// discovered nodes as it traverses the DHT.
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
@@ -102,7 +112,7 @@ pub struct Service {
     exit: oneshot::Receiver<()>,
 
     /// A queue of peers that require regular ping to check connectivity.
-    peers_to_ping: DelayQueue<NodeId>,
+    peers_to_ping: HashSetDelay<NodeId>,
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
@@ -198,7 +208,7 @@ impl Service {
                     handler_send,
                     handler_recv,
                     handler_exit: Some(handler_exit),
-                    peers_to_ping: DelayQueue::new(),
+                    peers_to_ping: HashSetDelay::new(config.ping_interval),
                     discv5_recv,
                     event_stream: None,
                     exit,
@@ -317,14 +327,13 @@ impl Service {
                         }
                     }
                 }
-                Some(Ok(expired_element)) = self.peers_to_ping.next() => {
-                    let node_id = expired_element.into_inner();
+                Some(Ok(node_id)) = self.peers_to_ping.next() => {
                     // If the node is in the routing table, Ping it and re-queue the node.
                     let key = kbucket::Key::from(node_id);
                     if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
                         // The peer is in the routing table, ping it and re-queue the ping
                         self.send_ping(entry.value().clone());
-                        self.peers_to_ping.insert(node_id, self.config.ping_interval);
+                        self.peers_to_ping.insert(node_id);
                     }
                 }
             }
@@ -1027,8 +1036,7 @@ impl Service {
                     InsertResult::Inserted => {
                         // We added this peer to the table
                         debug!("New connected node added to routing table: {}", node_id);
-                        self.peers_to_ping
-                            .insert(node_id, self.config.ping_interval);
+                        self.peers_to_ping.insert(node_id);
                         let event = Discv5Event::NodeInserted {
                             node_id,
                             replaced: None,
@@ -1048,8 +1056,7 @@ impl Service {
                         // The node was updated
                         if promoted_to_connected {
                             debug!("Node promoted to connected: {}", node_id);
-                            self.peers_to_ping
-                                .insert(node_id, self.config.ping_interval);
+                            self.peers_to_ping.insert(node_id);
                         }
                     }
                     InsertResult::ValueUpdated | InsertResult::UpdatedPending => {}
