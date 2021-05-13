@@ -25,6 +25,7 @@
 use crate::{
     config::Discv5Config,
     error::{Discv5Error, RequestError},
+    kbucket::NodeStatus,
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
@@ -95,7 +96,7 @@ pub enum HandlerResponse {
     ///
     /// A session is only considered established once we have received a signed ENR from the
     /// node and received messages from it's `SocketAddr` matching it's ENR fields.
-    Established(Enr),
+    Established(Enr, NodeConnection),
 
     /// A Request has been received.
     Request(NodeAddress, Box<Request>),
@@ -119,9 +120,31 @@ pub enum HandlerResponse {
 pub struct WhoAreYouRef(pub NodeAddress, MessageNonce);
 
 #[derive(Debug)]
+/// A Challenge (WHOAREYOU) object used to handle and send WHOAREYOU requests.
 pub struct Challenge {
+    /// The challenge data received from the node.
     data: ChallengeData,
+    /// The remote's ENR if we know it. We can receive a challenge from an unknown node.
     remote_enr: Option<Enr>,
+}
+
+/// How we connected to the node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeConnection {
+    /// The node contacted us.
+    Incoming,
+    /// We contacted the node.
+    Outgoing,
+}
+
+impl NodeConnection {
+    /// Converts the connection into a NodeStatus object for handling in the routing table.
+    pub fn to_status(&self) -> NodeStatus {
+        match &self {
+            NodeConnection::Incoming => NodeStatus::ConnectedIncoming,
+            NodeConnection::Outgoing => NodeStatus::ConnectedOutgoing,
+        }
+    }
 }
 
 /// A request to a node that we are waiting for a response.
@@ -655,8 +678,9 @@ impl Handler {
                 self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
+                //
                 self.outbound_channel
-                    .send(HandlerResponse::Established(*enr))
+                    .send(HandlerResponse::Established(*enr, NodeConnection::Outgoing))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
@@ -736,9 +760,11 @@ impl Handler {
                     if self.verify_enr(&enr, &node_address) {
                         // Session is valid
                         // Notify the application
+                        // The session established here are from WHOAREYOU packets that we sent.
+                        // This occurs when a node established a connection with us.
                         let _ = self
                             .outbound_channel
-                            .send(HandlerResponse::Established(enr))
+                            .send(HandlerResponse::Established(enr, NodeConnection::Incoming))
                             .await;
                         self.new_session(node_address.clone(), session);
                         self.handle_message(

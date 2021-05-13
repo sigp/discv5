@@ -1280,24 +1280,6 @@ pub enum QueryKind {
     },
 }
 
-/// How we connected to the node.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NodeConnection {
-    /// The node contacted us.
-    Incoming,
-    /// We contacted the node.
-    Outgoing,
-}
-
-impl NodeConnection {
-    fn to_status(&self) -> NodeStatus {
-        match &self {
-            NodeConnection::Incoming => NodeStatus::ConnectedIncoming,
-            NodeConnection::Outgoing => NodeStatus::ConnectedOutgoing,
-        }
-    }
-}
-
 /// Reporting the connection status of a node.
 enum ConnectionStatus {
     /// A node has started a new connection with us.
