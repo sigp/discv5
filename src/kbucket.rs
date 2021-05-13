@@ -86,7 +86,7 @@ use std::{
 
 pub use bucket::FailureReason;
 pub use bucket::UpdateResult;
-pub use filter::{Filter, FilterIterator, IpBucketFilter, IpTableFilter};
+pub use filter::{Filter, IpBucketFilter, IpTableFilter};
 
 pub use bucket::MAX_NODES_PER_BUCKET;
 /// Maximum number of k-buckets.
@@ -208,7 +208,13 @@ where
         KBucketsTable {
             local_key,
             buckets: (0..NUM_BUCKETS)
-                .map(|_| KBucket::new(pending_timeout, max_incoming_per_bucket, bucket_filter))
+                .map(|_| {
+                    KBucket::new(
+                        pending_timeout,
+                        max_incoming_per_bucket,
+                        bucket_filter.clone(),
+                    )
+                })
                 .collect(),
             applied_pending: VecDeque::new(),
             table_filter,
@@ -231,7 +237,12 @@ where
 
     pub fn update_node_value(&mut self, key: &Key<TNodeId>, value: TVal) -> UpdateResult {
         // Apply the table filter
-        let mut satisfy_table_filter = false;
+        let mut passed_table_filter = false;
+        if let Some(table_filter) = self.table_filter.as_ref() {
+            if table_filter.filter(&value, &mut self.table_iter()) {
+                passed_table_filter = true;
+            }
+        }
 
         let index = BucketIndex::new(&self.local_key.distance(key));
         if let Some(i) = index {
@@ -240,12 +251,11 @@ where
                 self.applied_pending.push_back(applied)
             }
 
-            if let Some(table_filter) = self.table_filter {
-                if !table_filter.filter(&value, &mut self.iter().map(|entry| entry.node.value)) {
-                    bucket.remove(key);
-                    return UpdateResult::UpdateFailed(FailureReason::TableFilter);
-                }
+            if !passed_table_filter {
+                bucket.remove(key);
+                return UpdateResult::UpdateFailed(FailureReason::TableFilter);
             }
+
             bucket.update_value(key, value)
         } else {
             UpdateResult::NotModified // The key refers to our current node.
@@ -259,6 +269,14 @@ where
         value: TVal,
         status: NodeStatus,
     ) -> InsertResult<TNodeId> {
+        // Check the table filter
+        let mut passed_table_filter = false;
+        if let Some(table_filter) = self.table_filter.as_ref() {
+            if table_filter.filter(&value, &mut self.table_iter()) {
+                passed_table_filter = true;
+            }
+        }
+
         let index = BucketIndex::new(&self.local_key.distance(key));
         if let Some(i) = index {
             let bucket = &mut self.buckets[i.get()];
@@ -266,12 +284,9 @@ where
                 self.applied_pending.push_back(applied)
             }
 
-            // Check the table filter
-            if let Some(table_filter) = self.table_filter {
-                if !table_filter.filter(&value, &mut self.iter().map(|entry| entry.node.value)) {
-                    bucket.remove(key);
-                    return InsertResult::Failed(FailureReason::TableFilter);
-                }
+            if !passed_table_filter {
+                bucket.remove(key);
+                return InsertResult::Failed(FailureReason::TableFilter);
             }
 
             // If the node doesn't exist, insert it
@@ -394,6 +409,16 @@ where
                 status: n.status,
             })
         })
+    }
+
+    /// Returns an iterator over all the entries in the routing table to give to a table filter.
+    ///
+    /// This differs from the regular iterator as it doesn't take ownership of self and doesn't try
+    /// to apply any pending nodes.
+    fn table_iter(&self) -> impl Iterator<Item = &TVal> {
+        self.buckets
+            .iter()
+            .flat_map(move |table| table.iter().map(|n| &n.value))
     }
 
     /// Returns an iterator over all the entries in the routing table.

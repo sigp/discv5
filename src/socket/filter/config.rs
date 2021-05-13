@@ -14,6 +14,9 @@ pub struct FilterConfig {
     /// The maximum number of node-ids allowed per IP address before the IP address gets banned.
     /// Having this set to None, disables this feature. Default value is 10.
     pub max_nodes_per_ip: Option<usize>,
+    /// The maximum number of nodes that can be banned by a single IP before that IP gets banned.
+    /// The default is 5.
+    pub max_bans_per_ip: Option<usize>,
 }
 
 impl Default for FilterConfig {
@@ -24,6 +27,7 @@ impl Default for FilterConfig {
             max_requests_per_node_per_second: Some(10.0),
             max_requests_per_ip_per_second: Some(10.0),
             max_nodes_per_ip: Some(10),
+            max_bans_per_ip: Some(5),
         }
     }
 }

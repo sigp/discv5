@@ -292,7 +292,7 @@ where
                         return None;
                     }
                     // Check the custom filter
-                    if let Some(filter) = self.filter {
+                    if let Some(filter) = self.filter.as_ref() {
                         if !filter.filter(
                             &pending.node.value,
                             &mut self.iter().map(|node| &node.value),
@@ -377,6 +377,7 @@ where
             let mut node = self.nodes.remove(pos.0);
             let old_status = node.status;
             node.status = status;
+            let not_modified = old_status == status;
 
             // Adjust `first_connected_pos` accordingly.
             match old_status {
@@ -401,7 +402,7 @@ where
             // Reinsert the node with the desired status.
             match self.insert(node) {
                 InsertResult::Inserted => {
-                    if node.status == old_status {
+                    if not_modified {
                         UpdateResult::NotModified
                     } else if old_status == NodeStatus::Disconnected {
                         // This means the status was updated from a disconnected state to connected
@@ -518,7 +519,7 @@ where
         }
 
         // check bucket filter
-        if let Some(filter) = self.filter {
+        if let Some(filter) = self.filter.as_ref() {
             if !filter.filter(&node.value, &mut self.iter().map(|node| &node.value)) {
                 return InsertResult::FailedFilter;
             }

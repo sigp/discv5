@@ -126,7 +126,7 @@ where
 
     /// Sets the status of the entry to `NodeStatus::Disconnected`.
     pub fn update(self, status: NodeStatus) -> Self {
-        self.0.bucket.update_status(self.0.key, status);
+        let _ = self.0.bucket.update_status(self.0.key, status);
         Self::new(self.0.bucket, self.0.key)
     }
 

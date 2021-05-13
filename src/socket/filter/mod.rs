@@ -23,6 +23,8 @@ const MAX_PERCENT_OF_LIMIT_PER_NODE: f64 = 0.9;
 const NUMBER_OF_WINDOWS: usize = 5;
 /// The maximum number of IPs to retain when calculating the number of nodes per IP.
 const KNOWN_ADDRS_SIZE: usize = 500;
+/// The number of IPs to retain at any given time that have banned nodes.
+const BANNED_NODES_SIZE: usize = 50;
 
 /// The packet filter which decides whether we accept or reject incoming packets.
 pub(crate) struct Filter {
@@ -38,6 +40,9 @@ pub(crate) struct Filter {
     /// Keep track of node ids per socket. If someone is using too many node-ids per IP, they can
     /// be banned.
     known_addrs: LruCache<IpAddr, HashSet<NodeId>>,
+    /// Keep track of Ips that have banned nodes. If a single IP has many nodes that get banned,
+    /// then we ban the IP address.
+    banned_nodes: LruCache<IpAddr, usize>,
 }
 
 impl Filter {
@@ -53,6 +58,7 @@ impl Filter {
                 METRICS.moving_window,
             ),
             known_addrs: LruCache::new(KNOWN_ADDRS_SIZE),
+            banned_nodes: LruCache::new(BANNED_NODES_SIZE),
         }
     }
 
@@ -162,10 +168,27 @@ impl Filter {
                     "Node has exceeded its request limit and is now banned {}",
                     node_address.node_id
                 );
+
+                // The node is being banned
                 PERMIT_BAN_LIST
                     .write()
                     .ban_nodes
                     .insert(node_address.node_id);
+
+                // If we are tracking banned nodes per IP, add to the count. If the count is higher
+                // than our tolerance, ban the IP.
+                if let Some(max_bans_per_ip) = self.config.max_bans_per_ip {
+                    let ip = node_address.socket_addr.ip();
+                    if let Some(banned_count) = self.banned_nodes.get_mut(&ip) {
+                        *banned_count += 1;
+                        if *banned_count >= max_bans_per_ip {
+                            PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+                        }
+                    } else {
+                        self.banned_nodes.put(ip, 0);
+                    }
+                }
+
                 return false;
             }
 

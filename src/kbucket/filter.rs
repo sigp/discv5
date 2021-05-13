@@ -30,11 +30,6 @@ impl<TVal: Eq> Clone for Box<dyn Filter<TVal>> {
     }
 }
 
-// Implementations of concrete types for the Iterators passed to the filter.
-pub struct FilterIterator<'a, TVal> {
-    pub x: Box<dyn Iterator<Item = &'a TVal>>,
-}
-
 // Implementation of an IP filter for buckets and for tables
 
 /// Number of permitted nodes in the same /24 subnet per table.

@@ -84,6 +84,7 @@ where
     }
 
     /// Returns the length of the mapping.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -101,6 +102,7 @@ where
     }
 
     /// Removes all entries from the map.
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.entries.clear();
         self.expirations.clear();
@@ -116,7 +118,7 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.expirations.poll_expired(cx) {
             Poll::Ready(Some(Ok(key))) => match self.entries.remove(key.get_ref()) {
-                Some(entry) => Poll::Ready(Some(Ok(key.into_inner()))),
+                Some(_delay_key) => Poll::Ready(Some(Ok(key.into_inner()))),
                 None => Poll::Ready(Some(Err("Value no longer exists in expirations".into()))),
             },
             Poll::Ready(Some(Err(e))) => {

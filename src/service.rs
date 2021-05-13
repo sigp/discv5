@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     error::RequestError,
-    handler::{Handler, HandlerRequest, HandlerResponse},
+    handler::{Handler, HandlerRequest, HandlerResponse, NodeConnection},
     kbucket::{self, FailureReason, InsertResult, KBucketsTable, NodeStatus, UpdateResult},
     node_info::{NodeAddress, NodeContact},
     packet::MAX_PACKET_SIZE,
@@ -327,6 +327,7 @@ impl Service {
                         }
                     }
                 }
+                /*
                 Some(Ok(node_id)) = self.peers_to_ping.next() => {
                     // If the node is in the routing table, Ping it and re-queue the node.
                     let key = kbucket::Key::from(node_id);
@@ -336,6 +337,7 @@ impl Service {
                         self.peers_to_ping.insert(node_id);
                     }
                 }
+                */
             }
         }
     }
@@ -651,7 +653,15 @@ impl Service {
                     //
                     // only attempt the majority-update if the peer supplies an ipv4 address to
                     // mitigate https://github.com/sigp/lighthouse/issues/2215
-                    if socket.is_ipv4() {
+                    //
+                    // Only count votes that from peers we have contacted.
+                    let key: kbucket::Key<NodeId> = node_id.into();
+                    let should_count = match self.kbuckets.write().entry(&key) {
+                        kbucket::Entry::Present(_, NodeStatus::ConnectedOutgoing) => true,
+                        _ => false,
+                    };
+
+                    if should_count && socket.is_ipv4() {
                         let local_socket = self.local_enr.read().udp_socket();
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
@@ -971,8 +981,8 @@ impl Service {
                 // sequence number, perform some filter checks before updating the enr.
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Present(entry, _) => entry.value().seq() < enr_ref.seq(),
-                    kbucket::Entry::Pending(entry, _) => entry.value().seq() < enr_ref.seq(),
+                    kbucket::Entry::Present(mut entry, _) => entry.value().seq() < enr_ref.seq(),
+                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr_ref.seq(),
                     _ => false,
                 };
 
@@ -1021,9 +1031,11 @@ impl Service {
     /// Update the connection status of a node in the routing table.
     /// This tracks whether or not we should be pinging peers. Disconnected peers are removed from
     /// the queue and newly added peers to the routing table are added to the queue.
-    fn connection_updated(&mut self, node_id: NodeId, mut new_status: ConnectionStatus) {
-        // Perform checks to verify this update is a valid candidate to modify the routing table.
+    fn connection_updated(&mut self, node_id: NodeId, new_status: ConnectionStatus) {
+        // Variables to that may require post-processing
         let mut ping_peer = None;
+        let mut event_to_send = None;
+
         let key = kbucket::Key::from(node_id);
         match new_status {
             ConnectionStatus::Connected(enr, direction) => {
@@ -1041,8 +1053,7 @@ impl Service {
                             node_id,
                             replaced: None,
                         };
-                        self.send_event(event);
-                        return;
+                        event_to_send = Some(event);
                     }
                     InsertResult::Pending { disconnected } => {
                         ping_peer = Some(disconnected);
@@ -1088,7 +1099,7 @@ impl Service {
                         others => {
                             warn!(
                                 "Could not update node to disconnected. Node: {}, Reason: {:?}",
-                                node_id, reason
+                                node_id, others
                             );
                         }
                     },
@@ -1100,10 +1111,26 @@ impl Service {
             }
         };
 
+        // Post processing
+
+        if let Some(event) = event_to_send {
+            self.send_event(event);
+        }
+
         if let Some(node_id) = ping_peer {
-            if let kbucket::Entry::Present(mut entry, _status) = self.kbuckets.write().entry(&key) {
-                // NOTE: We don't check the status of this peer. We try and ping outdated peers.
-                self.send_ping(entry.value().clone());
+            let optional_enr = {
+                let node_key = kbucket::Key::from(node_id);
+                if let kbucket::Entry::Present(mut entry, _status) =
+                    self.kbuckets.write().entry(&node_key)
+                {
+                    // NOTE: We don't check the status of this peer. We try and ping outdated peers.
+                    Some(entry.value().clone())
+                } else {
+                    None
+                }
+            };
+            if let Some(enr) = optional_enr {
+                self.send_ping(enr)
             }
         }
     }

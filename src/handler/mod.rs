@@ -162,10 +162,18 @@ pub(crate) struct RequestCall {
     /// If we receive a Nodes Response with a total greater than 1. This keeps track of the
     /// remaining responses expected.
     remaining_responses: Option<u64>,
+    /// Signifies if we are initiating the session with a random packet. This is only used to
+    /// determine the connection direction of the session.
+    initiating_session: bool,
 }
 
 impl RequestCall {
-    fn new(contact: NodeContact, packet: Packet, request: Request) -> Self {
+    fn new(
+        contact: NodeContact,
+        packet: Packet,
+        request: Request,
+        initiating_session: bool,
+    ) -> Self {
         RequestCall {
             contact,
             packet,
@@ -173,6 +181,7 @@ impl RequestCall {
             handshake_sent: false,
             retries: 1,
             remaining_responses: None,
+            initiating_session,
         }
     }
 
@@ -456,23 +465,27 @@ impl Handler {
             return Ok(());
         }
 
-        let packet = {
+        let (packet, initiating_session) = {
             if let Some(session) = self.sessions.get_mut(&node_address) {
                 // Encrypt the message and send
-                session
+                let packet = session
                     .encrypt_message(self.node_id, &request.clone().encode())
-                    .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?
+                    .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?;
+                (packet, false)
             } else {
                 // No session exists, start a new handshake
                 trace!(
                     "Starting session. Sending random packet to: {}",
                     node_address
                 );
-                Packet::new_random(&self.node_id).map_err(|e| RequestError::EntropyFailure(e))?
+                let packet = Packet::new_random(&self.node_id)
+                    .map_err(|e| RequestError::EntropyFailure(e))?;
+                // We are initiating a new session
+                (packet, true)
             }
         };
 
-        let call = RequestCall::new(contact, packet.clone(), request);
+        let call = RequestCall::new(contact, packet.clone(), request, initiating_session);
         // let the filter know we are expecting a response
         self.add_expected_response(node_address.socket_addr);
         let nonce = *packet.message_nonce();
@@ -667,20 +680,31 @@ impl Handler {
             .expect("All sent requests must have a node address");
         match request_call.contact.clone() {
             NodeContact::Enr(enr) => {
-                // We already know the ENR. Send the handshake response packet
+                // NOTE: Here we decide if the session is outgoing or ingoing. The condition for an
+                // outgoing session is that we originally sent a RANDOM packet (signifying we did
+                // not have a session for a request) and the packet is not a PING (we are not
+                // trying to update an old session that may have expired.
+                let connection_direction = {
+                    match (&request_call.initiating_session, &request_call.request.body) {
+                        (true, RequestBody::Ping { .. }) => NodeConnection::Incoming,
+                        (true, _) => NodeConnection::Outgoing,
+                        (false, _) => NodeConnection::Incoming,
+                    }
+                };
 
+                // We already know the ENR. Send the handshake response packet
                 trace!("Sending Authentication response to node: {}", node_address);
                 request_call.packet = auth_packet.clone();
                 request_call.handshake_sent = true;
+                request_call.initiating_session = false;
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
                 // Send the actual packet to the send task.
                 self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
-                //
                 self.outbound_channel
-                    .send(HandlerResponse::Established(*enr, NodeConnection::Outgoing))
+                    .send(HandlerResponse::Established(*enr, connection_direction))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
@@ -891,9 +915,15 @@ impl Handler {
                                     if let Some(enr) = nodes.pop() {
                                         if self.verify_enr(&enr, &node_address) {
                                             // Notify the application
+                                            // This can occur when we try to dial a node without an
+                                            // ENR. In this case we have attempted to establish the
+                                            // connection, so this is an outgoing connection.
                                             let _ = self
                                                 .outbound_channel
-                                                .send(HandlerResponse::Established(enr))
+                                                .send(HandlerResponse::Established(
+                                                    enr,
+                                                    NodeConnection::Outgoing,
+                                                ))
                                                 .await;
                                             return;
                                         }
