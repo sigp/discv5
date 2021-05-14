@@ -21,7 +21,7 @@
 // This basis of this file has been taken from the rust-libp2p codebase:
 // https://github.com/libp2p/rust-libp2p
 
-//! The `Entry` API for quering and modifying the entries of a `KBucketsTable`
+//! The `Entry` API for querying and modifying the entries of a `KBucketsTable`
 //! representing the nodes participating in the Kademlia DHT.
 
 pub use super::{

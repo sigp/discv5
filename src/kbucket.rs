@@ -84,11 +84,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub use bucket::FailureReason;
-pub use bucket::UpdateResult;
+pub use bucket::{
+    FailureReason, InsertResult as BucketInsertResult, UpdateResult, MAX_NODES_PER_BUCKET,
+};
 pub use filter::{Filter, IpBucketFilter, IpTableFilter};
 
-pub use bucket::MAX_NODES_PER_BUCKET;
 /// Maximum number of k-buckets.
 const NUM_BUCKETS: usize = 256;
 
@@ -237,10 +237,10 @@ where
 
     pub fn update_node_value(&mut self, key: &Key<TNodeId>, value: TVal) -> UpdateResult {
         // Apply the table filter
-        let mut passed_table_filter = false;
+        let mut passed_table_filter = true;
         if let Some(table_filter) = self.table_filter.as_ref() {
-            if table_filter.filter(&value, &mut self.table_iter()) {
-                passed_table_filter = true;
+            if !table_filter.filter(&value, &mut self.table_iter()) {
+                passed_table_filter = false;
             }
         }
 
@@ -270,10 +270,10 @@ where
         status: NodeStatus,
     ) -> InsertResult<TNodeId> {
         // Check the table filter
-        let mut passed_table_filter = false;
+        let mut passed_table_filter = true;
         if let Some(table_filter) = self.table_filter.as_ref() {
-            if table_filter.filter(&value, &mut self.table_iter()) {
-                passed_table_filter = true;
+            if !table_filter.filter(&value, &mut self.table_iter()) {
+                passed_table_filter = false;
             }
         }
 
@@ -715,6 +715,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::bucket::InsertResult as BucketInsertResult;
     use super::*;
     use enr::NodeId;
 
@@ -723,10 +724,16 @@ mod tests {
         let local_key = Key::from(NodeId::random());
         let other_id = Key::from(NodeId::random());
 
-        let mut table = KBucketsTable::<_, ()>::new(local_key, Duration::from_secs(5), None);
+        let mut table = KBucketsTable::<_, ()>::new(
+            local_key,
+            Duration::from_secs(5),
+            MAX_NODES_PER_BUCKET,
+            None,
+            None,
+        );
         if let Entry::Absent(entry) = table.entry(&other_id) {
-            match entry.insert((), NodeStatus::Connected) {
-                InsertResult::Inserted => (),
+            match entry.insert((), NodeStatus::ConnectedOutgoing) {
+                BucketInsertResult::Inserted => (),
                 _ => panic!(),
             }
         } else {
@@ -741,8 +748,13 @@ mod tests {
     #[test]
     fn update_local_id_fails() {
         let local_key = Key::from(NodeId::random());
-        let mut table =
-            KBucketsTable::<_, ()>::new(local_key.clone(), Duration::from_secs(5), None);
+        let mut table = KBucketsTable::<_, ()>::new(
+            local_key.clone(),
+            Duration::from_secs(5),
+            MAX_NODES_PER_BUCKET,
+            None,
+            None,
+        );
         match table.entry(&local_key) {
             Entry::SelfEntry => (),
             _ => panic!(),
@@ -752,7 +764,13 @@ mod tests {
     #[test]
     fn closest() {
         let local_key = Key::from(NodeId::random());
-        let mut table = KBucketsTable::<_, ()>::new(local_key, Duration::from_secs(5), None);
+        let mut table = KBucketsTable::<_, ()>::new(
+            local_key,
+            Duration::from_secs(5),
+            MAX_NODES_PER_BUCKET,
+            None,
+            None,
+        );
         let mut count = 0;
         loop {
             if count == 100 {
@@ -760,8 +778,8 @@ mod tests {
             }
             let key = Key::from(NodeId::random());
             if let Entry::Absent(e) = table.entry(&key) {
-                match e.insert((), NodeStatus::Connected) {
-                    InsertResult::Inserted => count += 1,
+                match e.insert((), NodeStatus::ConnectedOutgoing) {
+                    BucketInsertResult::Inserted => count += 1,
                     _ => continue,
                 }
             } else {
@@ -772,7 +790,7 @@ mod tests {
         let mut expected_keys: Vec<_> = table
             .buckets
             .iter()
-            .flat_map(|t| t.iter().map(|(n, _)| n.key.clone()))
+            .flat_map(|t| t.iter().map(|n| n.key.clone()))
             .collect();
 
         for _ in 0..10 {
@@ -787,18 +805,23 @@ mod tests {
     #[test]
     fn applied_pending() {
         let local_key = Key::from(NodeId::random());
-        let mut table =
-            KBucketsTable::<_, ()>::new(local_key.clone(), Duration::from_millis(1), None);
+        let mut table = KBucketsTable::<_, ()>::new(
+            local_key.clone(),
+            Duration::from_millis(1),
+            MAX_NODES_PER_BUCKET,
+            None,
+            None,
+        );
         let expected_applied;
         let full_bucket_index;
         loop {
             let key = Key::from(NodeId::random());
             if let Entry::Absent(e) = table.entry(&key) {
                 match e.insert((), NodeStatus::Disconnected) {
-                    InsertResult::Full => {
+                    BucketInsertResult::Full => {
                         if let Entry::Absent(e) = table.entry(&key) {
-                            match e.insert((), NodeStatus::Connected) {
-                                InsertResult::Pending { disconnected } => {
+                            match e.insert((), NodeStatus::ConnectedOutgoing) {
+                                BucketInsertResult::Pending { disconnected } => {
                                     expected_applied = AppliedPending {
                                         inserted: key.clone(),
                                         evicted: Some(Node {
@@ -829,7 +852,7 @@ mod tests {
         full_bucket.pending_mut().unwrap().set_ready_at(elapsed);
 
         match table.entry(&expected_applied.inserted) {
-            Entry::Present(_, NodeStatus::Connected) => {}
+            Entry::Present(_, NodeStatus::ConnectedOutgoing) => {}
             x => panic!("Unexpected entry: {:?}", x),
         }
 

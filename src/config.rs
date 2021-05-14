@@ -276,7 +276,7 @@ impl Discv5ConfigBuilder {
             self.config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
         };
 
-        assert!(self.config.incoming_bucket_limit < MAX_NODES_PER_BUCKET);
+        assert!(self.config.incoming_bucket_limit <= MAX_NODES_PER_BUCKET);
 
         self.config.clone()
     }

@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{kbucket, Discv5, *};
-use enr::{CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
+use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{
     collections::HashMap,
@@ -424,7 +424,7 @@ async fn test_table_limits() {
         })
         .collect();
     for enr in enrs {
-        discv5.add_enr(enr.clone()).unwrap();
+        let _ = discv5.add_enr(enr.clone()); // we expect some of these to fail the filter.
     }
     // Number of entries should be `table_limit`, i.e one node got restricted
     assert_eq!(discv5.kbuckets.read().iter_ref().count(), table_limit);
@@ -476,7 +476,7 @@ async fn test_bucket_limits() {
     let config = Discv5ConfigBuilder::new().ip_limit().build();
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
     for enr in enrs {
-        discv5.add_enr(enr.clone()).unwrap();
+        let _ = discv5.add_enr(enr.clone()); // we expect some of these to fail based on the filter.
     }
 
     // Number of entries should be equal to `bucket_limit`.

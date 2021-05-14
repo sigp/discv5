@@ -327,17 +327,21 @@ impl Service {
                         }
                     }
                 }
-                /*
                 Some(Ok(node_id)) = self.peers_to_ping.next() => {
                     // If the node is in the routing table, Ping it and re-queue the node.
                     let key = kbucket::Key::from(node_id);
-                    if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+                    let enr =  {
+                        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
                         // The peer is in the routing table, ping it and re-queue the ping
-                        self.send_ping(entry.value().clone());
                         self.peers_to_ping.insert(node_id);
+                        Some(entry.value().clone())
+                        } else { None }
+                    };
+
+                    if let Some(enr) = enr {
+                        self.send_ping(enr);
                     }
                 }
-                */
             }
         }
     }
@@ -1084,7 +1088,9 @@ impl Service {
                             node_id, reason
                         );
                     }
-                    _ => {} // Updated ENR successfully.
+                    update => {
+                        debug!("Updated {:?}", update)
+                    } // Updated ENR successfully.
                 }
             }
             ConnectionStatus::Disconnected => {

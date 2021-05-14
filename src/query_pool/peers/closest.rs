@@ -450,7 +450,7 @@ mod tests {
     use super::*;
     use enr::NodeId;
     use quickcheck::*;
-    use rand::{thread_rng, Rng};
+    use rand_07::{thread_rng, Rng};
     use std::time::Duration;
 
     type TestQuery = FindNodeQuery<NodeId>;
