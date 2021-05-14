@@ -255,7 +255,27 @@ where
         // Apply the table filter
         let mut passed_table_filter = true;
         if let Some(table_filter) = self.table_filter.as_ref() {
-            if !table_filter.filter(&value, &mut self.table_iter()) {
+            // Check if the value is a duplicate before applying the table filter (optimisation).
+            let duplicate = {
+                let index = BucketIndex::new(&self.local_key.distance(key));
+                if let Some(i) = index {
+                    let bucket = &mut self.buckets[i.get()];
+                    if let Some(node) = bucket.get(&key) {
+                        if node.value == value {
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+
+            // If the Value is new, check the table filter
+            if !duplicate && !table_filter.filter(&value, &mut self.table_iter()) {
                 passed_table_filter = false;
             }
         }
@@ -313,7 +333,26 @@ where
         // Check the table filter
         let mut passed_table_filter = true;
         if let Some(table_filter) = self.table_filter.as_ref() {
-            if !table_filter.filter(&value, &mut self.table_iter()) {
+            // Check if the value is a duplicate before applying the table filter (optimisation).
+            let duplicate = {
+                let index = BucketIndex::new(&self.local_key.distance(key));
+                if let Some(i) = index {
+                    let bucket = &mut self.buckets[i.get()];
+                    if let Some(node) = bucket.get(&key) {
+                        if node.value == value {
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+
+            if !duplicate && !table_filter.filter(&value, &mut self.table_iter()) {
                 passed_table_filter = false;
             }
         }

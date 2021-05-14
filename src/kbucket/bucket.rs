@@ -470,46 +470,27 @@ where
     /// Updates the value of the node referred to by the given key, if it is
     /// in the bucket. If the node is not in the bucket, or the update would violate a bucket
     /// filter or incoming limits, returns false and removes the node from the bucket.
+    /// NOTE: This does not update the position of the node in the table. It node will be removed
+    /// if it fails the filter however.
     pub fn update_value(&mut self, key: &Key<TNodeId>, value: TVal) -> UpdateResult {
         // Remove the node from its current position, check the filter and add it back in.
-
         if let Some(pos) = self.position(key) {
             // Remove the node from its current position.
             let mut node = self.nodes.remove(pos.0);
-            let modified = node.value == value;
-            node.value = value;
-
-            // Adjust `first_connected_pos` accordingly.
-            match node.status.state {
-                ConnectionState::Connected => {
-                    if self.first_connected_pos.map_or(false, |p| p == pos.0)
-                        && pos.0 == self.nodes.len()
-                    {
-                        // It was the last connected node.
-                        self.first_connected_pos = None
+            if node.value == value {
+                self.nodes.insert(pos.0, node);
+                return UpdateResult::NotModified;
+            } else {
+                // check bucket filter
+                if let Some(filter) = self.filter.as_ref() {
+                    if !filter.filter(&value, &mut self.iter().map(|node| &node.value)) {
+                        self.nodes.remove(pos.0);
+                        return UpdateResult::Failed(FailureReason::BucketFilter);
                     }
                 }
-                ConnectionState::Disconnected => {
-                    self.first_connected_pos =
-                        self.first_connected_pos.and_then(|p| p.checked_sub(1))
-                }
-            }
-            // If the least-recently connected node re-establishes its
-            // connected status, drop the pending node.
-            if pos == Position(0) && node.status.is_connected() {
-                self.pending = None
-            }
-            // Reinsert the node with the desired status.
-            match self.insert(node) {
-                InsertResult::Inserted => {
-                    if modified {
-                        UpdateResult::Updated
-                    } else {
-                        UpdateResult::NotModified
-                    }
-                }
-                InsertResult::FailedFilter => UpdateResult::Failed(FailureReason::BucketFilter), // The update could fail the bucket filter.
-                _ => unreachable!("The node is removed before being (re)inserted."),
+                node.value = value;
+                self.nodes.insert(pos.0, node);
+                return UpdateResult::Updated;
             }
         } else {
             if let Some(pending) = &mut self.pending {
@@ -651,6 +632,14 @@ where
         self.nodes.iter_mut().find(move |p| &p.key == key)
     }
 
+    /// Gets a reference to the node identified by the given key.
+    ///
+    /// Returns `None` if the given key does not refer to an node in the
+    /// bucket.
+    pub fn get(&mut self, key: &Key<TNodeId>) -> Option<&Node<TNodeId, TVal>> {
+        self.nodes.iter().find(move |p| &p.key == key)
+    }
+
     /// Returns whether the bucket has reached its maximum capacity of incoming nodes. This is used
     /// to determine if new nodes can be added to the bucket or not.
     fn is_max_incoming(&self) -> bool {
@@ -751,7 +740,7 @@ mod tests {
                     direction: ConnectionDirection::Outgoing,
                     state: ConnectionState::Disconnected,
                 },
-                _ => unreachable!("Should not generate numbers out of this range"),
+                x => unreachable!("Should not generate numbers out of this range {}", x),
             }
         }
     }
@@ -997,5 +986,128 @@ mod tests {
         }
 
         quickcheck(prop as fn(_, _, _) -> _);
+    }
+
+    #[test]
+    fn table_update_status_connection() {
+        let max_incoming = 7;
+        let mut bucket = KBucket::<NodeId, ()>::new(Duration::from_secs(1), max_incoming, None);
+
+        let mut incoming_connected = 0;
+        let mut keys = Vec::new();
+        for _ in 0..MAX_NODES_PER_BUCKET {
+            let key = Key::from(NodeId::random());
+            keys.push(key.clone());
+            incoming_connected += 1;
+            let direction = if incoming_connected <= max_incoming {
+                ConnectionDirection::Incoming
+            } else {
+                ConnectionDirection::Outgoing
+            };
+            let status = NodeStatus {
+                state: ConnectionState::Connected,
+                direction,
+            };
+            let node = Node {
+                key: key.clone(),
+                value: (),
+                status,
+            };
+            assert_eq!(InsertResult::Inserted, bucket.insert(node));
+        }
+
+        // Bucket is full
+        // Attempt to modify a new state
+        let result = bucket.update_status(
+            &keys[max_incoming],
+            ConnectionState::Disconnected,
+            Some(ConnectionDirection::Incoming),
+        );
+        assert_eq!(result, UpdateResult::Updated);
+        let result = bucket.update_status(
+            &keys[max_incoming],
+            ConnectionState::Connected,
+            Some(ConnectionDirection::Outgoing),
+        );
+        assert_eq!(result, UpdateResult::UpdatedAndPromoted);
+        let result = bucket.update_status(
+            &keys[max_incoming],
+            ConnectionState::Connected,
+            Some(ConnectionDirection::Outgoing),
+        );
+        assert_eq!(result, UpdateResult::NotModified);
+        let result = bucket.update_status(
+            &keys[max_incoming],
+            ConnectionState::Connected,
+            Some(ConnectionDirection::Incoming),
+        );
+        assert_eq!(result, UpdateResult::Failed(FailureReason::TooManyIncoming));
+    }
+
+    #[test]
+    fn bucket_max_incoming_nodes() {
+        fn prop(status: Vec<NodeStatus>) -> bool {
+            let max_incoming_nodes = 5;
+            let mut bucket =
+                KBucket::<NodeId, ()>::new(Duration::from_secs(1), max_incoming_nodes, None);
+
+            // The expected lists of connected and disconnected nodes.
+            let mut connected = VecDeque::new();
+            let mut disconnected = VecDeque::new();
+
+            // Fill the bucket, thereby populating the expected lists in insertion order.
+            for status in status {
+                let key = Key::from(NodeId::random());
+                let node = Node {
+                    key: key.clone(),
+                    value: (),
+                    status,
+                };
+                let full = bucket.num_entries() == MAX_NODES_PER_BUCKET;
+                match bucket.insert(node) {
+                    InsertResult::Inserted => {
+                        let vec = if status.is_connected() {
+                            &mut connected
+                        } else {
+                            &mut disconnected
+                        };
+                        if full {
+                            vec.pop_front();
+                        }
+                        vec.push_back((status, key.clone()));
+                    }
+                    InsertResult::FailedFilter => break,
+                    _ => {}
+                }
+            }
+
+            // Get all nodes from the bucket, together with their status.
+            let mut nodes = bucket
+                .iter()
+                .map(|n| (n.status, n.key.clone()))
+                .collect::<Vec<_>>();
+
+            // Split the list of nodes at the first connected node.
+            let first_connected_pos = nodes.iter().position(|(status, _)| status.is_connected());
+            assert_eq!(bucket.first_connected_pos, first_connected_pos);
+            let tail = first_connected_pos.map_or(Vec::new(), |p| nodes.split_off(p));
+
+            let number_of_incoming_nodes = bucket
+                .iter()
+                .filter(|n| n.status.is_connected() && n.status.is_incoming())
+                .count();
+
+            assert!(number_of_incoming_nodes <= max_incoming_nodes);
+
+            // All nodes before the first connected node must be disconnected and
+            // in insertion order. Similarly, all remaining nodes must be connected
+            // and in insertion order.
+            // The number of incoming nodes does not exceed the maximum limit.
+            nodes == Vec::from(disconnected)
+                && tail == Vec::from(connected)
+                && number_of_incoming_nodes <= 5
+        }
+
+        quickcheck(prop as fn(_) -> _);
     }
 }

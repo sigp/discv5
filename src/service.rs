@@ -1004,6 +1004,7 @@ impl Service {
                         .update_node(&key, enr_ref.clone(), None)
                     {
                         UpdateResult::Failed(reason) => {
+                            self.peers_to_ping.remove(&enr_ref.node_id());
                             debug!(
                                 "Failed to update discovered ENR. Node: {}, Reason: {:?}",
                                 source, reason
@@ -1083,6 +1084,7 @@ impl Service {
                     }
                     InsertResult::ValueUpdated | InsertResult::UpdatedPending => {}
                     InsertResult::Failed(reason) => {
+                        self.peers_to_ping.remove(&node_id);
                         trace!("Could not insert node: {}, reason: {:?}", node_id, reason);
                     }
                 }
@@ -1094,6 +1096,7 @@ impl Service {
                     .update_node(&key, enr, Some(ConnectionState::Connected))
                 {
                     UpdateResult::Failed(reason) => {
+                        self.peers_to_ping.remove(&node_id);
                         debug!(
                             "Could not update ENR from pong. Node: {}, reason: {:?}",
                             node_id, reason
