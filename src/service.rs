@@ -19,8 +19,11 @@ use self::{
 };
 use crate::{
     error::RequestError,
-    handler::{Handler, HandlerRequest, HandlerResponse, NodeConnection},
-    kbucket::{self, FailureReason, InsertResult, KBucketsTable, NodeStatus, UpdateResult},
+    handler::{Handler, HandlerRequest, HandlerResponse},
+    kbucket::{
+        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
+        NodeStatus, UpdateResult,
+    },
     node_info::{NodeAddress, NodeContact},
     packet::MAX_PACKET_SIZE,
     query_pool::{
@@ -661,7 +664,11 @@ impl Service {
                     // Only count votes that from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
                     let should_count = match self.kbuckets.write().entry(&key) {
-                        kbucket::Entry::Present(_, NodeStatus::ConnectedOutgoing) => true,
+                        kbucket::Entry::Present(_, status)
+                            if status.is_connected() && !status.is_incoming() =>
+                        {
+                            true
+                        }
                         _ => false,
                     };
 
@@ -994,9 +1001,9 @@ impl Service {
                     match self
                         .kbuckets
                         .write()
-                        .update_node_value(&key, enr_ref.clone())
+                        .update_node(&key, enr_ref.clone(), None)
                     {
-                        UpdateResult::UpdateFailed(reason) => {
+                        UpdateResult::Failed(reason) => {
                             debug!(
                                 "Failed to update discovered ENR. Node: {}, Reason: {:?}",
                                 source, reason
@@ -1044,11 +1051,11 @@ impl Service {
         match new_status {
             ConnectionStatus::Connected(enr, direction) => {
                 // attempt to update or insert the new ENR.
-                match self
-                    .kbuckets
-                    .write()
-                    .insert_or_update(&key, enr, direction.to_status())
-                {
+                let status = NodeStatus {
+                    state: ConnectionState::Connected,
+                    direction,
+                };
+                match self.kbuckets.write().insert_or_update(&key, enr, status) {
                     InsertResult::Inserted => {
                         // We added this peer to the table
                         debug!("New connected node added to routing table: {}", node_id);
@@ -1081,8 +1088,12 @@ impl Service {
                 }
             }
             ConnectionStatus::PongReceived(enr) => {
-                match self.kbuckets.write().update_node_value(&key, enr) {
-                    UpdateResult::UpdateFailed(reason) => {
+                match self
+                    .kbuckets
+                    .write()
+                    .update_node(&key, enr, Some(ConnectionState::Connected))
+                {
+                    UpdateResult::Failed(reason) => {
                         debug!(
                             "Could not update ENR from pong. Node: {}, reason: {:?}",
                             node_id, reason
@@ -1095,12 +1106,12 @@ impl Service {
             }
             ConnectionStatus::Disconnected => {
                 // If the node has disconnected, remove any ping timer for the node.
-                match self
-                    .kbuckets
-                    .write()
-                    .update_node_status(&key, NodeStatus::Disconnected)
-                {
-                    UpdateResult::UpdateFailed(reason) => match reason {
+                match self.kbuckets.write().update_node_status(
+                    &key,
+                    ConnectionState::Disconnected,
+                    None,
+                ) {
+                    UpdateResult::Failed(reason) => match reason {
                         FailureReason::KeyNonExistant => {}
                         others => {
                             warn!(
@@ -1143,7 +1154,7 @@ impl Service {
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr, direction: NodeConnection) {
+    fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if enr.udp_socket().is_none() {
             return;
@@ -1316,18 +1327,9 @@ pub enum QueryKind {
 /// Reporting the connection status of a node.
 enum ConnectionStatus {
     /// A node has started a new connection with us.
-    Connected(Enr, NodeConnection),
+    Connected(Enr, ConnectionDirection),
     /// We received a Pong from a new node. Do not have the connection direction.
     PongReceived(Enr),
     /// The node has disconnected
     Disconnected,
-}
-
-impl std::fmt::Display for NodeConnection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self {
-            NodeConnection::Incoming => write!(f, "Incoming"),
-            NodeConnection::Outgoing => write!(f, "Outgoing"),
-        }
-    }
 }

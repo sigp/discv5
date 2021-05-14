@@ -14,7 +14,10 @@
 
 use crate::{
     error::{Discv5Error, QueryError, RequestError},
-    kbucket::{self, FailureReason, InsertResult, KBucketsTable, NodeStatus},
+    kbucket::{
+        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
+        NodeStatus, UpdateResult,
+    },
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest},
     Discv5Config, Enr,
@@ -178,11 +181,14 @@ impl Discv5 {
 
         let key = kbucket::Key::from(enr.node_id());
 
-        match self
-            .kbuckets
-            .write()
-            .insert_or_update(&key, enr, NodeStatus::Disconnected)
-        {
+        match self.kbuckets.write().insert_or_update(
+            &key,
+            enr,
+            NodeStatus {
+                state: ConnectionState::Disconnected,
+                direction: ConnectionDirection::Incoming,
+            },
+        ) {
             InsertResult::Inserted
             | InsertResult::Pending { .. }
             | InsertResult::StatusUpdated { .. }
@@ -213,16 +219,13 @@ impl Discv5 {
     /// Returns `true` if node was in table and `false` otherwise.
     pub fn disconnect_node(&mut self, node_id: &NodeId) -> bool {
         let key = &kbucket::Key::from(*node_id);
-        match self.kbuckets.write().entry(key) {
-            kbucket::Entry::Present(entry, _) => {
-                entry.update(NodeStatus::Disconnected);
-                true
-            }
-            kbucket::Entry::Pending(entry, _) => {
-                entry.update(NodeStatus::Disconnected);
-                true
-            }
-            _ => false,
+        match self
+            .kbuckets
+            .write()
+            .update_node_status(key, ConnectionState::Disconnected, None)
+        {
+            UpdateResult::Failed(_) => false,
+            _ => true,
         }
     }
 

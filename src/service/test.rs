@@ -23,6 +23,20 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+fn _connected_state() -> NodeStatus {
+    NodeStatus {
+        state: ConnectionState::Connected,
+        direction: ConnectionDirection::Outgoing,
+    }
+}
+
+fn disconnected_state() -> NodeStatus {
+    NodeStatus {
+        state: ConnectionState::Disconnected,
+        direction: ConnectionDirection::Outgoing,
+    }
+}
+
 fn init() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -118,7 +132,7 @@ async fn test_updating_connection_on_ping() {
     // Set up service with one disconnected node
     let key = kbucket::Key::from(enr2.node_id());
     if let kbucket::Entry::Absent(entry) = service.kbuckets.write().entry(&key) {
-        match entry.insert(enr2.clone(), NodeStatus::Disconnected) {
+        match entry.insert(enr2.clone(), disconnected_state()) {
             BucketInsertResult::Inserted => {}
             BucketInsertResult::Full => {
                 panic!("Can't be full");

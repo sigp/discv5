@@ -85,7 +85,8 @@ use std::{
 };
 
 pub use bucket::{
-    FailureReason, InsertResult as BucketInsertResult, UpdateResult, MAX_NODES_PER_BUCKET,
+    ConnectionDirection, ConnectionState, FailureReason, InsertResult as BucketInsertResult,
+    UpdateResult, MAX_NODES_PER_BUCKET,
 };
 pub use filter::{Filter, IpBucketFilter, IpTableFilter};
 
@@ -221,7 +222,14 @@ where
         }
     }
 
-    pub fn update_node_status(&mut self, key: &Key<TNodeId>, status: NodeStatus) -> UpdateResult {
+    // Updates a node's status if it exists in the table.
+    // This checks all table and bucket filters before performing the update.
+    pub fn update_node_status(
+        &mut self,
+        key: &Key<TNodeId>,
+        state: ConnectionState,
+        direction: Option<ConnectionDirection>,
+    ) -> UpdateResult {
         let index = BucketIndex::new(&self.local_key.distance(key));
         if let Some(i) = index {
             let bucket = &mut self.buckets[i.get()];
@@ -229,13 +237,21 @@ where
                 self.applied_pending.push_back(applied)
             }
 
-            bucket.update_status(key, status)
+            bucket.update_status(key, state, direction)
         } else {
             UpdateResult::NotModified // The key refers to our current node.
         }
     }
 
-    pub fn update_node_value(&mut self, key: &Key<TNodeId>, value: TVal) -> UpdateResult {
+    /// Updates a node's value if it exists in the table.
+    ///
+    /// Optionally the connection state can be modified.
+    pub fn update_node(
+        &mut self,
+        key: &Key<TNodeId>,
+        value: TVal,
+        state: Option<ConnectionState>,
+    ) -> UpdateResult {
         // Apply the table filter
         let mut passed_table_filter = true;
         if let Some(table_filter) = self.table_filter.as_ref() {
@@ -253,10 +269,35 @@ where
 
             if !passed_table_filter {
                 bucket.remove(key);
-                return UpdateResult::UpdateFailed(FailureReason::TableFilter);
+                return UpdateResult::Failed(FailureReason::TableFilter);
             }
 
-            bucket.update_value(key, value)
+            let update_result = bucket.update_value(key, value);
+
+            match &update_result {
+                UpdateResult::Failed(_) => {
+                    return update_result;
+                }
+                _ => {}
+            }
+
+            // If we need to update the connection state, update it here.
+            let status_result = if let Some(state) = state {
+                bucket.update_status(key, state, None)
+            } else {
+                UpdateResult::NotModified
+            };
+
+            // Return an appropriate value
+            match (&update_result, &status_result) {
+                (_, UpdateResult::Failed(_)) => status_result,
+                (UpdateResult::Failed(_), _) => update_result,
+                (_, UpdateResult::UpdatedAndPromoted) => UpdateResult::UpdatedAndPromoted,
+                (UpdateResult::UpdatedPending, _) => UpdateResult::UpdatedPending,
+                (_, UpdateResult::UpdatedPending) => UpdateResult::UpdatedPending,
+                (UpdateResult::NotModified, UpdateResult::NotModified) => UpdateResult::NotModified,
+                (_, _) => UpdateResult::Updated,
+            }
         } else {
             UpdateResult::NotModified // The key refers to our current node.
         }
@@ -313,7 +354,7 @@ where
             } else {
                 // The node exists in the bucket
                 // Attempt to update the status
-                let update_status = bucket.update_status(key, status);
+                let update_status = bucket.update_status(key, status.state, Some(status.direction));
 
                 if update_status.failed() {
                     // The node was removed from the table
@@ -719,6 +760,20 @@ mod tests {
     use super::*;
     use enr::NodeId;
 
+    fn connected_state() -> NodeStatus {
+        NodeStatus {
+            state: ConnectionState::Connected,
+            direction: ConnectionDirection::Outgoing,
+        }
+    }
+
+    fn disconnected_state() -> NodeStatus {
+        NodeStatus {
+            state: ConnectionState::Disconnected,
+            direction: ConnectionDirection::Outgoing,
+        }
+    }
+
     #[test]
     fn basic_closest() {
         let local_key = Key::from(NodeId::random());
@@ -732,7 +787,7 @@ mod tests {
             None,
         );
         if let Entry::Absent(entry) = table.entry(&other_id) {
-            match entry.insert((), NodeStatus::ConnectedOutgoing) {
+            match entry.insert((), connected_state()) {
                 BucketInsertResult::Inserted => (),
                 _ => panic!(),
             }
@@ -778,7 +833,7 @@ mod tests {
             }
             let key = Key::from(NodeId::random());
             if let Entry::Absent(e) = table.entry(&key) {
-                match e.insert((), NodeStatus::ConnectedOutgoing) {
+                match e.insert((), connected_state()) {
                     BucketInsertResult::Inserted => count += 1,
                     _ => continue,
                 }
@@ -817,17 +872,17 @@ mod tests {
         loop {
             let key = Key::from(NodeId::random());
             if let Entry::Absent(e) = table.entry(&key) {
-                match e.insert((), NodeStatus::Disconnected) {
+                match e.insert((), disconnected_state()) {
                     BucketInsertResult::Full => {
                         if let Entry::Absent(e) = table.entry(&key) {
-                            match e.insert((), NodeStatus::ConnectedOutgoing) {
+                            match e.insert((), connected_state()) {
                                 BucketInsertResult::Pending { disconnected } => {
                                     expected_applied = AppliedPending {
                                         inserted: key.clone(),
                                         evicted: Some(Node {
                                             key: disconnected,
                                             value: (),
-                                            status: NodeStatus::Disconnected,
+                                            status: disconnected_state(),
                                         }),
                                     };
                                     full_bucket_index = BucketIndex::new(&key.distance(&local_key));
@@ -852,7 +907,13 @@ mod tests {
         full_bucket.pending_mut().unwrap().set_ready_at(elapsed);
 
         match table.entry(&expected_applied.inserted) {
-            Entry::Present(_, NodeStatus::ConnectedOutgoing) => {}
+            Entry::Present(
+                _,
+                NodeStatus {
+                    state: ConnectionState::Connected,
+                    direction: _direction,
+                },
+            ) => {}
             x => panic!("Unexpected entry: {:?}", x),
         }
 

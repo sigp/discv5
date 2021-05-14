@@ -25,8 +25,11 @@
 //! representing the nodes participating in the Kademlia DHT.
 
 pub use super::{
-    bucket::{AppliedPending, InsertResult, Node, NodeStatus, MAX_NODES_PER_BUCKET},
+    bucket::{
+        AppliedPending, ConnectionState, InsertResult, Node, NodeStatus, MAX_NODES_PER_BUCKET,
+    },
     key::*,
+    ConnectionDirection,
 };
 
 use super::*;
@@ -124,9 +127,9 @@ where
             .value
     }
 
-    /// Sets the status of the entry to `NodeStatus::Disconnected`.
-    pub fn update(self, status: NodeStatus) -> Self {
-        let _ = self.0.bucket.update_status(self.0.key, status);
+    /// Sets the status of the entry.
+    pub fn update(self, state: ConnectionState, direction: Option<ConnectionDirection>) -> Self {
+        let _ = self.0.bucket.update_status(self.0.key, state, direction);
         Self::new(self.0.bucket, self.0.key)
     }
 

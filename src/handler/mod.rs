@@ -25,7 +25,7 @@
 use crate::{
     config::Discv5Config,
     error::{Discv5Error, RequestError},
-    kbucket::NodeStatus,
+    kbucket::ConnectionDirection,
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
@@ -96,7 +96,7 @@ pub enum HandlerResponse {
     ///
     /// A session is only considered established once we have received a signed ENR from the
     /// node and received messages from it's `SocketAddr` matching it's ENR fields.
-    Established(Enr, NodeConnection),
+    Established(Enr, ConnectionDirection),
 
     /// A Request has been received.
     Request(NodeAddress, Box<Request>),
@@ -126,25 +126,6 @@ pub struct Challenge {
     data: ChallengeData,
     /// The remote's ENR if we know it. We can receive a challenge from an unknown node.
     remote_enr: Option<Enr>,
-}
-
-/// How we connected to the node.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NodeConnection {
-    /// The node contacted us.
-    Incoming,
-    /// We contacted the node.
-    Outgoing,
-}
-
-impl NodeConnection {
-    /// Converts the connection into a NodeStatus object for handling in the routing table.
-    pub fn to_status(&self) -> NodeStatus {
-        match &self {
-            NodeConnection::Incoming => NodeStatus::ConnectedIncoming,
-            NodeConnection::Outgoing => NodeStatus::ConnectedOutgoing,
-        }
-    }
 }
 
 /// A request to a node that we are waiting for a response.
@@ -686,9 +667,9 @@ impl Handler {
                 // trying to update an old session that may have expired.
                 let connection_direction = {
                     match (&request_call.initiating_session, &request_call.request.body) {
-                        (true, RequestBody::Ping { .. }) => NodeConnection::Incoming,
-                        (true, _) => NodeConnection::Outgoing,
-                        (false, _) => NodeConnection::Incoming,
+                        (true, RequestBody::Ping { .. }) => ConnectionDirection::Incoming,
+                        (true, _) => ConnectionDirection::Outgoing,
+                        (false, _) => ConnectionDirection::Incoming,
                     }
                 };
 
@@ -788,7 +769,10 @@ impl Handler {
                         // This occurs when a node established a connection with us.
                         let _ = self
                             .outbound_channel
-                            .send(HandlerResponse::Established(enr, NodeConnection::Incoming))
+                            .send(HandlerResponse::Established(
+                                enr,
+                                ConnectionDirection::Incoming,
+                            ))
                             .await;
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
@@ -922,7 +906,7 @@ impl Handler {
                                                 .outbound_channel
                                                 .send(HandlerResponse::Established(
                                                     enr,
-                                                    NodeConnection::Outgoing,
+                                                    ConnectionDirection::Outgoing,
                                                 ))
                                                 .await;
                                             return;

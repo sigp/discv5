@@ -51,20 +51,44 @@ pub struct PendingNode<TNodeId, TVal: Eq> {
 /// last status change determines the position of the node in a
 /// bucket.
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
-pub enum NodeStatus {
-    /// The node is considered connected via an incoming negotiation.
-    ConnectedIncoming,
-    /// The node is considered connected via an outgoing negotiation.
-    ConnectedOutgoing,
+pub struct NodeStatus {
+    /// The direction (incoming or outgoing) for the node. If in the disconnected state, this
+    /// represents the last connection status.
+    pub direction: ConnectionDirection,
+    /// The connection state, connected or disconnected.
+    pub state: ConnectionState,
+}
+
+/// How we connected to the node.
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum ConnectionDirection {
+    /// The node contacted us.
+    Incoming,
+    /// We contacted the node.
+    Outgoing,
+}
+
+/// The connection state of a node.
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum ConnectionState {
+    /// The node is connected.
+    Connected,
     /// The node is considered disconnected.
     Disconnected,
 }
 
 impl NodeStatus {
     pub fn is_connected(&self) -> bool {
-        match self {
-            NodeStatus::Disconnected => false,
-            _ => true,
+        match self.state {
+            ConnectionState::Connected => true,
+            ConnectionState::Disconnected => false,
+        }
+    }
+
+    pub fn is_incoming(&self) -> bool {
+        match self.direction {
+            ConnectionDirection::Outgoing => false,
+            ConnectionDirection::Incoming => true,
         }
     }
 }
@@ -94,15 +118,6 @@ pub struct Node<TNodeId, TVal: Eq> {
     pub value: TVal,
     /// The status of the node.
     pub status: NodeStatus,
-}
-
-impl<TNodeId, TVal: Eq> Node<TNodeId, TVal> {
-    fn is_connected(&self) -> bool {
-        match self.status {
-            NodeStatus::ConnectedOutgoing | NodeStatus::ConnectedIncoming => true,
-            NodeStatus::Disconnected => false,
-        }
-    }
 }
 
 /// The position of a node in a `KBucket`, i.e. a non-negative integer
@@ -189,7 +204,7 @@ pub enum UpdateResult {
     /// The pending entry was updated.
     UpdatedPending,
     /// The update removed the node because it would violate the incoming peers condition.
-    UpdateFailed(FailureReason),
+    Failed(FailureReason),
     /// There were no changes made to the value of the node.
     NotModified,
 }
@@ -198,7 +213,7 @@ impl UpdateResult {
     // The update failed.
     pub fn failed(&self) -> bool {
         match self {
-            UpdateResult::UpdateFailed(_) => true,
+            UpdateResult::Failed(_) => true,
             _ => false,
         }
     }
@@ -287,7 +302,7 @@ where
                     // Apply bucket filters
 
                     // Check if the bucket is full
-                    if self.nodes[0].is_connected() {
+                    if self.nodes[0].status.is_connected() {
                         // The bucket is full with connected nodes. Drop the pending node.
                         return None;
                     }
@@ -301,7 +316,7 @@ where
                         }
                     }
                     // Check the incoming node restriction
-                    if let NodeStatus::ConnectedIncoming = pending.status() {
+                    if pending.status().is_connected() && pending.status().is_incoming() {
                         // Make sure this doesn't violate the incoming conditions
                         if self.is_max_incoming() {
                             return None;
@@ -366,7 +381,14 @@ where
     /// Updates the status of the node referred to by the given key, if it is
     /// in the bucket. If the node is not in the bucket, or the update would violate a bucket
     /// filter or incoming limits, returns an update result indicating the outcome.
-    pub fn update_status(&mut self, key: &Key<TNodeId>, status: NodeStatus) -> UpdateResult {
+    /// An optional connection state can be given. If this is omitted the connection state will not
+    /// be modified.
+    pub fn update_status(
+        &mut self,
+        key: &Key<TNodeId>,
+        state: ConnectionState,
+        direction: Option<ConnectionDirection>,
+    ) -> UpdateResult {
         // Remove the node from its current position and then reinsert it
         // with the desired status, which puts it at the end of either the
         // prefix list of disconnected nodes or the suffix list of connected
@@ -376,12 +398,23 @@ where
             // Remove the node from its current position.
             let mut node = self.nodes.remove(pos.0);
             let old_status = node.status;
-            node.status = status;
-            let not_modified = old_status == status;
+            node.status.state = state;
+            if let Some(direction) = direction {
+                node.status.direction = direction;
+            }
+
+            // Flag indicating if this update modified the entry.
+            let not_modified = old_status == node.status;
+            // Flag indicating we are upgrading to a connected status
+            let is_connected = if let ConnectionState::Connected = state {
+                true
+            } else {
+                false
+            };
 
             // Adjust `first_connected_pos` accordingly.
-            match old_status {
-                NodeStatus::ConnectedIncoming | NodeStatus::ConnectedOutgoing => {
+            match old_status.state {
+                ConnectionState::Connected => {
                     if self.first_connected_pos.map_or(false, |p| p == pos.0)
                         && pos.0 == self.nodes.len()
                     {
@@ -389,14 +422,14 @@ where
                         self.first_connected_pos = None
                     }
                 }
-                NodeStatus::Disconnected => {
+                ConnectionState::Disconnected => {
                     self.first_connected_pos =
                         self.first_connected_pos.and_then(|p| p.checked_sub(1))
                 }
             }
             // If the least-recently connected node re-establishes its
             // connected status, drop the pending node.
-            if pos == Position(0) && status.is_connected() {
+            if pos == Position(0) && is_connected {
                 self.pending = None
             }
             // Reinsert the node with the desired status.
@@ -404,7 +437,7 @@ where
                 InsertResult::Inserted => {
                     if not_modified {
                         UpdateResult::NotModified
-                    } else if old_status == NodeStatus::Disconnected {
+                    } else if !old_status.is_connected() && is_connected {
                         // This means the status was updated from a disconnected state to connected
                         // state
                         UpdateResult::UpdatedAndPromoted
@@ -413,20 +446,23 @@ where
                     }
                 }
                 InsertResult::TooManyIncoming => {
-                    UpdateResult::UpdateFailed(FailureReason::TooManyIncoming)
+                    UpdateResult::Failed(FailureReason::TooManyIncoming)
                 } // Node could not be inserted
                 _ => unreachable!("The node is removed before being (re)inserted."),
             }
         } else {
             if let Some(pending) = &mut self.pending {
                 if &pending.node.key == key {
-                    pending.node.status = status;
+                    pending.node.status.state = state;
+                    if let Some(direction) = direction {
+                        pending.node.status.direction = direction;
+                    }
                     UpdateResult::UpdatedPending
                 } else {
-                    UpdateResult::UpdateFailed(FailureReason::KeyNonExistant)
+                    UpdateResult::Failed(FailureReason::KeyNonExistant)
                 }
             } else {
-                UpdateResult::UpdateFailed(FailureReason::KeyNonExistant)
+                UpdateResult::Failed(FailureReason::KeyNonExistant)
             }
         }
     }
@@ -444,8 +480,8 @@ where
             node.value = value;
 
             // Adjust `first_connected_pos` accordingly.
-            match node.status {
-                NodeStatus::ConnectedIncoming | NodeStatus::ConnectedOutgoing => {
+            match node.status.state {
+                ConnectionState::Connected => {
                     if self.first_connected_pos.map_or(false, |p| p == pos.0)
                         && pos.0 == self.nodes.len()
                     {
@@ -453,7 +489,7 @@ where
                         self.first_connected_pos = None
                     }
                 }
-                NodeStatus::Disconnected => {
+                ConnectionState::Disconnected => {
                     self.first_connected_pos =
                         self.first_connected_pos.and_then(|p| p.checked_sub(1))
                 }
@@ -472,9 +508,7 @@ where
                         UpdateResult::NotModified
                     }
                 }
-                InsertResult::FailedFilter => {
-                    UpdateResult::UpdateFailed(FailureReason::BucketFilter)
-                } // The update could fail the bucket filter.
+                InsertResult::FailedFilter => UpdateResult::Failed(FailureReason::BucketFilter), // The update could fail the bucket filter.
                 _ => unreachable!("The node is removed before being (re)inserted."),
             }
         } else {
@@ -483,10 +517,10 @@ where
                     pending.node.value = value;
                     UpdateResult::UpdatedPending
                 } else {
-                    UpdateResult::UpdateFailed(FailureReason::KeyNonExistant)
+                    UpdateResult::Failed(FailureReason::KeyNonExistant)
                 }
             } else {
-                UpdateResult::UpdateFailed(FailureReason::KeyNonExistant)
+                UpdateResult::Failed(FailureReason::KeyNonExistant)
             }
         }
     }
@@ -525,9 +559,9 @@ where
             }
         }
 
-        match node.status {
-            NodeStatus::ConnectedIncoming | NodeStatus::ConnectedOutgoing => {
-                if let NodeStatus::ConnectedOutgoing = node.status {
+        match node.status.state {
+            ConnectionState::Connected => {
+                if node.status.is_incoming() {
                     // check the maximum counter
                     if self.is_max_incoming() {
                         return InsertResult::TooManyIncoming;
@@ -551,7 +585,7 @@ where
                 self.nodes.push(node);
                 InsertResult::Inserted
             }
-            NodeStatus::Disconnected => {
+            ConnectionState::Disconnected => {
                 if self.nodes.is_full() {
                     return InsertResult::Full;
                 }
@@ -596,12 +630,16 @@ where
         self.nodes.iter().position(|p| &p.key == key).map(Position)
     }
 
-    /// Returns the status of the node at the given position.
+    /// Returns the state of the node at the given position.
     pub fn status(&self, pos: Position) -> NodeStatus {
         if let Some(node) = self.nodes.get(pos.0) {
             node.status.clone()
         } else {
-            NodeStatus::Disconnected
+            // If the node isn't in the bucket, return the worst kind of state.
+            NodeStatus {
+                state: ConnectionState::Disconnected,
+                direction: ConnectionDirection::Incoming,
+            }
         }
     }
 
@@ -618,7 +656,7 @@ where
     fn is_max_incoming(&self) -> bool {
         self.nodes
             .iter()
-            .filter(|node| node.status == NodeStatus::ConnectedIncoming)
+            .filter(|node| node.status.is_connected() && node.status.is_incoming())
             .count()
             >= self.max_incoming
     }
@@ -639,6 +677,15 @@ impl<TNodeId: std::fmt::Debug, TVal: Eq + std::fmt::Debug> std::fmt::Debug
     }
 }
 
+impl std::fmt::Display for ConnectionDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            ConnectionDirection::Incoming => write!(f, "Incoming"),
+            ConnectionDirection::Outgoing => write!(f, "Outgoing"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,6 +693,20 @@ mod tests {
     use quickcheck::*;
     use rand_07::Rng;
     use std::collections::VecDeque;
+
+    fn connected_state() -> NodeStatus {
+        NodeStatus {
+            state: ConnectionState::Connected,
+            direction: ConnectionDirection::Outgoing,
+        }
+    }
+
+    fn disconnected_state() -> NodeStatus {
+        NodeStatus {
+            state: ConnectionState::Disconnected,
+            direction: ConnectionDirection::Outgoing,
+        }
+    }
 
     impl Arbitrary for KBucket<NodeId, ()> {
         fn arbitrary<G: Gen>(g: &mut G) -> KBucket<NodeId, ()> {
@@ -673,10 +734,23 @@ mod tests {
 
     impl Arbitrary for NodeStatus {
         fn arbitrary<G: Gen>(g: &mut G) -> NodeStatus {
-            match g.gen_range(1, 3) {
-                1 => NodeStatus::ConnectedOutgoing,
-                2 => NodeStatus::ConnectedIncoming,
-                3 => NodeStatus::Disconnected,
+            match g.gen_range(1, 4) {
+                1 => NodeStatus {
+                    direction: ConnectionDirection::Incoming,
+                    state: ConnectionState::Connected,
+                },
+                2 => NodeStatus {
+                    direction: ConnectionDirection::Outgoing,
+                    state: ConnectionState::Connected,
+                },
+                3 => NodeStatus {
+                    direction: ConnectionDirection::Incoming,
+                    state: ConnectionState::Disconnected,
+                },
+                4 => NodeStatus {
+                    direction: ConnectionDirection::Outgoing,
+                    state: ConnectionState::Disconnected,
+                },
                 _ => unreachable!("Should not generate numbers out of this range"),
             }
         }
@@ -760,15 +834,19 @@ mod tests {
         let mut bucket =
             KBucket::<NodeId, ()>::new(Duration::from_secs(1), MAX_NODES_PER_BUCKET, None);
 
+        let disconnected_status = NodeStatus {
+            state: ConnectionState::Disconnected,
+            direction: ConnectionDirection::Outgoing,
+        };
         // Fill the bucket with disconnected nodes.
-        fill_bucket(&mut bucket, NodeStatus::Disconnected);
+        fill_bucket(&mut bucket, disconnected_status.clone());
 
         // Trying to insert another disconnected node fails.
         let key = Key::from(NodeId::random());
         let node = Node {
             key,
             value: (),
-            status: NodeStatus::Disconnected,
+            status: disconnected_status.clone(),
         };
         match bucket.insert(node) {
             InsertResult::Full => {}
@@ -779,7 +857,7 @@ mod tests {
         for i in 0..MAX_NODES_PER_BUCKET {
             let first = bucket.iter().next().unwrap();
             let first_disconnected = first.clone();
-            assert_eq!(first.status, NodeStatus::Disconnected);
+            assert_eq!(first.status, disconnected_status);
 
             // Add a connected node, which is expected to be pending, scheduled to
             // replace the first (i.e. least-recently connected) node.
@@ -787,7 +865,7 @@ mod tests {
             let node = Node {
                 key: key.clone(),
                 value: (),
-                status: NodeStatus::ConnectedOutgoing,
+                status: connected_state(),
             };
             match bucket.insert(node.clone()) {
                 InsertResult::Pending { disconnected } => {
@@ -816,7 +894,7 @@ mod tests {
                 })
             );
             assert_eq!(
-                Some(NodeStatus::ConnectedOutgoing),
+                Some(connected_state()),
                 bucket.iter().map(|v| v.status).last()
             );
             assert!(bucket.pending().is_none());
@@ -834,7 +912,7 @@ mod tests {
         let node = Node {
             key,
             value: (),
-            status: NodeStatus::ConnectedOutgoing,
+            status: connected_state(),
         };
         match bucket.insert(node) {
             InsertResult::Full => {}
@@ -846,7 +924,7 @@ mod tests {
     fn full_bucket_discard_pending() {
         let mut bucket =
             KBucket::<NodeId, ()>::new(Duration::from_secs(1), MAX_NODES_PER_BUCKET, None);
-        fill_bucket(&mut bucket, NodeStatus::Disconnected);
+        fill_bucket(&mut bucket, disconnected_state());
         let first = bucket.iter().next().unwrap();
         let first_disconnected = first.clone();
 
@@ -855,7 +933,7 @@ mod tests {
         let node = Node {
             key: key.clone(),
             value: (),
-            status: NodeStatus::ConnectedOutgoing,
+            status: connected_state(),
         };
         if let InsertResult::Pending { disconnected } = bucket.insert(node) {
             assert_eq!(&disconnected, &first_disconnected.key);
@@ -865,7 +943,7 @@ mod tests {
         assert!(bucket.pending().is_some());
 
         // Update the status of the first disconnected node to be connected.
-        let _ = bucket.update_status(&first_disconnected.key, NodeStatus::ConnectedOutgoing);
+        let _ = bucket.update_status(&first_disconnected.key, ConnectionState::Connected, None);
 
         // The pending node has been discarded.
         assert!(bucket.pending().is_none());
@@ -873,7 +951,7 @@ mod tests {
 
         // The initially disconnected node is now the most-recently connected.
         assert_eq!(
-            Some((&first_disconnected.key, NodeStatus::ConnectedOutgoing)),
+            Some((&first_disconnected.key, connected_state())),
             bucket.iter().map(|v| (&v.key, v.status)).last()
         );
         assert_eq!(
@@ -900,14 +978,14 @@ mod tests {
                 .collect::<Vec<_>>();
 
             // Update the node in the bucket.
-            let _ = bucket.update_status(&key, status);
+            let _ = bucket.update_status(&key, status.state, Some(status.direction));
 
             // Check that the bucket now contains the node with the new status,
             // preserving the status and relative order of all other nodes.
-            let expected_pos = match status {
-                NodeStatus::ConnectedOutgoing => num_nodes - 1,
-                NodeStatus::ConnectedIncoming => num_nodes - 1,
-                NodeStatus::Disconnected => bucket.first_connected_pos.unwrap_or(num_nodes) - 1,
+            let expected_pos = if status.is_connected() {
+                num_nodes - 1
+            } else {
+                bucket.first_connected_pos.unwrap_or(num_nodes) - 1
             };
             expected.remove(pos);
             expected.insert(expected_pos, (key, status));
