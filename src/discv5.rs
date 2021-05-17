@@ -351,6 +351,21 @@ impl Discv5 {
             .collect()
     }
 
+    /// Returns an iterator over all the entries in the routing table.
+    pub fn table_entries(&mut self) -> Vec<(NodeId, Enr, NodeStatus)> {
+        self.kbuckets
+            .write()
+            .iter()
+            .map(|entry| {
+                (
+                    *entry.node.key.preimage(),
+                    entry.node.value.clone(),
+                    entry.status.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
     /// Only `ed25519` and `secp256k1` key types are currently supported.
