@@ -219,7 +219,7 @@ impl Discv5ConfigBuilder {
 
     /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
     /// than the bucket size (16). By default, half of every bucket (8 positions) is the largest number of nodes that we accept that dial us.
-    pub fn incomfing_bucket_limit(&mut self, limit: usize) -> &mut Self {
+    pub fn incoming_bucket_limit(&mut self, limit: usize) -> &mut Self {
         self.config.incoming_bucket_limit = limit;
         self
     }
