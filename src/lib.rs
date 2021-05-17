@@ -126,7 +126,7 @@ pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
 pub use error::{Discv5Error, QueryError, RequestError};
 pub use executor::{Executor, TokioExecutor};
-pub use kbucket::Key;
+pub use kbucket::{ConnectionDirection, ConnectionState, Key};
 pub use permit_ban::PermitBanList;
 pub use socket::{FilterConfig, FilterConfigBuilder};
 // re-export the ENR crate
