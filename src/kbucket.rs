@@ -402,11 +402,6 @@ where
                 // Attempt to update the value
                 let update_value = bucket.update_value(key, value);
 
-                if update_value.failed() {
-                    // The value update failed and the node was removed
-                    return InsertResult::Failed(FailureReason::BucketFilter);
-                }
-
                 match (update_value, update_status) {
                     (UpdateResult::Updated { .. }, UpdateResult::Updated) => {
                         InsertResult::Updated {
@@ -418,7 +413,8 @@ where
                             promoted_to_connected: true,
                         }
                     }
-                    (UpdateResult::Updated { .. }, UpdateResult::NotModified) => {
+                    (UpdateResult::Updated { .. }, UpdateResult::NotModified)
+                    | (UpdateResult::Updated { .. }, UpdateResult::UpdatedPending) => {
                         InsertResult::ValueUpdated
                     }
                     (UpdateResult::NotModified, UpdateResult::Updated) => {
@@ -431,10 +427,19 @@ where
                             promoted_to_connected: true,
                         }
                     }
+                    (UpdateResult::NotModified, UpdateResult::NotModified) => {
+                        InsertResult::Updated {
+                            promoted_to_connected: false,
+                        }
+                    }
                     (UpdateResult::UpdatedPending, _) | (_, UpdateResult::UpdatedPending) => {
                         InsertResult::UpdatedPending
                     }
-                    (_, _) => unreachable!("Node must exist and pass filters by this point."),
+                    (UpdateResult::Failed(reason), _) => InsertResult::Failed(reason),
+                    (_, UpdateResult::Failed(_)) => unreachable!("Status failure handled earlier."),
+                    (UpdateResult::UpdatedAndPromoted, _) => {
+                        unreachable!("Value update cannot promote a connection.")
+                    }
                 }
             }
         } else {
