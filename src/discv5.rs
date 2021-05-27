@@ -361,7 +361,7 @@ impl Discv5 {
     }
 
     /// Returns an iterator over all ENR node IDs of nodes currently contained in the routing table.
-    pub fn table_entries_id(&mut self) -> Vec<NodeId> {
+    pub fn table_entries_id(&self) -> Vec<NodeId> {
         self.kbuckets
             .write()
             .iter()
@@ -370,7 +370,7 @@ impl Discv5 {
     }
 
     /// Returns an iterator over all the ENR's of nodes currently contained in the routing table.
-    pub fn table_entries_enr(&mut self) -> Vec<Enr> {
+    pub fn table_entries_enr(&self) -> Vec<Enr> {
         self.kbuckets
             .write()
             .iter()
