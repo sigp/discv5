@@ -1,5 +1,4 @@
-use crate::kbucket::MAX_NODES_PER_BUCKET;
-use crate::{Enr, Executor, FilterConfig, PermitBanList};
+use crate::{kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, FilterConfig, PermitBanList};
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 

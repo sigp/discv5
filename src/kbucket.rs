@@ -800,8 +800,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::bucket::InsertResult as BucketInsertResult;
-    use super::*;
+    use super::{bucket::InsertResult as BucketInsertResult, *};
     use enr::NodeId;
 
     fn connected_state() -> NodeStatus {
