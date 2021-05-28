@@ -577,16 +577,12 @@ impl Service {
                                 .node_address()
                                 .expect("Sanitized request"),
                         );
-                        nodes.retain(|enr| {
-                            peer_key
-                                .log2_distance(&enr.node_id().clone().into())
-                                .is_none()
-                        });
+                        nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
                         let before_len = nodes.len();
                         nodes.retain(|enr| {
                             peer_key
-                                .log2_distance(&enr.node_id().clone().into())
+                                .log2_distance(&enr.node_id().into())
                                 .map(|distance| distances_requested.contains(&distance))
                                 .unwrap_or_else(|| false)
                         });
@@ -1021,12 +1017,11 @@ impl Service {
             if let Some(query) = self.queries.get_mut(query_id) {
                 let mut peer_count = 0;
                 for enr_ref in other_enr_iter.clone() {
-                    if query
+                    if !query
                         .target_mut()
                         .untrusted_enrs
                         .iter()
-                        .position(|e| e.node_id() == enr_ref.node_id())
-                        .is_none()
+                        .any(|e| e.node_id() == enr_ref.node_id())
                     {
                         query.target_mut().untrusted_enrs.push(enr_ref.clone());
                     }
@@ -1281,7 +1276,7 @@ impl Service {
             QueryPoolState::Waiting(Some((query, return_peer))) => {
                 let node_id = return_peer;
 
-                let request_body = match query.target().rpc_request(&return_peer) {
+                let request_body = match query.target().rpc_request(return_peer) {
                     Ok(r) => r,
                     Err(e) => {
                         // dst node is local_key, report failure

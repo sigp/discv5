@@ -133,9 +133,9 @@ pub enum PacketKind {
     },
 }
 
-impl Into<u8> for &PacketKind {
-    fn into(self) -> u8 {
-        match self {
+impl From<&PacketKind> for u8 {
+    fn from(kind: &PacketKind) -> Self {
+        match kind {
             PacketKind::Message { .. } => 0,
             PacketKind::WhoAreYou { .. } => 1,
             PacketKind::Handshake { .. } => 2,

@@ -5,7 +5,6 @@ use crate::{
 };
 use std::{
     collections::btree_map::{BTreeMap, Entry},
-    iter::FromIterator,
     time::{Duration, Instant},
 };
 
@@ -81,19 +80,18 @@ where
         I: IntoIterator<Item = PredicateKey<TNodeId>>,
     {
         // Initialise the closest peers to begin the query with.
-        let closest_peers = BTreeMap::from_iter(
-            known_closest_peers
-                .into_iter()
-                .map(|key| {
-                    let predicate_match = key.predicate_match;
-                    let key: Key<TNodeId> = key.into();
-                    let distance = key.distance(&target_key);
-                    let state = QueryPeerState::NotContacted;
+        let closest_peers = known_closest_peers
+            .into_iter()
+            .map(|key| {
+                let predicate_match = key.predicate_match;
+                let key: Key<TNodeId> = key.into();
+                let distance = key.distance(&target_key);
+                let state = QueryPeerState::NotContacted;
 
-                    (distance, QueryPeer::new(key, state, predicate_match))
-                })
-                .take(config.num_results),
-        );
+                (distance, QueryPeer::new(key, state, predicate_match))
+            })
+            .take(config.num_results)
+            .collect();
 
         // The query initially makes progress by iterating towards the target.
         let progress = QueryProgress::Iterating { no_progress: 0 };

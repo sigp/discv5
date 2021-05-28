@@ -61,11 +61,11 @@ impl NodeContact {
     }
 
     pub fn node_address(&self) -> Result<NodeAddress, &'static str> {
-        let node_id = self.node_id();
         let socket_addr = self.udp_socket()?;
+        let node_id = self.node_id();
         Ok(NodeAddress {
-            node_id,
             socket_addr,
+            node_id,
         })
     }
 }
