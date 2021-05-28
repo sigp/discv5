@@ -1,4 +1,4 @@
-use crate::{Enr, Executor, FilterConfig, PermitBanList};
+use crate::{kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, FilterConfig, PermitBanList};
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
@@ -10,6 +10,10 @@ pub struct Discv5Config {
 
     /// The request timeout for each UDP request. Default: 2 seconds.
     pub request_timeout: Duration,
+
+    /// The interval over which votes are remembered when determining our external IP. A lower
+    /// interval will respond faster to IP changes. Default is 30 seconds.
+    pub vote_duration: Duration,
 
     /// The timeout after which a `QueryPeer` in an ongoing query is marked unresponsive.
     /// Unresponsive peers don't count towards the parallelism limits for a query.
@@ -45,6 +49,10 @@ pub struct Discv5Config {
     /// /24 subnet in the kbuckets table. This is to mitigate eclipse attacks. Default: false.
     pub ip_limit: bool,
 
+    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
+    /// than the bucket size (16). By default this is disabled (set to the maximum bucket size, 16).
+    pub incoming_bucket_limit: usize,
+
     /// A filter used to decide whether to insert nodes into our local routing table. Nodes can be
     /// excluded if they do not pass this filter. The default is to accept all nodes.
     pub table_filter: fn(&Enr) -> bool,
@@ -79,6 +87,7 @@ impl Default for Discv5Config {
         Self {
             enable_packet_filter: false,
             request_timeout: Duration::from_secs(1),
+            vote_duration: Duration::from_secs(30),
             query_peer_timeout: Duration::from_secs(2),
             query_timeout: Duration::from_secs(60),
             request_retries: 1,
@@ -89,6 +98,7 @@ impl Default for Discv5Config {
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
+            incoming_bucket_limit: MAX_NODES_PER_BUCKET,
             table_filter: |_| true,
             talkreq_callback: |_, _| Vec::new(),
             ping_interval: Duration::from_secs(300),
@@ -129,6 +139,13 @@ impl Discv5ConfigBuilder {
     /// The request timeout for each UDP request.
     pub fn request_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.config.request_timeout = timeout;
+        self
+    }
+
+    /// The interval over which votes are remembered when determining our external IP. A lower
+    /// interval will respond faster to IP changes. Default is 30 seconds.
+    pub fn vote_duration(&mut self, vote_duration: Duration) -> &mut Self {
+        self.config.vote_duration = vote_duration;
         self
     }
 
@@ -199,6 +216,13 @@ impl Discv5ConfigBuilder {
         self
     }
 
+    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
+    /// than the bucket size (16). By default, half of every bucket (8 positions) is the largest number of nodes that we accept that dial us.
+    pub fn incoming_bucket_limit(&mut self, limit: usize) -> &mut Self {
+        self.config.incoming_bucket_limit = limit;
+        self
+    }
+
     /// A filter used to decide whether to insert nodes into our local routing table. Nodes can be
     /// excluded if they do not pass this filter.
     pub fn table_filter(&mut self, filter: fn(&Enr) -> bool) -> &mut Self {
@@ -250,6 +274,9 @@ impl Discv5ConfigBuilder {
         if self.config.executor.is_none() {
             self.config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
         };
+
+        assert!(self.config.incoming_bucket_limit <= MAX_NODES_PER_BUCKET);
+
         self.config.clone()
     }
 }
@@ -259,6 +286,7 @@ impl std::fmt::Debug for Discv5Config {
         let mut builder = f.debug_struct("Discv5Config");
         let _ = builder.field("filter_enabled", &self.enable_packet_filter);
         let _ = builder.field("request_timeout", &self.request_timeout);
+        let _ = builder.field("vote_duration", &self.vote_duration);
         let _ = builder.field("query_timeout", &self.query_timeout);
         let _ = builder.field("query_peer_timeout", &self.query_peer_timeout);
         let _ = builder.field("request_retries", &self.request_retries);
@@ -268,6 +296,7 @@ impl std::fmt::Debug for Discv5Config {
         let _ = builder.field("query_parallelism", &self.query_parallelism);
         let _ = builder.field("report_discovered_peers", &self.report_discovered_peers);
         let _ = builder.field("ip_limit", &self.ip_limit);
+        let _ = builder.field("incoming_bucket_limit", &self.incoming_bucket_limit);
         let _ = builder.field("ping_interval", &self.ping_interval);
         builder.finish()
     }

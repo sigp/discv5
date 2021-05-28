@@ -468,7 +468,7 @@ impl Packet {
                 .expect("Can only be 2 bytes in size"),
         );
 
-        let remaining_data = data[STATIC_HEADER_LENGTH..].to_vec();
+        let remaining_data = data[IV_LENGTH + STATIC_HEADER_LENGTH..].to_vec();
         if auth_data_size as usize > remaining_data.len() {
             return Err(PacketError::InvalidAuthDataSize);
         }

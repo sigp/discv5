@@ -1,17 +1,19 @@
 #![cfg(test)]
 
+use super::*;
+
 use crate::{
     handler::Handler,
     kbucket,
-    kbucket::{KBucketsTable, NodeStatus},
+    kbucket::{BucketInsertResult, KBucketsTable, NodeStatus},
     node_info::NodeContact,
     query_pool::{QueryId, QueryPool},
     rpc,
     rpc::RequestId,
     service::{ActiveRequest, Service},
-    Discv5ConfigBuilder,
+    Discv5ConfigBuilder, Enr,
 };
-use enr::{CombinedKey, Enr, EnrBuilder};
+use enr::{CombinedKey, EnrBuilder};
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -21,6 +23,20 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+fn _connected_state() -> NodeStatus {
+    NodeStatus {
+        state: ConnectionState::Connected,
+        direction: ConnectionDirection::Outgoing,
+    }
+}
+
+fn disconnected_state() -> NodeStatus {
+    NodeStatus {
+        state: ConnectionState::Disconnected,
+        direction: ConnectionDirection::Outgoing,
+    }
+}
+
 fn init() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -28,9 +44,10 @@ fn init() {
 }
 
 async fn build_service(
-    local_enr: Arc<RwLock<Enr<CombinedKey>>>,
+    local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
     listen_socket: SocketAddr,
+    filters: bool,
 ) -> Service {
     let config = Discv5ConfigBuilder::new()
         .executor(Box::new(crate::executor::TokioExecutor::default()))
@@ -45,9 +62,21 @@ async fn build_service(
     .await
     .unwrap();
 
+    let (table_filter, bucket_filter) = if filters {
+        (
+            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+        )
+    } else {
+        (None, None)
+    };
+
     let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
         local_enr.read().node_id().into(),
         Duration::from_secs(60),
+        config.incoming_bucket_limit,
+        table_filter,
+        bucket_filter,
     )));
 
     // create the required channels
@@ -65,7 +94,7 @@ async fn build_service(
         handler_send,
         handler_recv,
         handler_exit: Some(_handler_exit),
-        ping_heartbeat: tokio::time::interval(config.ping_interval),
+        peers_to_ping: HashSetDelay::new(config.ping_interval),
         discv5_recv,
         event_stream: None,
         exit,
@@ -97,17 +126,19 @@ async fn test_updating_connection_on_ping() {
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
         socket_addr,
+        false,
     )
     .await;
     // Set up service with one disconnected node
     let key = kbucket::Key::from(enr2.node_id());
     if let kbucket::Entry::Absent(entry) = service.kbuckets.write().entry(&key) {
-        match entry.insert(enr2.clone(), NodeStatus::Disconnected) {
-            kbucket::InsertResult::Inserted => {}
-            kbucket::InsertResult::Full => {
+        match entry.insert(enr2.clone(), disconnected_state()) {
+            BucketInsertResult::Inserted => {}
+            BucketInsertResult::Full => {
                 panic!("Can't be full");
             }
-            kbucket::InsertResult::Pending { .. } => {}
+            BucketInsertResult::Pending { .. } => {}
+            _ => panic!("Could not be inserted"),
         }
     }
 
@@ -138,5 +169,5 @@ async fn test_updating_connection_on_ping() {
     service.handle_rpc_response(expected_return_addr, response);
     let buckets = service.kbuckets.read();
     let node = buckets.iter_ref().next().unwrap();
-    assert_eq!(node.status, NodeStatus::Connected);
+    assert!(node.status.is_connected())
 }

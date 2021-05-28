@@ -14,7 +14,10 @@
 
 use crate::{
     error::{Discv5Error, QueryError, RequestError},
-    kbucket::{self, ip_limiter, KBucketsTable, NodeStatus},
+    kbucket::{
+        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
+        NodeStatus, UpdateResult,
+    },
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest},
     Discv5Config, Enr,
@@ -89,11 +92,26 @@ impl Discv5 {
             config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
         };
 
+        // NOTE: Currently we don't expose custom filter support in the configuration. Users can
+        // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
+        // may expose this functionality to the users if there is demand for it.
+        let (table_filter, bucket_filter) = if config.ip_limit {
+            (
+                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            )
+        } else {
+            (None, None)
+        };
+
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));
         let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
             local_enr.read().node_id().into(),
             Duration::from_secs(60),
+            config.incoming_bucket_limit,
+            table_filter,
+            bucket_filter,
         )));
 
         // Update the PermitBan list based on initial configuration
@@ -163,35 +181,26 @@ impl Discv5 {
 
         let key = kbucket::Key::from(enr.node_id());
 
-        // should the ENR be inserted or updated to a value that would exceed the IP limit ban
-        let ip_limit_ban = self.config.ip_limit
-            && !self
-                .kbuckets
-                .read()
-                .check(&key, &enr, |v, o, l| ip_limiter(v, &o, l));
-
-        match self.kbuckets.write().entry(&key) {
-            kbucket::Entry::Present(mut entry, _) => {
-                // still update an ENR, regardless of the IP limit ban
-                *entry.value() = enr;
-            }
-            kbucket::Entry::Pending(mut entry, _) => {
-                *entry.value() = enr;
-            }
-            kbucket::Entry::Absent(entry) => {
-                if !ip_limit_ban {
-                    match entry.insert(enr, NodeStatus::Disconnected) {
-                        kbucket::InsertResult::Inserted => {}
-                        kbucket::InsertResult::Full => {
-                            return Err("Table full");
-                        }
-                        kbucket::InsertResult::Pending { .. } => {}
-                    }
-                }
-            }
-            kbucket::Entry::SelfEntry => {}
-        };
-        Ok(())
+        match self.kbuckets.write().insert_or_update(
+            &key,
+            enr,
+            NodeStatus {
+                state: ConnectionState::Disconnected,
+                direction: ConnectionDirection::Incoming,
+            },
+        ) {
+            InsertResult::Inserted
+            | InsertResult::Pending { .. }
+            | InsertResult::StatusUpdated { .. }
+            | InsertResult::ValueUpdated
+            | InsertResult::Updated { .. }
+            | InsertResult::UpdatedPending => Ok(()),
+            InsertResult::Failed(FailureReason::BucketFull) => Err("Table full"),
+            InsertResult::Failed(FailureReason::BucketFilter) => Err("Failed bucket filter"),
+            InsertResult::Failed(FailureReason::TableFilter) => Err("Failed table filter"),
+            InsertResult::Failed(FailureReason::InvalidSelfUpdate) => Err("Invalid self update"),
+            InsertResult::Failed(_) => Err("Failed to insert ENR"),
+        }
     }
 
     /// Removes a `node_id` from the routing table.
@@ -210,16 +219,13 @@ impl Discv5 {
     /// Returns `true` if node was in table and `false` otherwise.
     pub fn disconnect_node(&mut self, node_id: &NodeId) -> bool {
         let key = &kbucket::Key::from(*node_id);
-        match self.kbuckets.write().entry(key) {
-            kbucket::Entry::Present(entry, _) => {
-                entry.update(NodeStatus::Disconnected);
-                true
-            }
-            kbucket::Entry::Pending(entry, _) => {
-                entry.update(NodeStatus::Disconnected);
-                true
-            }
-            _ => false,
+        match self
+            .kbuckets
+            .write()
+            .update_node_status(key, ConnectionState::Disconnected, None)
+        {
+            UpdateResult::Failed(_) => false,
+            _ => true,
         }
     }
 
@@ -228,7 +234,7 @@ impl Discv5 {
         self.kbuckets
             .write()
             .iter()
-            .filter(|entry| entry.status == NodeStatus::Connected)
+            .filter(|entry| entry.status.is_connected())
             .count()
     }
 
@@ -342,6 +348,21 @@ impl Discv5 {
             .write()
             .iter()
             .map(|entry| entry.node.value.clone())
+            .collect()
+    }
+
+    /// Returns an iterator over all the entries in the routing table.
+    pub fn table_entries(&mut self) -> Vec<(NodeId, Enr, NodeStatus)> {
+        self.kbuckets
+            .write()
+            .iter()
+            .map(|entry| {
+                (
+                    *entry.node.key.preimage(),
+                    entry.node.value.clone(),
+                    entry.status.clone(),
+                )
+            })
             .collect()
     }
 

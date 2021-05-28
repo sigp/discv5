@@ -21,18 +21,21 @@
 // This basis of this file has been taken from the rust-libp2p codebase:
 // https://github.com/libp2p/rust-libp2p
 
-//! The `Entry` API for quering and modifying the entries of a `KBucketsTable`
+//! The `Entry` API for querying and modifying the entries of a `KBucketsTable`
 //! representing the nodes participating in the Kademlia DHT.
 
 pub use super::{
-    bucket::{AppliedPending, InsertResult, Node, NodeStatus, MAX_NODES_PER_BUCKET},
+    bucket::{
+        AppliedPending, ConnectionState, InsertResult, Node, NodeStatus, MAX_NODES_PER_BUCKET,
+    },
     key::*,
+    ConnectionDirection,
 };
 
 use super::*;
 
 /// An immutable by-reference view of a bucket entry.
-pub struct EntryRefView<'a, TPeerId, TVal> {
+pub struct EntryRefView<'a, TPeerId, TVal: Eq> {
     /// The node represented by the entry.
     pub node: NodeRefView<'a, TPeerId, TVal>,
     /// The status of the node identified by the key.
@@ -40,7 +43,7 @@ pub struct EntryRefView<'a, TPeerId, TVal> {
 }
 
 /// An immutable by-reference view of a `Node`.
-pub struct NodeRefView<'a, TPeerId, TVal> {
+pub struct NodeRefView<'a, TPeerId, TVal: Eq> {
     pub key: &'a Key<TPeerId>,
     pub value: &'a TVal,
 }
@@ -48,14 +51,14 @@ pub struct NodeRefView<'a, TPeerId, TVal> {
 /// A cloned, immutable view of an entry that is either present in a bucket
 /// or pending insertion.
 #[derive(Clone, Debug)]
-pub struct EntryView<TPeerId, TVal> {
+pub struct EntryView<TPeerId, TVal: Eq> {
     /// The node represented by the entry.
     pub node: Node<TPeerId, TVal>,
     /// The status of the node.
     pub status: NodeStatus,
 }
 
-impl<TPeerId, TVal> AsRef<Key<TPeerId>> for EntryView<TPeerId, TVal> {
+impl<TPeerId, TVal: Eq> AsRef<Key<TPeerId>> for EntryView<TPeerId, TVal> {
     fn as_ref(&self) -> &Key<TPeerId> {
         &self.node.key
     }
@@ -63,7 +66,7 @@ impl<TPeerId, TVal> AsRef<Key<TPeerId>> for EntryView<TPeerId, TVal> {
 
 /// A reference into a single entry of a `KBucketsTable`.
 #[derive(Debug)]
-pub enum Entry<'a, TPeerId, TVal> {
+pub enum Entry<'a, TPeerId, TVal: Eq> {
     /// The entry is present in a bucket.
     Present(PresentEntry<'a, TPeerId, TVal>, NodeStatus),
     /// The entry is pending insertion in a bucket.
@@ -77,7 +80,7 @@ pub enum Entry<'a, TPeerId, TVal> {
 /// The internal representation of the different states of an `Entry`,
 /// referencing the associated key and bucket.
 #[derive(Debug)]
-struct EntryRef<'a, TPeerId, TVal> {
+struct EntryRef<'a, TPeerId, TVal: Eq> {
     bucket: &'a mut KBucket<TPeerId, TVal>,
     key: &'a Key<TPeerId>,
 }
@@ -85,6 +88,7 @@ struct EntryRef<'a, TPeerId, TVal> {
 impl<'a, TPeerId, TVal> Entry<'a, TPeerId, TVal>
 where
     TPeerId: Clone,
+    TVal: Eq,
 {
     /// Creates a new `Entry` for a `Key`, encapsulating access to a bucket.
     pub(super) fn new(bucket: &'a mut KBucket<TPeerId, TVal>, key: &'a Key<TPeerId>) -> Self {
@@ -102,11 +106,12 @@ where
 
 /// An entry present in a bucket.
 #[derive(Debug)]
-pub struct PresentEntry<'a, TPeerId, TVal>(EntryRef<'a, TPeerId, TVal>);
+pub struct PresentEntry<'a, TPeerId, TVal: Eq>(EntryRef<'a, TPeerId, TVal>);
 
 impl<'a, TPeerId, TVal> PresentEntry<'a, TPeerId, TVal>
 where
     TPeerId: Clone,
+    TVal: Eq,
 {
     fn new(bucket: &'a mut KBucket<TPeerId, TVal>, key: &'a Key<TPeerId>) -> Self {
         PresentEntry(EntryRef { bucket, key })
@@ -122,20 +127,26 @@ where
             .value
     }
 
-    /// Sets the status of the entry to `NodeStatus::Disconnected`.
-    pub fn update(self, status: NodeStatus) -> Self {
-        self.0.bucket.update(self.0.key, status);
+    /// Sets the status of the entry.
+    pub fn update(self, state: ConnectionState, direction: Option<ConnectionDirection>) -> Self {
+        let _ = self.0.bucket.update_status(self.0.key, state, direction);
         Self::new(self.0.bucket, self.0.key)
+    }
+
+    /// Removes the entry from the table.
+    pub fn remove(self) {
+        self.0.bucket.remove(self.0.key);
     }
 }
 
 /// An entry waiting for a slot to be available in a bucket.
 #[derive(Debug)]
-pub struct PendingEntry<'a, TPeerId, TVal>(EntryRef<'a, TPeerId, TVal>);
+pub struct PendingEntry<'a, TPeerId, TVal: Eq>(EntryRef<'a, TPeerId, TVal>);
 
-impl<'a, TPeerId, TVal> PendingEntry<'a, TPeerId, TVal>
+impl<'a, TPeerId, TVal: Eq> PendingEntry<'a, TPeerId, TVal>
 where
     TPeerId: Clone,
+    TVal: Eq,
 {
     fn new(bucket: &'a mut KBucket<TPeerId, TVal>, key: &'a Key<TPeerId>) -> Self {
         PendingEntry(EntryRef { bucket, key })
@@ -155,15 +166,21 @@ where
         self.0.bucket.update_pending(status);
         PendingEntry::new(self.0.bucket, self.0.key)
     }
+
+    /// Removes the entry from the table.
+    pub fn remove(self) {
+        self.0.bucket.remove(self.0.key);
+    }
 }
 
 /// An entry that is not present in any bucket.
 #[derive(Debug)]
-pub struct AbsentEntry<'a, TPeerId, TVal>(EntryRef<'a, TPeerId, TVal>);
+pub struct AbsentEntry<'a, TPeerId, TVal: Eq>(EntryRef<'a, TPeerId, TVal>);
 
 impl<'a, TPeerId, TVal> AbsentEntry<'a, TPeerId, TVal>
 where
     TPeerId: Clone,
+    TVal: Eq,
 {
     fn new(bucket: &'a mut KBucket<TPeerId, TVal>, key: &'a Key<TPeerId>) -> Self {
         AbsentEntry(EntryRef { bucket, key })
@@ -171,12 +188,10 @@ where
 
     /// Attempts to insert the entry into a bucket.
     pub fn insert(self, value: TVal, status: NodeStatus) -> InsertResult<TPeerId> {
-        self.0.bucket.insert(
-            Node {
-                key: self.0.key.clone(),
-                value,
-            },
+        self.0.bucket.insert(Node {
+            key: self.0.key.clone(),
+            value,
             status,
-        )
+        })
     }
 }

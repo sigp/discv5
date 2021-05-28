@@ -36,7 +36,11 @@
 //!
 //!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
-use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder};
+use discv5::{
+    enr,
+    enr::{k256, CombinedKey},
+    Discv5, Discv5ConfigBuilder,
+};
 use std::{
     net::{Ipv4Addr, SocketAddr},
     time::Duration,

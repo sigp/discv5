@@ -167,7 +167,7 @@ async fn multiple_messages() {
     let sender = async move {
         loop {
             match sender_handler_recv.recv().await {
-                Some(HandlerResponse::Established(_)) => {
+                Some(HandlerResponse::Established(_, _)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
                         let _ = sender_handler.send(HandlerRequest::Request(

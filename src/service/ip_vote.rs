@@ -6,19 +6,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// The timeout before a report/vote expires. Currently set to a 5 minute window.
-const PING_VOTE_TIMEOUT: u64 = 300;
-
 /// A collection of IP:Ports for our node reported from external peers.
 pub(crate) struct IpVote {
     /// The current collection of IP:Port votes.
     votes: HashMap<NodeId, (SocketAddr, Instant)>,
     /// The minimum number of votes required before an IP/PORT is accepted.
     minimum_threshold: usize,
+    /// The time votes remain valid.
+    vote_duration: Duration,
 }
 
 impl IpVote {
-    pub fn new(minimum_threshold: usize) -> Self {
+    pub fn new(minimum_threshold: usize, vote_duration: Duration) -> Self {
         // do not allow minimum thresholds less than 2
         if minimum_threshold < 2 {
             panic!("Setting enr_peer_update_min to a value less than 2 will cause issues with discovery with peers behind NAT");
@@ -26,17 +25,13 @@ impl IpVote {
         IpVote {
             votes: HashMap::new(),
             minimum_threshold,
+            vote_duration,
         }
     }
 
     pub fn insert(&mut self, key: NodeId, socket: SocketAddr) {
-        self.votes.insert(
-            key,
-            (
-                socket,
-                Instant::now() + Duration::from_secs(PING_VOTE_TIMEOUT),
-            ),
-        );
+        self.votes
+            .insert(key, (socket, Instant::now() + self.vote_duration));
     }
 
     /// Returns the majority `SocketAddr` if it exists. If there are not enough votes to meet the threshold this returns None.
@@ -62,11 +57,11 @@ impl IpVote {
 
 #[cfg(test)]
 mod tests {
-    use super::{IpVote, NodeId, SocketAddr};
+    use super::{Duration, IpVote, NodeId, SocketAddr};
 
     #[test]
     fn test_three_way_vote_draw() {
-        let mut votes = IpVote::new(2);
+        let mut votes = IpVote::new(2, Duration::from_secs(10));
 
         let socket_1 = SocketAddr::new("127.0.0.1".parse().unwrap(), 1);
         let socket_2 = SocketAddr::new("127.0.0.1".parse().unwrap(), 2);
@@ -88,7 +83,7 @@ mod tests {
 
     #[test]
     fn test_majority_vote() {
-        let mut votes = IpVote::new(2);
+        let mut votes = IpVote::new(2, Duration::from_secs(10));
         let socket_1 = SocketAddr::new("127.0.0.1".parse().unwrap(), 1);
         let socket_2 = SocketAddr::new("127.0.0.1".parse().unwrap(), 2);
         let socket_3 = SocketAddr::new("127.0.0.1".parse().unwrap(), 3);
@@ -103,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_below_threshold() {
-        let mut votes = IpVote::new(3);
+        let mut votes = IpVote::new(3, Duration::from_secs(10));
         let socket_1 = SocketAddr::new("127.0.0.1".parse().unwrap(), 1);
         let socket_2 = SocketAddr::new("127.0.0.1".parse().unwrap(), 2);
         let socket_3 = SocketAddr::new("127.0.0.1".parse().unwrap(), 3);
