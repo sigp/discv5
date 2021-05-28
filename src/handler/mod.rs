@@ -25,7 +25,6 @@
 use crate::{
     config::Discv5Config,
     error::{Discv5Error, RequestError},
-    kbucket::ConnectionDirection,
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
@@ -112,6 +111,15 @@ pub enum HandlerResponse {
     ///
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
+}
+
+/// How we connected to the node.
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum ConnectionDirection {
+    /// The node contacted us.
+    Incoming,
+    /// We contacted the node.
+    Outgoing,
 }
 
 /// A reference for the application layer to send back when the handler requests any known
@@ -216,7 +224,7 @@ type HandlerReturn = (
 );
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
-    pub(crate) async fn spawn(
+    pub async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
