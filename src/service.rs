@@ -994,19 +994,16 @@ impl Service {
                 };
 
                 if must_update_enr {
-                    match self
-                        .kbuckets
-                        .write()
-                        .update_node(&key, enr_ref.clone(), None)
+                    if let UpdateResult::Failed(reason) =
+                        self.kbuckets
+                            .write()
+                            .update_node(&key, enr_ref.clone(), None)
                     {
-                        UpdateResult::Failed(reason) => {
-                            self.peers_to_ping.remove(&enr_ref.node_id());
-                            debug!(
-                                "Failed to update discovered ENR. Node: {}, Reason: {:?}",
-                                source, reason
-                            );
-                        }
-                        _ => {}
+                        self.peers_to_ping.remove(&enr_ref.node_id());
+                        debug!(
+                            "Failed to update discovered ENR. Node: {}, Reason: {:?}",
+                            source, reason
+                        );
                     }
                 }
             }
@@ -1132,9 +1129,8 @@ impl Service {
             self.send_event(event);
         }
 
-        if let Some(node_id) = ping_peer {
+        if let Some(node_key) = ping_peer {
             let optional_enr = {
-                let node_key = kbucket::Key::from(node_id);
                 if let kbucket::Entry::Present(mut entry, _status) =
                     self.kbuckets.write().entry(&node_key)
                 {

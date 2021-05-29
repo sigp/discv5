@@ -203,10 +203,7 @@ pub enum UpdateResult {
 impl UpdateResult {
     // The update failed.
     pub fn failed(&self) -> bool {
-        match self {
-            UpdateResult::Failed(_) => true,
-            _ => false,
-        }
+        matches!(self, UpdateResult::Failed(_))
     }
 }
 
@@ -397,11 +394,7 @@ where
             // Flag indicating if this update modified the entry.
             let not_modified = old_status == node.status;
             // Flag indicating we are upgrading to a connected status
-            let is_connected = if let ConnectionState::Connected = state {
-                true
-            } else {
-                false
-            };
+            let is_connected = matches!(state, ConnectionState::Connected);
 
             // Adjust `first_connected_pos` accordingly.
             match old_status.state {
@@ -441,20 +434,18 @@ where
                 } // Node could not be inserted
                 _ => unreachable!("The node is removed before being (re)inserted."),
             }
-        } else {
-            if let Some(pending) = &mut self.pending {
-                if &pending.node.key == key {
-                    pending.node.status.state = state;
-                    if let Some(direction) = direction {
-                        pending.node.status.direction = direction;
-                    }
-                    UpdateResult::UpdatedPending
-                } else {
-                    UpdateResult::Failed(FailureReason::KeyNonExistant)
+        } else if let Some(pending) = &mut self.pending {
+            if &pending.node.key == key {
+                pending.node.status.state = state;
+                if let Some(direction) = direction {
+                    pending.node.status.direction = direction;
                 }
+                UpdateResult::UpdatedPending
             } else {
                 UpdateResult::Failed(FailureReason::KeyNonExistant)
             }
+        } else {
+            UpdateResult::Failed(FailureReason::KeyNonExistant)
         }
     }
 
@@ -470,7 +461,7 @@ where
             let mut node = self.nodes.remove(pos.0);
             if node.value == value {
                 self.nodes.insert(pos.0, node);
-                return UpdateResult::NotModified;
+                UpdateResult::NotModified
             } else {
                 // check bucket filter
                 if let Some(filter) = self.filter.as_ref() {
@@ -481,19 +472,17 @@ where
                 }
                 node.value = value;
                 self.nodes.insert(pos.0, node);
-                return UpdateResult::Updated;
+                UpdateResult::Updated
             }
-        } else {
-            if let Some(pending) = &mut self.pending {
-                if &pending.node.key == key {
-                    pending.node.value = value;
-                    UpdateResult::UpdatedPending
-                } else {
-                    UpdateResult::Failed(FailureReason::KeyNonExistant)
-                }
+        } else if let Some(pending) = &mut self.pending {
+            if &pending.node.key == key {
+                pending.node.value = value;
+                UpdateResult::UpdatedPending
             } else {
                 UpdateResult::Failed(FailureReason::KeyNonExistant)
             }
+        } else {
+            UpdateResult::Failed(FailureReason::KeyNonExistant)
         }
     }
 
@@ -605,7 +594,7 @@ where
     /// Returns the state of the node at the given position.
     pub fn status(&self, pos: Position) -> NodeStatus {
         if let Some(node) = self.nodes.get(pos.0) {
-            node.status.clone()
+            node.status
         } else {
             // If the node isn't in the bucket, return the worst kind of state.
             NodeStatus {
@@ -803,7 +792,7 @@ mod tests {
             // All nodes before the first connected node must be disconnected and
             // in insertion order. Similarly, all remaining nodes must be connected
             // and in insertion order.
-            nodes == Vec::from(disconnected) && tail == Vec::from(connected)
+            disconnected == nodes && connected == tail
         }
 
         quickcheck(prop as fn(_) -> _);
@@ -819,14 +808,14 @@ mod tests {
             direction: ConnectionDirection::Outgoing,
         };
         // Fill the bucket with disconnected nodes.
-        fill_bucket(&mut bucket, disconnected_status.clone());
+        fill_bucket(&mut bucket, disconnected_status);
 
         // Trying to insert another disconnected node fails.
         let key = Key::from(NodeId::random());
         let node = Node {
             key,
             value: (),
-            status: disconnected_status.clone(),
+            status: disconnected_status,
         };
         match bucket.insert(node) {
             InsertResult::Full => {}
@@ -1094,9 +1083,7 @@ mod tests {
             // in insertion order. Similarly, all remaining nodes must be connected
             // and in insertion order.
             // The number of incoming nodes does not exceed the maximum limit.
-            nodes == Vec::from(disconnected)
-                && tail == Vec::from(connected)
-                && number_of_incoming_nodes <= 5
+            disconnected == nodes && connected == tail && number_of_incoming_nodes <= 5
         }
 
         quickcheck(prop as fn(_) -> _);
