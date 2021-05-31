@@ -261,11 +261,7 @@ where
                 if let Some(i) = index {
                     let bucket = &mut self.buckets[i.get()];
                     if let Some(node) = bucket.get(&key) {
-                        if node.value == value {
-                            true
-                        } else {
-                            false
-                        }
+                        node.value == value
                     } else {
                         false
                     }
@@ -294,11 +290,8 @@ where
 
             let update_result = bucket.update_value(key, value);
 
-            match &update_result {
-                UpdateResult::Failed(_) => {
-                    return update_result;
-                }
-                _ => {}
+            if let UpdateResult::Failed(_) = &update_result {
+                return update_result;
             }
 
             // If we need to update the connection state, update it here.
@@ -339,11 +332,7 @@ where
                 if let Some(i) = index {
                     let bucket = &mut self.buckets[i.get()];
                     if let Some(node) = bucket.get(&key) {
-                        if node.value == value {
-                            true
-                        } else {
-                            false
-                        }
+                        node.value == value
                     } else {
                         false
                     }

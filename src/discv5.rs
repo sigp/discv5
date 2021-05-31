@@ -219,14 +219,12 @@ impl Discv5 {
     /// Returns `true` if node was in table and `false` otherwise.
     pub fn disconnect_node(&mut self, node_id: &NodeId) -> bool {
         let key = &kbucket::Key::from(*node_id);
-        match self
-            .kbuckets
-            .write()
-            .update_node_status(key, ConnectionState::Disconnected, None)
-        {
-            UpdateResult::Failed(_) => false,
-            _ => true,
-        }
+        !matches!(
+            self.kbuckets
+                .write()
+                .update_node_status(key, ConnectionState::Disconnected, None),
+            UpdateResult::Failed(_)
+        )
     }
 
     /// Returns the number of connected peers that exist in the routing table.
@@ -360,7 +358,7 @@ impl Discv5 {
                 (
                     *entry.node.key.preimage(),
                     entry.node.value.clone(),
-                    entry.status.clone(),
+                    entry.status,
                 )
             })
             .collect()

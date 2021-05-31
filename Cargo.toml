@@ -9,10 +9,7 @@ repository = "https://github.com/sigp/discv5"
 readme = "./README.md"
 keywords = ["peer-to-peer", "libp2p", "networking", "discovery", "discv5"]
 categories = ["network-programming", "asynchronous"]
-exclude = [
-	".gitignore",
-	".github/*"
-]
+exclude = [".gitignore", ".github/*"]
 
 [dependencies]
 enr = { version = "0.5.1", features = ["k256", "ed25519"] }
@@ -35,8 +32,8 @@ smallvec = "1.6.1"
 parking_lot = "0.11.1"
 lru_time_cache = "0.11.10"
 lazy_static = "1.4.0"
+aes = { version = "0.7", features = ["ctr"] }
 aes-gcm = "0.9.0"
-aes-ctr = "0.6.0"
 tracing = { version = "0.1.26", features = ["log"] }
 tracing-subscriber = "0.2.18"
 lru = "0.6.5"

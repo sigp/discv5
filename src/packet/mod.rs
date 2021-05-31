@@ -10,8 +10,8 @@
 //! [`Packet`]: enum.Packet.html
 
 use crate::{error::PacketError, Enr};
-use aes_ctr::{
-    cipher::{generic_array::GenericArray, NewStreamCipher, SyncStreamCipher},
+use aes::{
+    cipher::{generic_array::GenericArray, NewCipher, StreamCipher},
     Aes128Ctr,
 };
 use enr::NodeId;
