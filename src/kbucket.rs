@@ -93,6 +93,18 @@ use std::{
 /// Maximum number of k-buckets.
 const NUM_BUCKETS: usize = 256;
 
+/// Closest Iterator Output Value
+pub struct ClosestValue<TNodeId, TVal> {
+    pub key: Key<TNodeId>,
+    pub value: TVal,
+}
+
+impl<TNodeId, TVal> AsRef<Key<TNodeId>> for ClosestValue<TNodeId, TVal> {
+    fn as_ref(&self) -> &Key<TNodeId> {
+        &self.key
+    }
+}
+
 /// A key that can be returned from the `closest_keys` function, which indicates if the key matches the
 /// predicate or not.
 pub struct PredicateKey<TNodeId: Clone> {
@@ -100,14 +112,36 @@ pub struct PredicateKey<TNodeId: Clone> {
     pub predicate_match: bool,
 }
 
-impl<TNodeId: Clone> AsRef<Key<TNodeId>> for PredicateKey<TNodeId> {
+impl<TNodeId: Clone> From<PredicateKey<TNodeId>> for Key<TNodeId> {
+    fn from(key: PredicateKey<TNodeId>) -> Self {
+        key.key
+    }
+}
+
+impl<TNodeId: Clone, TVal> From<PredicateValue<TNodeId, TVal>> for PredicateKey<TNodeId> {
+    fn from(value: PredicateValue<TNodeId, TVal>) -> Self {
+        PredicateKey {
+            key: value.key,
+            predicate_match: value.predicate_match,
+        }
+    }
+}
+
+/// A value being returned from a predicate closest iterator.
+pub struct PredicateValue<TNodeId: Clone, TVal> {
+    pub key: Key<TNodeId>,
+    pub predicate_match: bool,
+    pub value: TVal,
+}
+
+impl<TNodeId: Clone, TVal> AsRef<Key<TNodeId>> for PredicateValue<TNodeId, TVal> {
     fn as_ref(&self) -> &Key<TNodeId> {
         &self.key
     }
 }
 
-impl<TNodeId: Clone> From<PredicateKey<TNodeId>> for Key<TNodeId> {
-    fn from(key: PredicateKey<TNodeId>) -> Self {
+impl<TNodeId: Clone, TVal> From<PredicateValue<TNodeId, TVal>> for Key<TNodeId> {
+    fn from(key: PredicateValue<TNodeId, TVal>) -> Self {
         key.key
     }
 }
@@ -588,22 +622,50 @@ where
             iter: None,
             table: self,
             buckets_iter: ClosestBucketsIter::new(distance),
-            fmap: |b: &KBucket<_, _>| -> ArrayVec<_, MAX_NODES_PER_BUCKET> {
+            fmap: |b: &KBucket<TNodeId, TVal>| -> ArrayVec<_, MAX_NODES_PER_BUCKET> {
                 b.iter().map(|n| n.key.clone()).collect()
             },
         }
     }
 
     /// Returns an iterator over the keys closest to `target`, ordered by
+    /// increasing distance.
+    pub fn closest_values<'a, T>(
+        &'a mut self,
+        target: &'a Key<T>,
+    ) -> impl Iterator<Item = ClosestValue<TNodeId, TVal>> + 'a
+    where
+        T: Clone,
+        TVal: Clone,
+    {
+        let distance = self.local_key.distance(target);
+        ClosestIter {
+            target,
+            iter: None,
+            table: self,
+            buckets_iter: ClosestBucketsIter::new(distance),
+            fmap: |b: &KBucket<TNodeId, TVal>| -> ArrayVec<_, MAX_NODES_PER_BUCKET> {
+                b.iter()
+                    .map(|n| ClosestValue {
+                        key: n.key.clone(),
+                        value: n.value.clone(),
+                    })
+                    .collect()
+            },
+        }
+    }
+
+    /// Returns an iterator over the keys closest to `target`, ordered by
     /// increasing distance specifying which keys agree with a value predicate.
-    pub fn closest_keys_predicate<'a, T, F>(
+    pub fn closest_values_predicate<'a, T, F>(
         &'a mut self,
         target: &'a Key<T>,
         predicate: F,
-    ) -> impl Iterator<Item = PredicateKey<TNodeId>> + 'a
+    ) -> impl Iterator<Item = PredicateValue<TNodeId, TVal>> + 'a
     where
         T: Clone,
         F: Fn(&TVal) -> bool + 'a,
+        TVal: Clone,
     {
         let distance = self.local_key.distance(target);
         ClosestIter {
@@ -613,9 +675,10 @@ where
             buckets_iter: ClosestBucketsIter::new(distance),
             fmap: move |b: &KBucket<TNodeId, TVal>| -> ArrayVec<_, MAX_NODES_PER_BUCKET> {
                 b.iter()
-                    .map(|n| PredicateKey {
+                    .map(|n| PredicateValue {
                         key: n.key.clone(),
                         predicate_match: predicate(&n.value),
+                        value: n.value.clone(),
                     })
                     .collect()
             },
