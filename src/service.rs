@@ -351,7 +351,7 @@ impl Service {
 
     /// Internal function that starts a query.
     fn start_findnode_query(&mut self, target_node: NodeId, callback: oneshot::Sender<Vec<Enr>>) {
-        let target = QueryInfo {
+        let mut target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
             distances_to_request: DISTANCES_TO_REQUEST_PER_PEER,
@@ -359,18 +359,17 @@ impl Service {
         };
 
         let target_key: kbucket::Key<NodeId> = target.key();
-        let known_closest_peer_values = {
-            let mut kbuckets = self.kbuckets.write();
-            kbuckets.closest_values(&target_key)
-        };
-
         let mut known_closest_peers = Vec::new();
-        for closest in known_closest_peer_values {
-            // Add the known ENR's to the untrusted list
-            target.untrusted_enrs.push(closest.value);
-            // Add the key to the list for the query
-            known_closest_peers.push(closest.key);
+        {
+            let mut kbuckets = self.kbuckets.write();
+            for closest in kbuckets.closest_values(&target_key) {
+                // Add the known ENR's to the untrusted list
+                target.untrusted_enrs.push(closest.value);
+                // Add the key to the list for the query
+                known_closest_peers.push(closest.key);
+            }
         }
+
         let query_config = FindNodeQueryConfig::new_from_config(&self.config);
         self.queries
             .add_findnode_query(query_config, target, known_closest_peers);
@@ -396,18 +395,16 @@ impl Service {
         // Map the TableEntry to an ENR.
         let kbucket_predicate = |e: &Enr| predicate(&e);
 
-        let known_closest_peer_values = {
-            let mut kbuckets = self.kbuckets.write();
-            kbuckets.closest_values_predicate(&target_key, &kbucket_predicate)
-        };
-
         let mut known_closest_peers = Vec::<kbucket::PredicateKey<_>>::new();
-        for closest in known_closest_peer_values {
-            // Add the known ENR's to the untrusted list
-            target.untrusted_enrs.push(closest.value.clone());
-            // Add the key to the list for the query
-            known_closest_peers.push(closest.into());
-        }
+        {
+            let mut kbuckets = self.kbuckets.write();
+            for closest in kbuckets.closest_values_predicate(&target_key, &kbucket_predicate) {
+                // Add the known ENR's to the untrusted list
+                target.untrusted_enrs.push(closest.value.clone());
+                // Add the key to the list for the query
+                known_closest_peers.push(closest.into());
+            }
+        };
 
         let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
         query_config.num_results = num_nodes;
@@ -986,7 +983,7 @@ impl Service {
     fn discovered(&mut self, source: &NodeId, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
         let local_id = self.local_enr.read().node_id();
         enrs.retain(|enr| {
-            if enr.node_id() != local_id {
+            if enr.node_id() == local_id {
                 return false;
             }
 
