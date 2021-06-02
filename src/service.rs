@@ -823,7 +823,7 @@ impl Service {
         rpc_id: RequestId,
         mut distances: Vec<u64>,
     ) {
-        // NOTE: At most we only allow 5 distances to be send (see the decoder). If each of these
+        // NOTE: At most we only allow 5 distances to be sent (see the decoder). If each of these
         // buckets are full, that equates to 80 ENR's to respond with.
 
         let mut nodes_to_send = Vec::new();
