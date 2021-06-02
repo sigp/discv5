@@ -31,6 +31,7 @@
 #![allow(dead_code)]
 
 use super::*;
+use tracing::{debug, error};
 
 /// Maximum number of nodes in a bucket, i.e. the (fixed) `k` parameter.
 pub const MAX_NODES_PER_BUCKET: usize = 16;
@@ -348,7 +349,14 @@ where
                                 evicted: None,
                             })
                         }
-                        _ => unreachable!("Bucket is not full."), // Bucket filter should already be checked
+                        InsertResult::Full => unreachable!("Bucket cannot be full"),
+                        InsertResult::Pending { .. } | InsertResult::NodeExists => {
+                            error!("Bucket is not full or double node")
+                        }
+                        InsertResult::FailedFilter => debug!("Pending node failed filter"),
+                        InsertResult::TooManyIncoming => {
+                            debug!("Pending node failed incoming filter")
+                        }
                     }
                 }
             } else {

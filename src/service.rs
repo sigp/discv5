@@ -351,7 +351,7 @@ impl Service {
 
     /// Internal function that starts a query.
     fn start_findnode_query(&mut self, target_node: NodeId, callback: oneshot::Sender<Vec<Enr>>) {
-        let target = QueryInfo {
+        let mut target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
             distances_to_request: DISTANCES_TO_REQUEST_PER_PEER,
@@ -359,10 +359,17 @@ impl Service {
         };
 
         let target_key: kbucket::Key<NodeId> = target.key();
-        let known_closest_peers: Vec<kbucket::Key<NodeId>> = {
+        let mut known_closest_peers = Vec::new();
+        {
             let mut kbuckets = self.kbuckets.write();
-            kbuckets.closest_keys(&target_key).collect()
-        };
+            for closest in kbuckets.closest_values(&target_key) {
+                // Add the known ENR's to the untrusted list
+                target.untrusted_enrs.push(closest.value);
+                // Add the key to the list for the query
+                known_closest_peers.push(closest.key);
+            }
+        }
+
         let query_config = FindNodeQueryConfig::new_from_config(&self.config);
         self.queries
             .add_findnode_query(query_config, target, known_closest_peers);
@@ -376,7 +383,7 @@ impl Service {
         predicate: Box<dyn Fn(&Enr) -> bool + Send>,
         callback: oneshot::Sender<Vec<Enr>>,
     ) {
-        let target = QueryInfo {
+        let mut target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
             distances_to_request: DISTANCES_TO_REQUEST_PER_PEER,
@@ -388,11 +395,15 @@ impl Service {
         // Map the TableEntry to an ENR.
         let kbucket_predicate = |e: &Enr| predicate(&e);
 
-        let known_closest_peers: Vec<kbucket::PredicateKey<NodeId>> = {
+        let mut known_closest_peers = Vec::<kbucket::PredicateKey<_>>::new();
+        {
             let mut kbuckets = self.kbuckets.write();
-            kbuckets
-                .closest_keys_predicate(&target_key, &kbucket_predicate)
-                .collect()
+            for closest in kbuckets.closest_values_predicate(&target_key, &kbucket_predicate) {
+                // Add the known ENR's to the untrusted list
+                target.untrusted_enrs.push(closest.value.clone());
+                // Add the key to the list for the query
+                known_closest_peers.push(closest.into());
+            }
         };
 
         let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
@@ -969,51 +980,59 @@ impl Service {
     }
 
     /// Processes discovered peers from a query.
-    fn discovered(&mut self, source: &NodeId, enrs: Vec<Enr>, query_id: Option<QueryId>) {
+    fn discovered(&mut self, source: &NodeId, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
         let local_id = self.local_enr.read().node_id();
-        let other_enr_iter = enrs.iter().filter(|p| p.node_id() != local_id);
+        enrs.retain(|enr| {
+            if enr.node_id() == local_id {
+                return false;
+            }
 
-        for enr_ref in other_enr_iter.clone() {
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
             if self.config.report_discovered_peers {
-                self.send_event(Discv5Event::Discovered(enr_ref.clone()));
+                self.send_event(Discv5Event::Discovered(enr.clone()));
             }
 
             // ignore peers that don't pass the table filter
-            if (self.config.table_filter)(&enr_ref) {
-                let key = kbucket::Key::from(enr_ref.node_id());
+            if (self.config.table_filter)(&enr) {
+                let key = kbucket::Key::from(enr.node_id());
 
                 // If the ENR exists in the routing table and the discovered ENR has a greater
                 // sequence number, perform some filter checks before updating the enr.
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Present(mut entry, _) => entry.value().seq() < enr_ref.seq(),
-                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr_ref.seq(),
+                    kbucket::Entry::Present(mut entry, _) => entry.value().seq() < enr.seq(),
+                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
                     _ => false,
                 };
 
                 if must_update_enr {
                     if let UpdateResult::Failed(reason) =
-                        self.kbuckets
-                            .write()
-                            .update_node(&key, enr_ref.clone(), None)
+                        self.kbuckets.write().update_node(&key, enr.clone(), None)
                     {
-                        self.peers_to_ping.remove(&enr_ref.node_id());
+                        self.peers_to_ping.remove(&enr.node_id());
                         debug!(
                             "Failed to update discovered ENR. Node: {}, Reason: {:?}",
                             source, reason
                         );
+
+                        false // Remove this peer from the discovered list
+                    } else {
+                        true // Keep this peer in the list
                     }
+                } else {
+                    true // We don't need to update ENR
                 }
+            } else {
+                false // Didn't pass the table filter
             }
-        }
+        });
 
         // if this is part of a query, update the query
         if let Some(query_id) = query_id {
             if let Some(query) = self.queries.get_mut(query_id) {
                 let mut peer_count = 0;
-                for enr_ref in other_enr_iter.clone() {
+                for enr_ref in enrs.iter() {
                     if !query
                         .target_mut()
                         .untrusted_enrs
@@ -1025,7 +1044,7 @@ impl Service {
                     peer_count += 1;
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(source, &other_enr_iter.cloned().collect::<Vec<_>>())
+                query.on_success(source, &enrs)
             } else {
                 warn!("Response returned for ended query {:?}", query_id)
             }
