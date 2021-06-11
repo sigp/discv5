@@ -108,6 +108,10 @@ pub enum ResponseBody {
         /// A list of ENR's returned by the responder.
         nodes: Vec<Enr<CombinedKey>>,
     },
+    NodesRaw {
+        total: u64,
+        nodes: Vec<Vec<u8>>,
+    },
     /// The TALK response.
     Talk {
         /// The response for the talk.
@@ -195,6 +199,7 @@ impl Response {
         match &self.body {
             ResponseBody::Pong { .. } => 2,
             ResponseBody::Nodes { .. } => 4,
+            ResponseBody::NodesRaw { .. } => 4,
             ResponseBody::Talk { .. } => 6,
             ResponseBody::Ticket { .. } => 8,
             ResponseBody::RegisterConfirmation { .. } => 9,
@@ -206,6 +211,12 @@ impl Response {
         match self.body {
             ResponseBody::Pong { .. } => matches!(req, RequestBody::Ping { .. }),
             ResponseBody::Nodes { .. } => {
+                matches!(
+                    req,
+                    RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. }
+                )
+            }
+            ResponseBody::NodesRaw { .. } => {
                 matches!(
                     req,
                     RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. }
@@ -240,6 +251,23 @@ impl Response {
                 buf
             }
             ResponseBody::Nodes { total, nodes } => {
+                let mut s = RlpStream::new();
+                s.begin_list(3);
+                s.append(&id.as_bytes());
+                s.append(&total);
+
+                if nodes.is_empty() {
+                    s.begin_list(0);
+                } else {
+                    s.begin_list(nodes.len());
+                    for node in nodes {
+                        s.append(&node);
+                    }
+                }
+                buf.extend_from_slice(&s.out());
+                buf
+            }
+            ResponseBody::NodesRaw { total, nodes } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
                 s.append(&id.as_bytes());
@@ -322,6 +350,20 @@ impl std::fmt::Display for ResponseBody {
                         write!(f, ", {}", id)?;
                     } else {
                         write!(f, "{}", id)?;
+                    }
+                    first = false;
+                }
+
+                write!(f, "]")
+            }
+            ResponseBody::NodesRaw { total, nodes } => {
+                let _ = write!(f, "NODES: total: {}, Nodes: [", total);
+                let mut first = true;
+                for id in nodes {
+                    if !first {
+                        write!(f, ", {}", hex::encode(id))?;
+                    } else {
+                        write!(f, "{}", hex::encode(id))?;
                     }
                     first = false;
                 }

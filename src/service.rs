@@ -529,6 +529,7 @@ impl Service {
                 return;
             }
             match response.body {
+                ResponseBody::NodesRaw { .. } => {} // Not real
                 ResponseBody::Nodes { total, mut nodes } => {
                     // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can be returned. Datagrams have a max
                     // size of 1280 and ENR's have a max size of 300 bytes.
