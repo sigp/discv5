@@ -515,7 +515,7 @@ impl Handler {
         let node_address = wru_ref.0;
         let message_nonce = wru_ref.1;
 
-        if self.active_challenges.get(&node_address).is_some() {
+        if self.active_challenges.peek(&node_address).is_some() {
             warn!("WHOAREYOU already sent. {}", node_address);
             return;
         }
