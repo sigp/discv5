@@ -871,14 +871,15 @@ impl Handler {
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
                     trace!("Decryption failed. Error {}", e);
-                    debug!("Message from node: {} is not encrypted with known session keys.", node_address);
+                    debug!(
+                        "Message from node: {} is not encrypted with known session keys.",
+                        node_address
+                    );
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket)
                         .await;
-                    // If we haven't already sent a WhoAreYou, 
+                    // If we haven't already sent a WhoAreYou,
                     // spawn a WHOAREYOU event to check for highest known ENR
                     // Update the cache time and remove expired entries.
-                    let node_id = NodeId::new(&[0u8;32]);
-                    self.active_challenges.get(&NodeAddress {socket_addr: "0.0.0.0:0".parse().expect("valid socket addr"), node_id });
                     if self.active_challenges.peek(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
                         let _ = self
@@ -887,7 +888,7 @@ impl Handler {
                             .await;
                     } else {
                         trace!("WHOAREYOU packet already sent: {}", node_address);
-                   }
+                    }
                     return;
                 }
             };
