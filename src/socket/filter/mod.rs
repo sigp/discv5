@@ -19,8 +19,6 @@ pub use config::{FilterConfig, FilterConfigBuilder};
 /// for `NUMBER_OF_WINDOWS` duration before being banned.
 /// This allows us to ban the IP/NodeId of an attacker spamming us with requests.
 const MAX_PERCENT_OF_LIMIT_PER_NODE: f64 = 0.9;
-/// The number of windows to remember before banning a node.
-const NUMBER_OF_WINDOWS: usize = 5;
 /// The maximum number of IPs to retain when calculating the number of nodes per IP.
 const KNOWN_ADDRS_SIZE: usize = 500;
 /// The number of IPs to retain at any given time that have banned nodes.
@@ -47,6 +45,11 @@ pub(crate) struct Filter {
 
 impl Filter {
     pub fn new(config: &FilterConfig) -> Filter {
+        let max_requests_per_node = config
+            .max_requests_per_node_per_second
+            .map(|v| v.round() as usize)
+            .unwrap_or(config.max_requests_per_second);
+
         Filter {
             config: config.clone(),
             raw_packets_received: ReceivedPacketCache::new(
@@ -54,7 +57,7 @@ impl Filter {
                 METRICS.moving_window,
             ),
             received_by_node: ReceivedPacketCache::new(
-                config.max_requests_per_second * NUMBER_OF_WINDOWS,
+                max_requests_per_node,
                 METRICS.moving_window,
             ),
             known_addrs: LruCache::new(KNOWN_ADDRS_SIZE),
@@ -112,6 +115,9 @@ impl Filter {
                         return false;
                     }
                 }
+            }
+            if !result {
+                debug!("Dropped unsolicited packet from RPC limit: {:?}", src.ip());
             }
             result // filter based on whether the packet could get added to the cache or not
         } else {
