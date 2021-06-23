@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    error::RequestError,
+    error::{RequestError, ResponseError},
     handler::{Handler, HandlerRequest, HandlerResponse},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
@@ -88,7 +88,7 @@ impl TalkRequest {
         &self.body
     }
 
-    pub fn respond(mut self, response: Vec<u8>) {
+    pub fn respond(mut self, response: Vec<u8>) -> Result<(), ResponseError> {
         debug!("Sending TALK response to {}", self.node_address);
 
         let response = Response {
@@ -96,10 +96,16 @@ impl TalkRequest {
             body: ResponseBody::Talk { response },
         };
 
-        let _ = self.sender.take().unwrap().send(HandlerRequest::Response(
-            self.node_address.clone(),
-            Box::new(response),
-        ));
+        self.sender
+            .take()
+            .unwrap()
+            .send(HandlerRequest::Response(
+                self.node_address.clone(),
+                Box::new(response),
+            ))
+            .map_err(|_| ResponseError::ChannelClosed)?;
+
+        Ok(())
     }
 }
 
