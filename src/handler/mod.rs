@@ -75,6 +75,9 @@ pub enum HandlerRequest {
     /// `NodeContact` we know of.
     Request(NodeContact, Box<Request>),
 
+    /// Requests without tracking responses which ignore the pending queue.
+    RequestNoPending(NodeContact, Box<Request>),
+
     /// Send a response to a received request to a particular node.
     ///
     /// The handler does not keep state of requests, so the application layer must send the
@@ -311,6 +314,13 @@ impl Handler {
                                let _ = self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await;
                            }
                         }
+                        HandlerRequest::RequestNoPending(contact, request) => {
+                           let id = request.id.clone();
+                           if let Err(request_error) =  self.send_request_no_pending(contact, *request).await {
+                               // If the sending failed report to the application
+                               let _ = self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await;
+                           }
+                        }
                         HandlerRequest::Response(dst, response) => self.send_response(dst, *response).await,
                         HandlerRequest::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                     }
@@ -483,6 +493,40 @@ impl Handler {
         self.active_requests_nonce_mapping
             .insert(nonce, node_address.clone());
         self.active_requests.insert(node_address, call);
+        Ok(())
+    }
+
+    // Sends a request to a node if a session is established, otherwise revert to to normal send
+    // request. This unreliable sends which do not timeout or error.
+    async fn send_request_no_pending(
+        &mut self,
+        contact: NodeContact,
+        request: Request,
+    ) -> Result<(), RequestError> {
+        let node_address = contact
+            .node_address()
+            .map_err(|e| RequestError::InvalidEnr(e.into()))?;
+
+        if node_address.socket_addr == self.listen_socket {
+            debug!("Filtered request to self");
+            return Err(RequestError::SelfRequest);
+        }
+
+        let packet = {
+            if let Some(session) = self.sessions.get_mut(&node_address) {
+                // Encrypt the message and send
+                let packet = session
+                    .encrypt_message(self.node_id, &request.clone().encode())
+                    .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?;
+                packet
+            } else {
+                return self.send_request(contact, request).await;
+            }
+        };
+
+        // let the filter know we are expecting a response
+        self.add_expected_response(node_address.socket_addr);
+        self.send(node_address.clone(), packet).await;
         Ok(())
     }
 
