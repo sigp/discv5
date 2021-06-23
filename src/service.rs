@@ -36,7 +36,7 @@ use fnv::FnvHashMap;
 use futures::prelude::*;
 use parking_lot::RwLock;
 use rpc::*;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
@@ -582,11 +582,12 @@ impl Service {
                                 active_request.contact
                             );
                         }
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                         PERMIT_BAN_LIST.write().ban(
                             active_request
                                 .contact
                                 .node_address()
-                                .expect("Sanitized request"),
+                                .expect("Sanitized request"), ban_timeout
                         );
                         nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
@@ -604,11 +605,12 @@ impl Service {
                                 "Peer sent invalid ENR. Blacklisting {}",
                                 active_request.contact
                             );
+                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(
                                 active_request
                                     .contact
                                     .node_address()
-                                    .expect("Sanitized request"),
+                                    .expect("Sanitized request"), ban_timeout
                             );
                         }
                     }

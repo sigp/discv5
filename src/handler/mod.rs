@@ -13,6 +13,9 @@
 //! IP address/port that doesn't match the source, is considered invalid. A node that doesn't know
 //! their external contactable addresses should set their ENR IP field to `None`.
 //!
+//! The Handler also routinely checks the timeouts for banned nodes and removes them from the
+//! banned list once their ban expires.
+//!
 //! # Usage
 //!
 //! Interacting with a handler is done via channels. A Handler is spawned using the [`spawn()`]
@@ -29,6 +32,7 @@ use crate::{
     socket,
     socket::Socket,
     Enr,
+    discv5::PERMIT_BAN_LIST,
 };
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
@@ -40,6 +44,7 @@ use std::{
     default::Default,
     net::SocketAddr,
     sync::{atomic::Ordering, Arc},
+    time::{Duration,Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
@@ -55,6 +60,10 @@ use crate::metrics::METRICS;
 
 use hashmap_delay::HashMapDelay;
 use session::Session;
+
+// The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
+// seconds).
+const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
 /// Events sent to the handler to be executed.
 #[derive(Debug, Clone, PartialEq)]
@@ -252,6 +261,7 @@ impl Handler {
             filter_config,
             local_node_id: node_id,
             expected_responses: filter_expected_responses.clone(),
+            ban_duration: config.ban_duration,
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
@@ -299,6 +309,8 @@ impl Handler {
 
     /// The main execution loop for the handler.
     async fn start(&mut self) {
+        let mut banned_nodes_check = tokio::time::interval(Duration::from_secs(BANNED_NODES_CHECK));
+
         loop {
             tokio::select! {
                 Some(handler_request) = self.inbound_channel.recv() => {
@@ -320,6 +332,7 @@ impl Handler {
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, pending_request).await;
                 }
+                _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout 
                 _ = &mut self.exit => {
                     return;
                 }
@@ -1088,5 +1101,11 @@ impl Handler {
             packet,
         };
         let _ = self.socket.send.send(outbound_packet).await;
+    }
+
+    /// Check if any banned nodes have served their time and unban them.
+    fn unban_nodes_check(&self) {
+        PERMIT_BAN_LIST.write().ban_ips.retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
+        PERMIT_BAN_LIST.write().ban_nodes.retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
     }
 }

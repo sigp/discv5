@@ -77,6 +77,11 @@ pub struct Discv5Config {
     /// `crate::PermitBanList`.
     pub permit_ban_list: PermitBanList,
 
+    /// Set the default duration for which nodes are banned for. This timeouts are checked every 5 minutes,
+    /// so the precision will be to the nearest 5 minutes. If set to `None`, bans from the filter
+    /// will last indefinitely. Default is 1 hour.
+    pub ban_duration: Option<Duration>,
+
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
@@ -105,6 +110,7 @@ impl Default for Discv5Config {
             report_discovered_peers: true,
             filter_config: FilterConfig::default(),
             permit_ban_list: PermitBanList::default(),
+            ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             executor: None,
         }
     }

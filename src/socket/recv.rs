@@ -5,7 +5,7 @@
 use super::filter::{Filter, FilterConfig};
 use crate::{node_info::NodeAddress, packet::*, Executor};
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
@@ -27,6 +27,8 @@ pub struct InboundPacket {
 /// Convenience objects for setting up the recv handler.
 pub struct RecvHandlerConfig {
     pub filter_config: FilterConfig,
+    /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
+    pub ban_duration: Option<Duration>,
     pub executor: Box<dyn Executor>,
     pub recv: Arc<UdpSocket>,
     pub local_node_id: enr::NodeId,
@@ -64,7 +66,7 @@ impl RecvHandler {
 
         let mut recv_handler = RecvHandler {
             recv: config.recv,
-            filter: Filter::new(&config.filter_config),
+            filter: Filter::new(&config.filter_config, config.ban_duration),
             recv_buffer: [0; MAX_PACKET_SIZE],
             node_id: config.local_node_id,
             expected_responses: config.expected_responses,

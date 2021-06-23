@@ -8,6 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     sync::atomic::Ordering,
+    time::{Duration, Instant},
 };
 use tracing::{debug, warn};
 
@@ -28,6 +29,8 @@ const BANNED_NODES_SIZE: usize = 50;
 pub(crate) struct Filter {
     /// Configuration for the packet filter.
     config: FilterConfig,
+    /// The duration that bans by this filter last.
+    ban_duration: Option<Duration>,
     /// An ordered (by time) collection of recently seen packets by SocketAddr. The packet data is not
     /// stored here. This stores 5 seconds of history to calculate a 5 second moving average for
     /// the metrics.
@@ -44,7 +47,7 @@ pub(crate) struct Filter {
 }
 
 impl Filter {
-    pub fn new(config: &FilterConfig) -> Filter {
+    pub fn new(config: &FilterConfig, ban_duration: Option<Duration>) -> Filter {
         let max_requests_per_node = config
             .max_requests_per_node_per_second
             .map(|v| v.round() as usize)
@@ -62,6 +65,7 @@ impl Filter {
             ),
             known_addrs: LruCache::new(KNOWN_ADDRS_SIZE),
             banned_nodes: LruCache::new(BANNED_NODES_SIZE),
+            ban_duration,
         }
     }
 
@@ -110,7 +114,11 @@ impl Filter {
                     if requests >= &max_requests_per_ip_per_second {
                         warn!("Banning IP for excessive requests: {:?}", src.ip());
                         // Ban the IP address
-                        PERMIT_BAN_LIST.write().ban_ips.insert(src.ip());
+                        let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST
+                            .write()
+                            .ban_ips
+                            .insert(src.ip(), ban_timeout);
                         return false;
                     }
                 }
@@ -171,10 +179,11 @@ impl Filter {
                 );
 
                 // The node is being banned
+                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
                 PERMIT_BAN_LIST
                     .write()
                     .ban_nodes
-                    .insert(node_address.node_id);
+                    .insert(node_address.node_id, ban_timeout.clone());
 
                 // If we are tracking banned nodes per IP, add to the count. If the count is higher
                 // than our tolerance, ban the IP.
@@ -183,7 +192,10 @@ impl Filter {
                     if let Some(banned_count) = self.banned_nodes.get_mut(&ip) {
                         *banned_count += 1;
                         if *banned_count >= max_bans_per_ip {
-                            PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+                            PERMIT_BAN_LIST
+                                .write()
+                                .ban_ips
+                                .insert(ip, ban_timeout.clone());
                         }
                     } else {
                         self.banned_nodes.put(ip, 0);
@@ -219,7 +231,9 @@ impl Filter {
 
                 if known_nodes >= max_nodes_per_ip {
                     warn!("IP has exceeded its node-id limit and is now banned {}", ip);
-                    PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+                    // The node is being banned
+                    let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+                    PERMIT_BAN_LIST.write().ban_ips.insert(ip, ban_timeout);
                     self.known_addrs.pop(&ip);
                     return false;
                 }
