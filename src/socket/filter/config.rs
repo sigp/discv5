@@ -25,7 +25,7 @@ impl Default for FilterConfig {
             enabled: false,
             max_requests_per_second: 10,
             max_requests_per_node_per_second: Some(8.0),
-            max_requests_per_ip_per_second: Some(8.0),
+            max_requests_per_ip_per_second: Some(9.0),
             max_nodes_per_ip: Some(10),
             max_bans_per_ip: Some(5),
         }

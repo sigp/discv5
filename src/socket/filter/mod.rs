@@ -108,10 +108,9 @@ impl Filter {
             {
                 if let Some(requests) = METRICS.requests_per_ip_per_second.read().get(&src.ip()) {
                     if requests >= &max_requests_per_ip_per_second {
-                        debug!(
-                            "Dropped unsolicited packet from IP rate limit: {:?}",
-                            src.ip()
-                        );
+                        warn!("Banning IP for excessive requests: {:?}", src.ip());
+                        // Ban the IP address
+                        PERMIT_BAN_LIST.write().ban_ips.insert(src.ip());
                         return false;
                     }
                 }
@@ -151,11 +150,7 @@ impl Filter {
         if self.config.enabled {
             // Add the un-solicited request to the cache
             // If this is over the maximum requests per ENFORCED_SIZE_TIME, it will be rejected and return false.
-            // The unsolicited filter via IP should ensure this is never reached.
-            if !self.received_by_node.cache_insert(node_address.node_id) {
-                warn!("Message rejected as reached the maximum request limit for NodeId's");
-                return false;
-            }
+            let cache_insert_result = self.received_by_node.cache_insert(node_address.node_id);
 
             // If a single node has used > MAX_PERCENT_OF_LIMIT_PER_NODE of unsolicited
             // requests, ban them.
@@ -195,6 +190,14 @@ impl Filter {
                     }
                 }
 
+                return false;
+            }
+
+            if !cache_insert_result {
+                warn!(
+                    "Message rejected as reached the maximum request limit for node: {}",
+                    node_address
+                );
                 return false;
             }
 
