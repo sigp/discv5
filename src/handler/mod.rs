@@ -10,9 +10,8 @@
 //! associated [`Session`] for each node.
 //!
 //! An ongoing established connection is abstractly represented by a [`Session`]. A node that provides an ENR with an
-//! IP address/port that doesn't match the source, is considered untrusted and any
-//! establishing/established session is dropped. Once the IP is updated
-//! to match the source, the [`Session`] is promoted to an established state and reported back.
+//! IP address/port that doesn't match the source, is considered invalid. A node that doesn't know
+//! their external contactable addresses should set their ENR IP field to `None`.
 //!
 //! # Usage
 //!
@@ -414,7 +413,8 @@ impl Handler {
             self.active_requests_nonce_mapping
                 .remove(request_call.packet.message_nonce());
             self.remove_expected_response(node_address.socket_addr);
-            self.fail_request(request_call, RequestError::Timeout).await;
+            // The request has timed out. We keep any established session for future use.
+            self.fail_request(request_call, RequestError::Timeout, false).await;
         } else {
             // increment the request retry count and restart the timeout
             trace!(
@@ -617,7 +617,7 @@ impl Handler {
                 "Authentication response already sent. Dropping session. Node: {}",
                 request_call.contact
             );
-            self.fail_request(request_call, RequestError::InvalidRemotePacket)
+            self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                 .await;
             return;
         }
@@ -643,7 +643,7 @@ impl Handler {
             Ok(v) => v,
             Err(e) => {
                 error!("Could not generate a session. Error: {:?}", e);
-                self.fail_request(request_call, RequestError::InvalidRemotePacket)
+                self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                     .await;
                 return;
             }
@@ -797,7 +797,7 @@ impl Handler {
                             enr.udp_socket(),
                             node_address
                         );
-                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr)
+                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                             .await;
                     }
                 }
@@ -814,7 +814,7 @@ impl Handler {
                         "Invalid Authentication header. Dropping session. Error: {:?}",
                         e
                     );
-                    self.fail_session(&node_address, RequestError::InvalidRemotePacket)
+                    self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
                 }
             }
@@ -872,7 +872,7 @@ impl Handler {
                     // This means we need to drop the current session and re-establish.
                     trace!("Decryption failed. Error {}", e);
                     debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", node_address);
-                    self.fail_session(&node_address, RequestError::InvalidRemotePacket)
+                    self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
                     // spawn a WHOAREYOU event to check for highest known ENR
                     let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
@@ -924,7 +924,7 @@ impl Handler {
                                 _ => {}
                             }
                             debug!("Session failed invalid ENR response");
-                            self.fail_session(&node_address, RequestError::InvalidRemoteEnr)
+                            self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                                 .await;
                             return;
                         }
@@ -1041,7 +1041,8 @@ impl Handler {
         }
     }
 
-    async fn fail_request(&mut self, request_call: RequestCall, error: RequestError) {
+    /// A request has failed.
+    async fn fail_request(&mut self, request_call: RequestCall, error: RequestError, remove_session: bool) {
         // The Request has expired, remove the session.
         // Remove the associated nonce mapping.
         self.active_requests_nonce_mapping
@@ -1057,14 +1058,17 @@ impl Handler {
             .contact
             .node_address()
             .expect("All Request calls have been sanitized");
-        self.fail_session(&node_address, error).await;
+        self.fail_session(&node_address, error, remove_session).await;
     }
 
-    async fn fail_session(&mut self, node_address: &NodeAddress, error: RequestError) {
-        self.sessions.remove(&node_address);
-        METRICS
-            .active_sessions
-            .store(self.sessions.len(), Ordering::Relaxed);
+    /// Removes a session and updates associated metrics and fields.
+    async fn fail_session(&mut self, node_address: &NodeAddress, error: RequestError, remove_session: bool) {
+        if remove_session {
+            self.sessions.remove(&node_address);
+            METRICS
+                .active_sessions
+                .store(self.sessions.len(), Ordering::Relaxed);
+        }
         for request in self
             .pending_requests
             .remove(&node_address)
