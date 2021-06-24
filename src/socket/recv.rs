@@ -61,6 +61,9 @@ impl RecvHandler {
     ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
 
+
+        let filter_enabled = config.filter_config.enabled;
+
         // create the channel to send decoded packets to the handler
         let (handler, handler_recv) = mpsc::channel(30);
 
@@ -77,18 +80,19 @@ impl RecvHandler {
         // start the handler
         config.executor.spawn(Box::pin(async move {
             debug!("Recv handler starting");
-            recv_handler.start().await;
+            recv_handler.start(filter_enabled).await;
         }));
         (handler_recv, exit_sender)
     }
 
     /// The main future driving the recv handler. This will shutdown when the exit future is fired.
-    async fn start(&mut self) {
+    async fn start(&mut self, filter_enabled: bool) {
         loop {
             tokio::select! {
                 Ok((length, src)) = self.recv.recv_from(&mut self.recv_buffer) => {
                     self.handle_inbound(src, length).await;
                 }
+                _ = self.filter.prune_limiter(), if filter_enabled => {},
                 _ = &mut self.exit => {
                     debug!("Recv handler shutdown");
                     return;

@@ -209,4 +209,11 @@ impl Filter {
 
         true
     }
+
+    pub async fn prune_limiter(&mut self) {
+        if let Some(rate_limiter) = self.rate_limiter.as_mut() {
+            rate_limiter.prune().await;
+        }
+    }
+
 }
