@@ -215,5 +215,4 @@ impl Filter {
             rate_limiter.prune().await;
         }
     }
-
 }

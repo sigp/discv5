@@ -587,7 +587,8 @@ impl Service {
                             active_request
                                 .contact
                                 .node_address()
-                                .expect("Sanitized request"), ban_timeout
+                                .expect("Sanitized request"),
+                            ban_timeout,
                         );
                         nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
@@ -610,7 +611,8 @@ impl Service {
                                 active_request
                                     .contact
                                     .node_address()
-                                    .expect("Sanitized request"), ban_timeout
+                                    .expect("Sanitized request"),
+                                ban_timeout,
                             );
                         }
                     }

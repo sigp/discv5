@@ -1,10 +1,12 @@
 use enr::NodeId;
 use fnv::FnvHashMap;
-use std::convert::TryInto;
-use std::hash::Hash;
-use std::time::{Duration, Instant};
+use std::{
+    convert::TryInto,
+    hash::Hash,
+    net::IpAddr,
+    time::{Duration, Instant},
+};
 use tokio::time::Interval;
-use std::net::IpAddr;
 
 /// Nanoseconds since a given time.
 // Maintained as u64 to reduce footprint
@@ -183,7 +185,7 @@ impl RateLimiterBuilder {
         };
         let ip_rl = match self.ip_quota {
             Some(q) => Some(Limiter::from_quota(q)?),
-            None => None
+            None => None,
         };
 
         // check for nodes to prune every 30 seconds, starting in 30 seconds
@@ -229,8 +231,12 @@ impl RateLimiter {
         self.prune_interval.tick().await;
         let time_since_start = self.init_time.elapsed();
         self.total_rl.prune(time_since_start);
-        if let Some(v) = self.ip_rl.as_mut() { v.prune(time_since_start)};
-        if let Some(v) = self.node_rl.as_mut() {  v.prune(time_since_start)};
+        if let Some(v) = self.ip_rl.as_mut() {
+            v.prune(time_since_start)
+        };
+        if let Some(v) = self.node_rl.as_mut() {
+            v.prune(time_since_start)
+        };
     }
 }
 

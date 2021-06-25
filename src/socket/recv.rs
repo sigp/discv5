@@ -61,7 +61,6 @@ impl RecvHandler {
     ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
 
-
         let filter_enabled = config.filter_config.enabled;
 
         // create the channel to send decoded packets to the handler

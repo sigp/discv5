@@ -26,13 +26,13 @@
 //! Responses come by the receiving channel in the form of a [`HandlerResponse`].
 use crate::{
     config::Discv5Config,
+    discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
     socket::Socket,
     Enr,
-    discv5::PERMIT_BAN_LIST,
 };
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
@@ -44,7 +44,7 @@ use std::{
     default::Default,
     net::SocketAddr,
     sync::{atomic::Ordering, Arc},
-    time::{Duration,Instant},
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
@@ -332,7 +332,7 @@ impl Handler {
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, pending_request).await;
                 }
-                _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout 
+                _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
                     return;
                 }
@@ -427,7 +427,8 @@ impl Handler {
                 .remove(request_call.packet.message_nonce());
             self.remove_expected_response(node_address.socket_addr);
             // The request has timed out. We keep any established session for future use.
-            self.fail_request(request_call, RequestError::Timeout, false).await;
+            self.fail_request(request_call, RequestError::Timeout, false)
+                .await;
         } else {
             // increment the request retry count and restart the timeout
             trace!(
@@ -1055,7 +1056,12 @@ impl Handler {
     }
 
     /// A request has failed.
-    async fn fail_request(&mut self, request_call: RequestCall, error: RequestError, remove_session: bool) {
+    async fn fail_request(
+        &mut self,
+        request_call: RequestCall,
+        error: RequestError,
+        remove_session: bool,
+    ) {
         // The Request has expired, remove the session.
         // Remove the associated nonce mapping.
         self.active_requests_nonce_mapping
@@ -1071,11 +1077,17 @@ impl Handler {
             .contact
             .node_address()
             .expect("All Request calls have been sanitized");
-        self.fail_session(&node_address, error, remove_session).await;
+        self.fail_session(&node_address, error, remove_session)
+            .await;
     }
 
     /// Removes a session and updates associated metrics and fields.
-    async fn fail_session(&mut self, node_address: &NodeAddress, error: RequestError, remove_session: bool) {
+    async fn fail_session(
+        &mut self,
+        node_address: &NodeAddress,
+        error: RequestError,
+        remove_session: bool,
+    ) {
         if remove_session {
             self.sessions.remove(&node_address);
             METRICS
@@ -1105,7 +1117,13 @@ impl Handler {
 
     /// Check if any banned nodes have served their time and unban them.
     fn unban_nodes_check(&self) {
-        PERMIT_BAN_LIST.write().ban_ips.retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
-        PERMIT_BAN_LIST.write().ban_nodes.retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
+        PERMIT_BAN_LIST
+            .write()
+            .ban_ips
+            .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
+        PERMIT_BAN_LIST
+            .write()
+            .ban_nodes
+            .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
     }
 }

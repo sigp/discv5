@@ -24,7 +24,12 @@ use crate::{
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
-use std::{future::Future, net::SocketAddr, sync::Arc, time::{Duration, Instant}};
+use std::{
+    future::Future,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
@@ -267,7 +272,10 @@ impl Discv5 {
     pub fn ban_node(&mut self, node_id: &NodeId, duration_of_ban: Option<Duration>) {
         let time_to_unban = duration_of_ban.map(|v| Instant::now() + v);
         self.remove_node(node_id);
-        PERMIT_BAN_LIST.write().ban_nodes.insert(*node_id, time_to_unban);
+        PERMIT_BAN_LIST
+            .write()
+            .ban_nodes
+            .insert(*node_id, time_to_unban);
     }
 
     /// Removes a banned node from the banned list.
