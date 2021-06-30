@@ -534,7 +534,7 @@ impl Handler {
         let node_address = wru_ref.0;
         let message_nonce = wru_ref.1;
 
-        if self.active_challenges.get(&node_address).is_some() {
+        if self.active_challenges.peek(&node_address).is_some() {
             warn!("WHOAREYOU already sent. {}", node_address);
             return;
         }
@@ -890,15 +890,24 @@ impl Handler {
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
                     trace!("Decryption failed. Error {}", e);
-                    debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", node_address);
+                    debug!(
+                        "Message from node: {} is not encrypted with known session keys.",
+                        node_address
+                    );
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
+                    // If we haven't already sent a WhoAreYou,
                     // spawn a WHOAREYOU event to check for highest known ENR
-                    let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-                    let _ = self
-                        .outbound_channel
-                        .send(HandlerResponse::WhoAreYou(whoareyou_ref))
-                        .await;
+                    // Update the cache time and remove expired entries.
+                    if self.active_challenges.peek(&node_address).is_none() {
+                        let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
+                        let _ = self
+                            .outbound_channel
+                            .send(HandlerResponse::WhoAreYou(whoareyou_ref))
+                            .await;
+                    } else {
+                        trace!("WHOAREYOU packet already sent: {}", node_address);
+                    }
                     return;
                 }
             };
