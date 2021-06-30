@@ -129,6 +129,6 @@ pub use executor::{Executor, TokioExecutor};
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};
 pub use permit_ban::PermitBanList;
 pub use service::TalkRequest;
-pub use socket::{FilterConfig, FilterConfigBuilder};
+pub use socket::{RateLimiter, RateLimiterBuilder};
 // re-export the ENR crate
 pub use enr;

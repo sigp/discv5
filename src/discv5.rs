@@ -24,7 +24,12 @@ use crate::{
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
-use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
@@ -289,10 +294,15 @@ impl Discv5 {
     }
 
     /// Bans a node from the server. This will remove the node from the routing table if it exists
-    /// and block all incoming packets from the node.
-    pub fn ban_node(&mut self, node_id: &NodeId) {
+    /// and block all incoming packets from the node until the timeout specified. Setting the
+    /// timeout to `None` creates a permanent ban.
+    pub fn ban_node(&mut self, node_id: &NodeId, duration_of_ban: Option<Duration>) {
+        let time_to_unban = duration_of_ban.map(|v| Instant::now() + v);
         self.remove_node(node_id);
-        PERMIT_BAN_LIST.write().ban_nodes.insert(*node_id);
+        PERMIT_BAN_LIST
+            .write()
+            .ban_nodes
+            .insert(*node_id, time_to_unban);
     }
 
     /// Removes a banned node from the banned list.
@@ -311,8 +321,9 @@ impl Discv5 {
     }
 
     /// Bans an IP from the server.  This will block all incoming packets from the IP.
-    pub fn ban_ip(&mut self, ip: std::net::IpAddr) {
-        PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+    pub fn ban_ip(&mut self, ip: std::net::IpAddr, duration_of_ban: Option<Duration>) {
+        let time_to_unban = duration_of_ban.map(|v| Instant::now() + v);
+        PERMIT_BAN_LIST.write().ban_ips.insert(ip, time_to_unban);
     }
 
     /// Removes a banned IP from the banned list.

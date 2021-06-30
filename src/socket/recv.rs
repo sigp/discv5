@@ -5,7 +5,7 @@
 use super::filter::{Filter, FilterConfig};
 use crate::{node_info::NodeAddress, packet::*, Executor};
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
@@ -27,6 +27,8 @@ pub struct InboundPacket {
 /// Convenience objects for setting up the recv handler.
 pub struct RecvHandlerConfig {
     pub filter_config: FilterConfig,
+    /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
+    pub ban_duration: Option<Duration>,
     pub executor: Box<dyn Executor>,
     pub recv: Arc<UdpSocket>,
     pub local_node_id: enr::NodeId,
@@ -59,12 +61,14 @@ impl RecvHandler {
     ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
 
+        let filter_enabled = config.filter_config.enabled;
+
         // create the channel to send decoded packets to the handler
         let (handler, handler_recv) = mpsc::channel(30);
 
         let mut recv_handler = RecvHandler {
             recv: config.recv,
-            filter: Filter::new(&config.filter_config),
+            filter: Filter::new(config.filter_config, config.ban_duration),
             recv_buffer: [0; MAX_PACKET_SIZE],
             node_id: config.local_node_id,
             expected_responses: config.expected_responses,
@@ -75,18 +79,24 @@ impl RecvHandler {
         // start the handler
         config.executor.spawn(Box::pin(async move {
             debug!("Recv handler starting");
-            recv_handler.start().await;
+            recv_handler.start(filter_enabled).await;
         }));
         (handler_recv, exit_sender)
     }
 
     /// The main future driving the recv handler. This will shutdown when the exit future is fired.
-    async fn start(&mut self) {
+    async fn start(&mut self, filter_enabled: bool) {
+        // Interval to prune to rate limiter.
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+
         loop {
             tokio::select! {
                 Ok((length, src)) = self.recv.recv_from(&mut self.recv_buffer) => {
                     self.handle_inbound(src, length).await;
                 }
+                _ = interval.tick(), if filter_enabled => {
+                    self.filter.prune_limiter();
+                },
                 _ = &mut self.exit => {
                     debug!("Recv handler shutdown");
                     return;
