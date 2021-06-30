@@ -15,16 +15,21 @@ use tracing::{debug, warn};
 mod cache;
 mod config;
 pub mod rate_limiter;
-pub use config::{FilterConfig, FilterConfigBuilder};
+pub use config::FilterConfig;
 use rate_limiter::{LimitKind, RateLimiter};
 
 /// The maximum number of IPs to retain when calculating the number of nodes per IP.
 const KNOWN_ADDRS_SIZE: usize = 500;
 /// The number of IPs to retain at any given time that have banned nodes.
 const BANNED_NODES_SIZE: usize = 50;
+/// The maximum number of packets to keep record of for metrics if the rate limiter is not
+/// specified.
+const DEFAULT_PACKETS_PER_SECOND: usize = 20;
 
 /// The packet filter which decides whether we accept or reject incoming packets.
 pub(crate) struct Filter {
+    /// Whether the filter is enabled or not.
+    enabled: bool,
     /// An optional rate limiter for incoming packets.
     rate_limiter: Option<RateLimiter>,
     /// An ordered (by time) collection of recently seen packets by SocketAddr. The packet data is not
@@ -48,13 +53,18 @@ pub(crate) struct Filter {
 }
 
 impl Filter {
-    pub fn new(config: &FilterConfig, ban_duration: Option<Duration>) -> Filter {
-        let rate_limiter = config.build_limiter();
+    pub fn new(config: FilterConfig, ban_duration: Option<Duration>) -> Filter {
+        let expected_packets_per_second = config
+            .rate_limiter
+            .as_ref()
+            .map(|v| v.total_requests_per_second().round() as usize)
+            .unwrap_or(DEFAULT_PACKETS_PER_SECOND);
 
         Filter {
-            rate_limiter,
+            enabled: config.enabled,
+            rate_limiter: config.rate_limiter,
             raw_packets_received: ReceivedPacketCache::new(
-                config.max_requests_per_second as usize,
+                expected_packets_per_second,
                 METRICS.moving_window,
             ),
             known_addrs: LruCache::new(KNOWN_ADDRS_SIZE),
@@ -102,6 +112,11 @@ impl Filter {
         };
         *METRICS.requests_per_ip_per_second.write() = hashmap;
 
+        // If the filter isn't enabled, pass the packet
+        if !self.enabled {
+            return true;
+        }
+
         // Check rate limits
         if let Some(rate_limiter) = self.rate_limiter.as_mut() {
             if rate_limiter.allows(&LimitKind::Ip(src.ip())).is_err() {
@@ -144,6 +159,11 @@ impl Filter {
                 node_address
             );
             return false;
+        }
+
+        // If the filter isn't enabled, just pass the packet.
+        if !self.enabled {
+            return true;
         }
 
         if let Some(rate_limiter) = self.rate_limiter.as_mut() {
@@ -210,9 +230,9 @@ impl Filter {
         true
     }
 
-    pub async fn prune_limiter(&mut self) {
+    pub fn prune_limiter(&mut self) {
         if let Some(rate_limiter) = self.rate_limiter.as_mut() {
-            rate_limiter.prune().await;
+            rate_limiter.prune();
         }
     }
 }

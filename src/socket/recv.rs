@@ -68,7 +68,7 @@ impl RecvHandler {
 
         let mut recv_handler = RecvHandler {
             recv: config.recv,
-            filter: Filter::new(&config.filter_config, config.ban_duration),
+            filter: Filter::new(config.filter_config, config.ban_duration),
             recv_buffer: [0; MAX_PACKET_SIZE],
             node_id: config.local_node_id,
             expected_responses: config.expected_responses,
@@ -86,12 +86,17 @@ impl RecvHandler {
 
     /// The main future driving the recv handler. This will shutdown when the exit future is fired.
     async fn start(&mut self, filter_enabled: bool) {
+        // Interval to prune to rate limiter.
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+
         loop {
             tokio::select! {
                 Ok((length, src)) = self.recv.recv_from(&mut self.recv_buffer) => {
                     self.handle_inbound(src, length).await;
                 }
-                _ = self.filter.prune_limiter(), if filter_enabled => {},
+                _ = interval.tick(), if filter_enabled => {
+                    self.filter.prune_limiter();
+                },
                 _ = &mut self.exit => {
                     debug!("Recv handler shutdown");
                     return;

@@ -31,7 +31,7 @@ use crate::{
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
-    socket::Socket,
+    socket::{FilterConfig, Socket},
     Enr,
 };
 use enr::{CombinedKey, NodeId};
@@ -252,8 +252,13 @@ impl Handler {
         let node_id = enr.read().node_id();
 
         // enable the packet filter if required
-        let mut filter_config = config.filter_config.clone();
-        filter_config.enabled = config.enable_packet_filter;
+
+        let filter_config = FilterConfig {
+            enabled: config.enable_packet_filter,
+            rate_limiter: config.filter_rate_limiter.clone(),
+            max_nodes_per_ip: config.filter_max_nodes_per_ip,
+            max_bans_per_ip: config.filter_max_bans_per_ip,
+        };
 
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),

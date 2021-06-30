@@ -6,7 +6,6 @@ use std::{
     net::IpAddr,
     time::{Duration, Instant},
 };
-use tokio::time::Interval;
 
 /// Nanoseconds since a given time.
 // Maintained as u64 to reduce footprint
@@ -45,6 +44,7 @@ type Nanosecs = u64;
 /// n*`replenish_all_every`/`max_tokens` units of time since their last request.
 ///
 /// To produce hard limits, set `max_tokens` to 1.
+#[derive(Clone)]
 pub struct Quota {
     /// How often are `max_tokens` fully replenished.
     replenish_all_every: Duration,
@@ -54,9 +54,11 @@ pub struct Quota {
 }
 
 /// Manages rate limiting of requests per peer, with differentiated rates per protocol.
+#[derive(Debug, Clone)]
 pub struct RateLimiter {
-    /// Interval to prune peers for which their timer ran out.
-    prune_interval: Interval,
+    /// An estimate of the maximum requests per second. This is only used for estimating the size
+    /// of the cache for measuring metrics
+    total_requests_per_second: f32,
     /// Creation time of the rate limiter.
     init_time: Instant,
     /// Total rate limit. Must be set.
@@ -84,7 +86,14 @@ pub enum LimitKind {
     Ip(IpAddr),
 }
 
-/// User-friendly builder of a `RateLimiter`
+/// User-friendly builder of a `RateLimiter`. The user can specify three kinds of rate limits but
+/// must at least set the total quota. The three types are:
+/// 1. Total Quota - Specifies the total number of inbound requests. This must be set.
+/// 2. Node Quota - Specifies the number of requests per node id.
+/// 3. IP Quota - Specifies the number of requests per IP.
+///
+/// Quotas can be set via the X_one_every() functions to set hard limits as described above. Using
+/// the `X_n_every()` functions allow for bursts.
 #[derive(Default)]
 pub struct RateLimiterBuilder {
     /// Quota for total received RPCs.
@@ -114,7 +123,7 @@ impl RateLimiterBuilder {
         self
     }
 
-    /// Set the ip quota.
+    /// Set the IP quota.
     fn ip_quota(mut self, quota: Quota) -> Self {
         self.ip_quota = Some(quota);
         self
@@ -178,7 +187,7 @@ impl RateLimiterBuilder {
             .ok_or("Total quota not specified and must be set.")?;
 
         // create the rate limiters
-        let total_rl = Limiter::from_quota(total_quota)?;
+        let total_rl = Limiter::from_quota(total_quota.clone())?;
         let node_rl = match self.node_quota {
             Some(q) => Some(Limiter::from_quota(q)?),
             None => None,
@@ -188,12 +197,19 @@ impl RateLimiterBuilder {
             None => None,
         };
 
-        // check for nodes to prune every 30 seconds, starting in 30 seconds
-        let prune_every = tokio::time::Duration::from_secs(30);
-        let prune_start = tokio::time::Instant::now() + prune_every;
-        let prune_interval = tokio::time::interval_at(prune_start, prune_every);
+        let total_requests_per_second = if total_quota.max_tokens == 1 {
+            (1.0 / total_quota.replenish_all_every.as_secs_f32()
+                / Duration::from_secs(1).as_secs_f32())
+            .round()
+        } else {
+            (2.0 * total_quota.max_tokens as f32 // multiply by 2 to account for potential bursts
+                / total_quota.replenish_all_every.as_secs_f32()
+                / Duration::from_secs(1).as_secs_f32())
+            .round()
+        };
+
         Ok(RateLimiter {
-            prune_interval,
+            total_requests_per_second,
             total_rl,
             node_rl,
             ip_rl,
@@ -203,6 +219,7 @@ impl RateLimiterBuilder {
 }
 
 impl RateLimiter {
+    /// Indicates whether the request is allowed based on the configured rate limits.
     pub fn allows(&mut self, request: &LimitKind) -> Result<(), RateLimitedErr> {
         let time_since_start = self.init_time.elapsed();
         let tokens = 1; // Only count each of these as one.
@@ -227,8 +244,13 @@ impl RateLimiter {
         }
     }
 
-    pub async fn prune(&mut self) {
-        self.prune_interval.tick().await;
+    /// Returns the expected total requests per second.
+    pub fn total_requests_per_second(&self) -> f32 {
+        self.total_requests_per_second
+    }
+
+    /// Prunes excess entries. Should be called regularly (30 seconds) to remove old entries.
+    pub fn prune(&mut self) {
         let time_since_start = self.init_time.elapsed();
         self.total_rl.prune(time_since_start);
         if let Some(v) = self.ip_rl.as_mut() {
@@ -242,6 +264,7 @@ impl RateLimiter {
 
 /// Per key rate limiter using the token bucket / leaky bucket as a meter rate limiting algorithm,
 /// with the GCRA implementation.
+#[derive(Debug, Clone)]
 pub struct Limiter<Key: Hash + Eq + Clone> {
     /// After how long is the bucket considered full via replenishing 1T every `t`.
     tau: Nanosecs,
