@@ -9,8 +9,10 @@ mod filter;
 mod recv;
 mod send;
 
-pub use filter::rate_limiter::{RateLimiter, RateLimiterBuilder};
-pub use filter::FilterConfig;
+pub use filter::{
+    rate_limiter::{RateLimiter, RateLimiterBuilder},
+    FilterConfig,
+};
 pub use recv::InboundPacket;
 pub use send::OutboundPacket;
 /// Convenience objects for setting up the recv handler.
