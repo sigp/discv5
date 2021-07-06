@@ -1,4 +1,5 @@
 //! Implements the static ecdh algorithm required by discv5 in terms of the `k256` library.
+use enr::k256;
 use k256::{
     ecdsa::{SigningKey, VerifyingKey},
     elliptic_curve::sec1::ToEncodedPoint,
