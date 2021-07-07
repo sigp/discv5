@@ -2,14 +2,14 @@
 //!
 //! The [`Handler`] is responsible for establishing and maintaining sessions with
 //! connected/discovered nodes. Each node, identified by it's [`NodeId`] is associated with a
-//! [`Session`]. This service drives the handshakes for establishing the sessions and associated
+//! `Session`. This service drives the handshakes for establishing the sessions and associated
 //! logic for sending/requesting initial connections/ENR's to/from unknown peers.
 //!
 //! The [`Handler`] also manages the timeouts for each request and reports back RPC failures,
 //! and received messages. Messages are encrypted and decrypted using the
-//! associated [`Session`] for each node.
+//! associated `Session` for each node.
 //!
-//! An ongoing established connection is abstractly represented by a [`Session`]. A node that provides an ENR with an
+//! An ongoing established connection is abstractly represented by a `Session`. A node that provides an ENR with an
 //! IP address/port that doesn't match the source, is considered invalid. A node that doesn't know
 //! their external contactable addresses should set their ENR IP field to `None`.
 //!
@@ -18,7 +18,7 @@
 //!
 //! # Usage
 //!
-//! Interacting with a handler is done via channels. A Handler is spawned using the [`spawn()`]
+//! Interacting with a handler is done via channels. A Handler is spawned using the [`Handler::spawn`]
 //! function. This returns an exit channel, a sending and receiving channel respectively. If the
 //! exit channel is dropped or fired, the handler task gets shutdown.
 //!

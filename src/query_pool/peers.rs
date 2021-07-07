@@ -39,12 +39,13 @@
 //!
 //! A peer iterator can be finished prematurely at any time through `finish`.
 //!
-//! [`Finished`]: peers::PeersIterState::Finished
+//! [`Finished`]: QueryState::Finished
 
 pub mod closest;
 pub mod predicate;
 
-/// The state of the query reported by [`Query::next`].
+/// The state of the query reported by [`closest::FindNodeQuery::next`] or
+/// [`predicate::PredicateQuery::next`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryState<TNodeId> {
     /// The query is waiting for results.

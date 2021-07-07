@@ -5,8 +5,6 @@ on: pull_request
 jobs:
   cargo-fmt:
     runs-on: ubuntu-latest
-    container:
-      image: rust
     steps:
     - uses: actions/checkout@v2
     - name: Get latest version of stable rust

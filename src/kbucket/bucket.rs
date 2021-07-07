@@ -171,8 +171,7 @@ pub enum InsertResult<TNodeId> {
         /// The key of the least-recently connected entry that is currently considered
         /// disconnected and whose corresponding peer should be checked for connectivity
         /// in order to prevent it from being evicted. If connectivity to the peer is
-        /// re-established, the corresponding entry should be updated with
-        /// [`NodeStatus::Connected`].
+        /// re-established, the corresponding entry should be updated with a connected status.
         disconnected: Key<TNodeId>,
     },
     /// The attempted entry failed to pass the filter.
@@ -498,23 +497,23 @@ where
     ///
     /// The status of the node to insert determines the result as follows:
     ///
-    ///   * `NodeStatus::ConnectedIncoming` or `NodeStatus::ConnectedOutgoing`: If the bucket is full and either all nodes are connected
-    ///     or there is already a pending node, insertion fails with `InsertResult::Full`.
+    ///   * [`ConnectionState::Connected`] for both directions: If the bucket is full and either all nodes are connected
+    ///     or there is already a pending node, insertion fails with [`InsertResult::Full`].
     ///     If the bucket is full but at least one node is disconnected and there is no pending
-    ///     node, the new node is inserted as pending, yielding `InsertResult::Pending`.
+    ///     node, the new node is inserted as pending, yielding [`InsertResult::Pending`].
     ///     Otherwise the bucket has free slots and the new node is added to the end of the
     ///     bucket as the most-recently connected node.
     ///
-    ///   * `NodeStatus::Disconnected`: If the bucket is full, insertion fails with
-    ///     `InsertResult::Full`. Otherwise the bucket has free slots and the new node
+    ///   * [`ConnectionState::Disconnected`]: If the bucket is full, insertion fails with
+    ///     [`InsertResult::Full`]. Otherwise the bucket has free slots and the new node
     ///     is inserted at the position preceding the first connected node,
     ///     i.e. as the most-recently disconnected node. If there are no connected nodes,
     ///     the new node is added as the last element of the bucket.
     ///
     /// The insert can fail if a provided bucket filter does not pass. If a node is attempted
-    /// to be inserted that doesn't pass the bucket filter, `InsertResult::FailedFilter` will be
+    /// to be inserted that doesn't pass the bucket filter, [`InsertResult::FailedFilter`] will be
     /// returned. Similarly, if the inserted node would violate the `max_incoming` value, the
-    /// result will return `InsertResult::TooManyIncoming`.
+    /// result will return [`InsertResult::TooManyIncoming`].
     pub fn insert(&mut self, node: Node<TNodeId, TVal>) -> InsertResult<TNodeId> {
         // Prevent inserting duplicate nodes.
         if self.position(&node.key).is_some() {
