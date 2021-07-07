@@ -5,6 +5,8 @@ on: pull_request
 jobs:
   cargo-fmt:
     runs-on: ubuntu-latest
+    container:
+      image: rust
     steps:
     - uses: actions/checkout@v2
     - name: Get latest version of stable rust
@@ -22,6 +24,8 @@ jobs:
         run: cargo test --all --release --tests
   test-all-features:
     runs-on: ubuntu-latest
+    container:
+      image: rust
     needs: cargo-fmt
     steps:
       - uses: actions/checkout@v2
@@ -31,8 +35,19 @@ jobs:
         run: cargo test --all --release --all-features --tests
   clippy:
     runs-on: ubuntu-latest
+    container:
+      image: rust
     needs: cargo-fmt
     steps:
-    - uses: actions/checkout@v1
+    - uses: actions/checkout@v2
     - name: Lint code for quality and style with Clippy
       run: cargo clippy
+  check-rustdoc-links:
+    name: Check rustdoc intra-doc links
+    runs-on: ubuntu-latest
+    container:
+      image: rust
+    steps:
+    - uses: actions/checkout@v2
+    - name: Check rustdoc links
+      run: RUSTDOCFLAGS="--deny broken_intra_doc_links" cargo doc --verbose --workspace --no-deps --document-private-items
