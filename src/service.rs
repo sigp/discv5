@@ -1110,7 +1110,7 @@ impl Service {
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
                 query.on_success(source, &enrs)
             } else {
-                warn!("Response returned for ended query {:?}", query_id)
+                debug!("Response returned for ended query {:?}", query_id)
             }
         }
     }
