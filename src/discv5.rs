@@ -2,15 +2,15 @@
 //!
 //! This provides the main struct for running and interfacing with a discovery v5 server.
 //!
-//! A [`Discv5`] struct needs to be created either with an [`Executor`] specified in the
-//! [`Discv5Config`] via the [`Discv5ConfigBuilder`] or in the presence of a tokio runtime that has
+//! A [`Discv5`] struct needs to be created either with an [`crate::executor::Executor`] specified in the
+//! [`Discv5Config`] via the [`crate::Discv5ConfigBuilder`] or in the presence of a tokio runtime that has
 //! timing and io enabled.
 //!
-//! Once a [`Discv5`] struct has been created the service is started by running the [`start()`]
+//! Once a [`Discv5`] struct has been created the service is started by running the [`Discv5::start`]
 //! functions with a UDP socket. This will start a discv5 server in the background listening on the
 //! specified UDP socket.
 //!
-//! The server can be shutdown using the [`shutdown()`] function.
+//! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
     error::{Discv5Error, QueryError, RequestError},

@@ -5,7 +5,7 @@
 //!
 //!                
 //! |               | Enforced Time |  
-//! [x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x]
+//! \[x,x,x,x,x,x,x,x,x,x,x,x,x,x,x,x\]
 //!                 
 //! The enforced time represents one seconds worth of elements. The target aims to limit the
 //! number of elements that can be inserted within the enforced time. The length of the list is

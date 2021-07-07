@@ -174,17 +174,17 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// The timeout for an entire query. Any peers discovered before this timeout are returned.
-    pub fn query_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.config.query_timeout = timeout;
-        self
-    }
-
     /// The timeout after which a `QueryPeer` in an ongoing query is marked unresponsive.
     /// Unresponsive peers don't count towards the parallelism limits for a query.
     /// Hence, we may potentially end up making more requests to good peers.
     pub fn query_peer_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.config.query_peer_timeout = timeout;
+        self
+    }
+
+    /// The timeout for an entire query. Any peers discovered before this timeout are returned.
+    pub fn query_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.config.query_timeout = timeout;
         self
     }
 
@@ -294,6 +294,14 @@ impl Discv5ConfigBuilder {
         self
     }
 
+    /// Set the default duration for which nodes are banned for. This timeouts are checked every 5 minutes,
+    /// so the precision will be to the nearest 5 minutes. If set to `None`, bans from the filter
+    /// will last indefinitely. Default is 1 hour.
+    pub fn ban_duration(&mut self, ban_duration: Option<Duration>) -> &mut Self {
+        self.config.ban_duration = ban_duration;
+        self
+    }
+
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support.
     pub fn executor(&mut self, executor: Box<dyn Executor + Send + Sync>) -> &mut Self {
@@ -333,6 +341,7 @@ impl std::fmt::Debug for Discv5Config {
         let _ = builder.field("ip_limit", &self.ip_limit);
         let _ = builder.field("incoming_bucket_limit", &self.incoming_bucket_limit);
         let _ = builder.field("ping_interval", &self.ping_interval);
+        let _ = builder.field("ban_duration", &self.ban_duration);
         builder.finish()
     }
 }

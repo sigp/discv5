@@ -33,14 +33,11 @@
 //! Pending entries are inserted lazily when their timeout is found to be expired
 //! upon querying the `KBucketsTable`. When that happens, the `KBucketsTable` records
 //! an [`AppliedPending`] result which must be consumed by calling [`take_applied_pending`]
-//! regularly and / or after performing lookup operations like [`entry`] and [`closest`].
+//! regularly and / or after performing lookup operations like [`entry`] and [`closest_keys`].
 //!
-//! [`entry`]: kbucket::KBucketsTable::entry
-//! [`closest`]: kbucket::KBucketsTable::closest
-//! [`AppliedPending`]: kbucket::AppliedPending
-//! [`KBucketsTable`]: kbucket::KBucketsTable
-//! [`take_applied_pending`]: kbucket::KBucketsTable::take_applied_pending
-//! [`PendingEntry`]: kbucket::PendingEntry
+//! [`entry`]: KBucketsTable::entry
+//! [`closest_keys`]: KBucketsTable::closest_keys
+//! [`take_applied_pending`]: KBucketsTable::take_applied_pending
 
 // [Implementation Notes]
 //
@@ -172,7 +169,7 @@ pub enum InsertResult<TNodeId> {
         /// disconnected and whose corresponding peer should be checked for connectivity
         /// in order to prevent it from being evicted. If connectivity to the peer is
         /// re-established, the corresponding entry should be updated with
-        /// [`NodeStatus::Connected`].
+        /// [`bucket::ConnectionState::Connected`].
         disconnected: Key<TNodeId>,
     },
     /// The node existed and the status was updated.

@@ -4,8 +4,9 @@ use super::rate_limiter::RateLimiter;
 pub struct FilterConfig {
     /// Whether the packet filter is enabled or not.
     pub enabled: bool,
-    /// Set up various rate limits for unsolicited packets. See the [`rate_limiter`] module for
-    /// further details on constructing rate limits. See the `Default` implementation for default
+    /// Set up various rate limits for unsolicited packets. See the
+    /// [`crate::RateLimiterBuilder`] for
+    /// further details on constructing rate limits. See the [`Default`] implementation for default
     /// values.
     pub rate_limiter: Option<RateLimiter>,
     /// The maximum number of node-ids allowed per IP address before the IP address gets banned.
