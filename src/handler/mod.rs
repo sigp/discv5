@@ -880,7 +880,7 @@ impl Handler {
                 Ok(m) => match Message::decode(&m) {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!("Failed to decode message. Error: {:?}", e);
+                        warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
                         return;
                     }
                 },
