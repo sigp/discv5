@@ -8,57 +8,70 @@ use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     sync::atomic::Ordering,
+    time::{Duration, Instant},
 };
 use tracing::{debug, warn};
 
 mod cache;
 mod config;
-pub use config::{FilterConfig, FilterConfigBuilder};
+pub mod rate_limiter;
+pub use config::FilterConfig;
+use rate_limiter::{LimitKind, RateLimiter};
 
-/// The maximum percentage of our unsolicited requests per second limit a node is able to consume
-/// for `NUMBER_OF_WINDOWS` duration before being banned.
-/// This allows us to ban the IP/NodeId of an attacker spamming us with requests.
-const MAX_PERCENT_OF_LIMIT_PER_NODE: f64 = 0.9;
-/// The number of windows to remember before banning a node.
-const NUMBER_OF_WINDOWS: usize = 5;
 /// The maximum number of IPs to retain when calculating the number of nodes per IP.
 const KNOWN_ADDRS_SIZE: usize = 500;
 /// The number of IPs to retain at any given time that have banned nodes.
 const BANNED_NODES_SIZE: usize = 50;
+/// The maximum number of packets to keep record of for metrics if the rate limiter is not
+/// specified.
+const DEFAULT_PACKETS_PER_SECOND: usize = 20;
 
 /// The packet filter which decides whether we accept or reject incoming packets.
 pub(crate) struct Filter {
-    /// Configuration for the packet filter.
-    config: FilterConfig,
+    /// Whether the filter is enabled or not.
+    enabled: bool,
+    /// An optional rate limiter for incoming packets.
+    rate_limiter: Option<RateLimiter>,
     /// An ordered (by time) collection of recently seen packets by SocketAddr. The packet data is not
     /// stored here. This stores 5 seconds of history to calculate a 5 second moving average for
     /// the metrics.
     raw_packets_received: ReceivedPacketCache<SocketAddr>,
-    /// An ordered (by time) collection of seen NodeIds that have passed the first filter check and
-    /// have an associated NodeId.
-    received_by_node: ReceivedPacketCache<NodeId>,
+    /// The duration that bans by this filter last.
+    ban_duration: Option<Duration>,
     /// Keep track of node ids per socket. If someone is using too many node-ids per IP, they can
     /// be banned.
     known_addrs: LruCache<IpAddr, HashSet<NodeId>>,
     /// Keep track of Ips that have banned nodes. If a single IP has many nodes that get banned,
     /// then we ban the IP address.
     banned_nodes: LruCache<IpAddr, usize>,
+    /// The maximum number of node-ids allowed per IP address before the IP address gets banned.
+    /// Having this set to None, disables this feature. Default value is 10.
+    pub max_nodes_per_ip: Option<usize>,
+    /// The maximum number of nodes that can be banned by a single IP before that IP gets banned.
+    /// The default is 5.
+    pub max_bans_per_ip: Option<usize>,
 }
 
 impl Filter {
-    pub fn new(config: &FilterConfig) -> Filter {
+    pub fn new(config: FilterConfig, ban_duration: Option<Duration>) -> Filter {
+        let expected_packets_per_second = config
+            .rate_limiter
+            .as_ref()
+            .map(|v| v.total_requests_per_second().round() as usize)
+            .unwrap_or(DEFAULT_PACKETS_PER_SECOND);
+
         Filter {
-            config: config.clone(),
+            enabled: config.enabled,
+            rate_limiter: config.rate_limiter,
             raw_packets_received: ReceivedPacketCache::new(
-                config.max_requests_per_second,
-                METRICS.moving_window,
-            ),
-            received_by_node: ReceivedPacketCache::new(
-                config.max_requests_per_second * NUMBER_OF_WINDOWS,
+                expected_packets_per_second,
                 METRICS.moving_window,
             ),
             known_addrs: LruCache::new(KNOWN_ADDRS_SIZE),
             banned_nodes: LruCache::new(BANNED_NODES_SIZE),
+            ban_duration,
+            max_nodes_per_ip: config.max_nodes_per_ip,
+            max_bans_per_ip: config.max_bans_per_ip,
         }
     }
 
@@ -75,8 +88,9 @@ impl Filter {
         }
 
         // Add the un-solicited request to the cache
-        // If this is over the maximum requests per ENFORCED_SIZE_TIME, it will be rejected and return false.
-        let result = self.raw_packets_received.cache_insert(*src);
+        // If this is over the maximum requests per ENFORCED_SIZE_TIME, it will not be added, we
+        // leave the rate limiter to enforce the rate limits..
+        let _ = self.raw_packets_received.cache_insert(*src);
 
         // build the metrics
         METRICS
@@ -98,25 +112,30 @@ impl Filter {
         };
         *METRICS.requests_per_ip_per_second.write() = hashmap;
 
-        // run the filters
-        if self.config.enabled {
-            // if there is a restriction per IP, enforce it
-            if let Some(max_requests_per_ip_per_second) = self.config.max_requests_per_ip_per_second
-            {
-                if let Some(requests) = METRICS.requests_per_ip_per_second.read().get(&src.ip()) {
-                    if requests >= &max_requests_per_ip_per_second {
-                        debug!(
-                            "Dropped unsolicited packet from IP rate limit: {:?}",
-                            src.ip()
-                        );
-                        return false;
-                    }
-                }
-            }
-            result // filter based on whether the packet could get added to the cache or not
-        } else {
-            true
+        // If the filter isn't enabled, pass the packet
+        if !self.enabled {
+            return true;
         }
+
+        // Check rate limits
+        if let Some(rate_limiter) = self.rate_limiter.as_mut() {
+            if rate_limiter.allows(&LimitKind::Ip(src.ip())).is_err() {
+                warn!("Banning IP for excessive requests: {:?}", src.ip());
+                // Ban the IP address
+                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+                PERMIT_BAN_LIST
+                    .write()
+                    .ban_ips
+                    .insert(src.ip(), ban_timeout);
+                return false;
+            }
+
+            if rate_limiter.allows(&LimitKind::Total).is_err() {
+                debug!("Dropped unsolicited packet from RPC limit: {:?}", src.ip());
+                return false;
+            }
+        }
+        true
     }
 
     pub fn final_pass(&mut self, node_address: &NodeAddress, _packet: &Packet) -> bool {
@@ -142,27 +161,15 @@ impl Filter {
             return false;
         }
 
-        if self.config.enabled {
-            // Add the un-solicited request to the cache
-            // If this is over the maximum requests per ENFORCED_SIZE_TIME, it will be rejected and return false.
-            // The unsolicited filter via IP should ensure this is never reached.
-            if !self.received_by_node.cache_insert(node_address.node_id) {
-                warn!("Message rejected as reached the maximum request limit for NodeId's");
-                return false;
-            }
+        // If the filter isn't enabled, just pass the packet.
+        if !self.enabled {
+            return true;
+        }
 
-            // If a single node has used > MAX_PERCENT_OF_LIMIT_PER_NODE of unsolicited
-            // requests, ban them.
-            // If we have reached our maximum limit each time, the maximum number of messages is:
-            // max_requests_per_second*METRICS.moving_window.
-            if self
-                .received_by_node
-                .iter()
-                .filter(|x| x.content == node_address.node_id)
-                .count() as f64
-                > self.config.max_requests_per_second as f64
-                    * METRICS.moving_window as f64
-                    * MAX_PERCENT_OF_LIMIT_PER_NODE
+        if let Some(rate_limiter) = self.rate_limiter.as_mut() {
+            if rate_limiter
+                .allows(&LimitKind::NodeId(node_address.node_id))
+                .is_err()
             {
                 warn!(
                     "Node has exceeded its request limit and is now banned {}",
@@ -170,19 +177,20 @@ impl Filter {
                 );
 
                 // The node is being banned
+                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
                 PERMIT_BAN_LIST
                     .write()
                     .ban_nodes
-                    .insert(node_address.node_id);
+                    .insert(node_address.node_id, ban_timeout);
 
                 // If we are tracking banned nodes per IP, add to the count. If the count is higher
                 // than our tolerance, ban the IP.
-                if let Some(max_bans_per_ip) = self.config.max_bans_per_ip {
+                if let Some(max_bans_per_ip) = self.max_bans_per_ip {
                     let ip = node_address.socket_addr.ip();
                     if let Some(banned_count) = self.banned_nodes.get_mut(&ip) {
                         *banned_count += 1;
                         if *banned_count >= max_bans_per_ip {
-                            PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+                            PERMIT_BAN_LIST.write().ban_ips.insert(ip, ban_timeout);
                         }
                     } else {
                         self.banned_nodes.put(ip, 0);
@@ -191,32 +199,40 @@ impl Filter {
 
                 return false;
             }
+        }
 
-            // Check the nodes per IP filter configuration
-            if let Some(max_nodes_per_ip) = self.config.max_nodes_per_ip {
-                // This option is set, store the known nodes per IP.
-                let ip = node_address.socket_addr.ip();
-                let known_nodes = {
-                    if let Some(known_nodes) = self.known_addrs.get_mut(&ip) {
-                        known_nodes.insert(node_address.node_id);
-                        known_nodes.len()
-                    } else {
-                        let mut ids = HashSet::new();
-                        ids.insert(node_address.node_id);
-                        self.known_addrs.put(ip, ids);
-                        1
-                    }
-                };
-
-                if known_nodes >= max_nodes_per_ip {
-                    warn!("IP has exceeded its node-id limit and is now banned {}", ip);
-                    PERMIT_BAN_LIST.write().ban_ips.insert(ip);
-                    self.known_addrs.pop(&ip);
-                    return false;
+        // Check the nodes per IP filter configuration
+        if let Some(max_nodes_per_ip) = self.max_nodes_per_ip {
+            // This option is set, store the known nodes per IP.
+            let ip = node_address.socket_addr.ip();
+            let known_nodes = {
+                if let Some(known_nodes) = self.known_addrs.get_mut(&ip) {
+                    known_nodes.insert(node_address.node_id);
+                    known_nodes.len()
+                } else {
+                    let mut ids = HashSet::new();
+                    ids.insert(node_address.node_id);
+                    self.known_addrs.put(ip, ids);
+                    1
                 }
+            };
+
+            if known_nodes >= max_nodes_per_ip {
+                warn!("IP has exceeded its node-id limit and is now banned {}", ip);
+                // The node is being banned
+                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+                PERMIT_BAN_LIST.write().ban_ips.insert(ip, ban_timeout);
+                self.known_addrs.pop(&ip);
+                return false;
             }
         }
 
         true
+    }
+
+    pub fn prune_limiter(&mut self) {
+        if let Some(rate_limiter) = self.rate_limiter.as_mut() {
+            rate_limiter.prune();
+        }
     }
 }

@@ -2,15 +2,15 @@
 //!
 //! This provides the main struct for running and interfacing with a discovery v5 server.
 //!
-//! A [`Discv5`] struct needs to be created either with an [`Executor`] specified in the
-//! [`Discv5Config`] via the [`Discv5ConfigBuilder`] or in the presence of a tokio runtime that has
+//! A [`Discv5`] struct needs to be created either with an [`crate::executor::Executor`] specified in the
+//! [`Discv5Config`] via the [`crate::Discv5ConfigBuilder`] or in the presence of a tokio runtime that has
 //! timing and io enabled.
 //!
-//! Once a [`Discv5`] struct has been created the service is started by running the [`start()`]
+//! Once a [`Discv5`] struct has been created the service is started by running the [`Discv5::start`]
 //! functions with a UDP socket. This will start a discv5 server in the background listening on the
 //! specified UDP socket.
 //!
-//! The server can be shutdown using the [`shutdown()`] function.
+//! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
     error::{Discv5Error, QueryError, RequestError},
@@ -19,12 +19,17 @@ use crate::{
         NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
-    service::{QueryKind, Service, ServiceRequest},
+    service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
-use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
@@ -58,6 +63,8 @@ pub enum Discv5Event {
     },
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
+    /// A node has initiated a talk request.
+    TalkRequest(TalkRequest),
 }
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
@@ -212,6 +219,31 @@ impl Discv5 {
         self.kbuckets.write().remove(key)
     }
 
+    /// Returns a vector of closest nodes by the given distances.
+    pub fn nodes_by_distance(&self, mut distances: Vec<u64>) -> Vec<Enr> {
+        let mut nodes_to_send = Vec::new();
+        distances.sort_unstable();
+        distances.dedup();
+
+        if let Some(0) = distances.first() {
+            // if the distance is 0 send our local ENR
+            nodes_to_send.push(self.local_enr.read().clone());
+            distances.remove(0);
+        }
+
+        if !distances.is_empty() {
+            let mut kbuckets = self.kbuckets.write();
+            for node in kbuckets
+                .nodes_by_distances(distances, self.config.max_nodes_response)
+                .into_iter()
+                .map(|entry| entry.node.value.clone())
+            {
+                nodes_to_send.push(node);
+            }
+        }
+        nodes_to_send
+    }
+
     /// Mark a node in the routing table as `Disconnnected`.
     ///
     /// A `Disconnected` node will be present in the routing table and will be only
@@ -262,10 +294,15 @@ impl Discv5 {
     }
 
     /// Bans a node from the server. This will remove the node from the routing table if it exists
-    /// and block all incoming packets from the node.
-    pub fn ban_node(&mut self, node_id: &NodeId) {
+    /// and block all incoming packets from the node until the timeout specified. Setting the
+    /// timeout to `None` creates a permanent ban.
+    pub fn ban_node(&mut self, node_id: &NodeId, duration_of_ban: Option<Duration>) {
+        let time_to_unban = duration_of_ban.map(|v| Instant::now() + v);
         self.remove_node(node_id);
-        PERMIT_BAN_LIST.write().ban_nodes.insert(*node_id);
+        PERMIT_BAN_LIST
+            .write()
+            .ban_nodes
+            .insert(*node_id, time_to_unban);
     }
 
     /// Removes a banned node from the banned list.
@@ -284,8 +321,9 @@ impl Discv5 {
     }
 
     /// Bans an IP from the server.  This will block all incoming packets from the IP.
-    pub fn ban_ip(&mut self, ip: std::net::IpAddr) {
-        PERMIT_BAN_LIST.write().ban_ips.insert(ip);
+    pub fn ban_ip(&mut self, ip: std::net::IpAddr, duration_of_ban: Option<Duration>) {
+        let time_to_unban = duration_of_ban.map(|v| Instant::now() + v);
+        PERMIT_BAN_LIST.write().ban_ips.insert(ip, time_to_unban);
     }
 
     /// Removes a banned IP from the banned list.
@@ -332,7 +370,7 @@ impl Discv5 {
     }
 
     /// Returns an iterator over all ENR node IDs of nodes currently contained in the routing table.
-    pub fn table_entries_id(&mut self) -> Vec<NodeId> {
+    pub fn table_entries_id(&self) -> Vec<NodeId> {
         self.kbuckets
             .write()
             .iter()
@@ -341,7 +379,7 @@ impl Discv5 {
     }
 
     /// Returns an iterator over all the ENR's of nodes currently contained in the routing table.
-    pub fn table_entries_enr(&mut self) -> Vec<Enr> {
+    pub fn table_entries_enr(&self) -> Vec<Enr> {
         self.kbuckets
             .write()
             .iter()
@@ -406,7 +444,7 @@ impl Discv5 {
 
     /// Request a TALK message from a node, identified via the ENR.
     pub fn talk_req(
-        &mut self,
+        &self,
         enr: Enr,
         protocol: Vec<u8>,
         request: Vec<u8>,

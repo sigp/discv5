@@ -28,7 +28,6 @@ pub(crate) struct Session {
     ///
     /// This field holds the request_id associated with the ENR request.
     pub awaiting_enr: Option<RequestId>,
-
     /// Number of messages sent. Used to ensure the nonce used in message encryption is always
     /// unique.
     counter: u32,

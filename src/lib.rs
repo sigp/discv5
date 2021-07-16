@@ -27,7 +27,7 @@
 //!  * Handler - The protocol's communication is encrypted with `AES_GCM`. All node communication
 //!  undergoes a handshake, which results in a [`Session`]. [`Session`]'s are established when
 //!  needed and get dropped after a timeout. This section manages the creation and maintenance of
-//!  sessions between nodes and the encryption/decryption of packets from the socket. It is realised by the [`Handler`] struct and it runs in its own task.
+//!  sessions between nodes and the encryption/decryption of packets from the socket. It is realised by the [`handler::Handler`] struct and it runs in its own task.
 //!  * Service - This section contains the protocol-level logic. In particular it manages the
 //!  routing table of known ENR's, topic registration/advertisement and performs various queries
 //!  such as peer discovery. This section is realised by the [`Service`] struct. This also runs in
@@ -115,7 +115,7 @@ pub mod permit_ban;
 mod query_pool;
 pub mod rpc;
 pub mod service;
-mod socket;
+pub mod socket;
 
 #[macro_use]
 extern crate lazy_static;
@@ -124,10 +124,11 @@ pub type Enr = enr::Enr<enr::CombinedKey>;
 
 pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
-pub use error::{Discv5Error, QueryError, RequestError};
+pub use error::{Discv5Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};
 pub use permit_ban::PermitBanList;
-pub use socket::{FilterConfig, FilterConfigBuilder};
+pub use service::TalkRequest;
+pub use socket::{RateLimiter, RateLimiterBuilder};
 // re-export the ENR crate
 pub use enr;

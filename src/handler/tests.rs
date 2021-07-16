@@ -32,7 +32,7 @@ async fn simple_session_message() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let config = Discv5ConfigBuilder::new().build();
+    let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
 
     let sender_enr = EnrBuilder::new("v4")
         .ip(ip)

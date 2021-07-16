@@ -2,14 +2,17 @@ use crate::Executor;
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 mod filter;
 mod recv;
 mod send;
 
-pub use filter::{FilterConfig, FilterConfigBuilder};
+pub use filter::{
+    rate_limiter::{RateLimiter, RateLimiterBuilder},
+    FilterConfig,
+};
 pub use recv::InboundPacket;
 pub use send::OutboundPacket;
 /// Convenience objects for setting up the recv handler.
@@ -20,6 +23,8 @@ pub struct SocketConfig {
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
+    /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
+    pub ban_duration: Option<Duration>,
     /// The expected responses reference.
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// The local node id used to decrypt messages.
@@ -61,6 +66,7 @@ impl Socket {
             recv: recv_udp,
             local_node_id: config.local_node_id,
             expected_responses: config.expected_responses,
+            ban_duration: config.ban_duration,
         };
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);

@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    error::RequestError,
+    error::{RequestError, ResponseError},
     handler::{Handler, HandlerRequest, HandlerResponse},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
@@ -34,9 +34,10 @@ use crate::{
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
+use hashset_delay::HashSetDelay;
 use parking_lot::RwLock;
 use rpc::*;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
@@ -45,7 +46,68 @@ mod ip_vote;
 mod query_info;
 mod test;
 
-use hashset_delay::HashSetDelay;
+/// Request type for Protocols using `TalkReq` message.
+///
+/// Automatically responds with an empty body on drop if
+/// [`TalkRequest::respond`] is not called.
+#[derive(Debug)]
+pub struct TalkRequest {
+    id: RequestId,
+    node_address: NodeAddress,
+    protocol: Vec<u8>,
+    body: Vec<u8>,
+    sender: Option<mpsc::UnboundedSender<HandlerRequest>>,
+}
+
+impl Drop for TalkRequest {
+    fn drop(&mut self) {
+        let sender = match self.sender.take() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let response = Response {
+            id: self.id.clone(),
+            body: ResponseBody::Talk { response: vec![] },
+        };
+
+        debug!("Sending empty TALK response to {}", self.node_address);
+        let _ = sender.send(HandlerRequest::Response(
+            self.node_address.clone(),
+            Box::new(response),
+        ));
+    }
+}
+
+impl TalkRequest {
+    pub fn protocol(&self) -> &[u8] {
+        &self.protocol
+    }
+
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    pub fn respond(mut self, response: Vec<u8>) -> Result<(), ResponseError> {
+        debug!("Sending TALK response to {}", self.node_address);
+
+        let response = Response {
+            id: self.id.clone(),
+            body: ResponseBody::Talk { response },
+        };
+
+        self.sender
+            .take()
+            .unwrap()
+            .send(HandlerRequest::Response(
+                self.node_address.clone(),
+                Box::new(response),
+            ))
+            .map_err(|_| ResponseError::ChannelClosed)?;
+
+        Ok(())
+    }
+}
 
 /// The number of distances (buckets) we simultaneously request from each peer.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
@@ -480,17 +542,15 @@ impl Service {
                     .send(HandlerRequest::Response(node_address, Box::new(response)));
             }
             RequestBody::Talk { protocol, request } => {
-                // Send the callback's response to this protocol.
-                let response = (self.config.talkreq_callback)(&protocol, &request);
-                let response = Response {
+                let req = TalkRequest {
                     id,
-                    body: ResponseBody::Talk { response },
+                    node_address,
+                    protocol,
+                    body: request,
+                    sender: Some(self.handler_send.clone()),
                 };
 
-                debug!("Sending TALK response to {}", node_address);
-                let _ = self
-                    .handler_send
-                    .send(HandlerRequest::Response(node_address, Box::new(response)));
+                self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { .. } => {
                 debug!("Received RegisterTopic request which is unimplemented");
@@ -583,11 +643,13 @@ impl Service {
                                 active_request.contact
                             );
                         }
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                         PERMIT_BAN_LIST.write().ban(
                             active_request
                                 .contact
                                 .node_address()
                                 .expect("Sanitized request"),
+                            ban_timeout,
                         );
                         nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
@@ -605,11 +667,13 @@ impl Service {
                                 "Peer sent invalid ENR. Blacklisting {}",
                                 active_request.contact
                             );
+                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(
                                 active_request
                                     .contact
                                     .node_address()
                                     .expect("Sanitized request"),
+                                ban_timeout,
                             );
                         }
                     }
@@ -1047,7 +1111,7 @@ impl Service {
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
                 query.on_success(source, &enrs)
             } else {
-                warn!("Response returned for ended query {:?}", query_id)
+                debug!("Response returned for ended query {:?}", query_id)
             }
         }
     }

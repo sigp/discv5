@@ -2,21 +2,23 @@
 //!
 //! The [`Handler`] is responsible for establishing and maintaining sessions with
 //! connected/discovered nodes. Each node, identified by it's [`NodeId`] is associated with a
-//! [`Session`]. This service drives the handshakes for establishing the sessions and associated
+//! `Session`. This service drives the handshakes for establishing the sessions and associated
 //! logic for sending/requesting initial connections/ENR's to/from unknown peers.
 //!
 //! The [`Handler`] also manages the timeouts for each request and reports back RPC failures,
 //! and received messages. Messages are encrypted and decrypted using the
-//! associated [`Session`] for each node.
+//! associated `Session` for each node.
 //!
-//! An ongoing established connection is abstractly represented by a [`Session`]. A node that provides an ENR with an
-//! IP address/port that doesn't match the source, is considered untrusted and any
-//! establishing/established session is dropped. Once the IP is updated
-//! to match the source, the [`Session`] is promoted to an established state and reported back.
+//! An ongoing established connection is abstractly represented by a `Session`. A node that provides an ENR with an
+//! IP address/port that doesn't match the source, is considered invalid. A node that doesn't know
+//! their external contactable addresses should set their ENR IP field to `None`.
+//!
+//! The Handler also routinely checks the timeouts for banned nodes and removes them from the
+//! banned list once their ban expires.
 //!
 //! # Usage
 //!
-//! Interacting with a handler is done via channels. A Handler is spawned using the [`spawn()`]
+//! Interacting with a handler is done via channels. A Handler is spawned using the [`Handler::spawn`]
 //! function. This returns an exit channel, a sending and receiving channel respectively. If the
 //! exit channel is dropped or fired, the handler task gets shutdown.
 //!
@@ -24,11 +26,12 @@
 //! Responses come by the receiving channel in the form of a [`HandlerResponse`].
 use crate::{
     config::Discv5Config,
+    discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
-    socket::Socket,
+    socket::{FilterConfig, Socket},
     Enr,
 };
 use enr::{CombinedKey, NodeId};
@@ -41,6 +44,7 @@ use std::{
     default::Default,
     net::SocketAddr,
     sync::{atomic::Ordering, Arc},
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
@@ -56,6 +60,10 @@ use crate::metrics::METRICS;
 
 use hashmap_delay::HashMapDelay;
 use session::Session;
+
+// The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
+// seconds).
+const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
 /// Events sent to the handler to be executed.
 #[derive(Debug, Clone, PartialEq)]
@@ -247,8 +255,13 @@ impl Handler {
         let node_id = enr.read().node_id();
 
         // enable the packet filter if required
-        let mut filter_config = config.filter_config.clone();
-        filter_config.enabled = config.enable_packet_filter;
+
+        let filter_config = FilterConfig {
+            enabled: config.enable_packet_filter,
+            rate_limiter: config.filter_rate_limiter.clone(),
+            max_nodes_per_ip: config.filter_max_nodes_per_ip,
+            max_bans_per_ip: config.filter_max_bans_per_ip,
+        };
 
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
@@ -256,6 +269,7 @@ impl Handler {
             filter_config,
             local_node_id: node_id,
             expected_responses: filter_expected_responses.clone(),
+            ban_duration: config.ban_duration,
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
@@ -303,6 +317,8 @@ impl Handler {
 
     /// The main execution loop for the handler.
     async fn start(&mut self) {
+        let mut banned_nodes_check = tokio::time::interval(Duration::from_secs(BANNED_NODES_CHECK));
+
         loop {
             tokio::select! {
                 Some(handler_request) = self.inbound_channel.recv() => {
@@ -331,6 +347,7 @@ impl Handler {
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, pending_request).await;
                 }
+                _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
                     return;
                 }
@@ -424,7 +441,9 @@ impl Handler {
             self.active_requests_nonce_mapping
                 .remove(request_call.packet.message_nonce());
             self.remove_expected_response(node_address.socket_addr);
-            self.fail_request(request_call, RequestError::Timeout).await;
+            // The request has timed out. We keep any established session for future use.
+            self.fail_request(request_call, RequestError::Timeout, false)
+                .await;
         } else {
             // increment the request retry count and restart the timeout
             trace!(
@@ -559,7 +578,7 @@ impl Handler {
         let node_address = wru_ref.0;
         let message_nonce = wru_ref.1;
 
-        if self.active_challenges.get(&node_address).is_some() {
+        if self.active_challenges.peek(&node_address).is_some() {
             warn!("WHOAREYOU already sent. {}", node_address);
             return;
         }
@@ -661,7 +680,7 @@ impl Handler {
                 "Authentication response already sent. Dropping session. Node: {}",
                 request_call.contact
             );
-            self.fail_request(request_call, RequestError::InvalidRemotePacket)
+            self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                 .await;
             return;
         }
@@ -687,7 +706,7 @@ impl Handler {
             Ok(v) => v,
             Err(e) => {
                 error!("Could not generate a session. Error: {:?}", e);
-                self.fail_request(request_call, RequestError::InvalidRemotePacket)
+                self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                     .await;
                 return;
             }
@@ -841,7 +860,7 @@ impl Handler {
                             enr.udp_socket(),
                             node_address
                         );
-                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr)
+                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                             .await;
                     }
                 }
@@ -858,7 +877,7 @@ impl Handler {
                         "Invalid Authentication header. Dropping session. Error: {:?}",
                         e
                     );
-                    self.fail_session(&node_address, RequestError::InvalidRemotePacket)
+                    self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
                 }
             }
@@ -905,7 +924,7 @@ impl Handler {
                 Ok(m) => match Message::decode(&m) {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!("Failed to decode message. Error: {:?}", e);
+                        warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
                         return;
                     }
                 },
@@ -915,15 +934,24 @@ impl Handler {
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
                     trace!("Decryption failed. Error {}", e);
-                    debug!("Message from node: {} is not encrypted with known session keys. Requesting a WHOAREYOU packet", node_address);
-                    self.fail_session(&node_address, RequestError::InvalidRemotePacket)
+                    debug!(
+                        "Message from node: {} is not encrypted with known session keys.",
+                        node_address
+                    );
+                    self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
+                    // If we haven't already sent a WhoAreYou,
                     // spawn a WHOAREYOU event to check for highest known ENR
-                    let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-                    let _ = self
-                        .outbound_channel
-                        .send(HandlerResponse::WhoAreYou(whoareyou_ref))
-                        .await;
+                    // Update the cache time and remove expired entries.
+                    if self.active_challenges.peek(&node_address).is_none() {
+                        let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
+                        let _ = self
+                            .outbound_channel
+                            .send(HandlerResponse::WhoAreYou(whoareyou_ref))
+                            .await;
+                    } else {
+                        trace!("WHOAREYOU packet already sent: {}", node_address);
+                    }
                     return;
                 }
             };
@@ -968,7 +996,7 @@ impl Handler {
                                 _ => {}
                             }
                             debug!("Session failed invalid ENR response");
-                            self.fail_session(&node_address, RequestError::InvalidRemoteEnr)
+                            self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                                 .await;
                             return;
                         }
@@ -1085,7 +1113,13 @@ impl Handler {
         }
     }
 
-    async fn fail_request(&mut self, request_call: RequestCall, error: RequestError) {
+    /// A request has failed.
+    async fn fail_request(
+        &mut self,
+        request_call: RequestCall,
+        error: RequestError,
+        remove_session: bool,
+    ) {
         // The Request has expired, remove the session.
         // Remove the associated nonce mapping.
         self.active_requests_nonce_mapping
@@ -1101,14 +1135,23 @@ impl Handler {
             .contact
             .node_address()
             .expect("All Request calls have been sanitized");
-        self.fail_session(&node_address, error).await;
+        self.fail_session(&node_address, error, remove_session)
+            .await;
     }
 
-    async fn fail_session(&mut self, node_address: &NodeAddress, error: RequestError) {
-        self.sessions.remove(&node_address);
-        METRICS
-            .active_sessions
-            .store(self.sessions.len(), Ordering::Relaxed);
+    /// Removes a session and updates associated metrics and fields.
+    async fn fail_session(
+        &mut self,
+        node_address: &NodeAddress,
+        error: RequestError,
+        remove_session: bool,
+    ) {
+        if remove_session {
+            self.sessions.remove(&node_address);
+            METRICS
+                .active_sessions
+                .store(self.sessions.len(), Ordering::Relaxed);
+        }
         for request in self
             .pending_requests
             .remove(&node_address)
@@ -1128,5 +1171,17 @@ impl Handler {
             packet,
         };
         let _ = self.socket.send.send(outbound_packet).await;
+    }
+
+    /// Check if any banned nodes have served their time and unban them.
+    fn unban_nodes_check(&self) {
+        PERMIT_BAN_LIST
+            .write()
+            .ban_ips
+            .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
+        PERMIT_BAN_LIST
+            .write()
+            .ban_nodes
+            .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
     }
 }

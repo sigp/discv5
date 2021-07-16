@@ -1,5 +1,6 @@
 use crate::handler::Challenge;
 use rlp::DecoderError;
+use std::fmt;
 
 #[derive(Debug)]
 /// A general error that is used throughout the Discv5 library.
@@ -70,6 +71,25 @@ pub enum PacketError {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ResponseError {
+    /// The channel used to send the response has already been closed.
+    ChannelClosed,
+}
+
+impl fmt::Display for ResponseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ResponseError::ChannelClosed => {
+                write!(f, "response channel has already been closed")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ResponseError {}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum RequestError {
     /// The request timed out.
     Timeout,
@@ -107,20 +127,20 @@ pub enum QueryError {
     InvalidMultiaddr(String),
 }
 
-impl std::fmt::Display for Discv5Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Discv5Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl std::fmt::Display for RequestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for RequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
 
-impl std::fmt::Display for QueryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for QueryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
     }
 }
