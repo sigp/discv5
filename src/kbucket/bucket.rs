@@ -463,22 +463,32 @@ where
     /// if it fails the filter however.
     pub fn update_value(&mut self, key: &Key<TNodeId>, value: TVal) -> UpdateResult {
         // Remove the node from its current position, check the filter and add it back in.
-        if let Some(pos) = self.position(key) {
+        if let Some(Position(pos)) = self.position(key) {
             // Remove the node from its current position.
-            let mut node = self.nodes.remove(pos.0);
+            let mut node = self.nodes.remove(pos);
             if node.value == value {
-                self.nodes.insert(pos.0, node);
+                self.nodes.insert(pos, node);
                 UpdateResult::NotModified
             } else {
-                // check bucket filter
+                // Check bucket filter
                 if let Some(filter) = self.filter.as_ref() {
                     if !filter.filter(&value, &mut self.iter().map(|node| &node.value)) {
-                        self.nodes.remove(pos.0);
+                        // Node is removed, update the `first_connected_pos` accordingly.
+                        self.first_connected_pos = self.first_connected_pos.and_then(|fcp| {
+                            if pos < fcp {
+                                Some(fcp - 1)
+                            } else {
+                                // FCP is unchanged, unless there are no nodes following
+                                // the removed node.
+                                Some(fcp).filter(|_| fcp < self.nodes.len())
+                            }
+                        });
+
                         return UpdateResult::Failed(FailureReason::BucketFilter);
                     }
                 }
                 node.value = value;
-                self.nodes.insert(pos.0, node);
+                self.nodes.insert(pos, node);
                 UpdateResult::Updated
             }
         } else if let Some(pending) = &mut self.pending {
@@ -663,12 +673,15 @@ impl std::fmt::Display for ConnectionDirection {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use enr::NodeId;
     use quickcheck::*;
     use rand_07::Rng;
-    use std::collections::VecDeque;
+    use std::{
+        collections::{HashSet, VecDeque},
+        hash::Hash,
+    };
 
     fn connected_state() -> NodeStatus {
         NodeStatus {
@@ -684,17 +697,68 @@ mod tests {
         }
     }
 
-    impl Arbitrary for KBucket<NodeId, ()> {
-        fn arbitrary<G: Gen>(g: &mut G) -> KBucket<NodeId, ()> {
+    pub fn arbitrary_node_id<G: Gen>(g: &mut G) -> NodeId {
+        let mut node_id = [0u8; 32];
+        g.fill_bytes(&mut node_id);
+        NodeId::new(&node_id)
+    }
+
+    impl<V> KBucket<NodeId, V>
+    where
+        V: Eq + std::fmt::Debug,
+    {
+        /// Check invariants that must hold on the `KBucket`.
+        fn check_invariants(&self) {
+            self.check_first_connected_pos();
+            self.check_status_ordering();
+            self.check_max_incoming_nodes();
+        }
+
+        /// Check that the cached `first_connected_pos` field matches the list of nodes.
+        fn check_first_connected_pos(&self) {
+            let first_connected_pos = self
+                .nodes
+                .iter()
+                .position(|node| node.status.is_connected());
+            assert_eq!(self.first_connected_pos, first_connected_pos);
+        }
+
+        /// Check that disconnected nodes are listed first, follow by connected nodes.
+        fn check_status_ordering(&self) {
+            let first_connected_pos = self.first_connected_pos.unwrap_or(self.nodes.len());
+            assert!(self.nodes[..first_connected_pos]
+                .iter()
+                .all(|n| !n.status.is_connected()));
+            assert!(self.nodes[first_connected_pos..]
+                .iter()
+                .all(|n| n.status.is_connected()));
+        }
+
+        /// Check that the limit on incoming connections is respected.
+        fn check_max_incoming_nodes(&self) {
+            let number_of_incoming_nodes = self
+                .nodes
+                .iter()
+                .filter(|n| n.status.is_connected() && n.status.is_incoming())
+                .count();
+            assert!(number_of_incoming_nodes <= self.max_incoming);
+        }
+    }
+
+    impl<V> Arbitrary for KBucket<NodeId, V>
+    where
+        V: Arbitrary + Eq,
+    {
+        fn arbitrary<G: Gen>(g: &mut G) -> KBucket<NodeId, V> {
             let timeout = Duration::from_secs(g.gen_range(1, g.size() as u64));
-            let mut bucket = KBucket::<NodeId, ()>::new(timeout, MAX_NODES_PER_BUCKET, None);
+            let mut bucket = KBucket::<NodeId, V>::new(timeout, MAX_NODES_PER_BUCKET, None);
             let num_nodes = g.gen_range(1, MAX_NODES_PER_BUCKET + 1);
             for _ in 0..num_nodes {
-                let key = Key::from(NodeId::random());
+                let key = Key::from(arbitrary_node_id(g));
                 loop {
                     let node = Node {
                         key: key.clone(),
-                        value: (),
+                        value: V::arbitrary(g),
                         status: NodeStatus::arbitrary(g),
                     };
                     match bucket.insert(node) {
@@ -750,6 +814,21 @@ mod tests {
             };
             assert_eq!(InsertResult::Inserted, bucket.insert(node));
             assert_eq!(bucket.num_entries(), num_entries_start + i + 1);
+        }
+    }
+
+    /// Filter for testing that returns true if the value is in `self.set`.
+    #[derive(Debug, Clone)]
+    pub struct SetFilter<T> {
+        set: HashSet<T>,
+    }
+
+    impl<T> Filter<T> for SetFilter<T>
+    where
+        T: Clone + Hash + Eq + Send + Sync + 'static,
+    {
+        fn filter(&self, value: &T, _: &mut dyn Iterator<Item = &T>) -> bool {
+            self.set.contains(value)
         }
     }
 
@@ -976,6 +1055,54 @@ mod tests {
     }
 
     #[test]
+    fn bucket_update_value_with_filtering() {
+        fn prop(
+            mut bucket: KBucket<NodeId, u8>,
+            pos: Position,
+            value: u8,
+            value_matches_filter: bool,
+        ) -> bool {
+            // Initialise filter.
+            let filter = SetFilter {
+                set: value_matches_filter.then(|| value).into_iter().collect(),
+            };
+            bucket.filter = Some(Box::new(filter));
+
+            let num_nodes = bucket.num_entries();
+
+            // Capture position and key of the random node to update.
+            let pos = pos.0 % num_nodes;
+            let key = bucket.nodes[pos].key.clone();
+
+            // Record the (ordered) list of values of all nodes in the bucket.
+            let mut expected = bucket
+                .iter()
+                .map(|n| (n.key.clone(), n.value))
+                .collect::<Vec<_>>();
+
+            // Update the node in the bucket.
+            let _ = bucket.update_value(&key, value);
+
+            bucket.check_invariants();
+
+            // Check that the bucket now contains the node with the new value, or that the node
+            // has been removed.
+            if value_matches_filter || expected[pos].1 == value {
+                expected[pos].1 = value;
+            } else {
+                expected.remove(pos);
+            }
+            let actual = bucket
+                .iter()
+                .map(|n| (n.key.clone(), n.value))
+                .collect::<Vec<_>>();
+            expected == actual
+        }
+
+        quickcheck(prop as fn(_, _, _, _) -> _);
+    }
+
+    #[test]
     fn table_update_status_connection() {
         let max_incoming = 7;
         let mut bucket = KBucket::<NodeId, ()>::new(Duration::from_secs(1), max_incoming, None);
@@ -1068,6 +1195,9 @@ mod tests {
                 }
             }
 
+            // Check all invariants.
+            bucket.check_invariants();
+
             // Get all nodes from the bucket, together with their status.
             let mut nodes = bucket
                 .iter()
@@ -1075,22 +1205,15 @@ mod tests {
                 .collect::<Vec<_>>();
 
             // Split the list of nodes at the first connected node.
-            let first_connected_pos = nodes.iter().position(|(status, _)| status.is_connected());
-            assert_eq!(bucket.first_connected_pos, first_connected_pos);
-            let tail = first_connected_pos.map_or(Vec::new(), |p| nodes.split_off(p));
-
-            let number_of_incoming_nodes = bucket
-                .iter()
-                .filter(|n| n.status.is_connected() && n.status.is_incoming())
-                .count();
-
-            assert!(number_of_incoming_nodes <= max_incoming_nodes);
+            let tail = bucket
+                .first_connected_pos
+                .map_or(Vec::new(), |p| nodes.split_off(p));
 
             // All nodes before the first connected node must be disconnected and
             // in insertion order. Similarly, all remaining nodes must be connected
             // and in insertion order.
             // The number of incoming nodes does not exceed the maximum limit.
-            disconnected == nodes && connected == tail && number_of_incoming_nodes <= 5
+            disconnected == nodes && connected == tail
         }
 
         quickcheck(prop as fn(_) -> _);
