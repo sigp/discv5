@@ -114,11 +114,12 @@ pub struct Distance(pub(super) U256);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kbucket::bucket::tests::arbitrary_node_id;
     use quickcheck::*;
 
     impl Arbitrary for Key<NodeId> {
-        fn arbitrary<G: Gen>(_: &mut G) -> Key<NodeId> {
-            Key::from(NodeId::random())
+        fn arbitrary<G: Gen>(g: &mut G) -> Key<NodeId> {
+            Key::from(arbitrary_node_id(g))
         }
     }
 
