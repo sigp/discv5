@@ -626,7 +626,7 @@ where
     ///
     /// Returns `None` if the given key does not refer to an node in the
     /// bucket.
-    pub fn get(&mut self, key: &Key<TNodeId>) -> Option<&Node<TNodeId, TVal>> {
+    pub fn get(&self, key: &Key<TNodeId>) -> Option<&Node<TNodeId, TVal>> {
         self.nodes.iter().find(move |p| &p.key == key)
     }
 
