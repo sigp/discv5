@@ -474,15 +474,7 @@ where
                 if let Some(filter) = self.filter.as_ref() {
                     if !filter.filter(&value, &mut self.iter().map(|node| &node.value)) {
                         // Node is removed, update the `first_connected_pos` accordingly.
-                        self.first_connected_pos = self.first_connected_pos.and_then(|fcp| {
-                            if pos < fcp {
-                                Some(fcp - 1)
-                            } else {
-                                // FCP is unchanged, unless there are no nodes following
-                                // the removed node.
-                                Some(fcp).filter(|_| fcp < self.nodes.len())
-                            }
-                        });
+                        self.update_first_connected_pos_for_removal(pos);
 
                         return UpdateResult::Failed(FailureReason::BucketFilter);
                     }
@@ -580,8 +572,9 @@ where
 
     /// Removes a node from the bucket.
     pub fn remove(&mut self, key: &Key<TNodeId>) -> bool {
-        if let Some(position) = self.position(key) {
-            self.nodes.remove(position.0);
+        if let Some(Position(position)) = self.position(key) {
+            self.nodes.remove(position);
+            self.update_first_connected_pos_for_removal(position);
             true
         } else {
             false
@@ -645,6 +638,22 @@ where
             .filter(|node| node.status.is_connected() && node.status.is_incoming())
             .count()
             >= self.max_incoming
+    }
+
+    /// Update the `first_connected_pos` for the removal of a node at position `removed_pos`.
+    ///
+    /// This function should be called *after* removing the node. It has the ability to destroy
+    /// the bucket's internal consistency invariants if misused.
+    fn update_first_connected_pos_for_removal(&mut self, removed_pos: usize) {
+        self.first_connected_pos = self.first_connected_pos.and_then(|fcp| {
+            if removed_pos < fcp {
+                // Remove node is before the first connected position, decrement it.
+                Some(fcp - 1)
+            } else {
+                // FCP is unchanged, unless there are no nodes following the removed node.
+                Some(fcp).filter(|_| fcp < self.nodes.len())
+            }
+        });
     }
 }
 
@@ -754,13 +763,8 @@ pub mod tests {
             let mut bucket = KBucket::<NodeId, V>::new(timeout, MAX_NODES_PER_BUCKET, None);
             let num_nodes = g.gen_range(1, MAX_NODES_PER_BUCKET + 1);
             for _ in 0..num_nodes {
-                let key = Key::from(arbitrary_node_id(g));
                 loop {
-                    let node = Node {
-                        key: key.clone(),
-                        value: V::arbitrary(g),
-                        status: NodeStatus::arbitrary(g),
-                    };
+                    let node = Node::arbitrary(g);
                     match bucket.insert(node) {
                         InsertResult::Inserted => break,
                         InsertResult::TooManyIncoming => {}
@@ -769,6 +773,20 @@ pub mod tests {
                 }
             }
             bucket
+        }
+    }
+
+    impl<V> Arbitrary for Node<NodeId, V>
+    where
+        V: Arbitrary + Eq,
+    {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            let key = Key::from(arbitrary_node_id(g));
+            Node {
+                key: key.clone(),
+                value: V::arbitrary(g),
+                status: NodeStatus::arbitrary(g),
+            }
         }
     }
 
@@ -829,6 +847,82 @@ pub mod tests {
     {
         fn filter(&self, value: &T, _: &mut dyn Iterator<Item = &T>) -> bool {
             self.set.contains(value)
+        }
+    }
+
+    /// Enum encoding mutable method calls on KBucket, implements Arbitrary.
+    #[derive(Debug, Clone)]
+    pub enum Action<TVal>
+    where
+        TVal: Eq,
+    {
+        Insert(Node<NodeId, TVal>),
+        Remove(usize),
+        UpdatePending(NodeStatus),
+        ApplyPending,
+        UpdateStatus(usize, NodeStatus),
+        UpdateValue(usize, TVal),
+    }
+
+    impl<V> Arbitrary for Action<V>
+    where
+        V: Arbitrary + Eq,
+    {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            match g.gen_range(0, 6) {
+                0 => Action::Insert(<_>::arbitrary(g)),
+                1 => Action::Remove(<_>::arbitrary(g)),
+                2 => Action::UpdatePending(<_>::arbitrary(g)),
+                3 => Action::ApplyPending,
+                4 => Action::UpdateStatus(<_>::arbitrary(g), <_>::arbitrary(g)),
+                5 => Action::UpdateValue(<_>::arbitrary(g), <_>::arbitrary(g)),
+                _ => panic!("wrong number of action variants"),
+            }
+        }
+    }
+
+    impl<V> KBucket<NodeId, V>
+    where
+        V: Eq + std::fmt::Debug,
+    {
+        fn apply_action(&mut self, action: Action<V>) {
+            match action {
+                Action::Insert(node) => {
+                    let _ = self.insert(node);
+                }
+                Action::Remove(pos) => {
+                    if let Some(key) = self.key_of_pos(pos) {
+                        self.remove(&key);
+                    }
+                }
+                Action::UpdatePending(status) => {
+                    self.update_pending(status);
+                }
+                Action::ApplyPending => {
+                    self.apply_pending();
+                }
+                Action::UpdateStatus(pos, status) => {
+                    if let Some(key) = self.key_of_pos(pos) {
+                        let _ = self.update_status(&key, status.state, Some(status.direction));
+                    }
+                }
+                Action::UpdateValue(pos, value) => {
+                    if let Some(key) = self.key_of_pos(pos) {
+                        let _ = self.update_value(&key, value);
+                    }
+                }
+            }
+        }
+
+        fn key_of_pos(&self, pos: usize) -> Option<Key<NodeId>> {
+            let num_nodes = self.num_entries();
+            if num_nodes > 0 {
+                let pos = pos % num_nodes;
+                let key = self.nodes[pos].key.clone();
+                Some(key)
+            } else {
+                None
+            }
         }
     }
 
@@ -1100,6 +1194,35 @@ pub mod tests {
         }
 
         quickcheck(prop as fn(_, _, _, _) -> _);
+    }
+
+    /// Hammer a bucket with random mutations to ensure invariants are always maintained.
+    #[test]
+    fn random_actions_with_filtering() {
+        fn prop(
+            initial_nodes: Vec<Node<NodeId, u8>>,
+            pending_timeout_millis: u64,
+            max_incoming: usize,
+            filter_set: HashSet<u8>,
+            actions: Vec<Action<u8>>,
+        ) -> bool {
+            let filter = SetFilter { set: filter_set };
+            let pending_timeout = Duration::from_millis(pending_timeout_millis);
+            let mut kbucket =
+                KBucket::<NodeId, u8>::new(pending_timeout, max_incoming, Some(Box::new(filter)));
+
+            for node in initial_nodes {
+                let _ = kbucket.insert(node);
+            }
+
+            for action in actions {
+                kbucket.apply_action(action);
+                kbucket.check_invariants();
+            }
+            true
+        }
+
+        quickcheck(prop as fn(_, _, _, _, _) -> _);
     }
 
     #[test]
