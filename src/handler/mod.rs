@@ -782,8 +782,8 @@ impl Handler {
                 &self.node_id,
                 &node_address.node_id,
                 challenge,
-                &id_nonce_sig,
-                &ephem_pubkey,
+                id_nonce_sig,
+                ephem_pubkey,
                 enr_record,
             ) {
                 Ok((session, enr)) => {
@@ -806,7 +806,7 @@ impl Handler {
                             node_address,
                             message_nonce,
                             message,
-                            &authenticated_data,
+                            authenticated_data,
                         )
                         .await;
                     } else {
@@ -875,7 +875,7 @@ impl Handler {
         // check if we have an available session
         if let Some(session) = self.sessions.get_mut(&node_address) {
             // attempt to decrypt and process the message.
-            let message = match session.decrypt_message(message_nonce, message, &authenticated_data)
+            let message = match session.decrypt_message(message_nonce, message, authenticated_data)
             {
                 Ok(m) => match Message::decode(&m) {
                     Ok(p) => p,
@@ -1103,14 +1103,14 @@ impl Handler {
         remove_session: bool,
     ) {
         if remove_session {
-            self.sessions.remove(&node_address);
+            self.sessions.remove(node_address);
             METRICS
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
         }
         for request in self
             .pending_requests
-            .remove(&node_address)
+            .remove(node_address)
             .unwrap_or_else(Vec::new)
         {
             let _ = self

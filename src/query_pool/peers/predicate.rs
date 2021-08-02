@@ -163,7 +163,7 @@ where
         // Incorporate the reported closer peers into the query.
         for result in closer_peers {
             // If ENR satisfies the predicate, add to list of peers that satisfies predicate
-            let predicate_match = (self.predicate)(&result);
+            let predicate_match = (self.predicate)(result);
             let key: TNodeId = result.into();
             let key: Key<TNodeId> = key.into();
             let distance = self.target_key.distance(&key);
