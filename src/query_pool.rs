@@ -233,8 +233,8 @@ where
     /// Informs the query that the attempt to contact `peer` failed.
     pub fn on_failure(&mut self, peer: &TNodeId) {
         match &mut self.peer_iter {
-            QueryPeerIter::FindNode(iter) => iter.on_failure(&peer),
-            QueryPeerIter::Predicate(iter) => iter.on_failure(&peer),
+            QueryPeerIter::FindNode(iter) => iter.on_failure(peer),
+            QueryPeerIter::Predicate(iter) => iter.on_failure(peer),
         }
     }
 

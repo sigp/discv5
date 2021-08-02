@@ -61,7 +61,7 @@ impl std::convert::TryFrom<&[u8]> for ChallengeData {
             return Err(());
         }
         let mut result = [0; 63];
-        result.copy_from_slice(&data);
+        result.copy_from_slice(data);
         Ok(ChallengeData(result))
     }
 }
