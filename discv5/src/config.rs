@@ -1,7 +1,6 @@
-use crate::{
-    kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
-};
+use crate::{Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder};
 ///! A set of configuration parameters to tune the discovery protocol.
+use discv5_dht::kbucket::MAX_NODES_PER_BUCKET;
 use std::time::Duration;
 
 /// Configuration parameters that define the performance of the gossipsub network.

@@ -26,10 +26,10 @@
 
 pub use super::{
     bucket::{
-        AppliedPending, ConnectionState, InsertResult, Node, NodeStatus, MAX_NODES_PER_BUCKET,
+        AppliedPending, ConnectionDirection, ConnectionState, InsertResult, Node, NodeStatus,
+        MAX_NODES_PER_BUCKET,
     },
     key::*,
-    ConnectionDirection,
 };
 
 use super::*;

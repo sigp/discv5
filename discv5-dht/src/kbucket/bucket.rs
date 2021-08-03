@@ -60,6 +60,15 @@ pub struct NodeStatus {
     pub state: ConnectionState,
 }
 
+/// How we connected to the node.
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum ConnectionDirection {
+    /// The node contacted us.
+    Incoming,
+    /// We contacted the node.
+    Outgoing,
+}
+
 /// The connection state of a node.
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum ConnectionState {

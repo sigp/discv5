@@ -4,14 +4,16 @@ use super::*;
 
 use crate::{
     handler::Handler,
-    kbucket,
-    kbucket::{BucketInsertResult, KBucketsTable, NodeStatus},
     node_info::NodeContact,
     query_pool::{QueryId, QueryPool},
     rpc,
     rpc::RequestId,
     service::{ActiveRequest, Service},
     Discv5ConfigBuilder, Enr,
+};
+use discv5_dht::{
+    kbucket,
+    kbucket::{BucketInsertResult, KBucketsTable, NodeStatus},
 };
 use enr::{CombinedKey, EnrBuilder};
 use parking_lot::RwLock;

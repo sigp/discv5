@@ -14,13 +14,13 @@
 
 use crate::{
     error::{Discv5Error, QueryError, RequestError},
-    kbucket::{
-        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        NodeStatus, UpdateResult,
-    },
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Discv5Config, Enr,
+};
+use discv5_dht::kbucket::{
+    self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
+    NodeStatus, UpdateResult,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
