@@ -109,7 +109,7 @@ pub(crate) fn derive_keys_from_pubkey(
                 // the key type should match our own node record
                 let remote_pubkey = k256::ecdsa::VerifyingKey::from_sec1_bytes(ephem_pubkey)
                     .map_err(|_| Discv5Error::InvalidRemotePublicKey)?;
-                ecdh(&remote_pubkey, &key)
+                ecdh(&remote_pubkey, key)
             }
             CombinedKey::Ed25519(_) => return Err(Discv5Error::KeyTypeNotSupported("Ed25519")),
         }

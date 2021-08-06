@@ -157,7 +157,7 @@ impl Session {
             &remote_public_key,
             ephem_pubkey,
             &challenge.data,
-            &local_id,
+            local_id,
             id_nonce_sig,
         ) {
             return Err(Discv5Error::InvalidChallengeSignature(challenge));

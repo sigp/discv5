@@ -80,6 +80,10 @@ impl Drop for TalkRequest {
 }
 
 impl TalkRequest {
+    pub fn node_id(&self) -> &NodeId {
+        &self.node_address.node_id
+    }
+
     pub fn protocol(&self) -> &[u8] {
         &self.protocol
     }
@@ -455,7 +459,7 @@ impl Service {
         let target_key: kbucket::Key<NodeId> = target.key();
 
         // Map the TableEntry to an ENR.
-        let kbucket_predicate = |e: &Enr| predicate(&e);
+        let kbucket_predicate = |e: &Enr| predicate(e);
 
         let mut known_closest_peers = Vec::<kbucket::PredicateKey<_>>::new();
         {
@@ -1059,7 +1063,7 @@ impl Service {
             }
 
             // ignore peers that don't pass the table filter
-            if (self.config.table_filter)(&enr) {
+            if (self.config.table_filter)(enr) {
                 let key = kbucket::Key::from(enr.node_id());
 
                 // If the ENR exists in the routing table and the discovered ENR has a greater

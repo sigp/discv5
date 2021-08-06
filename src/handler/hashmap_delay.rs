@@ -82,7 +82,7 @@ where
     ///
     /// Panics if the duration is too far in the future.
     pub fn update_timeout(&mut self, key: &K, value: V, timeout: Duration) -> bool {
-        if let Some(entry) = self.entries.get_mut(&key) {
+        if let Some(entry) = self.entries.get_mut(key) {
             entry.value = value;
             self.expirations.reset(&entry.key, timeout);
             true

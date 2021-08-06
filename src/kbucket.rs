@@ -291,7 +291,7 @@ where
                 let index = BucketIndex::new(&self.local_key.distance(key));
                 if let Some(i) = index {
                     let bucket = &mut self.buckets[i.get()];
-                    if let Some(node) = bucket.get(&key) {
+                    if let Some(node) = bucket.get(key) {
                         node.value == value
                     } else {
                         false
@@ -362,7 +362,7 @@ where
                 let index = BucketIndex::new(&self.local_key.distance(key));
                 if let Some(i) = index {
                     let bucket = &mut self.buckets[i.get()];
-                    if let Some(node) = bucket.get(&key) {
+                    if let Some(node) = bucket.get(key) {
                         node.value == value
                     } else {
                         false
@@ -687,7 +687,7 @@ where
         let index = BucketIndex::new(&self.local_key.distance(key));
         if let Some(i) = index {
             let bucket = &self.buckets[i.get()];
-            Some(&bucket)
+            Some(bucket)
         } else {
             None
         }

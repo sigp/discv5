@@ -66,6 +66,7 @@ impl<TPeerId, TVal: Eq> AsRef<Key<TPeerId>> for EntryView<TPeerId, TVal> {
 
 /// A reference into a single entry of a `KBucketsTable`.
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum Entry<'a, TPeerId, TVal: Eq> {
     /// The entry is present in a bucket.
     Present(PresentEntry<'a, TPeerId, TVal>, NodeStatus),
