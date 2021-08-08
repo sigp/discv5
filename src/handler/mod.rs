@@ -34,7 +34,6 @@ use crate::{
     socket::{FilterConfig, Socket},
     Enr,
 };
-use discv5_dht::kbucket::ConnectionDirection;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use lru_time_cache::LruCache;
@@ -120,6 +119,15 @@ pub enum HandlerResponse {
     ///
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
+}
+
+/// How we connected to the node.
+#[derive(PartialEq, Eq, Debug, Copy, Clone)]
+pub enum ConnectionDirection {
+    /// The node contacted us.
+    Incoming,
+    /// We contacted the node.
+    Outgoing,
 }
 
 /// A reference for the application layer to send back when the handler requests any known

@@ -74,11 +74,12 @@ mod key;
 
 pub use entry::*;
 
+pub use crate::handler::ConnectionDirection;
 use arrayvec::{self, ArrayVec};
 use bucket::KBucket;
 pub use bucket::{
-    ConnectionDirection, ConnectionState, FailureReason, InsertResult as BucketInsertResult,
-    UpdateResult, MAX_NODES_PER_BUCKET,
+    ConnectionState, FailureReason, InsertResult as BucketInsertResult, UpdateResult,
+    MAX_NODES_PER_BUCKET,
 };
 pub use filter::{Filter, IpBucketFilter, IpTableFilter};
 use std::{

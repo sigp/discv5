@@ -1,7 +1,6 @@
 #![cfg(test)]
 
-use crate::{Discv5, *};
-use discv5_dht::kbucket;
+use crate::{kbucket, Discv5, *};
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{

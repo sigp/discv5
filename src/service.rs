@@ -20,16 +20,16 @@ use self::{
 use crate::{
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerRequest, HandlerResponse},
+    kbucket::{
+        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
+        NodeStatus, UpdateResult,
+    },
     node_info::{NodeAddress, NodeContact},
     packet::MAX_PACKET_SIZE,
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
     rpc, Discv5Config, Discv5Event, Enr,
-};
-use discv5_dht::kbucket::{
-    self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-    NodeStatus, UpdateResult,
 };
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;

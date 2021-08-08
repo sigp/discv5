@@ -29,7 +29,7 @@ pub(crate) use peers::{
     predicate::{PredicateQuery, PredicateQueryConfig},
 };
 
-use discv5_dht::kbucket::{Key, PredicateKey};
+use crate::kbucket::{Key, PredicateKey};
 use fnv::FnvHashMap;
 use std::time::{Duration, Instant};
 
