@@ -284,7 +284,7 @@ impl Discv5 {
     }
 
     /// Returns an ENR if one is known for the given NodeId.
-    pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
+    pub fn find_enr(&self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
         if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
