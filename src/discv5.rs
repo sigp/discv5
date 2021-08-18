@@ -234,7 +234,7 @@ impl Discv5 {
         if !distances.is_empty() {
             let mut kbuckets = self.kbuckets.write();
             for node in kbuckets
-                .nodes_by_distances(distances, self.config.max_nodes_response)
+                .nodes_by_distances(distances.as_slice(), self.config.max_nodes_response)
                 .into_iter()
                 .map(|entry| entry.node.value.clone())
             {
