@@ -107,7 +107,7 @@ mod discv5;
 mod error;
 mod executor;
 pub mod handler;
-mod kbucket;
+pub mod kbucket;
 mod lru_time_cache;
 pub mod metrics;
 mod node_info;
