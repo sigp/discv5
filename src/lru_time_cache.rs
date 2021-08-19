@@ -195,7 +195,7 @@ mod tests {
         use std::thread::sleep;
         use std::time::Duration;
 
-        const TTL: Duration = Duration::from_millis(1);
+        const TTL: Duration = Duration::from_millis(100);
 
         #[test]
         fn get() {
@@ -225,6 +225,25 @@ mod tests {
 
             sleep(TTL);
             assert_eq!(0, cache.len());
+        }
+
+        #[test]
+        fn ttl() {
+            let mut cache = LruTimeCache::new(TTL, None);
+            cache.insert(1, 10);
+            sleep(TTL / 4);
+            cache.insert(2, 20);
+            sleep(TTL / 4);
+            cache.insert(3, 30);
+            sleep(TTL / 4);
+            cache.insert(4, 40);
+            sleep(TTL / 4);
+
+            assert_eq!(3, cache.len());
+            assert_eq!(None, cache.get(&1));
+            assert_eq!(Some(&20), cache.get(&2));
+            assert_eq!(Some(&30), cache.get(&3));
+            assert_eq!(Some(&40), cache.get(&4));
         }
     }
 }
