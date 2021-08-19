@@ -1,6 +1,8 @@
 use hashlink::LinkedHashMap;
-use std::hash::Hash;
-use std::time::{Duration, Instant};
+use std::{
+    hash::Hash,
+    time::{Duration, Instant},
+};
 
 pub struct LruTimeCache<K, V> {
     map: LinkedHashMap<K, (V, Instant)>,
@@ -11,7 +13,7 @@ pub struct LruTimeCache<K, V> {
 }
 
 impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
-    pub fn new(ttl: Duration, capacity: Option<usize>) -> LruTimeCache<K, V>{
+    pub fn new(ttl: Duration, capacity: Option<usize>) -> LruTimeCache<K, V> {
         let capacity = if let Some(cap) = capacity {
             cap
         } else {
@@ -195,8 +197,7 @@ mod tests {
 
     mod ttl {
         use crate::lru_time_cache::LruTimeCache;
-        use std::thread::sleep;
-        use std::time::Duration;
+        use std::{thread::sleep, time::Duration};
 
         const TTL: Duration = Duration::from_millis(100);
 

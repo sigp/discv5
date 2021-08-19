@@ -57,9 +57,9 @@ pub use crate::node_info::{NodeAddress, NodeContact};
 
 use crate::metrics::METRICS;
 
+use crate::lru_time_cache::LruTimeCache;
 use hashmap_delay::HashMapDelay;
 use session::Session;
-use crate::lru_time_cache::LruTimeCache;
 
 // The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
 // seconds).
@@ -294,7 +294,10 @@ impl Handler {
                     active_requests_nonce_mapping: HashMap::new(),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
-                    sessions: LruTimeCache::new(config.session_timeout, Some(config.session_cache_capacity)),
+                    sessions: LruTimeCache::new(
+                        config.session_timeout,
+                        Some(config.session_cache_capacity),
+                    ),
                     active_challenges: LruTimeCache::new(config.request_timeout * 2, None),
                     inbound_channel,
                     outbound_channel,
