@@ -36,7 +36,6 @@ use crate::{
 };
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
-use lru_time_cache::LruCache;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -58,6 +57,7 @@ pub use crate::node_info::{NodeAddress, NodeContact};
 
 use crate::metrics::METRICS;
 
+use crate::lru_time_cache::LruTimeCache;
 use hashmap_delay::HashMapDelay;
 use session::Session;
 
@@ -210,9 +210,9 @@ pub struct Handler {
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
     /// Currently in-progress handshakes with peers.
-    active_challenges: LruCache<NodeAddress, Challenge>,
+    active_challenges: LruTimeCache<NodeAddress, Challenge>,
     /// Established sessions with peers.
-    sessions: LruCache<NodeAddress, Session>,
+    sessions: LruTimeCache<NodeAddress, Session>,
     /// The channel that receives requests from the application layer.
     inbound_channel: mpsc::UnboundedReceiver<HandlerRequest>,
     /// The channel to send responses to the application layer.
@@ -294,11 +294,11 @@ impl Handler {
                     active_requests_nonce_mapping: HashMap::new(),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
-                    sessions: LruCache::with_expiry_duration_and_capacity(
+                    sessions: LruTimeCache::new(
                         config.session_timeout,
-                        config.session_cache_capacity,
+                        Some(config.session_cache_capacity),
                     ),
-                    active_challenges: LruCache::with_expiry_duration(config.request_timeout * 2),
+                    active_challenges: LruTimeCache::new(config.request_timeout * 2, None),
                     inbound_channel,
                     outbound_channel,
                     listen_socket,

@@ -108,6 +108,7 @@ mod error;
 mod executor;
 pub mod handler;
 pub mod kbucket;
+mod lru_time_cache;
 pub mod metrics;
 mod node_info;
 pub mod packet;
