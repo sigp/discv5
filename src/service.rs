@@ -924,7 +924,7 @@ impl Service {
         if !distances.is_empty() {
             let mut kbuckets = self.kbuckets.write();
             for node in kbuckets
-                .nodes_by_distances(distances, self.config.max_nodes_response)
+                .nodes_by_distances(distances.as_slice(), self.config.max_nodes_response)
                 .into_iter()
                 .filter_map(|entry| {
                     if entry.node.key.preimage() != &node_address.node_id {

@@ -560,17 +560,24 @@ where
     /// Returns an iterator over the keys that are contained in a kbucket, specified by a log2 distance.
     pub fn nodes_by_distances(
         &mut self,
-        log2_distances: Vec<u64>,
+        log2_distances: &[u64],
         max_nodes: usize,
     ) -> Vec<EntryRefView<'_, TNodeId, TVal>> {
+        // Filter log2 distances to only include those in the closed interval [1, 256]
         let distances = log2_distances
-            .into_iter()
-            .filter(|&d| d > 0 && d <= (NUM_BUCKETS as u64))
+            .iter()
+            .filter_map(|&d| {
+                if d > 0 && d <= (NUM_BUCKETS as u64) {
+                    Some(d)
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>();
 
-        // apply bending nodes
+        // Apply pending nodes
         for distance in &distances {
-            // the log2 distance ranges from 1-256 and is always 1 more than the bucket index. For this
+            // The log2 distance ranges from 1-256 and is always 1 more than the bucket index. For this
             // reason we subtract 1 from log2 distance to get the correct bucket index.
             let bucket = &mut self.buckets[(distance - 1) as usize];
             if let Some(applied) = bucket.apply_pending() {
@@ -578,7 +585,7 @@ where
             }
         }
 
-        // find the matching nodes
+        // Find the matching nodes
         let mut matching_nodes = Vec::new();
 
         // Note we search via distance in order
