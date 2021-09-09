@@ -300,6 +300,8 @@ where
                             &pending.node.value,
                             &mut self.iter().map(|node| &node.value),
                         ) {
+                            // The pending node doesn't satisfy the bucket filter. Drop the pending
+                            // node.
                             return None;
                         }
                     }
@@ -307,6 +309,8 @@ where
                     if pending.status().is_connected() && pending.status().is_incoming() {
                         // Make sure this doesn't violate the incoming conditions
                         if self.is_max_incoming() {
+                            // The pending node doesn't satisfy the incoming/outgoing limits. Drop
+                            // the pending node.
                             return None;
                         }
                     }
@@ -438,8 +442,20 @@ where
                 }
                 InsertResult::TooManyIncoming => {
                     UpdateResult::Failed(FailureReason::TooManyIncoming)
-                } // Node could not be inserted
-                _ => unreachable!("The node is removed before being (re)inserted."),
+                }
+                // Node could not be inserted. None of these should be possible.
+                InsertResult::FailedFilter => {
+                    unreachable!("The node was removed and shouldn't fail the bucket filter")
+                }
+                InsertResult::NodeExists => {
+                    unreachable!("The node was removed and shouldn't already exist")
+                }
+                InsertResult::Full => {
+                    unreachable!("The node was removed so the bucket cannot be full")
+                }
+                InsertResult::Pending { .. } => {
+                    unreachable!("The node was removed so can't be added as pending")
+                }
             }
         } else if let Some(pending) = &mut self.pending {
             if &pending.node.key == key {
@@ -618,7 +634,7 @@ where
     ///
     /// Returns `None` if the given key does not refer to an node in the
     /// bucket.
-    pub fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
+    fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
         self.nodes.iter_mut().find(move |p| &p.key == key)
     }
 

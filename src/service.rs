@@ -400,7 +400,7 @@ impl Service {
                     // If the node is in the routing table, Ping it and re-queue the node.
                     let key = kbucket::Key::from(node_id);
                     let enr =  {
-                        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+                        if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
                         // The peer is in the routing table, ping it and re-queue the ping
                         self.peers_to_ping.insert(node_id);
                         Some(entry.value().clone())
@@ -498,7 +498,7 @@ impl Service {
     pub fn find_enr(&self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+        if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
             return Some(entry.value().clone());
         }
         // check the untrusted addresses for ongoing queries
@@ -1085,7 +1085,7 @@ impl Service {
                 // sequence number, perform some filter checks before updating the enr.
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Present(mut entry, _) => entry.value().seq() < enr.seq(),
+                    kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
                     kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
                     _ => false,
                 };
@@ -1234,7 +1234,7 @@ impl Service {
 
         if let Some(node_key) = ping_peer {
             let optional_enr = {
-                if let kbucket::Entry::Present(mut entry, _status) =
+                if let kbucket::Entry::Present(entry, _status) =
                     self.kbuckets.write().entry(&node_key)
                 {
                     // NOTE: We don't check the status of this peer. We try and ping outdated peers.
