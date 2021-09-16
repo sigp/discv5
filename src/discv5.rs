@@ -287,7 +287,7 @@ impl Discv5 {
     pub fn find_enr(&self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+        if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
             return Some(entry.value().clone());
         }
         None

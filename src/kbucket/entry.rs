@@ -119,11 +119,11 @@ where
     }
 
     /// Returns the value associated with the key.
-    pub fn value(&mut self) -> &mut TVal {
-        &mut self
+    pub fn value(&self) -> &TVal {
+        &self
             .0
             .bucket
-            .get_mut(self.0.key)
+            .get(self.0.key)
             .expect("We can only build a ConnectedEntry if the entry is in the bucket; QED")
             .value
     }
