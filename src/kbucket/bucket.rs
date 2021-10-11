@@ -573,7 +573,6 @@ where
 
                 let pos = self.nodes.len();
                 self.first_connected_pos = self.first_connected_pos.or(Some(pos));
-                // Remove any duplicate pending node before inserting
                 self.nodes.push(node);
                 InsertResult::Inserted
             }
