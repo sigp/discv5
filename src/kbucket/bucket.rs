@@ -547,7 +547,9 @@ where
             }
         }
 
-        match node.status.state {
+        let key = node.key.clone();
+
+        let insert_result = match node.status.state {
             ConnectionState::Connected => {
                 if node.status.is_incoming() {
                     // check the maximum counter
@@ -569,16 +571,9 @@ where
                     }
                 }
 
-                // If we inserted the node, make sure there is no pending node of the same key. This can
-                // happen when a pending node is inserted, a node gets removed from the bucket, freeing up
-                // space and then re-inserted here.
-                if let Some(pending) = self.pending.as_ref() {
-                    if pending.node.key == node.key {
-                        self.pending = None
-                    }
-                }
                 let pos = self.nodes.len();
                 self.first_connected_pos = self.first_connected_pos.or(Some(pos));
+                // Remove any duplicate pending node before inserting
                 self.nodes.push(node);
                 InsertResult::Inserted
             }
@@ -587,12 +582,6 @@ where
                     return InsertResult::Full;
                 }
 
-                // If the pending node is the same as the current node, remove the pending node.
-                if let Some(pending) = self.pending.as_ref() {
-                    if pending.node.key == node.key {
-                        self.pending = None
-                    }
-                }
                 if let Some(ref mut first_connected_pos) = self.first_connected_pos {
                     self.nodes.insert(*first_connected_pos, node);
                     *first_connected_pos += 1;
@@ -601,7 +590,19 @@ where
                 }
                 InsertResult::Inserted
             }
+        };
+
+        // If we inserted the node, make sure there is no pending node of the same key. This can
+        // happen when a pending node is inserted, a node gets removed from the bucket, freeing up
+        // space and then re-inserted here.
+        if matches!(insert_result, InsertResult::Inserted) {
+            if let Some(pending) = self.pending.as_ref() {
+                if pending.node.key == key {
+                    self.pending = None
+                }
+            }
         }
+        insert_result
     }
 
     /// Removes a node from the bucket.
@@ -1149,7 +1150,7 @@ pub mod tests {
     /// No duplicate nodes can be inserted via the apply_pending function.
     #[test]
     fn full_bucket_applied_no_duplicates() {
-        // First fill the bucket with disconnected nodes.
+        // First fill the bucket with connected nodes.
         let mut bucket =
             KBucket::<NodeId, ()>::new(Duration::from_secs(1), MAX_NODES_PER_BUCKET, None);
         fill_bucket(&mut bucket, connected_state());
@@ -1190,6 +1191,7 @@ pub mod tests {
         // The pending time hasn't elapsed so nothing should occur.
         assert_eq!(bucket.apply_pending(), None);
         assert_eq!(bucket.insert(node.clone()), InsertResult::Inserted);
+        assert!(bucket.pending.is_none());
 
         // Speed up the pending time
         if let Some(pending) = bucket.pending.as_mut() {
