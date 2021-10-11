@@ -1159,9 +1159,10 @@ pub mod tests {
         let third = bucket.iter().nth(2).unwrap().clone();
 
         // Set the first connected node as disconnected
-        println!(
-            "Result of updating first node state: {:?}",
-            bucket.update_status(&first.key, ConnectionState::Disconnected, None)
+
+        assert_eq!(
+            bucket.update_status(&first.key, ConnectionState::Disconnected, None),
+            UpdateResult::Updated
         );
 
         // Add a connected pending node.
@@ -1187,11 +1188,8 @@ pub mod tests {
         // The pending nodes status gets updated
         // Apply pending gets called within kbuckets, so we mimic here.
         // The pending time hasn't elapsed so nothing should occur.
-        println!("Result of apply pending: {:?}", bucket.apply_pending());
-        println!(
-            "Result of inserting node: {:?}",
-            bucket.insert(node.clone())
-        );
+        assert_eq!(bucket.apply_pending(), None);
+        assert_eq!(bucket.insert(node.clone()), InsertResult::Inserted);
 
         // Speed up the pending time
         if let Some(pending) = bucket.pending.as_mut() {
@@ -1199,14 +1197,12 @@ pub mod tests {
         }
 
         // At some later time apply pending
-        println!("Result of apply pending: {:?}", bucket.apply_pending());
+        assert_eq!(bucket.apply_pending(), None);
         // And try and update the status of the pending node
-        println!(
-            "Result of updating the pending nodes status: {:?}",
-            bucket.update_status(&node.key, ConnectionState::Connected, None)
+        assert_eq!(
+            bucket.update_status(&node.key, ConnectionState::Connected, None),
+            UpdateResult::NotModified
         );
-
-        // This test checks for panics, so no explicit assert is required.
     }
 
     #[test]
