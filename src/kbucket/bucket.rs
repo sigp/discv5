@@ -601,7 +601,6 @@ where
         if matches!(insert_result, InsertResult::Inserted) && inserting_pending {
             self.pending = None
         }
-        }
         insert_result
     }
 
