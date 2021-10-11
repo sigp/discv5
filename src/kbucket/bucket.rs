@@ -286,10 +286,18 @@ where
     pub fn apply_pending(&mut self) -> Option<AppliedPending<TNodeId, TVal>> {
         if let Some(pending) = self.pending.take() {
             if pending.replace <= Instant::now() {
+                // If the node already exists in the bucket, drop the pending node.
+                // This can happen when a node gets added to the pending state, the table removes
+                // other nodes for not passing filters and the node gets re-inserted before the
+                // pending time is up.
+                if self.position(&pending.node.key).is_some() {
+                    return None;
+                }
+
+                // Check if the bucket is full
                 if self.nodes.is_full() {
                     // Apply bucket filters
 
-                    // Check if the bucket is full
                     if self.nodes[0].status.is_connected() {
                         // The bucket is full with connected nodes. Drop the pending node.
                         return None;
@@ -1125,6 +1133,67 @@ pub mod tests {
         );
         assert_eq!(1, bucket.num_connected());
         assert_eq!(MAX_NODES_PER_BUCKET - 1, bucket.num_disconnected());
+    }
+
+    /// No duplicate nodes can be inserted via the apply_pending function.
+    #[test]
+    fn full_bucket_applied_no_duplicates() {
+        // First fill the bucket with disconnected nodes.
+        let mut bucket =
+            KBucket::<NodeId, ()>::new(Duration::from_secs(1), MAX_NODES_PER_BUCKET, None);
+        fill_bucket(&mut bucket, connected_state());
+
+        let first = bucket.iter().next().unwrap().clone();
+
+        // Set the first connected node as disconnected
+        println!(
+            "Result of updating first node state: {:?}",
+            bucket.update_status(&first.key, ConnectionState::Disconnected, None)
+        );
+
+        // Add a connected pending node.
+        let key = Key::from(NodeId::random());
+        let node = Node {
+            key: key.clone(),
+            value: (),
+            status: connected_state(),
+        };
+
+        // Add a pending node
+        if let InsertResult::Pending { disconnected } = bucket.insert(node.clone()) {
+            assert_eq!(&disconnected, &first.key);
+        } else {
+            panic!()
+        }
+        assert!(bucket.pending().is_some());
+
+        // A misc node gets dropped, because it may not pass a filter when updating its connection
+        // status.
+        bucket.nodes.remove(4);
+
+        // The pending nodes status gets updated
+        // Apply pending gets called within kbuckets, so we mimic here.
+        // The pending time hasn't elapsed so nothing should occur.
+        println!("Result of apply pending: {:?}", bucket.apply_pending());
+        println!(
+            "Result of inserting node: {:?}",
+            bucket.insert(node.clone())
+        );
+
+        // Speed up the pending time
+        if let Some(pending) = bucket.pending.as_mut() {
+            pending.replace = Instant::now() - Duration::from_secs(1);
+        }
+
+        // At some later time apply pending
+        println!("Result of apply pending: {:?}", bucket.apply_pending());
+        // And try and update the status of the pending node
+        println!(
+            "Result of updating the pending nodes status: {:?}",
+            bucket.update_status(&node.key, ConnectionState::Connected, None)
+        );
+
+        // This test checks for panics, so no explicit assert is required.
     }
 
     #[test]
