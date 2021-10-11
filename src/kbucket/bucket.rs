@@ -547,7 +547,11 @@ where
             }
         }
 
-        let key = node.key.clone();
+        let inserting_pending = self
+            .pending
+            .as_ref()
+            .map(|pending| pending.node.key == node.key)
+            .unwrap_or_default();
 
         let insert_result = match node.status.state {
             ConnectionState::Connected => {
