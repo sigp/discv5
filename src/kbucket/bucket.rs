@@ -286,14 +286,6 @@ where
     pub fn apply_pending(&mut self) -> Option<AppliedPending<TNodeId, TVal>> {
         if let Some(pending) = self.pending.take() {
             if pending.replace <= Instant::now() {
-                // If the node already exists in the bucket, drop the pending node.
-                // This can happen when a node gets added to the pending state, the table removes
-                // other nodes for not passing filters and the node gets re-inserted before the
-                // pending time is up.
-                if self.position(&pending.node.key).is_some() {
-                    return None;
-                }
-
                 // Check if the bucket is full
                 if self.nodes.is_full() {
                     // Apply bucket filters
@@ -453,7 +445,9 @@ where
                 }
                 // Node could not be inserted. None of these should be possible.
                 InsertResult::FailedFilter => {
-                    unreachable!("The node was removed and shouldn't fail the bucket filter")
+                    // If the filter is non-deterministic, potentially a re-insertion of the same
+                    // node can fail the filter.
+                    UpdateResult::Failed(FailureReason::BucketFilter)
                 }
                 InsertResult::NodeExists => {
                     unreachable!("The node was removed and shouldn't already exist")
@@ -574,6 +568,15 @@ where
                         };
                     }
                 }
+
+                // If we inserted the node, make sure there is no pending node of the same key. This can
+                // happen when a pending node is inserted, a node gets removed from the bucket, freeing up
+                // space and then re-inserted here.
+                if let Some(pending) = self.pending.as_ref() {
+                    if pending.node.key == node.key {
+                        self.pending = None
+                    }
+                }
                 let pos = self.nodes.len();
                 self.first_connected_pos = self.first_connected_pos.or(Some(pos));
                 self.nodes.push(node);
@@ -582,6 +585,13 @@ where
             ConnectionState::Disconnected => {
                 if self.nodes.is_full() {
                     return InsertResult::Full;
+                }
+
+                // If the pending node is the same as the current node, remove the pending node.
+                if let Some(pending) = self.pending.as_ref() {
+                    if pending.node.key == node.key {
+                        self.pending = None
+                    }
                 }
                 if let Some(ref mut first_connected_pos) = self.first_connected_pos {
                     self.nodes.insert(*first_connected_pos, node);
