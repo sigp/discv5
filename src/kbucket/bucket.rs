@@ -598,12 +598,9 @@ where
         // If we inserted the node, make sure there is no pending node of the same key. This can
         // happen when a pending node is inserted, a node gets removed from the bucket, freeing up
         // space and then re-inserted here.
-        if matches!(insert_result, InsertResult::Inserted) {
-            if let Some(pending) = self.pending.as_ref() {
-                if pending.node.key == key {
-                    self.pending = None
-                }
-            }
+        if matches!(insert_result, InsertResult::Inserted) && inserting_pending {
+            self.pending = None
+        }
         }
         insert_result
     }
