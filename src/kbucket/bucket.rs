@@ -599,6 +599,7 @@ where
         if let Some(Position(position)) = self.position(key) {
             self.nodes.remove(position);
             self.update_first_connected_pos_for_removal(position);
+            self.apply_pending();
             true
         } else {
             false
@@ -1145,6 +1146,8 @@ pub mod tests {
 
         let first = bucket.iter().next().unwrap().clone();
 
+        let third = bucket.iter().nth(2).unwrap().clone();
+
         // Set the first connected node as disconnected
         println!(
             "Result of updating first node state: {:?}",
@@ -1169,7 +1172,7 @@ pub mod tests {
 
         // A misc node gets dropped, because it may not pass a filter when updating its connection
         // status.
-        bucket.nodes.remove(4);
+        bucket.remove(&third.key);
 
         // The pending nodes status gets updated
         // Apply pending gets called within kbuckets, so we mimic here.
