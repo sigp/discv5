@@ -80,6 +80,10 @@ impl Drop for TalkRequest {
 }
 
 impl TalkRequest {
+    pub fn id(&self) -> &RequestId {
+        &self.id
+    }
+
     pub fn node_id(&self) -> &NodeId {
         &self.node_address.node_id
     }
