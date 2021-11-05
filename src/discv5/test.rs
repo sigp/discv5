@@ -168,7 +168,7 @@ async fn test_discovery_three_peers() {
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     let mut nodes = build_nodes_from_keypairs(keypairs, 11200).await;
     // Last node is bootstrap node in a star topology
-    let mut bootstrap_node = nodes.remove(0);
+    let bootstrap_node = nodes.remove(0);
     // target_node is not polled.
     let target_node = nodes.pop().unwrap();
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
@@ -231,7 +231,7 @@ async fn test_discovery_star_topology() {
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     let mut nodes = build_nodes_from_keypairs(keypairs, 11000).await;
     // Last node is bootstrap node in a star topology
-    let mut bootstrap_node = nodes.remove(0);
+    let bootstrap_node = nodes.remove(0);
     // target_node is not polled.
     let target_node = nodes.pop().unwrap();
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
@@ -334,7 +334,7 @@ async fn test_predicate_search() {
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     let mut nodes = build_nodes_from_keypairs(keypairs, 12000).await;
     // Last node is bootstrap node in a star topology
-    let mut bootstrap_node = nodes.remove(0);
+    let bootstrap_node = nodes.remove(0);
     // target_node is not polled.
     let target_node = nodes.pop().unwrap();
 
@@ -409,7 +409,7 @@ async fn test_table_limits() {
         .unwrap();
 
     // let socket_addr = enr.udp_socket().unwrap();
-    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
     let table_limit: usize = 10;
     // Generate `table_limit + 2` nodes in the same subnet.
     let enrs: Vec<Enr<CombinedKey>> = (1..=table_limit + 1)
@@ -472,7 +472,7 @@ async fn test_bucket_limits() {
         .collect();
 
     let config = Discv5ConfigBuilder::new().ip_limit().build();
-    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let discv5 = Discv5::new(enr, enr_key, config).unwrap();
     for enr in enrs {
         let _ = discv5.add_enr(enr.clone()); // we expect some of these to fail based on the filter.
     }
