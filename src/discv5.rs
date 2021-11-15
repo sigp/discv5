@@ -174,7 +174,7 @@ impl Discv5 {
     /// addresses, so that they can be used immediately in following DHT
     /// operations involving one of these peers, without having to dial
     /// them upfront.
-    pub fn add_enr(&mut self, enr: Enr) -> Result<(), &'static str> {
+    pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
         if enr.udp_socket().is_none() {
             warn!("ENR attempted to be added without a UDP socket has been ignored");
@@ -214,7 +214,7 @@ impl Discv5 {
     ///
     /// This allows applications, for whatever reason, to remove nodes from the local routing
     /// table. Returns `true` if the node was in the table and `false` otherwise.
-    pub fn remove_node(&mut self, node_id: &NodeId) -> bool {
+    pub fn remove_node(&self, node_id: &NodeId) -> bool {
         let key = &kbucket::Key::from(*node_id);
         self.kbuckets.write().remove(key)
     }
@@ -249,7 +249,7 @@ impl Discv5 {
     /// A `Disconnected` node will be present in the routing table and will be only
     /// used if there are no other `Connected` peers in the bucket.
     /// Returns `true` if node was in table and `false` otherwise.
-    pub fn disconnect_node(&mut self, node_id: &NodeId) -> bool {
+    pub fn disconnect_node(&self, node_id: &NodeId) -> bool {
         let key = &kbucket::Key::from(*node_id);
         !matches!(
             self.kbuckets
@@ -296,7 +296,7 @@ impl Discv5 {
     /// Bans a node from the server. This will remove the node from the routing table if it exists
     /// and block all incoming packets from the node until the timeout specified. Setting the
     /// timeout to `None` creates a permanent ban.
-    pub fn ban_node(&mut self, node_id: &NodeId, duration_of_ban: Option<Duration>) {
+    pub fn ban_node(&self, node_id: &NodeId, duration_of_ban: Option<Duration>) {
         let time_to_unban = duration_of_ban.map(|v| Instant::now() + v);
         self.remove_node(node_id);
         PERMIT_BAN_LIST
@@ -306,43 +306,43 @@ impl Discv5 {
     }
 
     /// Removes a banned node from the banned list.
-    pub fn ban_node_remove(&mut self, node_id: &NodeId) {
+    pub fn ban_node_remove(&self, node_id: &NodeId) {
         PERMIT_BAN_LIST.write().ban_nodes.remove(node_id);
     }
 
     /// Permits a node, allowing the node to bypass the packet filter.  
-    pub fn permit_node(&mut self, node_id: &NodeId) {
+    pub fn permit_node(&self, node_id: &NodeId) {
         PERMIT_BAN_LIST.write().permit_nodes.insert(*node_id);
     }
 
     /// Removes a node from the permit list.
-    pub fn permit_node_remove(&mut self, node_id: &NodeId) {
+    pub fn permit_node_remove(&self, node_id: &NodeId) {
         PERMIT_BAN_LIST.write().permit_nodes.remove(node_id);
     }
 
     /// Bans an IP from the server.  This will block all incoming packets from the IP.
-    pub fn ban_ip(&mut self, ip: std::net::IpAddr, duration_of_ban: Option<Duration>) {
+    pub fn ban_ip(&self, ip: std::net::IpAddr, duration_of_ban: Option<Duration>) {
         let time_to_unban = duration_of_ban.map(|v| Instant::now() + v);
         PERMIT_BAN_LIST.write().ban_ips.insert(ip, time_to_unban);
     }
 
     /// Removes a banned IP from the banned list.
-    pub fn ban_ip_remove(&mut self, ip: &std::net::IpAddr) {
+    pub fn ban_ip_remove(&self, ip: &std::net::IpAddr) {
         PERMIT_BAN_LIST.write().ban_ips.remove(ip);
     }
 
     /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.  
-    pub fn permit_ip(&mut self, ip: std::net::IpAddr) {
+    pub fn permit_ip(&self, ip: std::net::IpAddr) {
         PERMIT_BAN_LIST.write().permit_ips.insert(ip);
     }
 
     /// Removes an IP from the permit list.
-    pub fn permit_ip_remove(&mut self, ip: &std::net::IpAddr) {
+    pub fn permit_ip_remove(&self, ip: &std::net::IpAddr) {
         PERMIT_BAN_LIST.write().permit_ips.remove(ip);
     }
 
     /// Updates the local ENR TCP/UDP socket.
-    pub fn update_local_enr_socket(&mut self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
+    pub fn update_local_enr_socket(&self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
         let local_socket = self.local_enr.read().udp_socket();
         if local_socket != Some(socket_addr) {
             if is_tcp {
@@ -362,7 +362,7 @@ impl Discv5 {
     }
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
-    pub fn enr_insert(&mut self, key: &str, value: &[u8]) -> Result<Option<Vec<u8>>, EnrError> {
+    pub fn enr_insert(&self, key: &str, value: &[u8]) -> Result<Option<Vec<u8>>, EnrError> {
         self.local_enr
             .write()
             .insert(key, value, &self.enr_key.read())
@@ -388,7 +388,7 @@ impl Discv5 {
     }
 
     /// Returns an iterator over all the entries in the routing table.
-    pub fn table_entries(&mut self) -> Vec<(NodeId, Enr, NodeStatus)> {
+    pub fn table_entries(&self) -> Vec<(NodeId, Enr, NodeStatus)> {
         self.kbuckets
             .write()
             .iter()
@@ -411,7 +411,7 @@ impl Discv5 {
     #[cfg(feature = "libp2p")]
     #[cfg_attr(docsrs, doc(cfg(feature = "libp2p")))]
     pub fn request_enr(
-        &mut self,
+        &self,
         multiaddr: impl std::convert::TryInto<Multiaddr> + 'static,
     ) -> impl Future<Output = Result<Enr, RequestError>> + 'static {
         let channel = self.clone_channel();
@@ -482,7 +482,7 @@ impl Discv5 {
     /// Note: The async syntax is forgone here in order to create `'static` futures, where the
     /// underlying sending channel is cloned.
     pub fn find_node(
-        &mut self,
+        &self,
         target_node: NodeId,
     ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
         let channel = self.clone_channel();
@@ -523,7 +523,7 @@ impl Discv5 {
     ///  let result = discv5.find_node_predicate(target, predicate, 5).await;
     ///  ```
     pub fn find_node_predicate(
-        &mut self,
+        &self,
         target_node: NodeId,
         predicate: Box<dyn Fn(&Enr) -> bool + Send>,
         target_peer_no: usize,
@@ -554,7 +554,7 @@ impl Discv5 {
 
     /// Creates an event stream channel which can be polled to receive Discv5 events.
     pub fn event_stream(
-        &mut self,
+        &self,
     ) -> impl Future<Output = Result<mpsc::Receiver<Discv5Event>, Discv5Error>> + 'static {
         let channel = self.clone_channel();
 
