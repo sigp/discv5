@@ -10,6 +10,8 @@ use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
 };
+use crate::metrics::METRICS;
+
 use tracing::{debug, trace, warn};
 
 /// The object sent back by the Recv handler.
@@ -92,6 +94,7 @@ impl RecvHandler {
         loop {
             tokio::select! {
                 Ok((length, src)) = self.recv.recv_from(&mut self.recv_buffer) => {
+                    METRICS.add_recv_bytes(length);
                     self.handle_inbound(src, length).await;
                 }
                 _ = interval.tick(), if filter_enabled => {
