@@ -3,14 +3,13 @@
 //! Every UDP packet passes a filter before being processed.
 
 use super::filter::{Filter, FilterConfig};
-use crate::{node_info::NodeAddress, packet::*, Executor};
+use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
 use parking_lot::RwLock;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
 };
-use crate::metrics::METRICS;
 
 use tracing::{debug, trace, warn};
 
