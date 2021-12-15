@@ -445,7 +445,6 @@ impl Service {
             if target.callback.send(vec![]).is_err() {
                 warn!("Failed to callback");
             }
-            return;
         } else {
             let query_config = FindNodeQueryConfig::new_from_config(&self.config);
             self.queries
@@ -489,7 +488,6 @@ impl Service {
             if target.callback.send(vec![]).is_err() {
                 warn!("Failed to callback");
             }
-            return;
         } else {
             let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
             query_config.num_results = num_nodes;

@@ -136,17 +136,9 @@ impl Default for Discv5Config {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Discv5ConfigBuilder {
     config: Discv5Config,
-}
-
-impl Default for Discv5ConfigBuilder {
-    fn default() -> Self {
-        Self {
-            config: Discv5Config::default(),
-        }
-    }
 }
 
 impl Discv5ConfigBuilder {
