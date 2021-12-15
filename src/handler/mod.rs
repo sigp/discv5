@@ -486,8 +486,8 @@ impl Handler {
                     "Starting session. Sending random packet to: {}",
                     node_address
                 );
-                let packet = Packet::new_random(&self.node_id)
-                    .map_err(RequestError::EntropyFailure)?;
+                let packet =
+                    Packet::new_random(&self.node_id).map_err(RequestError::EntropyFailure)?;
                 // We are initiating a new session
                 (packet, true)
             }
