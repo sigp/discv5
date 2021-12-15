@@ -163,7 +163,7 @@ impl PacketKind {
             } => {
                 let sig_size = id_nonce_sig.len();
                 let pubkey_size = ephem_pubkey.len();
-                let node_record = enr_record.as_ref().map(|enr| rlp::encode(enr));
+                let node_record = enr_record.as_ref().map(rlp::encode);
                 let expected_len = 34
                     + sig_size
                     + pubkey_size
