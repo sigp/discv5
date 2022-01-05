@@ -516,6 +516,11 @@ where
         })
     }
 
+    /// Returns an iterator over all the buckets in the routing table
+    pub fn buckets_iter(&self) -> impl Iterator<Item = &KBucket<TNodeId, TVal>> {
+        self.buckets.iter()
+    }
+
     /// Returns an iterator over all the entries in the routing table to give to a table filter.
     ///
     /// This differs from the regular iterator as it doesn't take ownership of self and doesn't try
@@ -698,6 +703,12 @@ where
         } else {
             None
         }
+    }
+
+    /// Returns a bucket index given the key. Returns None if bucket index does not exist.
+    pub fn get_index(&self, key: &Key<TNodeId>) -> Option<usize> {
+        let index = BucketIndex::new(&self.local_key.distance(key));
+        index.map(|i| i.get())
     }
 }
 
