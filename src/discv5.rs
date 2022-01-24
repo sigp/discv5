@@ -283,6 +283,11 @@ impl Discv5 {
         self.local_enr.read().clone()
     }
 
+    /// Returns the routing table of the discv5 service
+    pub fn kbuckets(&self) -> KBucketsTable<NodeId, Enr> {
+        self.kbuckets.read().clone()
+    }
+
     /// Returns an ENR if one is known for the given NodeId.
     pub fn find_enr(&self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
