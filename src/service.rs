@@ -34,14 +34,13 @@ use crate::{
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
-use hashset_delay::HashSetDelay;
+use delay_map::HashSetDelay;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
-mod hashset_delay;
 mod ip_vote;
 mod query_info;
 mod test;
