@@ -29,7 +29,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr,
+    rpc, Discv5Config, Discv5Event, Enr, EnrUpdate,
 };
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
@@ -167,7 +167,7 @@ pub struct Service {
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
-    ip_votes: Option<IpVote>,
+    ip_votes: Option<(IpVote, EnrUpdate)>,
 
     /// The channel to send messages to the handler.
     handler_send: mpsc::UnboundedSender<HandlerRequest>,
@@ -243,14 +243,12 @@ impl Service {
         listen_socket: SocketAddr,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
-        let ip_votes = if config.enr_update {
-            Some(IpVote::new(
-                config.enr_peer_update_min,
-                config.vote_duration,
-            ))
-        } else {
-            None
-        };
+        let ip_votes = config.enr_update.map(|update_kind| {
+            (
+                IpVote::new(config.enr_peer_update_min, config.vote_duration),
+                update_kind,
+            )
+        });
 
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
@@ -751,9 +749,6 @@ impl Service {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
                     //
-                    // only attempt the majority-update if the peer supplies an ipv4 address to
-                    // mitigate https://github.com/sigp/lighthouse/issues/2215
-                    //
                     // Only count votes that from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
                     let should_count = match self.kbuckets.write().entry(&key) {
@@ -765,24 +760,55 @@ impl Service {
                         _ => false,
                     };
 
-                    if should_count && socket.is_ipv4() {
-                        let local_socket = self.local_enr.read().udp_socket();
-                        if let Some(ref mut ip_votes) = self.ip_votes {
+                    if should_count {
+                        if let Some((ref mut ip_votes, update_kind)) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
-                            if let Some(majority_socket) = ip_votes.majority() {
-                                if Some(majority_socket) != local_socket {
-                                    info!("Local UDP socket updated to: {}", majority_socket);
+                            let (maybe_best_ipv4, maybe_best_ipv6) = ip_votes.majority();
+                            let local_enr = self.local_enr.read();
+                            let current_v4_socket = local_enr.udp_socket();
+                            let current_v6_socket = local_enr.udp6_socket();
+                            drop(local_enr);
+
+                            let mut v4_updated = false;
+                            let mut v6_updated = false;
+
+                            if let Some(v4_majority) = maybe_best_ipv4 {
+                                let majority_socket = SocketAddr::V4(v4_majority);
+
+                                if update_kind.update_v4()
+                                    && Some(majority_socket) != current_v4_socket
+                                {
+                                    info!("Local UDP socket updated to: {}", v4_majority);
                                     self.send_event(Discv5Event::SocketUpdated(majority_socket));
+
                                     // Update the UDP socket
-                                    if self
+                                    v4_updated = self
                                         .local_enr
                                         .write()
                                         .set_udp_socket(majority_socket, &self.enr_key.read())
-                                        .is_ok()
-                                    {
-                                        self.ping_connected_peers();
-                                    }
+                                        .is_ok();
                                 }
+                            }
+                            if let Some(v6_majority) = maybe_best_ipv6 {
+                                let majority_socket = SocketAddr::V6(v6_majority);
+
+                                if update_kind.update_v6()
+                                    && Some(majority_socket) != current_v6_socket
+                                {
+                                    info!("Local UDP socket updated to: {}", v6_majority);
+                                    self.send_event(Discv5Event::SocketUpdated(majority_socket));
+
+                                    // Update the UDP socket
+                                    v6_updated = self
+                                        .local_enr
+                                        .write()
+                                        .set_udp_socket(majority_socket, &self.enr_key.read())
+                                        .is_ok();
+                                }
+                            }
+
+                            if v4_updated || v6_updated {
+                                self.ping_connected_peers();
                             }
                         }
                     }

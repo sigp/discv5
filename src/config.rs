@@ -4,6 +4,40 @@ use crate::{
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy)]
+pub enum EnrUpdate {
+    /// Update the local ENR only if the perceived V4 socket changes.
+    V4,
+    /// Update the local ENR only if the perceived V6 socket changes.
+    V6,
+    /// Update the local ENR both on ipv4 and ipv6 changes.
+    DualStack,
+}
+
+impl Default for EnrUpdate {
+    fn default() -> Self {
+        EnrUpdate::V4
+    }
+}
+
+impl EnrUpdate {
+    pub const fn update_v4(&self) -> bool {
+        match self {
+            EnrUpdate::V4 => true,
+            EnrUpdate::V6 => false,
+            EnrUpdate::DualStack => true,
+        }
+    }
+
+    pub const fn update_v6(&self) -> bool {
+        match self {
+            EnrUpdate::V4 => false,
+            EnrUpdate::V6 => true,
+            EnrUpdate::DualStack => false,
+        }
+    }
+}
+
 /// Configuration parameters that define the performance of the gossipsub network.
 #[derive(Clone)]
 pub struct Discv5Config {
@@ -34,8 +68,8 @@ pub struct Discv5Config {
     /// The maximum number of established sessions to maintain. Default: 1000.
     pub session_cache_capacity: usize,
 
-    /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
-    pub enr_update: bool,
+    /// Updates the local ENR IP and port based on PONG responses from peers. Default: IpV4.
+    pub enr_update: Option<EnrUpdate>,
 
     /// The maximum number of nodes we return to a find nodes request. The default is 16.
     pub max_nodes_response: usize,
@@ -117,7 +151,7 @@ impl Default for Discv5Config {
             request_retries: 1,
             session_timeout: Duration::from_secs(86400),
             session_cache_capacity: 1000,
-            enr_update: true,
+            enr_update: Some(EnrUpdate::default()),
             max_nodes_response: 16,
             enr_peer_update_min: 10,
             query_parallelism: 3,
@@ -200,7 +234,12 @@ impl Discv5ConfigBuilder {
 
     /// Disables the auto-update of the local ENR IP and port based on PONG responses from peers.
     pub fn disable_enr_update(&mut self) -> &mut Self {
-        self.config.enr_update = false;
+        self.config.enr_update = None;
+        self
+    }
+
+    pub fn enr_update(&mut self, update: EnrUpdate) -> &mut Self {
+        self.config.enr_update = Some(update);
         self
     }
 

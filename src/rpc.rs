@@ -437,6 +437,7 @@ impl Message {
                         ip.copy_from_slice(&ip_bytes);
                         let ipv6 = Ipv6Addr::from(ip);
                         // If the ipv6 is ipv4 compatible/mapped, simply return the ipv4.
+                        // TODO: I don't see a better option for now.
                         if let Some(ipv4) = ipv6.to_ipv4() {
                             IpAddr::V4(ipv4)
                         } else {
