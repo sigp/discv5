@@ -1,15 +1,13 @@
 use enr::NodeId;
 use fnv::FnvHashMap;
 use std::collections::HashMap;
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::time::{Duration, Instant};
 
 /// A collection of IP:Ports for our node reported from external peers.
 pub(crate) struct IpVote {
     /// The current collection of IP:Port votes for ipv4 addresses.
-    v4_votes: HashMap<NodeId, (SocketAddrV4, Instant)>,
-    /// The current collection of IP:Port votes for ipv6 addresses.
-    v6_votes: HashMap<NodeId, (SocketAddrV6, Instant)>,
+    votes: HashMap<NodeId, (SocketAddr, Instant)>,
     /// The minimum number of votes required before an IP/PORT is accepted.
     minimum_threshold: usize,
     /// The time votes remain valid.
@@ -23,41 +21,40 @@ impl IpVote {
             panic!("Setting enr_peer_update_min to a value less than 2 will cause issues with discovery with peers behind NAT");
         }
         IpVote {
-            v4_votes: HashMap::new(),
-            v6_votes: HashMap::new(),
+            votes: HashMap::new(),
             minimum_threshold,
             vote_duration,
         }
     }
 
     pub fn insert(&mut self, key: NodeId, socket: SocketAddr) {
-        match socket {
-            SocketAddr::V4(socket) => {
-                self.v4_votes
-                    .insert(key, (socket, Instant::now() + self.vote_duration));
-            }
-            SocketAddr::V6(socket) => {
-                self.v6_votes
-                    .insert(key, (socket, Instant::now() + self.vote_duration));
-            }
-        }
+        self.votes
+            .insert(key, (socket, Instant::now() + self.vote_duration));
     }
 
     /// Returns the majority `SocketAddr` if it exists. If there are not enough votes to meet the threshold this returns None.
     pub fn majority(&mut self) -> (Option<SocketAddrV4>, Option<SocketAddrV6>) {
         // remove any expired votes
         let instant = Instant::now();
-        self.v4_votes.retain(|_, v| v.1 > instant);
-        self.v6_votes.retain(|_, v| v.1 > instant);
+        self.votes.retain(|_, v| v.1 > instant);
 
         // count votes, take majority
         let mut ipv4_count: FnvHashMap<SocketAddrV4, usize> = FnvHashMap::default();
         let mut ipv6_count: FnvHashMap<SocketAddrV6, usize> = FnvHashMap::default();
-        for (socket, _) in self.v4_votes.values() {
-            *ipv4_count.entry(*socket).or_insert_with(|| 0) += 1;
-        }
-        for (socket, _) in self.v6_votes.values() {
-            *ipv6_count.entry(*socket).or_insert_with(|| 0) += 1;
+        for (socket, _) in self.votes.values() {
+            let port = socket.port();
+            let (maybe_ipv4, ipv6) = match socket.ip() {
+                IpAddr::V4(ipv4) => (Some(ipv4), ipv4.to_ipv6_mapped()),
+                IpAddr::V6(ipv6) => (ipv6.to_ipv4(), ipv6), // to_ipv4_mapped() is experimental
+            };
+            if let Some(ipv4) = maybe_ipv4 {
+                *ipv4_count
+                    .entry(SocketAddrV4::new(ipv4, port))
+                    .or_insert_with(|| 0) += 1;
+            }
+            *ipv6_count
+                .entry(SocketAddrV6::new(ipv6, port, 0, 0))
+                .or_insert_with(|| 0) += 1;
         }
 
         // find the maximum socket addr
