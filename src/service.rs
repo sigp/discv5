@@ -31,10 +31,10 @@ use crate::{
     },
     rpc, Discv5Config, Discv5Event, Enr,
 };
+use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
-use delay_map::HashSetDelay;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Instant};
