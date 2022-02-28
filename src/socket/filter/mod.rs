@@ -5,7 +5,7 @@ use cache::ReceivedPacketCache;
 use enr::NodeId;
 use lru::LruCache;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     net::{IpAddr, SocketAddr},
     sync::atomic::Ordering,
     time::{Duration, Instant},
@@ -96,21 +96,6 @@ impl Filter {
         METRICS
             .unsolicited_requests_per_window
             .store(self.raw_packets_received.len(), Ordering::Relaxed);
-
-        // It might not be worth the effort keeping an average for the metrics in the cache.
-        // Builds the hashmap of IPs to requests
-        let hashmap = {
-            let mut hashmap = HashMap::with_capacity(10);
-            for ip in self
-                .raw_packets_received
-                .iter()
-                .map(|packet| packet.content.ip())
-            {
-                *hashmap.entry(ip).or_default() += 1.0 / (METRICS.moving_window as f64);
-            }
-            hashmap
-        };
-        *METRICS.requests_per_ip_per_second.write() = hashmap;
 
         // If the filter isn't enabled, pass the packet
         if !self.enabled {

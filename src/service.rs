@@ -31,17 +31,16 @@ use crate::{
     },
     rpc, Discv5Config, Discv5Event, Enr,
 };
+use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
-use hashset_delay::HashSetDelay;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Instant};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
-mod hashset_delay;
 mod ip_vote;
 mod query_info;
 mod test;
@@ -80,6 +79,10 @@ impl Drop for TalkRequest {
 }
 
 impl TalkRequest {
+    pub fn id(&self) -> &RequestId {
+        &self.id
+    }
+
     pub fn node_id(&self) -> &NodeId {
         &self.node_address.node_id
     }
@@ -400,7 +403,7 @@ impl Service {
                     // If the node is in the routing table, Ping it and re-queue the node.
                     let key = kbucket::Key::from(node_id);
                     let enr =  {
-                        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+                        if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
                         // The peer is in the routing table, ping it and re-queue the ping
                         self.peers_to_ping.insert(node_id);
                         Some(entry.value().clone())
@@ -436,9 +439,16 @@ impl Service {
             }
         }
 
-        let query_config = FindNodeQueryConfig::new_from_config(&self.config);
-        self.queries
-            .add_findnode_query(query_config, target, known_closest_peers);
+        if known_closest_peers.is_empty() {
+            warn!("No known_closest_peers found. Return empty result without sending query.");
+            if target.callback.send(vec![]).is_err() {
+                warn!("Failed to callback");
+            }
+        } else {
+            let query_config = FindNodeQueryConfig::new_from_config(&self.config);
+            self.queries
+                .add_findnode_query(query_config, target, known_closest_peers);
+        }
     }
 
     /// Internal function that starts a query.
@@ -472,17 +482,24 @@ impl Service {
             }
         };
 
-        let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
-        query_config.num_results = num_nodes;
-        self.queries
-            .add_predicate_query(query_config, target, known_closest_peers, predicate);
+        if known_closest_peers.is_empty() {
+            warn!("No known_closest_peers found. Return empty result without sending query.");
+            if target.callback.send(vec![]).is_err() {
+                warn!("Failed to callback");
+            }
+        } else {
+            let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
+            query_config.num_results = num_nodes;
+            self.queries
+                .add_predicate_query(query_config, target, known_closest_peers, predicate);
+        }
     }
 
     /// Returns an ENR if one is known for the given NodeId.
-    pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
+    pub fn find_enr(&self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(mut entry, _) = self.kbuckets.write().entry(&key) {
+        if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
             return Some(entry.value().clone());
         }
         // check the untrusted addresses for ongoing queries
@@ -909,7 +926,7 @@ impl Service {
         if !distances.is_empty() {
             let mut kbuckets = self.kbuckets.write();
             for node in kbuckets
-                .nodes_by_distances(distances, self.config.max_nodes_response)
+                .nodes_by_distances(distances.as_slice(), self.config.max_nodes_response)
                 .into_iter()
                 .filter_map(|entry| {
                     if entry.node.key.preimage() != &node_address.node_id {
@@ -1070,7 +1087,7 @@ impl Service {
                 // sequence number, perform some filter checks before updating the enr.
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Present(mut entry, _) => entry.value().seq() < enr.seq(),
+                    kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
                     kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
                     _ => false,
                 };
@@ -1219,7 +1236,7 @@ impl Service {
 
         if let Some(node_key) = ping_peer {
             let optional_enr = {
-                if let kbucket::Entry::Present(mut entry, _status) =
+                if let kbucket::Entry::Present(entry, _status) =
                     self.kbuckets.write().entry(&node_key)
                 {
                     // NOTE: We don't check the status of this peer. We try and ping outdated peers.

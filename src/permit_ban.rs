@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PermitBanList {
     /// A set of IPs which pass all filters.
     pub permit_ips: HashSet<IpAddr>,
@@ -16,17 +16,6 @@ pub struct PermitBanList {
     pub permit_nodes: HashSet<NodeId>,
     /// A set of NodeIds whose packets get dropped instantly.
     pub ban_nodes: HashMap<NodeId, Option<Instant>>,
-}
-
-impl Default for PermitBanList {
-    fn default() -> Self {
-        PermitBanList {
-            permit_ips: HashSet::new(),
-            ban_ips: HashMap::new(),
-            permit_nodes: HashSet::new(),
-            ban_nodes: HashMap::new(),
-        }
-    }
 }
 
 impl PermitBanList {

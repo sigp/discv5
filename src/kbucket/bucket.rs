@@ -286,10 +286,10 @@ where
     pub fn apply_pending(&mut self) -> Option<AppliedPending<TNodeId, TVal>> {
         if let Some(pending) = self.pending.take() {
             if pending.replace <= Instant::now() {
+                // Check if the bucket is full
                 if self.nodes.is_full() {
                     // Apply bucket filters
 
-                    // Check if the bucket is full
                     if self.nodes[0].status.is_connected() {
                         // The bucket is full with connected nodes. Drop the pending node.
                         return None;
@@ -300,6 +300,8 @@ where
                             &pending.node.value,
                             &mut self.iter().map(|node| &node.value),
                         ) {
+                            // The pending node doesn't satisfy the bucket filter. Drop the pending
+                            // node.
                             return None;
                         }
                     }
@@ -307,6 +309,8 @@ where
                     if pending.status().is_connected() && pending.status().is_incoming() {
                         // Make sure this doesn't violate the incoming conditions
                         if self.is_max_incoming() {
+                            // The pending node doesn't satisfy the incoming/outgoing limits. Drop
+                            // the pending node.
                             return None;
                         }
                     }
@@ -438,8 +442,22 @@ where
                 }
                 InsertResult::TooManyIncoming => {
                     UpdateResult::Failed(FailureReason::TooManyIncoming)
-                } // Node could not be inserted
-                _ => unreachable!("The node is removed before being (re)inserted."),
+                }
+                // Node could not be inserted. None of these should be possible.
+                InsertResult::FailedFilter => {
+                    // If the filter is non-deterministic, potentially a re-insertion of the same
+                    // node can fail the filter.
+                    UpdateResult::Failed(FailureReason::BucketFilter)
+                }
+                InsertResult::NodeExists => {
+                    unreachable!("The node was removed and shouldn't already exist")
+                }
+                InsertResult::Full => {
+                    unreachable!("The node was removed so the bucket cannot be full")
+                }
+                InsertResult::Pending { .. } => {
+                    unreachable!("The node was removed so can't be added as pending")
+                }
             }
         } else if let Some(pending) = &mut self.pending {
             if &pending.node.key == key {
@@ -529,7 +547,13 @@ where
             }
         }
 
-        match node.status.state {
+        let inserting_pending = self
+            .pending
+            .as_ref()
+            .map(|pending| pending.node.key == node.key)
+            .unwrap_or_default();
+
+        let insert_result = match node.status.state {
             ConnectionState::Connected => {
                 if node.status.is_incoming() {
                     // check the maximum counter
@@ -550,6 +574,7 @@ where
                         };
                     }
                 }
+
                 let pos = self.nodes.len();
                 self.first_connected_pos = self.first_connected_pos.or(Some(pos));
                 self.nodes.push(node);
@@ -559,6 +584,7 @@ where
                 if self.nodes.is_full() {
                     return InsertResult::Full;
                 }
+
                 if let Some(ref mut first_connected_pos) = self.first_connected_pos {
                     self.nodes.insert(*first_connected_pos, node);
                     *first_connected_pos += 1;
@@ -567,7 +593,15 @@ where
                 }
                 InsertResult::Inserted
             }
+        };
+
+        // If we inserted the node, make sure there is no pending node of the same key. This can
+        // happen when a pending node is inserted, a node gets removed from the bucket, freeing up
+        // space and then re-inserted here.
+        if matches!(insert_result, InsertResult::Inserted) && inserting_pending {
+            self.pending = None
         }
+        insert_result
     }
 
     /// Removes a node from the bucket.
@@ -575,6 +609,7 @@ where
         if let Some(Position(position)) = self.position(key) {
             self.nodes.remove(position);
             self.update_first_connected_pos_for_removal(position);
+            self.apply_pending();
             true
         } else {
             false
@@ -618,7 +653,7 @@ where
     ///
     /// Returns `None` if the given key does not refer to an node in the
     /// bucket.
-    pub fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
+    fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
         self.nodes.iter_mut().find(move |p| &p.key == key)
     }
 
@@ -1109,6 +1144,66 @@ pub mod tests {
         );
         assert_eq!(1, bucket.num_connected());
         assert_eq!(MAX_NODES_PER_BUCKET - 1, bucket.num_disconnected());
+    }
+
+    /// No duplicate nodes can be inserted via the apply_pending function.
+    #[test]
+    fn full_bucket_applied_no_duplicates() {
+        // First fill the bucket with connected nodes.
+        let mut bucket =
+            KBucket::<NodeId, ()>::new(Duration::from_secs(1), MAX_NODES_PER_BUCKET, None);
+        fill_bucket(&mut bucket, connected_state());
+
+        let first = bucket.iter().next().unwrap().clone();
+
+        let third = bucket.iter().nth(2).unwrap().clone();
+
+        // Set the first connected node as disconnected
+
+        assert_eq!(
+            bucket.update_status(&first.key, ConnectionState::Disconnected, None),
+            UpdateResult::Updated
+        );
+
+        // Add a connected pending node.
+        let key = Key::from(NodeId::random());
+        let node = Node {
+            key: key.clone(),
+            value: (),
+            status: connected_state(),
+        };
+
+        // Add a pending node
+        if let InsertResult::Pending { disconnected } = bucket.insert(node.clone()) {
+            assert_eq!(&disconnected, &first.key);
+        } else {
+            panic!()
+        }
+        assert!(bucket.pending().is_some());
+
+        // A misc node gets dropped, because it may not pass a filter when updating its connection
+        // status.
+        bucket.remove(&third.key);
+
+        // The pending nodes status gets updated
+        // Apply pending gets called within kbuckets, so we mimic here.
+        // The pending time hasn't elapsed so nothing should occur.
+        assert_eq!(bucket.apply_pending(), None);
+        assert_eq!(bucket.insert(node.clone()), InsertResult::Inserted);
+        assert!(bucket.pending.is_none());
+
+        // Speed up the pending time
+        if let Some(pending) = bucket.pending.as_mut() {
+            pending.replace = Instant::now() - Duration::from_secs(1);
+        }
+
+        // At some later time apply pending
+        assert_eq!(bucket.apply_pending(), None);
+        // And try and update the status of the pending node
+        assert_eq!(
+            bucket.update_status(&node.key, ConnectionState::Connected, None),
+            UpdateResult::NotModified
+        );
     }
 
     #[test]

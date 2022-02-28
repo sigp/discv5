@@ -516,6 +516,11 @@ where
         })
     }
 
+    /// Returns an iterator over all the buckets in the routing table
+    pub fn buckets_iter(&self) -> impl Iterator<Item = &KBucket<TNodeId, TVal>> {
+        self.buckets.iter()
+    }
+
     /// Returns an iterator over all the entries in the routing table to give to a table filter.
     ///
     /// This differs from the regular iterator as it doesn't take ownership of self and doesn't try
@@ -560,17 +565,24 @@ where
     /// Returns an iterator over the keys that are contained in a kbucket, specified by a log2 distance.
     pub fn nodes_by_distances(
         &mut self,
-        log2_distances: Vec<u64>,
+        log2_distances: &[u64],
         max_nodes: usize,
     ) -> Vec<EntryRefView<'_, TNodeId, TVal>> {
+        // Filter log2 distances to only include those in the closed interval [1, 256]
         let distances = log2_distances
-            .into_iter()
-            .filter(|&d| d > 0 && d <= (NUM_BUCKETS as u64))
+            .iter()
+            .filter_map(|&d| {
+                if d > 0 && d <= (NUM_BUCKETS as u64) {
+                    Some(d)
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>();
 
-        // apply bending nodes
+        // Apply pending nodes
         for distance in &distances {
-            // the log2 distance ranges from 1-256 and is always 1 more than the bucket index. For this
+            // The log2 distance ranges from 1-256 and is always 1 more than the bucket index. For this
             // reason we subtract 1 from log2 distance to get the correct bucket index.
             let bucket = &mut self.buckets[(distance - 1) as usize];
             if let Some(applied) = bucket.apply_pending() {
@@ -578,7 +590,7 @@ where
             }
         }
 
-        // find the matching nodes
+        // Find the matching nodes
         let mut matching_nodes = Vec::new();
 
         // Note we search via distance in order
@@ -691,6 +703,12 @@ where
         } else {
             None
         }
+    }
+
+    /// Returns a bucket index given the key. Returns None if bucket index does not exist.
+    pub fn get_index(&self, key: &Key<TNodeId>) -> Option<usize> {
+        let index = BucketIndex::new(&self.local_key.distance(key));
+        index.map(|i| i.get())
     }
 }
 

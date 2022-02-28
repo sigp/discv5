@@ -1,5 +1,5 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
-use crate::{node_info::NodeAddress, packet::*, Executor};
+use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
 use std::sync::Arc;
 use tokio::{
     net::UdpSocket,
@@ -60,6 +60,8 @@ impl SendHandler {
                     }
                     if let Err(e) = self.send.send_to(&encoded_packet, &packet.node_address.socket_addr).await {
                         trace!("Could not send packet. Error: {:?}", e);
+                    } else {
+                        METRICS.add_sent_bytes(encoded_packet.len());
                     }
                 }
                 _ = &mut self.exit => {
