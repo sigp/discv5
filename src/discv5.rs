@@ -176,7 +176,8 @@ impl Discv5 {
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
-        if enr.udp_socket().is_none() {
+        // TODO: does it matter here?
+        if enr.udp_socket().is_none() && enr.udp6_socket().is_none() {
             warn!("ENR attempted to be added without a UDP socket has been ignored");
             return Err("ENR has no UDP socket to connect to");
         }
