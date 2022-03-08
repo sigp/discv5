@@ -63,7 +63,7 @@ async fn main() {
         if let Some(udp_port) = std::env::args().nth(2) {
             udp_port.parse().unwrap()
         } else {
-            9000
+            9010
         }
     };
 
