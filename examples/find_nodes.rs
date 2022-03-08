@@ -41,10 +41,8 @@ use discv5::{
     enr::{k256, CombinedKey},
     Discv5, Discv5ConfigBuilder,
 };
-use std::{
-    net::{Ipv4Addr, SocketAddr},
-    time::Duration,
-};
+use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
@@ -58,7 +56,8 @@ async fn main() {
     // if there is an address specified use it
     let address = std::env::args()
         .nth(1)
-        .map(|addr| addr.parse::<Ipv4Addr>().unwrap());
+        .map(|addr| addr.parse::<IpAddr>().unwrap());
+    dbg!(&address);
 
     let port = {
         if let Some(udp_port) = std::env::args().nth(2) {
@@ -85,13 +84,22 @@ async fn main() {
     let enr = {
         let mut builder = enr::EnrBuilder::new("v4");
         // if an IP was specified, use it
+        let isv6 = address
+            .as_ref()
+            .map(|address| address.is_ipv6())
+            .unwrap_or(false);
         if let Some(external_address) = address {
             builder.ip(external_address.into());
         }
         // if a port was specified, use it
         if std::env::args().nth(2).is_some() {
-            builder.udp(port);
+            if isv6 {
+                builder.udp6(port);
+            } else {
+                builder.udp(port);
+            }
         }
+
         builder.build(&enr_key).unwrap()
     };
 
@@ -100,6 +108,13 @@ async fn main() {
     if enr.udp_socket().is_some() {
         println!("Base64 ENR: {}", enr.to_base64());
         println!("IP: {}, UDP_PORT:{}", enr.ip().unwrap(), enr.udp().unwrap());
+    } else if enr.udp6_socket().is_some() {
+        println!("Base64 ENR: {}", enr.to_base64());
+        println!(
+            "IP6: {}, UDP_PORT6:{}",
+            enr.ip6().unwrap(),
+            enr.udp6().unwrap()
+        );
     } else {
         println!("ENR is not printed as no IP:PORT was specified");
     }
