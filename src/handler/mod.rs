@@ -208,12 +208,19 @@ impl ActiveRequests {
                 request_retries
         }
     }
+
     pub fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
-        //todo
+        self.active_requests_mapping.insert(node_address, request_call);
+        self.active_requests_nonce_mapping
+            .insert(*request_call.packet.message_nonce(), node_address.clone());
     }
 
-    pub fn get(&self, node_address: NodeAddress) {
-        //todo
+    pub fn reinsert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
+        self.active_requests_mapping.insert(node_address, request_call);
+    }
+
+    pub fn get(&self, node_address: &NodeAddress) -> Option<&RequestCall> {
+        self.active_requests_mapping.get(node_address)
     }
 
     pub fn remove(&mut self, node_address: NodeAddress) {
@@ -511,7 +518,7 @@ impl Handler {
             self.send(node_address.clone(), request_call.packet.clone())
                 .await;
             request_call.retries += 1;
-            self.active_requests.insert(node_address, request_call);
+            self.active_requests.reinsert(node_address, request_call);
         }
     }
 
@@ -566,8 +573,6 @@ impl Handler {
         let nonce = *packet.message_nonce();
         self.send(node_address.clone(), packet).await;
 
-        self.active_requests_nonce_mapping
-            .insert(nonce, node_address.clone());
         self.active_requests.insert(node_address, call);
         Ok(())
     }
@@ -1120,8 +1125,6 @@ impl Handler {
             .node_address()
             .expect("Can only add requests with a valid destination");
         // adds the mapping of message nonce to node address
-        self.active_requests_nonce_mapping
-            .insert(*request_call.packet.message_nonce(), node_address.clone());
         self.active_requests.insert(node_address, request_call);
     }
 
