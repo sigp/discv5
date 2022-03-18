@@ -207,6 +207,28 @@ impl ActiveRequests {
     pub fn remove(&mut self, node_address: NodeAddress) {
         //todo
     }
+
+    /// Checks that `active_requests_mapping` and `active_requests_nonce_mapping` are in sync.
+    // this function is only available in tests
+    #[cfg(test)]
+    // this makes is so that if there is a panic, the error is printed in the caller of this
+    // function.
+    #[track_caller]
+    pub fn check_invariant(&self) {
+        // First check that for every `MessageNonce` there is an associated `NodeAddress`.
+        for (nonce, address) in self.active_requests_nonce_mapping.iter() {
+            if !self.active_requests_mapping.contains_key(address) {
+                panic!("Nonce {:?} maps to address {}, which does not exist in `active_requests_mapping`", nonce, address);
+            }
+        }
+
+        // Here we would do the the same but HashMapDelay does not have an `iter` method
+        assert_eq!(
+            self.active_requests_mapping._len(),
+            self.active_requests_nonce_mapping.len(),
+            "Structs should have the same number of elements."
+        );
+    }
 }
 
 impl Stream for ActiveRequests {
@@ -314,7 +336,7 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests{
+                    active_requests: ActiveRequests {
                         active_requests_mapping: HashMapDelay::new(config.request_timeout),
                         active_requests_nonce_mapping: HashMap::new(),
                     },
