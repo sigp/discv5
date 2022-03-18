@@ -49,7 +49,6 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
 
 mod crypto;
-mod hashmap_delay;
 mod session;
 mod tests;
 
@@ -58,7 +57,7 @@ pub use crate::node_info::{NodeAddress, NodeContact};
 use crate::metrics::METRICS;
 
 use crate::lru_time_cache::LruTimeCache;
-use hashmap_delay::HashMapDelay;
+use delay_map::HashMapDelay;
 use session::Session;
 
 // The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
