@@ -42,7 +42,9 @@ use std::{
     convert::TryFrom,
     default::Default,
     net::SocketAddr,
+    pin::Pin,
     sync::{atomic::Ordering, Arc},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
@@ -187,6 +189,33 @@ impl RequestCall {
     }
 }
 
+struct ActiveRequests {
+    /// A list of raw messages we are awaiting a response from the remote.
+    active_requests_mapping: HashMapDelay<NodeAddress, RequestCall>,
+    // WHOAREYOU messages do not include the source node id. We therefore maintain another
+    // mapping of active_requests via message_nonce. This allows us to match WHOAREYOU
+    // requests with active requests sent.
+    /// A mapping of all pending active raw requests message nonces to their NodeAddress.
+    active_requests_nonce_mapping: HashMap<MessageNonce, NodeAddress>,
+}
+
+impl ActiveRequests {
+    pub fn get(&self, node_address: NodeAddress) {
+        //todo
+    }
+
+    pub fn remove(&mut self, node_address: NodeAddress) {
+        //todo
+    }
+}
+
+impl Stream for ActiveRequests {
+    type Item = Result<(NodeAddress, RequestCall), String>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.active_requests_mapping.poll_next()
+    }
+}
+
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.
@@ -198,13 +227,8 @@ pub struct Handler {
     enr: Arc<RwLock<Enr>>,
     /// The key to sign the ENR and set up encrypted communication with peers.
     key: Arc<RwLock<CombinedKey>>,
-    /// Pending raw requests. A list of raw messages we are awaiting a response from the remote.
-    active_requests: HashMapDelay<NodeAddress, RequestCall>,
-    // WHOAREYOU messages do not include the source node id. We therefore maintain another
-    // mapping of active_requests via message_nonce. This allows us to match WHOAREYOU
-    // requests with active requests sent.
-    /// A mapping of all pending active raw requests message nonces to their NodeAddress.
-    active_requests_nonce_mapping: HashMap<MessageNonce, NodeAddress>,
+    /// Pending raw requests.
+    active_requests: ActiveRequests,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Requests awaiting a handshake completion.
@@ -290,8 +314,10 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: HashMapDelay::new(config.request_timeout),
-                    active_requests_nonce_mapping: HashMap::new(),
+                    active_requests: ActiveRequests{
+                        active_requests_mapping: HashMapDelay::new(config.request_timeout),
+                        active_requests_nonce_mapping: HashMap::new(),
+                    },
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
