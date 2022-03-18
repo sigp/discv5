@@ -197,9 +197,21 @@ struct ActiveRequests {
     // requests with active requests sent.
     /// A mapping of all pending active raw requests message nonces to their NodeAddress.
     active_requests_nonce_mapping: HashMap<MessageNonce, NodeAddress>,
+    request_retries: u8,
 }
 
 impl ActiveRequests {
+    pub fn new(request_retries: u8, request_timeout: Duration) -> Self {
+        ActiveRequests {
+                active_requests_mapping: HashMapDelay::new(request_timeout),
+                active_requests_nonce_mapping: HashMap::new(),
+                request_retries
+        }
+    }
+    pub fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
+        //todo
+    }
+
     pub fn get(&self, node_address: NodeAddress) {
         //todo
     }
@@ -231,10 +243,23 @@ impl ActiveRequests {
     }
 }
 
+
 impl Stream for ActiveRequests {
     type Item = Result<(NodeAddress, RequestCall), String>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.active_requests_mapping.poll_next()
+        match self.active_requests_mapping.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok((node_address, request_call)))) => {
+                if request_call.retries >= self.request_retries {
+                    // Remove the associated nonce mapping.
+                    self.active_requests_nonce_mapping
+                        .remove(request_call.packet.message_nonce());
+                }
+                Poll::Ready(Some(Ok((node_address, request_call))))
+            },
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -336,10 +361,7 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests {
-                        active_requests_mapping: HashMapDelay::new(config.request_timeout),
-                        active_requests_nonce_mapping: HashMap::new(),
-                    },
+                    active_requests: ActiveRequests::new(config.request_retries, config.request_timeout),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
@@ -475,9 +497,6 @@ impl Handler {
         if request_call.retries >= self.request_retries {
             trace!("Request timed out with {}", node_address);
             // Remove the request from the awaiting packet_filter
-            // Remove the associated nonce mapping.
-            self.active_requests_nonce_mapping
-                .remove(request_call.packet.message_nonce());
             self.remove_expected_response(node_address.socket_addr);
             // The request has timed out. We keep any established session for future use.
             self.fail_request(request_call, RequestError::Timeout, false)
