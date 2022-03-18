@@ -215,7 +215,7 @@ impl ActiveRequests {
             .insert(*request_call.packet.message_nonce(), node_address.clone());
     }
 
-    pub fn reinsert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
+    fn reinsert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
         self.active_requests_mapping.insert(node_address, request_call);
     }
 
