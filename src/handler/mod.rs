@@ -223,8 +223,16 @@ impl ActiveRequests {
         self.active_requests_mapping.get(node_address)
     }
 
-    pub fn remove(&mut self, node_address: NodeAddress) {
-        //todo
+    pub fn remove(&mut self, node_address: &NodeAddress) -> Option<RequestCall> {
+        match self.active_requests_mapping.remove(node_address) {
+            Some(request_call) => {
+                // Remove the associated nonce mapping.
+                self.active_requests_nonce_mapping
+                    .remove(request_call.packet.message_nonce());
+                Some(request_call)
+            },
+            None => None
+        }
     }
 
     /// Checks that `active_requests_mapping` and `active_requests_nonce_mapping` are in sync.
@@ -1096,9 +1104,6 @@ impl Handler {
                 }
             }
 
-            // Remove the associated nonce mapping.
-            self.active_requests_nonce_mapping
-                .remove(request_call.packet.message_nonce());
             // Remove the expected response
             self.remove_expected_response(node_address.socket_addr);
 
