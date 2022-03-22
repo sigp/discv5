@@ -5,7 +5,10 @@ use crate::{
     Discv5ConfigBuilder,
 };
 use enr::EnrBuilder;
-use std::{net::IpAddr, time::Duration};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    time::Duration,
+};
 use tokio::time::sleep;
 
 fn init() {
@@ -216,4 +219,35 @@ async fn multiple_messages() {
             panic!("Test timed out");
         }
     }
+}
+
+#[tokio::test]
+async fn test_active_requests_insert() {
+    const RETRIES: u8 = 1;
+    const EXPIRY: Duration = Duration::from_secs(5);
+    let mut active_requests = ActiveRequests::new(RETRIES, EXPIRY);
+
+    // Create the test values needed
+    let port = 5000;
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    let key = CombinedKey::generate_secp256k1();
+
+    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let node_id = enr.node_id();
+
+    let contact = NodeContact::Enr(Box::new(enr));
+    let node_address = contact.node_address().unwrap();
+
+    let packet = Packet::new_random(&node_id).unwrap();
+    let request = Request {
+        id: RequestId(vec![1]),
+        body: RequestBody::Ping { enr_seq: 1 },
+    };
+    let initiating_session = true;
+    let request_call = RequestCall::new(contact, packet, request, initiating_session);
+
+    // insert the pair and verify the mapping remains in sync
+    active_requests.insert(node_address, request_call);
+    active_requests.check_invariant();
 }
