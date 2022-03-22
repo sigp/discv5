@@ -196,15 +196,56 @@ struct ActiveRequests {
     // requests with active requests sent.
     /// A mapping of all pending active raw requests message nonces to their NodeAddress.
     active_requests_nonce_mapping: HashMap<MessageNonce, NodeAddress>,
+    request_retries: u8,
 }
 
 impl ActiveRequests {
-    pub fn get(&self, node_address: NodeAddress) {
-        //todo
+    pub fn new(request_retries: u8, request_timeout: Duration) -> Self {
+        ActiveRequests {
+                active_requests_mapping: HashMapDelay::new(request_timeout),
+                active_requests_nonce_mapping: HashMap::new(),
+                request_retries
+        }
     }
 
-    pub fn remove(&mut self, node_address: NodeAddress) {
-        //todo
+    pub fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
+        self.active_requests_mapping.insert(node_address, request_call);
+        self.active_requests_nonce_mapping
+            .insert(*request_call.packet.message_nonce(), node_address.clone());
+    }
+
+    fn reinsert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
+        self.active_requests_mapping.insert(node_address, request_call);
+    }
+
+    pub fn get(&self, node_address: &NodeAddress) -> Option<&RequestCall> {
+        self.active_requests_mapping.get(node_address)
+    }
+
+    pub fn remove_by_nonce(&self, nonce: &MessageNonce) -> Option<(NodeAddress, RequestCall)> {
+        match self.active_requests_nonce_mapping.remove(nonce) {
+            Some(node_address) => {
+                match self.active_requests_mapping.remove(&node_address) {
+                    Some(request_call) => Some((node_address, request_call)),
+                    None => None
+                }
+            },
+            None => None
+        }
+    }
+
+    pub fn remove(&mut self, node_address: &NodeAddress) -> Option<RequestCall> {
+        match self.active_requests_mapping.remove(node_address) {
+            Some(request_call) => {
+                // Remove the associated nonce mapping.
+                match self.active_requests_nonce_mapping
+                    .remove(request_call.packet.message_nonce()) {
+                        Some(_) => Some(request_call),
+                        None => None
+                    }
+            },
+            None => None
+        }
     }
 
     /// Checks that `active_requests_mapping` and `active_requests_nonce_mapping` are in sync.
@@ -230,10 +271,23 @@ impl ActiveRequests {
     }
 }
 
+
 impl Stream for ActiveRequests {
     type Item = Result<(NodeAddress, RequestCall), String>;
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.active_requests_mapping.poll_next()
+        match self.active_requests_mapping.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok((node_address, request_call)))) => {
+                if request_call.retries >= self.request_retries {
+                    // Remove the associated nonce mapping.
+                    self.active_requests_nonce_mapping
+                        .remove(request_call.packet.message_nonce());
+                }
+                Poll::Ready(Some(Ok((node_address, request_call))))
+            },
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -335,10 +389,7 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests {
-                        active_requests_mapping: HashMapDelay::new(config.request_timeout),
-                        active_requests_nonce_mapping: HashMap::new(),
-                    },
+                    active_requests: ActiveRequests::new(config.request_retries, config.request_timeout),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
@@ -474,9 +525,6 @@ impl Handler {
         if request_call.retries >= self.request_retries {
             trace!("Request timed out with {}", node_address);
             // Remove the request from the awaiting packet_filter
-            // Remove the associated nonce mapping.
-            self.active_requests_nonce_mapping
-                .remove(request_call.packet.message_nonce());
             self.remove_expected_response(node_address.socket_addr);
             // The request has timed out. We keep any established session for future use.
             self.fail_request(request_call, RequestError::Timeout, false)
@@ -491,7 +539,7 @@ impl Handler {
             self.send(node_address.clone(), request_call.packet.clone())
                 .await;
             request_call.retries += 1;
-            self.active_requests.insert(node_address, request_call);
+            self.active_requests.reinsert(node_address, request_call);
         }
     }
 
@@ -546,8 +594,6 @@ impl Handler {
         let nonce = *packet.message_nonce();
         self.send(node_address.clone(), packet).await;
 
-        self.active_requests_nonce_mapping
-            .insert(nonce, node_address.clone());
         self.active_requests.insert(node_address, call);
         Ok(())
     }
@@ -628,36 +674,18 @@ impl Handler {
     ) {
         // Check that this challenge matches a known active request.
         // If this message passes all the requisite checks, a request call is returned.
-        let mut request_call = {
-            // Check for an active request
-            let node_address = match self.active_requests_nonce_mapping.remove(&request_nonce) {
-                Some(addr) => addr,
-                None => {
-                    trace!("Received a WHOAREYOU packet that references an unknown or expired request. Source {}, message_nonce {}", src_address, hex::encode(request_nonce));
+        let mut request_call = match self.active_requests.remove_by_nonce(&request_nonce) {
+            Some((node_address, request_call)) => {
+                // Verify that the src_addresses match
+                if node_address.socket_addr != src_address {
+                    trace!("Received a WHOAREYOU packet for a message with a non-expected source. Source {}, expected_source: {} message_nonce {}", src_address, node_address.socket_addr, hex::encode(request_nonce));
                     return;
                 }
-            };
-
-            // Verify that the src_addresses match
-            if node_address.socket_addr != src_address {
-                trace!("Received a WHOAREYOU packet for a message with a non-expected source. Source {}, expected_source: {} message_nonce {}", src_address, node_address.socket_addr, hex::encode(request_nonce));
-                // add the mapping back
-                self.active_requests_nonce_mapping
-                    .insert(request_nonce, node_address);
+                request_call
+            },
+            None => {
+                trace!("Received a WHOAREYOU packet that references an unknown or expired request. Source {}, message_nonce {}", src_address, hex::encode(request_nonce));
                 return;
-            }
-
-            // Obtain the request from the mapping. This must exist, otherwise there is a
-            // serious coding error. The active_requests_nonce_mapping and active_requests
-            // mappings should be 1 to 1.
-
-            match self.active_requests.remove(&node_address) {
-                Some(request_call) => request_call,
-                None => {
-                    error!("Active request mappings are not in sync. Message_id {}, node_address {} doesn't exist in active request mapping", hex::encode(request_nonce), node_address);
-                    // NOTE: Both mappings are removed in this case.
-                    return;
-                }
             }
         };
 
@@ -1071,9 +1099,6 @@ impl Handler {
                 }
             }
 
-            // Remove the associated nonce mapping.
-            self.active_requests_nonce_mapping
-                .remove(request_call.packet.message_nonce());
             // Remove the expected response
             self.remove_expected_response(node_address.socket_addr);
 
@@ -1100,8 +1125,6 @@ impl Handler {
             .node_address()
             .expect("Can only add requests with a valid destination");
         // adds the mapping of message nonce to node address
-        self.active_requests_nonce_mapping
-            .insert(*request_call.packet.message_nonce(), node_address.clone());
         self.active_requests.insert(node_address, request_call);
     }
 
