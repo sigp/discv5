@@ -221,12 +221,12 @@ impl ActiveRequests {
             }
         }
 
-        // Here we would do the the same but HashMapDelay does not have an `iter` method
-        assert_eq!(
-            self.active_requests_mapping._len(),
-            self.active_requests_nonce_mapping.len(),
-            "Structs should have the same number of elements."
-        );
+        for (address, request) in self.active_requests_mapping.iter() {
+            let nonce = request.packet.message_nonce();
+            if !self.active_requests_nonce_mapping.contains_key(nonce) {
+                panic!("Address {} maps to request with nonce {:?}, which does not exist in `active_requests_nonce_mapping`", address, nonce);
+            }
+        }
     }
 }
 
