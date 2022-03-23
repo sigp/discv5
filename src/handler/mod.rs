@@ -209,9 +209,10 @@ impl ActiveRequests {
     }
 
     pub fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
-        self.active_requests_mapping.insert(node_address, request_call);
+        let nonce = *request_call.packet.message_nonce();
+        self.active_requests_mapping.insert(node_address.clone(), request_call);
         self.active_requests_nonce_mapping
-            .insert(*request_call.packet.message_nonce(), node_address.clone());
+            .insert(nonce, node_address);
     }
 
     fn reinsert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
@@ -222,7 +223,7 @@ impl ActiveRequests {
         self.active_requests_mapping.get(node_address)
     }
 
-    pub fn remove_by_nonce(&self, nonce: &MessageNonce) -> Option<(NodeAddress, RequestCall)> {
+    pub fn remove_by_nonce(&mut self, nonce: &MessageNonce) -> Option<(NodeAddress, RequestCall)> {
         match self.active_requests_nonce_mapping.remove(nonce) {
             Some(node_address) => {
                 match self.active_requests_mapping.remove(&node_address) {
@@ -274,7 +275,7 @@ impl ActiveRequests {
 
 impl Stream for ActiveRequests {
     type Item = Result<(NodeAddress, RequestCall), String>;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.active_requests_mapping.poll_next_unpin(cx) {
             Poll::Ready(Some(Ok((node_address, request_call)))) => {
                 if request_call.retries >= self.request_retries {
@@ -1148,8 +1149,8 @@ impl Handler {
     ) {
         // The Request has expired, remove the session.
         // Remove the associated nonce mapping.
-        self.active_requests_nonce_mapping
-            .remove(request_call.packet.message_nonce());
+        self.active_requests
+            .remove_by_nonce(request_call.packet.message_nonce());
         // Fail the current request
         let request_id = request_call.request.id;
         let _ = self
