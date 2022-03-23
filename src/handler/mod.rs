@@ -51,7 +51,6 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
 
 mod crypto;
-mod hashmap_delay;
 mod session;
 mod tests;
 
@@ -60,7 +59,7 @@ pub use crate::node_info::{NodeAddress, NodeContact};
 use crate::metrics::METRICS;
 
 use crate::lru_time_cache::LruTimeCache;
-use hashmap_delay::HashMapDelay;
+use delay_map::HashMapDelay;
 use session::Session;
 
 // The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
@@ -263,12 +262,12 @@ impl ActiveRequests {
             }
         }
 
-        // Here we would do the the same but HashMapDelay does not have an `iter` method
-        assert_eq!(
-            self.active_requests_mapping._len(),
-            self.active_requests_nonce_mapping.len(),
-            "Structs should have the same number of elements."
-        );
+        for (address, request) in self.active_requests_mapping.iter() {
+            let nonce = request.packet.message_nonce();
+            if !self.active_requests_nonce_mapping.contains_key(nonce) {
+                panic!("Address {} maps to request with nonce {:?}, which does not exist in `active_requests_nonce_mapping`", address, nonce);
+            }
+        }
     }
 }
 
