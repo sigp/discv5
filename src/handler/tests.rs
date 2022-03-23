@@ -6,7 +6,7 @@ use crate::{
 };
 use enr::EnrBuilder;
 use std::{
-    net::{IpAddr, Ipv4Addr},
+    net::IpAddr,
     time::Duration,
 };
 use tokio::time::sleep;
