@@ -196,15 +196,13 @@ struct ActiveRequests {
     // requests with active requests sent.
     /// A mapping of all pending active raw requests message nonces to their NodeAddress.
     active_requests_nonce_mapping: HashMap<MessageNonce, NodeAddress>,
-    request_retries: u8,
 }
 
 impl ActiveRequests {
-    pub fn new(request_retries: u8, request_timeout: Duration) -> Self {
+    pub fn new(request_timeout: Duration) -> Self {
         ActiveRequests {
                 active_requests_mapping: HashMapDelay::new(request_timeout),
                 active_requests_nonce_mapping: HashMap::new(),
-                request_retries
         }
     }
 
@@ -213,10 +211,6 @@ impl ActiveRequests {
         self.active_requests_mapping.insert(node_address.clone(), request_call);
         self.active_requests_nonce_mapping
             .insert(nonce, node_address);
-    }
-
-    fn reinsert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
-        self.active_requests_mapping.insert(node_address, request_call);
     }
 
     pub fn get(&self, node_address: &NodeAddress) -> Option<&RequestCall> {
@@ -278,11 +272,9 @@ impl Stream for ActiveRequests {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.active_requests_mapping.poll_next_unpin(cx) {
             Poll::Ready(Some(Ok((node_address, request_call)))) => {
-                if request_call.retries >= self.request_retries {
-                    // Remove the associated nonce mapping.
-                    self.active_requests_nonce_mapping
-                        .remove(request_call.packet.message_nonce());
-                }
+                // Remove the associated nonce mapping.
+                self.active_requests_nonce_mapping
+                    .remove(request_call.packet.message_nonce());
                 Poll::Ready(Some(Ok((node_address, request_call))))
             },
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
@@ -390,7 +382,7 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests::new(config.request_retries, config.request_timeout),
+                    active_requests: ActiveRequests::new(config.request_timeout),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
@@ -540,7 +532,7 @@ impl Handler {
             self.send(node_address.clone(), request_call.packet.clone())
                 .await;
             request_call.retries += 1;
-            self.active_requests.reinsert(node_address, request_call);
+            self.active_requests.insert(node_address, request_call);
         }
     }
 

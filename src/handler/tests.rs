@@ -223,9 +223,8 @@ async fn multiple_messages() {
 
 #[tokio::test]
 async fn test_active_requests_insert() {
-    const RETRIES: u8 = 1;
     const EXPIRY: Duration = Duration::from_secs(5);
-    let mut active_requests = ActiveRequests::new(RETRIES, EXPIRY);
+    let mut active_requests = ActiveRequests::new(EXPIRY);
 
     // Create the test values needed
     let port = 5000;
