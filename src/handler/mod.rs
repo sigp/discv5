@@ -1139,9 +1139,6 @@ impl Handler {
         remove_session: bool,
     ) {
         // The Request has expired, remove the session.
-        // Remove the associated nonce mapping.
-        self.active_requests
-            .remove_by_nonce(request_call.packet.message_nonce());
         // Fail the current request
         let request_id = request_call.request.id;
         let _ = self
