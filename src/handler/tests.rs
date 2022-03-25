@@ -4,6 +4,8 @@ use crate::{
     rpc::{Request, Response},
     Discv5ConfigBuilder,
 };
+
+use active_requests::ActiveRequests;
 use enr::EnrBuilder;
 use std::{net::IpAddr, time::Duration};
 use tokio::time::sleep;
