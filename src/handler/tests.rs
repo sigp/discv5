@@ -4,6 +4,8 @@ use crate::{
     rpc::{Request, Response},
     Discv5ConfigBuilder,
 };
+
+use active_requests::ActiveRequests;
 use enr::EnrBuilder;
 use std::{net::IpAddr, time::Duration};
 use tokio::time::sleep;
@@ -216,4 +218,37 @@ async fn multiple_messages() {
             panic!("Test timed out");
         }
     }
+}
+
+#[tokio::test]
+async fn test_active_requests_insert() {
+    const EXPIRY: Duration = Duration::from_secs(5);
+    let mut active_requests = ActiveRequests::new(EXPIRY);
+
+    // Create the test values needed
+    let port = 5000;
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+    let key = CombinedKey::generate_secp256k1();
+
+    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let node_id = enr.node_id();
+
+    let contact = NodeContact::Enr(Box::new(enr));
+    let node_address = contact.node_address().unwrap();
+
+    let packet = Packet::new_random(&node_id).unwrap();
+    let request = Request {
+        id: RequestId(vec![1]),
+        body: RequestBody::Ping { enr_seq: 1 },
+    };
+    let initiating_session = true;
+    let request_call = RequestCall::new(contact, packet, request, initiating_session);
+
+    // insert the pair and verify the mapping remains in sync
+    let nonce = request_call.packet.message_nonce().clone();
+    active_requests.insert(node_address, request_call);
+    active_requests.check_invariant();
+    active_requests.remove_by_nonce(&nonce);
+    active_requests.check_invariant();
 }
