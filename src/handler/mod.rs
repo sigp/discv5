@@ -201,14 +201,15 @@ struct ActiveRequests {
 impl ActiveRequests {
     pub fn new(request_timeout: Duration) -> Self {
         ActiveRequests {
-                active_requests_mapping: HashMapDelay::new(request_timeout),
-                active_requests_nonce_mapping: HashMap::new(),
+            active_requests_mapping: HashMapDelay::new(request_timeout),
+            active_requests_nonce_mapping: HashMap::new(),
         }
     }
 
     pub fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
         let nonce = *request_call.packet.message_nonce();
-        self.active_requests_mapping.insert(node_address.clone(), request_call);
+        self.active_requests_mapping
+            .insert(node_address.clone(), request_call);
         self.active_requests_nonce_mapping
             .insert(nonce, node_address);
     }
@@ -219,13 +220,11 @@ impl ActiveRequests {
 
     pub fn remove_by_nonce(&mut self, nonce: &MessageNonce) -> Option<(NodeAddress, RequestCall)> {
         match self.active_requests_nonce_mapping.remove(nonce) {
-            Some(node_address) => {
-                match self.active_requests_mapping.remove(&node_address) {
-                    Some(request_call) => Some((node_address, request_call)),
-                    None => None
-                }
+            Some(node_address) => match self.active_requests_mapping.remove(&node_address) {
+                Some(request_call) => Some((node_address, request_call)),
+                None => None,
             },
-            None => None
+            None => None,
         }
     }
 
@@ -233,13 +232,15 @@ impl ActiveRequests {
         match self.active_requests_mapping.remove(node_address) {
             Some(request_call) => {
                 // Remove the associated nonce mapping.
-                match self.active_requests_nonce_mapping
-                    .remove(request_call.packet.message_nonce()) {
-                        Some(_) => Some(request_call),
-                        None => None
-                    }
-            },
-            None => None
+                match self
+                    .active_requests_nonce_mapping
+                    .remove(request_call.packet.message_nonce())
+                {
+                    Some(_) => Some(request_call),
+                    None => None,
+                }
+            }
+            None => None,
         }
     }
 
@@ -266,7 +267,6 @@ impl ActiveRequests {
     }
 }
 
-
 impl Stream for ActiveRequests {
     type Item = Result<(NodeAddress, RequestCall), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -276,7 +276,7 @@ impl Stream for ActiveRequests {
                 self.active_requests_nonce_mapping
                     .remove(request_call.packet.message_nonce());
                 Poll::Ready(Some(Ok((node_address, request_call))))
-            },
+            }
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -674,7 +674,7 @@ impl Handler {
                     return;
                 }
                 request_call
-            },
+            }
             None => {
                 trace!("Received a WHOAREYOU packet that references an unknown or expired request. Source {}, message_nonce {}", src_address, hex::encode(request_nonce));
                 return;

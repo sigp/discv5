@@ -5,10 +5,7 @@ use crate::{
     Discv5ConfigBuilder,
 };
 use enr::EnrBuilder;
-use std::{
-    net::IpAddr,
-    time::Duration,
-};
+use std::{net::IpAddr, time::Duration};
 use tokio::time::sleep;
 
 fn init() {
