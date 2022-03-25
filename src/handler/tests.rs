@@ -248,7 +248,7 @@ async fn test_active_requests_insert() {
 
     // insert the pair and verify the mapping remains in sync
     let nonce = request_call.packet.message_nonce().clone();
-    active_requests.insert(node_address.clone(), request_call);
+    active_requests.insert(node_address, request_call);
     active_requests.check_invariant();
     active_requests.remove_by_nonce(&nonce);
     active_requests.check_invariant();
