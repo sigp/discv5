@@ -584,7 +584,6 @@ impl Handler {
         let call = RequestCall::new(contact, packet.clone(), request, initiating_session);
         // let the filter know we are expecting a response
         self.add_expected_response(node_address.socket_addr);
-        let nonce = *packet.message_nonce();
         self.send(node_address.clone(), packet).await;
 
         self.active_requests.insert(node_address, call);
