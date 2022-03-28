@@ -38,7 +38,15 @@ impl ActiveRequests {
         match self.active_requests_nonce_mapping.remove(nonce) {
             Some(node_address) => match self.active_requests_mapping.remove(&node_address) {
                 Some(request_call) => Some((node_address, request_call)),
-                None => unreachable!("A matching request call mapping should always exist"),
+                None => {
+                    #[cfg(debug_assertions)]
+                    panic!("Panic on debug, a matching request call doesn't exist");
+                    #[cfg(not(debug_assertions))]
+                    {
+                        error!("A matching request call doesn't exist");
+                        return None;
+                    }
+                }
             },
             None => None,
         }
@@ -53,7 +61,15 @@ impl ActiveRequests {
                     .remove(request_call.packet.message_nonce())
                 {
                     Some(_) => Some(request_call),
-                    None => unreachable!("A matching nonce mapping should always exist"),
+                    None => {
+                        #[cfg(debug_assertions)]
+                        panic!("Panic on debug, a matching nonce mapping doesn't exist");
+                        #[cfg(not(debug_assertions))]
+                        {
+                            error!("A matching nonce mapping doesn't exist");
+                            return None;
+                        }
+                    }
                 }
             }
             None => None,
