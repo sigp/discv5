@@ -40,9 +40,10 @@ impl ActiveRequests {
                 Some(request_call) => Some((node_address, request_call)),
                 // If the matching request_call mapping doesn't exist, rollback remove_by_nonce op
                 None => {
-                    self.active_requests_nonce_mapping.insert(*nonce, node_address);
+                    self.active_requests_nonce_mapping
+                        .insert(*nonce, node_address);
                     None
-                },
+                }
             },
             None => None,
         }
@@ -59,9 +60,10 @@ impl ActiveRequests {
                     Some(_) => Some(request_call),
                     None => {
                         // If the matching nonce mapping doesn't exist, rollback remove op
-                        self.active_requests_mapping.insert(node_address.clone(), request_call);
+                        self.active_requests_mapping
+                            .insert(node_address.clone(), request_call);
                         None
-                    },
+                    }
                 }
             }
             None => None,
