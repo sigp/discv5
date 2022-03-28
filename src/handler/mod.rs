@@ -576,6 +576,8 @@ impl Handler {
                 // Verify that the src_addresses match
                 if node_address.socket_addr != src_address {
                     trace!("Received a WHOAREYOU packet for a message with a non-expected source. Source {}, expected_source: {} message_nonce {}", src_address, node_address.socket_addr, hex::encode(request_nonce));
+                    // Add the request back if src_address doesn't match
+                    self.active_requests.insert(node_address, request_call);
                     return;
                 }
                 request_call
