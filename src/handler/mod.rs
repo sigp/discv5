@@ -67,7 +67,7 @@ use session::Session;
 // seconds).
 const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
-/// Messages sent between the application layer and `Handler`.
+/// Messages sent from the application layer to `Handler`.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum HandlerIn {
