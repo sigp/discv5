@@ -85,7 +85,7 @@ pub enum HandlerIn {
     /// `NodeContact` we know of.
     Request(NodeContact, Box<Request>),
 
-    /// A Response to send to a particular noded to answer a HandlerOut::Request has been
+    /// A Response to send to a particular node to answer a HandlerOut::Request has been
     /// received from the application layer.
     ///
     /// The handler does not keep state of requests, so the application layer must send the
