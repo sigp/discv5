@@ -22,8 +22,10 @@
 //! function. This returns an exit channel, a sending and receiving channel respectively. If the
 //! exit channel is dropped or fired, the handler task gets shutdown.
 //!
-//! Requests to the handler can be made via the sending channel using a [`HandlerRequest`].
-//! Responses come by the receiving channel in the form of a [`HandlerResponse`].
+//! Requests from the application layer can be made via the receive channel using a [`HandlerIn`].
+//! Responses from the application layer can be made via the receive channel using a [`HandlerIn`].
+//! Messages from the a node on the network come by [`Socket`] and get the form of a [`HandlerOut`] 
+//! and can be forwarded to the application layer via the send channel.
 use crate::{
     config::Discv5Config,
     discv5::PERMIT_BAN_LIST,
@@ -212,9 +214,9 @@ pub struct Handler {
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
     /// The channel to receive messages from the application layer.
-    rx: mpsc::UnboundedReceiver<HandlerIn>,
+    service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
-    tx: mpsc::Sender<HandlerOut>,
+    service_send: mpsc::Sender<HandlerOut>,
     /// The listening socket to filter out any attempted requests to self.
     listen_socket: SocketAddr,
     /// The discovery v5 UDP socket tasks.
@@ -238,8 +240,8 @@ impl Handler {
     ) -> Result<HandlerReturn, std::io::Error> {
         let (exit_sender, exit) = oneshot::channel();
         // create the channels to send/receive messages from the application
-        let (inbound_send, inbound_channel) = mpsc::unbounded_channel();
-        let (outbound_channel, outbound_recv) = mpsc::channel(50);
+        let (handler_send, service_recv) = mpsc::unbounded_channel();
+        let (service_send, handler_recv) = mpsc::channel(50);
 
         // Creates a SocketConfig to pass to the underlying UDP socket tasks.
 
@@ -296,8 +298,8 @@ impl Handler {
                         Some(config.session_cache_capacity),
                     ),
                     active_challenges: LruTimeCache::new(config.request_timeout * 2, None),
-                    rx: inbound_channel,
-                    tx: outbound_channel,
+                    service_recv,
+                    service_send,
                     listen_socket,
                     socket,
                     exit,
@@ -306,7 +308,7 @@ impl Handler {
                 handler.start().await;
             }));
 
-        Ok((exit_sender, inbound_send, outbound_recv))
+        Ok((exit_sender, handler_send, handler_recv))
     }
 
     /// The main execution loop for the handler.
@@ -315,13 +317,13 @@ impl Handler {
 
         loop {
             tokio::select! {
-                Some(handler_request) = self.rx.recv() => {
+                Some(handler_request) = self.service_recv.recv() => {
                     match handler_request {
                         HandlerIn::Request(contact, request) => {
                            let id = request.id.clone();
                            if let Err(request_error) =  self.send_request(contact, *request).await {
                                // If the sending failed report to the application
-                               let _ = self.tx.send(HandlerOut::RequestFailed(id, request_error)).await;
+                               let _ = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await;
                            }
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
@@ -686,7 +688,7 @@ impl Handler {
                 self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
-                self.tx
+                self.service_send
                     .send(HandlerOut::Established(*enr, connection_direction))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
@@ -770,7 +772,7 @@ impl Handler {
                         // The session established here are from WHOAREYOU packets that we sent.
                         // This occurs when a node established a connection with us.
                         let _ = self
-                            .tx
+                            .service_send
                             .send(HandlerOut::Established(enr, ConnectionDirection::Incoming))
                             .await;
                         self.new_session(node_address.clone(), session);
@@ -873,7 +875,7 @@ impl Handler {
                     // Update the cache time and remove expired entries.
                     if self.active_challenges.peek(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-                        let _ = self.tx.send(HandlerOut::WhoAreYou(whoareyou_ref)).await;
+                        let _ = self.service_send.send(HandlerOut::WhoAreYou(whoareyou_ref)).await;
                     } else {
                         trace!("WHOAREYOU packet already sent: {}", node_address);
                     }
@@ -888,7 +890,7 @@ impl Handler {
                 Message::Request(request) => {
                     // report the request to the application
                     let _ = self
-                        .tx
+                        .service_send
                         .send(HandlerOut::Request(node_address, Box::new(request)))
                         .await;
                 }
@@ -908,7 +910,7 @@ impl Handler {
                                             // ENR. In this case we have attempted to establish the
                                             // connection, so this is an outgoing connection.
                                             let _ = self
-                                                .tx
+                                                .service_send
                                                 .send(HandlerOut::Established(
                                                     enr,
                                                     ConnectionDirection::Outgoing,
@@ -936,7 +938,7 @@ impl Handler {
             trace!("Requesting a WHOAREYOU packet to be sent.");
             // spawn a WHOAREYOU event to check for highest known ENR
             let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-            let _ = self.tx.send(HandlerOut::WhoAreYou(whoareyou_ref)).await;
+            let _ = self.service_send.send(HandlerOut::WhoAreYou(whoareyou_ref)).await;
         }
     }
 
@@ -970,7 +972,7 @@ impl Handler {
                             self.active_requests
                                 .insert(node_address.clone(), request_call);
                             let _ = self
-                                .tx
+                                .service_send
                                 .send(HandlerOut::Response(node_address, Box::new(response)))
                                 .await;
                             return;
@@ -982,7 +984,7 @@ impl Handler {
                         self.active_requests
                             .insert(node_address.clone(), request_call);
                         let _ = self
-                            .tx
+                            .service_send
                             .send(HandlerOut::Response(node_address, Box::new(response)))
                             .await;
                         return;
@@ -995,7 +997,7 @@ impl Handler {
 
             // The request matches report the response
             let _ = self
-                .tx
+                .service_send
                 .send(HandlerOut::Response(
                     node_address.clone(),
                     Box::new(response),
@@ -1041,7 +1043,7 @@ impl Handler {
         // Fail the current request
         let request_id = request_call.request.id;
         let _ = self
-            .tx
+            .service_send
             .send(HandlerOut::RequestFailed(request_id, error.clone()))
             .await;
 
@@ -1072,7 +1074,7 @@ impl Handler {
             .unwrap_or_else(Vec::new)
         {
             let _ = self
-                .tx
+                .service_send
                 .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
                 .await;
         }
