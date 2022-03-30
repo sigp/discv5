@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     error::{RequestError, ResponseError},
-    handler::{Handler, HandlerRequest, HandlerResponse},
+    handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
@@ -55,7 +55,7 @@ pub struct TalkRequest {
     node_address: NodeAddress,
     protocol: Vec<u8>,
     body: Vec<u8>,
-    sender: Option<mpsc::UnboundedSender<HandlerRequest>>,
+    sender: Option<mpsc::UnboundedSender<HandlerIn>>,
 }
 
 impl Drop for TalkRequest {
@@ -71,7 +71,7 @@ impl Drop for TalkRequest {
         };
 
         debug!("Sending empty TALK response to {}", self.node_address);
-        let _ = sender.send(HandlerRequest::Response(
+        let _ = sender.send(HandlerIn::Response(
             self.node_address.clone(),
             Box::new(response),
         ));
@@ -106,7 +106,7 @@ impl TalkRequest {
         self.sender
             .take()
             .unwrap()
-            .send(HandlerRequest::Response(
+            .send(HandlerIn::Response(
                 self.node_address.clone(),
                 Box::new(response),
             ))
@@ -169,10 +169,10 @@ pub struct Service {
     ip_votes: Option<IpVote>,
 
     /// The channel to send messages to the handler.
-    handler_send: mpsc::UnboundedSender<HandlerRequest>,
+    handler_send: mpsc::UnboundedSender<HandlerIn>,
 
     /// The channel to receive messages from the handler.
-    handler_recv: mpsc::Receiver<HandlerResponse>,
+    handler_recv: mpsc::Receiver<HandlerOut>,
 
     /// The exit channel to shutdown the handler.
     handler_exit: Option<oneshot::Sender<()>>,
@@ -337,26 +337,26 @@ impl Service {
                 }
                 Some(event) = self.handler_recv.recv() => {
                     match event {
-                        HandlerResponse::Established(enr, direction) => {
+                        HandlerOut::Established(enr, direction) => {
                             self.inject_session_established(enr,direction);
                         }
-                        HandlerResponse::Request(node_address, request) => {
+                        HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
                             }
-                        HandlerResponse::Response(node_address, response) => {
+                        HandlerOut::Response(node_address, response) => {
                                 self.handle_rpc_response(node_address, *response);
                             }
-                        HandlerResponse::WhoAreYou(whoareyou_ref) => {
+                        HandlerOut::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                let _ = self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, Some(known_enr)));
+                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr)));
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                let _ = self.handler_send.send(HandlerRequest::WhoAreYou(whoareyou_ref, None));
+                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None));
                             }
                         }
-                        HandlerResponse::RequestFailed(request_id, error) => {
+                        HandlerOut::RequestFailed(request_id, error) => {
                             if let RequestError::Timeout = error {
                                 debug!("RPC Request timed out. id: {}", request_id);
                             } else {
@@ -560,7 +560,7 @@ impl Service {
                 debug!("Sending PONG response to {}", node_address);
                 let _ = self
                     .handler_send
-                    .send(HandlerRequest::Response(node_address, Box::new(response)));
+                    .send(HandlerIn::Response(node_address, Box::new(response)));
             }
             RequestBody::Talk { protocol, request } => {
                 let req = TalkRequest {
@@ -954,7 +954,7 @@ impl Service {
             );
             let _ = self
                 .handler_send
-                .send(HandlerRequest::Response(node_address, Box::new(response)));
+                .send(HandlerIn::Response(node_address, Box::new(response)));
         } else {
             // build the NODES response
             let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
@@ -1009,7 +1009,7 @@ impl Service {
                     node_address,
                     response
                 );
-                let _ = self.handler_send.send(HandlerRequest::Response(
+                let _ = self.handler_send.send(HandlerIn::Response(
                     node_address.clone(),
                     Box::new(response),
                 ));
@@ -1052,7 +1052,7 @@ impl Service {
 
         let _ = self
             .handler_send
-            .send(HandlerRequest::Request(contact, Box::new(request)));
+            .send(HandlerIn::Request(contact, Box::new(request)));
     }
 
     fn send_event(&mut self, event: Discv5Event) {

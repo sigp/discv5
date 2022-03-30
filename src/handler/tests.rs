@@ -70,7 +70,7 @@ async fn simple_session_message() {
         body: RequestBody::Ping { enr_seq: 1 },
     });
 
-    let _ = sender_send.send(HandlerRequest::Request(
+    let _ = sender_send.send(HandlerIn::Request(
         receiver_enr.into(),
         send_message.clone(),
     ));
@@ -79,11 +79,11 @@ async fn simple_session_message() {
         loop {
             if let Some(message) = receiver_recv.recv().await {
                 match message {
-                    HandlerResponse::WhoAreYou(wru_ref) => {
-                        let _ = recv_send
-                            .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())));
+                    HandlerOut::WhoAreYou(wru_ref) => {
+                        let _ =
+                            recv_send.send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())));
                     }
-                    HandlerResponse::Request(_, request) => {
+                    HandlerOut::Request(_, request) => {
                         assert_eq!(request, send_message);
                         return;
                     }
@@ -147,7 +147,7 @@ async fn multiple_messages() {
     });
 
     // sender to send the first message then await for the session to be established
-    let _ = sender_handler.send(HandlerRequest::Request(
+    let _ = sender_handler.send(HandlerIn::Request(
         receiver_enr.clone().into(),
         send_message.clone(),
     ));
@@ -169,10 +169,10 @@ async fn multiple_messages() {
     let sender = async move {
         loop {
             match sender_handler_recv.recv().await {
-                Some(HandlerResponse::Established(_, _)) => {
+                Some(HandlerOut::Established(_, _)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
-                        let _ = sender_handler.send(HandlerRequest::Request(
+                        let _ = sender_handler.send(HandlerIn::Request(
                             receiver_enr.clone().into(),
                             send_message.clone(),
                         ));
@@ -186,18 +186,15 @@ async fn multiple_messages() {
     let receiver = async move {
         loop {
             match receiver_handler.recv().await {
-                Some(HandlerResponse::WhoAreYou(wru_ref)) => {
-                    let _ = recv_send
-                        .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())));
+                Some(HandlerOut::WhoAreYou(wru_ref)) => {
+                    let _ = recv_send.send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())));
                 }
-                Some(HandlerResponse::Request(addr, request)) => {
+                Some(HandlerOut::Request(addr, request)) => {
                     assert_eq!(request, recv_send_message);
                     message_count += 1;
                     // required to send a pong response to establish the session
-                    let _ = recv_send.send(HandlerRequest::Response(
-                        addr,
-                        Box::new(pong_response.clone()),
-                    ));
+                    let _ =
+                        recv_send.send(HandlerIn::Response(addr, Box::new(pong_response.clone())));
                     if message_count == messages_to_send {
                         return;
                     }

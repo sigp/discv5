@@ -67,14 +67,14 @@ use session::Session;
 // seconds).
 const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
-/// Events sent to the handler to be executed.
+/// Messages sent between the application layer and `Handler`.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
-pub enum HandlerRequest {
-    /// Sends a `Request` to a `NodeContact`. A `NodeContact` is an abstract type
-    /// that allows for either an ENR to be sent or a `Raw` type which represents an `SocketAddr`,
-    /// `PublicKey` and `NodeId`. This type can be created from MultiAddrs and MultiAddr strings
-    /// for some keys.
+pub enum HandlerIn {
+    /// A Request to send to a `NodeContact` has been received from the application layer. A
+    /// `NodeContact` is an abstract type that allows for either an ENR to be sent or a `Raw` type
+    /// which represents an `SocketAddr`, `PublicKey` and `NodeId`. This type can be created from
+    /// MultiAddrs and MultiAddr strings for some keys.
     ///
     /// This permits us to send messages to nodes without knowing their ENR. In this case their ENR
     /// will be requested during the handshake.
@@ -85,7 +85,8 @@ pub enum HandlerRequest {
     /// `NodeContact` we know of.
     Request(NodeContact, Box<Request>),
 
-    /// Send a response to a received request to a particular node.
+    /// A Response to send to a particular noded to answer a HandlerOut::Request has been
+    /// received from the application layer.
     ///
     /// The handler does not keep state of requests, so the application layer must send the
     /// response back to the `NodeAddress` from which the request was received.
@@ -98,19 +99,19 @@ pub enum HandlerRequest {
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 }
 
-/// The outputs provided by the `Handler`.
+/// Messages sent between a node on the network and `Handler`.
 #[derive(Debug, Clone, PartialEq)]
-pub enum HandlerResponse {
+pub enum HandlerOut {
     /// A session has been established with a node.
     ///
     /// A session is only considered established once we have received a signed ENR from the
     /// node and received messages from it's `SocketAddr` matching it's ENR fields.
     Established(Enr, ConnectionDirection),
 
-    /// A Request has been received.
+    /// A Request has been received from a node on the network.
     Request(NodeAddress, Box<Request>),
 
-    /// A Response has been received.
+    /// A Response has been received from a node on the network.
     Response(NodeAddress, Box<Response>),
 
     /// An unknown source has requested information from us. Return the reference with the known
@@ -210,10 +211,10 @@ pub struct Handler {
     active_challenges: LruTimeCache<NodeAddress, Challenge>,
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
-    /// The channel that receives requests from the application layer.
-    inbound_channel: mpsc::UnboundedReceiver<HandlerRequest>,
-    /// The channel to send responses to the application layer.
-    outbound_channel: mpsc::Sender<HandlerResponse>,
+    /// The inwards facing channel to send/receive message to/from the application layer.
+    in_channel: mpsc::UnboundedReceiver<HandlerIn>,
+    /// The outwards facing channel to send/recieve messages to/from a node on the network.
+    out_channel: mpsc::Sender<HandlerOut>,
     /// The listening socket to filter out any attempted requests to self.
     listen_socket: SocketAddr,
     /// The discovery v5 UDP socket tasks.
@@ -224,8 +225,8 @@ pub struct Handler {
 
 type HandlerReturn = (
     oneshot::Sender<()>,
-    mpsc::UnboundedSender<HandlerRequest>,
-    mpsc::Receiver<HandlerResponse>,
+    mpsc::UnboundedSender<HandlerIn>,
+    mpsc::Receiver<HandlerOut>,
 );
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
@@ -295,8 +296,8 @@ impl Handler {
                         Some(config.session_cache_capacity),
                     ),
                     active_challenges: LruTimeCache::new(config.request_timeout * 2, None),
-                    inbound_channel,
-                    outbound_channel,
+                    in_channel: inbound_channel,
+                    out_channel: outbound_channel,
                     listen_socket,
                     socket,
                     exit,
@@ -314,17 +315,17 @@ impl Handler {
 
         loop {
             tokio::select! {
-                Some(handler_request) = self.inbound_channel.recv() => {
+                Some(handler_request) = self.in_channel.recv() => {
                     match handler_request {
-                        HandlerRequest::Request(contact, request) => {
+                        HandlerIn::Request(contact, request) => {
                            let id = request.id.clone();
                            if let Err(request_error) =  self.send_request(contact, *request).await {
                                // If the sending failed report to the application
-                               let _ = self.outbound_channel.send(HandlerResponse::RequestFailed(id, request_error)).await;
+                               let _ = self.out_channel.send(HandlerOut::RequestFailed(id, request_error)).await;
                            }
                         }
-                        HandlerRequest::Response(dst, response) => self.send_response(dst, *response).await,
-                        HandlerRequest::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
+                        HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
+                        HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                     }
                 }
                 Some(inbound_packet) = self.socket.recv.recv() => {
@@ -685,8 +686,8 @@ impl Handler {
                 self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
-                self.outbound_channel
-                    .send(HandlerResponse::Established(*enr, connection_direction))
+                self.out_channel
+                    .send(HandlerOut::Established(*enr, connection_direction))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
@@ -769,11 +770,8 @@ impl Handler {
                         // The session established here are from WHOAREYOU packets that we sent.
                         // This occurs when a node established a connection with us.
                         let _ = self
-                            .outbound_channel
-                            .send(HandlerResponse::Established(
-                                enr,
-                                ConnectionDirection::Incoming,
-                            ))
+                            .out_channel
+                            .send(HandlerOut::Established(enr, ConnectionDirection::Incoming))
                             .await;
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
@@ -876,8 +874,8 @@ impl Handler {
                     if self.active_challenges.peek(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
                         let _ = self
-                            .outbound_channel
-                            .send(HandlerResponse::WhoAreYou(whoareyou_ref))
+                            .out_channel
+                            .send(HandlerOut::WhoAreYou(whoareyou_ref))
                             .await;
                     } else {
                         trace!("WHOAREYOU packet already sent: {}", node_address);
@@ -893,8 +891,8 @@ impl Handler {
                 Message::Request(request) => {
                     // report the request to the application
                     let _ = self
-                        .outbound_channel
-                        .send(HandlerResponse::Request(node_address, Box::new(request)))
+                        .out_channel
+                        .send(HandlerOut::Request(node_address, Box::new(request)))
                         .await;
                 }
                 Message::Response(response) => {
@@ -913,8 +911,8 @@ impl Handler {
                                             // ENR. In this case we have attempted to establish the
                                             // connection, so this is an outgoing connection.
                                             let _ = self
-                                                .outbound_channel
-                                                .send(HandlerResponse::Established(
+                                                .out_channel
+                                                .send(HandlerOut::Established(
                                                     enr,
                                                     ConnectionDirection::Outgoing,
                                                 ))
@@ -942,8 +940,8 @@ impl Handler {
             // spawn a WHOAREYOU event to check for highest known ENR
             let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
             let _ = self
-                .outbound_channel
-                .send(HandlerResponse::WhoAreYou(whoareyou_ref))
+                .out_channel
+                .send(HandlerOut::WhoAreYou(whoareyou_ref))
                 .await;
         }
     }
@@ -978,8 +976,8 @@ impl Handler {
                             self.active_requests
                                 .insert(node_address.clone(), request_call);
                             let _ = self
-                                .outbound_channel
-                                .send(HandlerResponse::Response(node_address, Box::new(response)))
+                                .out_channel
+                                .send(HandlerOut::Response(node_address, Box::new(response)))
                                 .await;
                             return;
                         }
@@ -990,8 +988,8 @@ impl Handler {
                         self.active_requests
                             .insert(node_address.clone(), request_call);
                         let _ = self
-                            .outbound_channel
-                            .send(HandlerResponse::Response(node_address, Box::new(response)))
+                            .out_channel
+                            .send(HandlerOut::Response(node_address, Box::new(response)))
                             .await;
                         return;
                     }
@@ -1003,8 +1001,8 @@ impl Handler {
 
             // The request matches report the response
             let _ = self
-                .outbound_channel
-                .send(HandlerResponse::Response(
+                .out_channel
+                .send(HandlerOut::Response(
                     node_address.clone(),
                     Box::new(response),
                 ))
@@ -1049,8 +1047,8 @@ impl Handler {
         // Fail the current request
         let request_id = request_call.request.id;
         let _ = self
-            .outbound_channel
-            .send(HandlerResponse::RequestFailed(request_id, error.clone()))
+            .out_channel
+            .send(HandlerOut::RequestFailed(request_id, error.clone()))
             .await;
 
         let node_address = request_call
@@ -1080,8 +1078,8 @@ impl Handler {
             .unwrap_or_else(Vec::new)
         {
             let _ = self
-                .outbound_channel
-                .send(HandlerResponse::RequestFailed(request.1.id, error.clone()))
+                .out_channel
+                .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
                 .await;
         }
     }
