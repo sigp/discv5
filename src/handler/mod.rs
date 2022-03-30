@@ -24,7 +24,7 @@
 //!
 //! Requests from the application layer can be made via the receive channel using a [`HandlerIn`].
 //! Responses from the application layer can be made via the receive channel using a [`HandlerIn`].
-//! Messages from the a node on the network come by [`Socket`] and get the form of a [`HandlerOut`] 
+//! Messages from the a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
     config::Discv5Config,
@@ -875,7 +875,10 @@ impl Handler {
                     // Update the cache time and remove expired entries.
                     if self.active_challenges.peek(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-                        let _ = self.service_send.send(HandlerOut::WhoAreYou(whoareyou_ref)).await;
+                        let _ = self
+                            .service_send
+                            .send(HandlerOut::WhoAreYou(whoareyou_ref))
+                            .await;
                     } else {
                         trace!("WHOAREYOU packet already sent: {}", node_address);
                     }
@@ -938,7 +941,10 @@ impl Handler {
             trace!("Requesting a WHOAREYOU packet to be sent.");
             // spawn a WHOAREYOU event to check for highest known ENR
             let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-            let _ = self.service_send.send(HandlerOut::WhoAreYou(whoareyou_ref)).await;
+            let _ = self
+                .service_send
+                .send(HandlerOut::WhoAreYou(whoareyou_ref))
+                .await;
         }
     }
 
