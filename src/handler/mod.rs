@@ -67,7 +67,7 @@ use session::Session;
 // seconds).
 const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
-/// Messages sent between the application layer and `Handler`.
+/// Messages sent from the application layer to `Handler`.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum HandlerIn {
@@ -85,7 +85,7 @@ pub enum HandlerIn {
     /// `NodeContact` we know of.
     Request(NodeContact, Box<Request>),
 
-    /// A Response to send to a particular noded to answer a HandlerOut::Request has been
+    /// A Response to send to a particular node to answer a HandlerOut::Request has been
     /// received from the application layer.
     ///
     /// The handler does not keep state of requests, so the application layer must send the
