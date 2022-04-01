@@ -18,6 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
+    advertisements::Ads,
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -29,7 +30,9 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr,
+    rpc,
+    ticket::topic_hash,
+    Discv5Config, Discv5Event, Enr,
 };
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
@@ -37,13 +40,18 @@ use fnv::FnvHashMap;
 use futures::prelude::*;
 use parking_lot::RwLock;
 use rpc::*;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Instant};
+use std::{
+    collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Duration, time::Instant,
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
 mod ip_vote;
 mod query_info;
 mod test;
+
+pub(crate) const MAX_TABLE_SIZE: usize = 5000;
+pub(crate) const MAX_QUEUE_SIZE: usize = 100;
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -188,6 +196,9 @@ pub struct Service {
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
+
+    /// Ads
+    ads: Ads,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -283,6 +294,7 @@ impl Service {
                     peers_to_ping: HashSetDelay::new(config.ping_interval),
                     discv5_recv,
                     event_stream: None,
+                    ads: Ads::new(),
                     exit,
                     config: config.clone(),
                 };
@@ -414,6 +426,7 @@ impl Service {
                         self.send_ping(enr);
                     }
                 }
+                _ = self.ads.next() => {}
             }
         }
     }
@@ -573,11 +586,17 @@ impl Service {
 
                 self.send_event(Discv5Event::TalkRequest(req));
             }
-            RequestBody::RegisterTopic { .. } => {
+            RequestBody::RegisterTopic { topic, enr, ticket } => {
+                // todo: temp use of unwrap as hash function not properly impl
+                let topic_hash = topic_hash(topic).unwrap();
+                // inspect ticket
+                let ticket_wait_time = self.ads.ticket_wait_time(topic_hash);
+                // send ticket, if has previous valid ticket Duration + 10 secs?
+                // do regconfirmation checks
                 debug!("Received RegisterTopic request which is unimplemented");
             }
-            RequestBody::TopicQuery { .. } => {
-                debug!("Received TopicQuery request which is unimplemented");
+            RequestBody::TopicQuery { topic } => {
+                self.send_topic_query_response(node_address, id, topic);
             }
         }
     }
@@ -898,6 +917,15 @@ impl Service {
             callback: Some(CallbackResponse::Talk(callback)),
         };
         self.send_rpc_request(active_request);
+    }
+
+    fn send_topic_query_response(
+        &mut self,
+        node_address: NodeAddress,
+        rpc_id: RequestId,
+        topic: [u8; 32],
+    ) {
+        unimplemented!()
     }
 
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up

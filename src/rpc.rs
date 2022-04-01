@@ -92,7 +92,7 @@ pub enum RequestBody {
     /// A TOPICQUERY request.
     TopicQuery {
         /// The hashed topic we want NODES response(s) for.
-        topic: TopicHash 
+        topic: TopicHash,
     },
 }
 
@@ -120,16 +120,16 @@ pub enum ResponseBody {
         response: Vec<u8>,
     },
     /// The TICKET response.
-    Ticket { 
+    Ticket {
         /// The response to a REGTOPIC request.
-        ticket: Vec<u8>, 
+        ticket: Vec<u8>,
         /// The time in seconds to wait before attempting to register again.
-        wait_time: u64 
+        wait_time: u64,
     },
     /// The REGCONFIRMATION response.
-    RegisterConfirmation { 
+    RegisterConfirmation {
         /// The topic of a successful REGTOPIC request.
-        topic: Vec<u8> 
+        topic: Vec<u8>,
     },
 }
 

@@ -97,6 +97,7 @@ async fn build_service(
         peers_to_ping: HashSetDelay::new(config.ping_interval),
         discv5_recv,
         event_stream: None,
+        ads: Ads::new(),
         exit,
         config,
     }
