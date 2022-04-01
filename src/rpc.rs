@@ -73,7 +73,7 @@ pub enum RequestBody {
         /// The distance(s) of peers we expect to be returned in the response.
         distances: Vec<u64>,
     },
-    /// A Talk request.
+    /// A TALKREQ request.
     Talk {
         /// The protocol requesting.
         protocol: Vec<u8>,
@@ -114,9 +114,9 @@ pub enum ResponseBody {
         /// A list of ENR's returned by the responder.
         nodes: Vec<Enr<CombinedKey>>,
     },
-    /// The TALK response.
+    /// The TALKRESP response.
     Talk {
-        /// The response for the talk.
+        /// The response for the TALKREQ request.
         response: Vec<u8>,
     },
     /// The TICKET response.
@@ -428,10 +428,10 @@ impl Message {
                 })
             }
             2 => {
-                // PingResponse
+                // PongResponse
                 if list_len != 4 {
                     debug!(
-                        "Ping Response has an invalid RLP list length. Expected 4, found {}",
+                        "Pong Response has an invalid RLP list length. Expected 4, found {}",
                         list_len
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
@@ -455,7 +455,7 @@ impl Message {
                         }
                     }
                     _ => {
-                        debug!("Ping Response has incorrect byte length for IP");
+                        debug!("Pong Response has incorrect byte length for IP");
                         return Err(DecoderError::RlpIncorrectListLen);
                     }
                 };
@@ -530,7 +530,7 @@ impl Message {
                 })
             }
             5 => {
-                // Talk Request
+                // TalkRequest
                 if list_len != 3 {
                     debug!(
                         "Talk Request has an invalid RLP list length. Expected 3, found {}",
@@ -546,7 +546,7 @@ impl Message {
                 })
             }
             6 => {
-                // Talk Response
+                // TalkResponse
                 if list_len != 2 {
                     debug!(
                         "Talk Response has an invalid RLP list length. Expected 2, found {}",
