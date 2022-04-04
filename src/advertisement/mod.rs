@@ -53,10 +53,10 @@ impl Ads {
                         }
                         None => {
                             #[cfg(debug_assertions)]
-                            panic!("Panic on debug, topic was not removed when empty");
+                            panic!("Panic on debug,topic key should be deleted if no ad nodes queued for it");
                             #[cfg(not(debug_assertions))]
                             {
-                                error!("Topic was not removed when empty");
+                                error!("Topic key should be deleted if no ad nodes queued for it");
                                 return Poll::Ready(Err("No nodes for topic".into()));
                             }
                         }
