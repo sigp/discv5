@@ -349,7 +349,7 @@ mod tests {
 
         let (key1, key2, pk) = generate_session_keys(
             &node1_enr.node_id(),
-            &node2_enr.clone().into(),
+            &node2_enr.clone().try_into().unwrap(),
             &challenge_data,
         )
         .unwrap();

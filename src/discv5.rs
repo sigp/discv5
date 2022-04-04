@@ -25,6 +25,7 @@ use crate::{
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
+    convert::TryInto,
     future::Future,
     net::SocketAddr,
     sync::Arc,
@@ -315,7 +316,7 @@ impl Discv5 {
         PERMIT_BAN_LIST.write().ban_nodes.remove(node_id);
     }
 
-    /// Permits a node, allowing the node to bypass the packet filter.  
+    /// Permits a node, allowing the node to bypass the packet filter.
     pub fn permit_node(&self, node_id: &NodeId) {
         PERMIT_BAN_LIST.write().permit_nodes.insert(*node_id);
     }
@@ -336,7 +337,7 @@ impl Discv5 {
         PERMIT_BAN_LIST.write().ban_ips.remove(ip);
     }
 
-    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.  
+    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.
     pub fn permit_ip(&self, ip: std::net::IpAddr) {
         PERMIT_BAN_LIST.write().permit_ips.insert(ip);
     }
@@ -454,15 +455,17 @@ impl Discv5 {
         protocol: Vec<u8>,
         request: Vec<u8>,
     ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static {
-        // convert the ENR to a node_contact.
-        let node_contact = NodeContact::from(enr);
-
         // the service will verify if this node is contactable, we just send it and
         // await a response.
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
 
         async move {
+            // convert the ENR to a node_contact.
+            let node_contact: NodeContact = match enr.try_into() {
+                Ok(node_contact) => node_contact,
+                Err(e) => return Err(RequestError::InvalidEnr(e.into())),
+            };
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);

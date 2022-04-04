@@ -9,70 +9,54 @@ use libp2p_core::{identity::PublicKey, multiaddr::Protocol, multihash, Multiaddr
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
 #[derive(Debug, Clone, PartialEq)]
-pub enum NodeContact {
-    /// We know the ENR of the node we are contacting.
-    Enr(Box<Enr>),
-    /// We don't have an ENR, but have enough information to start a handshake.
-    ///
-    /// The handshake will request the ENR at the first opportunity.
-    /// The public key can be derived from multiaddr's whose keys can be inlined. The `TryFrom`
-    /// implementation for `String` and `MultiAddr`. This is gated behind the `libp2p` feature.
-    Raw {
-        /// An ENR compatible public key, required for handshaking with peers.
-        public_key: Box<CombinedPublicKey>,
-        /// The socket address and `NodeId` of the peer to connect to.
-        node_address: Box<NodeAddress>,
-    },
+pub struct NodeContact {
+    /// An ENR compatible public key, required for handshaking with peers.
+    public_key: Box<CombinedPublicKey>,
+    /// The socket address and `NodeId` of the peer to connect to.
+    /// TODO: why do we need the node_id if we have the key?
+    node_address: Box<NodeAddress>,
+    /// Enr of the node if known.
+    /// TODO: reduce size somehow?
+    enr: Option<Enr>,
 }
 
 impl NodeContact {
     pub fn node_id(&self) -> NodeId {
-        match self {
-            NodeContact::Enr(enr) => enr.node_id(),
-            NodeContact::Raw { node_address, .. } => node_address.node_id,
-        }
-    }
-
-    pub fn seq_no(&self) -> Option<u64> {
-        match self {
-            NodeContact::Enr(enr) => Some(enr.seq()),
-            _ => None,
-        }
+        self.node_address.node_id
     }
 
     pub fn public_key(&self) -> CombinedPublicKey {
-        match self {
-            NodeContact::Enr(ref enr) => enr.public_key(),
-            NodeContact::Raw { public_key, .. } => *public_key.clone(),
-        }
+        *self.public_key.clone()
     }
 
     pub fn is_enr(&self) -> bool {
-        matches!(self, NodeContact::Enr(_))
+        self.enr.is_some()
     }
 
-    pub fn udp_socket(&self) -> Result<SocketAddr, &'static str> {
-        match self {
-            NodeContact::Enr(enr) => enr
-                .udp_socket()
-                .ok_or("ENR does not contain an IP and UDP port"),
-            NodeContact::Raw { node_address, .. } => Ok(node_address.socket_addr),
-        }
+    pub fn udp_socket(&self) -> SocketAddr {
+        self.node_address.socket_addr
     }
 
-    pub fn node_address(&self) -> Result<NodeAddress, &'static str> {
-        let socket_addr = self.udp_socket()?;
-        let node_id = self.node_id();
-        Ok(NodeAddress {
-            socket_addr,
-            node_id,
-        })
+    pub fn node_address(&self) -> NodeAddress {
+        *self.node_address.clone()
+    }
+
+    pub fn enr(&self) -> Option<Enr> {
+        self.enr.as_ref().cloned()
     }
 }
 
-impl From<Enr> for NodeContact {
-    fn from(enr: Enr) -> Self {
-        NodeContact::Enr(Box::new(enr))
+impl std::convert::TryFrom<Enr> for NodeContact {
+    type Error = &'static str;
+
+    fn try_from(enr: Enr) -> Result<Self, Self::Error> {
+        let node_address = NodeAddress::from_enr(&enr)?;
+        let public_key = enr.public_key();
+        Ok(NodeContact {
+            public_key: Box::new(public_key),
+            node_address: Box::new(node_address),
+            enr: Some(enr),
+        })
     }
 }
 
@@ -124,24 +108,21 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
                 _ => return Err("The key type is not supported"),
             };
 
-        Ok(NodeContact::Raw {
+        Ok(NodeContact {
             public_key: Box::new(public_key.clone()),
             node_address: Box::new(NodeAddress {
                 socket_addr: SocketAddr::new(ip_addr, udp_port),
                 node_id: public_key.into(),
             }),
+            enr: None,
         })
     }
 }
 
 impl std::fmt::Display for NodeContact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NodeContact::Enr(enr) => {
-                write!(f, "Node: {}, addr: {:?}", enr.node_id(), enr.udp_socket())
-            }
-            NodeContact::Raw { node_address, .. } => write!(f, "{}", node_address),
-        }
+        // TODO: maybe the enr too?
+        write!(f, "addr: {:?}", self.node_address())
     }
 }
 
@@ -180,6 +161,15 @@ impl NodeAddress {
             socket_addr,
             node_id,
         }
+    }
+
+    pub fn from_enr(enr: &Enr) -> Result<Self, &'static str> {
+        let socket_addr = enr.udp_socket().ok_or("Enr is not contactable")?;
+        let node_id = enr.node_id();
+        Ok(NodeAddress {
+            socket_addr,
+            node_id,
+        })
     }
 }
 

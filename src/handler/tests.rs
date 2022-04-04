@@ -7,7 +7,7 @@ use crate::{
 
 use active_requests::ActiveRequests;
 use enr::EnrBuilder;
-use std::{net::IpAddr, time::Duration};
+use std::{convert::TryInto, net::IpAddr, time::Duration};
 use tokio::time::sleep;
 
 fn init() {
@@ -71,7 +71,7 @@ async fn simple_session_message() {
     });
 
     let _ = sender_send.send(HandlerIn::Request(
-        receiver_enr.into(),
+        receiver_enr.try_into().unwrap(),
         send_message.clone(),
     ));
 
@@ -122,6 +122,7 @@ async fn multiple_messages() {
         .udp(receiver_port)
         .build(&key2)
         .unwrap();
+    let receiver_contact: NodeContact = receiver_enr.clone().try_into().unwrap();
 
     let (_exit_send, sender_handler, mut sender_handler_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
@@ -148,7 +149,7 @@ async fn multiple_messages() {
 
     // sender to send the first message then await for the session to be established
     let _ = sender_handler.send(HandlerIn::Request(
-        receiver_enr.clone().into(),
+        receiver_contact.clone(),
         send_message.clone(),
     ));
 
@@ -173,7 +174,7 @@ async fn multiple_messages() {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
                         let _ = sender_handler.send(HandlerIn::Request(
-                            receiver_enr.clone().into(),
+                            receiver_contact.clone(),
                             send_message.clone(),
                         ));
                     }
@@ -231,8 +232,8 @@ async fn test_active_requests_insert() {
     let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
     let node_id = enr.node_id();
 
-    let contact = NodeContact::Enr(Box::new(enr));
-    let node_address = contact.node_address().unwrap();
+    let contact = NodeContact::try_from(enr).unwrap();
+    let node_address = contact.node_address();
 
     let packet = Packet::new_random(&node_id).unwrap();
     let request = Request {

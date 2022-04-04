@@ -37,7 +37,9 @@ use fnv::FnvHashMap;
 use futures::prelude::*;
 use parking_lot::RwLock;
 use rpc::*;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Instant};
+use std::{
+    collections::HashMap, convert::TryInto, net::SocketAddr, sync::Arc, task::Poll, time::Instant,
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
@@ -531,13 +533,13 @@ impl Service {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            to_request_enr = Some(enr.into());
+                            to_request_enr = enr.try_into().ok();
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            to_request_enr = Some(enr.into());
+                            to_request_enr = enr.try_into().ok();
                         }
                     }
                     // don't know of the ENR, request the update
@@ -594,11 +596,10 @@ impl Service {
             );
 
             // Check that the responder matches the expected request
-            if let Ok(request_node_address) = active_request.contact.node_address() {
-                if request_node_address != node_address {
-                    warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", request_node_address, node_address, id);
-                    return;
-                }
+            let request_node_address = active_request.contact.node_address();
+            if request_node_address != node_address {
+                warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", request_node_address, node_address, id);
+                return;
             }
 
             let node_id = active_request.contact.node_id();
@@ -664,13 +665,9 @@ impl Service {
                             );
                         }
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST.write().ban(
-                            active_request
-                                .contact
-                                .node_address()
-                                .expect("Sanitized request"),
-                            ban_timeout,
-                        );
+                        PERMIT_BAN_LIST
+                            .write()
+                            .ban(active_request.contact.node_address(), ban_timeout);
                         nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
                         let before_len = nodes.len();
@@ -688,13 +685,9 @@ impl Service {
                                 active_request.contact
                             );
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(
-                                active_request
-                                    .contact
-                                    .node_address()
-                                    .expect("Sanitized request"),
-                                ban_timeout,
-                            );
+                            PERMIT_BAN_LIST
+                                .write()
+                                .ban(active_request.contact.node_address(), ban_timeout);
                         }
                     }
 
@@ -834,13 +827,15 @@ impl Service {
         let request_body = RequestBody::Ping {
             enr_seq: self.local_enr.read().seq(),
         };
-        let active_request = ActiveRequest {
-            contact: enr.into(),
-            request_body,
-            query_id: None,
-            callback: None,
-        };
-        self.send_rpc_request(active_request);
+        if let Ok(contact) = enr.try_into() {
+            let active_request = ActiveRequest {
+                contact,
+                request_body,
+                query_id: None,
+                callback: None,
+            };
+            self.send_rpc_request(active_request);
+        }
     }
 
     /// Ping all peers that are connected in the routing table.
@@ -1026,13 +1021,17 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
-            let active_request = ActiveRequest {
-                contact: enr.into(),
-                request_body,
-                query_id: Some(query_id),
-                callback: None,
-            };
-            self.send_rpc_request(active_request);
+            if let Ok(contact) = enr.try_into() {
+                let active_request = ActiveRequest {
+                    contact,
+                    request_body,
+                    query_id: Some(query_id),
+                    callback: None,
+                };
+                self.send_rpc_request(active_request);
+            } else {
+                todo!()
+            }
         } else {
             error!("Query {} requested an unknown ENR", *query_id);
         }

@@ -450,9 +450,7 @@ impl Handler {
         contact: NodeContact,
         request: Request,
     ) -> Result<(), RequestError> {
-        let node_address = contact
-            .node_address()
-            .map_err(|e| RequestError::InvalidEnr(e.into()))?;
+        let node_address = contact.node_address();
 
         if node_address.socket_addr == self.listen_socket {
             debug!("Filtered request to self");
@@ -659,12 +657,9 @@ impl Handler {
         //
         // All sent requests must have an associated node_id. Therefore the following
         // must not panic.
-        let node_address = request_call
-            .contact
-            .node_address()
-            .expect("All sent requests must have a node address");
-        match request_call.contact.clone() {
-            NodeContact::Enr(enr) => {
+        let node_address = request_call.contact.node_address();
+        match request_call.contact.enr().clone() {
+            Some(enr) => {
                 // NOTE: Here we decide if the session is outgoing or ingoing. The condition for an
                 // outgoing session is that we originally sent a RANDOM packet (signifying we did
                 // not have a session for a request) and the packet is not a PING (we are not
@@ -689,21 +684,18 @@ impl Handler {
 
                 // Notify the application that the session has been established
                 self.service_send
-                    .send(HandlerOut::Established(*enr, connection_direction))
+                    .send(HandlerOut::Established(enr, connection_direction))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
-            NodeContact::Raw { .. } => {
+            None => {
                 // Don't know the ENR. Establish the session, but request an ENR also
 
                 // Send the Auth response
                 let contact = request_call.contact.clone();
                 trace!(
                     "Sending Authentication response to node: {}",
-                    request_call
-                        .contact
-                        .node_address()
-                        .expect("Sanitized contact")
+                    request_call.contact.node_address()
                 );
                 request_call.packet = auth_packet.clone();
                 request_call.handshake_sent = true;
@@ -1019,10 +1011,7 @@ impl Handler {
 
     /// Inserts a request and associated auth_tag mapping.
     fn insert_active_request(&mut self, request_call: RequestCall) {
-        let node_address = request_call
-            .contact
-            .node_address()
-            .expect("Can only add requests with a valid destination");
+        let node_address = request_call.contact.node_address();
         // adds the mapping of message nonce to node address
         self.active_requests.insert(node_address, request_call);
     }
@@ -1053,10 +1042,7 @@ impl Handler {
             .send(HandlerOut::RequestFailed(request_id, error.clone()))
             .await;
 
-        let node_address = request_call
-            .contact
-            .node_address()
-            .expect("All Request calls have been sanitized");
+        let node_address = request_call.contact.node_address();
         self.fail_session(&node_address, error, remove_session)
             .await;
     }
