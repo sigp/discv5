@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    advertisements::Ads,
+    advertisement::{Ads, ticket::topic_hash},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -31,7 +31,6 @@ use crate::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
     rpc,
-    ticket::topic_hash,
     Discv5Config, Discv5Event, Enr,
 };
 use delay_map::HashSetDelay;
@@ -49,9 +48,6 @@ use tracing::{debug, error, info, trace, warn};
 mod ip_vote;
 mod query_info;
 mod test;
-
-pub(crate) const MAX_TABLE_SIZE: usize = 5000;
-pub(crate) const MAX_QUEUE_SIZE: usize = 100;
 
 /// Request type for Protocols using `TalkReq` message.
 ///

@@ -102,7 +102,7 @@
 //! [`Service`]: service/struct.Service.html
 //! [`Session`]: session/struct.Session.html
 
-mod advertisements;
+mod advertisement;
 mod config;
 mod discv5;
 mod error;
@@ -118,7 +118,6 @@ mod query_pool;
 pub mod rpc;
 pub mod service;
 pub mod socket;
-pub mod ticket;
 
 #[macro_use]
 extern crate lazy_static;
