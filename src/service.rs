@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    advertisement::{Ads, ticket::topic_hash},
+    advertisement::{ticket::topic_hash, Ads},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -30,8 +30,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc,
-    Discv5Config, Discv5Event, Enr,
+    rpc, Discv5Config, Discv5Event, Enr,
 };
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
@@ -531,7 +530,7 @@ impl Service {
         let id = req.id;
         match req.body {
             RequestBody::FindNode { distances } => {
-                self.send_nodes_response(node_address, id, distances);
+                self.send_find_nodes_response(node_address, id, distances);
             }
             RequestBody::Ping { enr_seq } => {
                 // check if we need to update the known ENR
@@ -921,12 +920,19 @@ impl Service {
         rpc_id: RequestId,
         topic: [u8; 32],
     ) {
-        unimplemented!()
+        let nodes_to_send = match self.ads.get_ad_nodes(topic) {
+            Ok(node_records) => node_records,
+            Err(e) => {
+                debug!("{}", e);
+                Vec::new()
+            }
+        };
+        self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY");
     }
 
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
     /// into multiple responses to ensure the response stays below the maximum packet size.
-    fn send_nodes_response(
+    fn send_find_nodes_response(
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
@@ -962,7 +968,16 @@ impl Service {
                 nodes_to_send.push(node);
             }
         }
+        self.send_nodes_response(nodes_to_send, node_address, rpc_id, "FINDNODE");
+    }
 
+    fn send_nodes_response(
+        &self,
+        nodes_to_send: Vec<Enr>,
+        node_address: NodeAddress,
+        rpc_id: RequestId,
+        query: &str,
+    ) {
         // if there are no nodes, send an empty response
         if nodes_to_send.is_empty() {
             let response = Response {
@@ -973,7 +988,8 @@ impl Service {
                 },
             };
             trace!(
-                "Sending empty FINDNODES response to: {}",
+                "Sending empty {} response to: {}",
+                query,
                 node_address.node_id
             );
             let _ = self
@@ -1029,7 +1045,8 @@ impl Service {
 
             for response in responses {
                 trace!(
-                    "Sending FINDNODES response to: {}. Response: {} ",
+                    "Sending {} response to: {}. Response: {} ",
+                    query,
                     node_address,
                     response
                 );

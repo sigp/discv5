@@ -1,6 +1,6 @@
 use super::*;
 use core::time::Duration;
-use enr::NodeId;
+use enr::{CombinedKey, Enr};
 use futures::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
@@ -16,7 +16,7 @@ pub const MAX_ADS: i32 = 5000;
 type Topic = [u8; 32];
 pub struct Ads {
     expirations: VecDeque<(Pin<Box<Sleep>>, Topic)>,
-    ads: HashMap<Topic, VecDeque<(NodeId, Instant)>>,
+    ads: HashMap<Topic, VecDeque<(Enr<CombinedKey>, Instant)>>,
     total_ads: i32,
     ad_lifetime: Duration,
 }
@@ -28,6 +28,13 @@ impl Ads {
             ads: HashMap::new(),
             total_ads: 0,
             ad_lifetime,
+        }
+    }
+
+    pub fn get_ad_nodes(&self, topic: Topic) -> Result<Vec<Enr<CombinedKey>>, String> {
+        match self.ads.get(&topic) {
+            Some(topic_ads) => Ok(topic_ads.into_iter().map(|(enr, _)| enr.clone()).collect()),
+            None => Err("No ads for this topic".into()),
         }
     }
 
@@ -76,13 +83,13 @@ impl Ads {
         }
     }
 
-    pub fn insert(&mut self, node_id: NodeId, topic: Topic) {
+    pub fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) {
         let now = Instant::now();
         if let Some(nodes) = self.ads.get_mut(&topic) {
-            nodes.push_back((node_id, now));
+            nodes.push_back((node_record, now));
         } else {
             let mut nodes = VecDeque::new();
-            nodes.push_back((node_id, now));
+            nodes.push_back((node_record, now));
             self.ads.insert(topic, nodes);
         }
         self.expirations
@@ -114,19 +121,19 @@ impl Ads {
 
 impl Stream for Ads {
     // type returned can be unit type but for testing easier to get values, worth the overhead to keep?
-    type Item = Result<((NodeId, Instant), Topic), String>;
+    type Item = Result<((Enr<CombinedKey>, Instant), Topic), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.next_to_expire() {
             Ok((fut, topic)) => match fut.poll_unpin(cx) {
                 Poll::Ready(()) => match self.ads.get_mut(&topic) {
                     Some(topic_ads) => {
                         match topic_ads.pop_front() {
-                            Some((node_id, insert_time)) => {
+                            Some((node_record, insert_time)) => {
                                 if topic_ads.is_empty() {
                                     self.ads.remove(&topic);
                                 }
                                 self.total_ads -= 1;
-                                Poll::Ready(Some(Ok(((node_id, insert_time), topic))))
+                                Poll::Ready(Some(Ok(((node_record, insert_time), topic))))
                             }
                             None => {
                                 #[cfg(debug_assertions)]
