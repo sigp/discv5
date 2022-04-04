@@ -9,6 +9,7 @@ use tokio::time::{sleep, Instant, Sleep};
 use tracing::debug;
 
 pub mod ticket;
+mod test;
 
 pub const MAX_ADS_PER_TOPIC: usize = 100;
 pub const MAX_ADS: i32 = 5000;
