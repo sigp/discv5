@@ -137,10 +137,10 @@ impl Stream for Ads {
                             }
                             None => {
                                 #[cfg(debug_assertions)]
-                                panic!("Panic on debug, mismatched mapping between expiration queue and entry queue");
+                                panic!("Panic on debug, topic key should be deleted if no ad nodes queued for it");
                                 #[cfg(not(debug_assertions))]
                                 {
-                                    error!("Mismatched mapping between expiration queue and entry queue");
+                                    error!("Topic key should be deleted if no ad nodes queued for it");
                                     return Poll::Ready(Err("No nodes for topic".into()));
                                 }
                             }

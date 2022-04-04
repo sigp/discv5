@@ -340,6 +340,7 @@ impl Service {
                                 error!("Failed to return the event stream channel");
                             }
                         }
+                        //ServiceRequest::TopicQuery() => {}
                     }
                 }
                 Some(event) = self.handler_recv.recv() => {
@@ -582,8 +583,13 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                // todo: temp use of unwrap as hash function not properly impl
-                let topic_hash = topic_hash(topic).unwrap();
+                let topic_hash = match topic_hash(topic) {
+                    Ok(hash) => hash,
+                    Err(e) => {
+                        debug!("{}", e);
+                        [0;32]
+                    }
+                };
                 // inspect ticket
                 let ticket_wait_time = self.ads.ticket_wait_time(topic_hash);
                 // send ticket, if has previous valid ticket Duration + 10 secs?
