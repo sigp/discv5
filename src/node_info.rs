@@ -121,7 +121,6 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
 
 impl std::fmt::Display for NodeContact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO: maybe the enr too?
         write!(f, "addr: {:?}", self.node_address())
     }
 }
