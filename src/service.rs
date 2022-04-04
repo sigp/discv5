@@ -294,7 +294,7 @@ impl Service {
                     peers_to_ping: HashSetDelay::new(config.ping_interval),
                     discv5_recv,
                     event_stream: None,
-                    ads: Ads::new(),
+                    ads: Ads::new(Duration::from_secs(60 * 15)),
                     exit,
                     config: config.clone(),
                 };

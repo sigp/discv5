@@ -10,21 +10,22 @@ use tracing::debug;
 
 pub const MAX_ADS_PER_TOPIC: usize = 100;
 pub const MAX_ADS: i32 = 5000;
-pub const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
 
 type Topic = [u8; 32];
 pub struct Ads {
     expirations: VecDeque<(Pin<Box<Sleep>>, Topic)>,
     ads: HashMap<Topic, VecDeque<(NodeId, Instant)>>,
     total_ads: i32,
+    ad_lifetime: Duration,
 }
 
 impl Ads {
-    pub fn new() -> Self {
+    pub fn new(ad_lifetime: Duration) -> Self {
         Ads {
             expirations: VecDeque::new(),
             ads: HashMap::new(),
             total_ads: 0,
+            ad_lifetime,
         }
     }
 
@@ -38,7 +39,7 @@ impl Ads {
                     match nodes.get(0) {
                         Some((_, insert_time)) => {
                             let elapsed_time = now.saturating_duration_since(*insert_time);
-                            AD_LIFETIME.saturating_sub(elapsed_time)
+                            self.ad_lifetime.saturating_sub(elapsed_time)
                         }
                         None => {
                             #[cfg(debug_assertions)]
@@ -83,11 +84,11 @@ impl Ads {
             self.ads.insert(topic, nodes);
         }
         self.expirations
-            .push_back((Box::pin(sleep(Duration::from_secs(60 * 15))), topic));
+            .push_back((Box::pin(sleep(self.ad_lifetime)), topic));
         self.total_ads += 1;
     }
 
-    // Should first be be called after checking if list is empty in 
+    // Should first be be called after checking if list is empty in
     fn next_to_expire(&mut self) -> Result<(&mut Pin<Box<Sleep>>, Topic), String> {
         if self.expirations.is_empty() {
             return Err("No ads in 'table'".into());
@@ -114,10 +115,10 @@ impl Stream for Ads {
     type Item = Result<((NodeId, Instant), Topic), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.next_to_expire() {
-            Ok((fut, topic)) => {
-                match fut.poll_unpin(cx) {
-                    Poll::Ready(()) => match self.ads.get_mut(&topic) {
-                        Some(topic_ads) => match topic_ads.pop_front() {
+            Ok((fut, topic)) => match fut.poll_unpin(cx) {
+                Poll::Ready(()) => match self.ads.get_mut(&topic) {
+                    Some(topic_ads) => {
+                        match topic_ads.pop_front() {
                             Some((node_id, insert_time)) => {
                                 if topic_ads.is_empty() {
                                     self.ads.remove(&topic);
@@ -134,21 +135,21 @@ impl Stream for Ads {
                                     return Poll::Ready(Err("No nodes for topic".into()));
                                 }
                             }
-                        },
-                        None => {
-                            #[cfg(debug_assertions)]
-                            panic!("Panic on debug, mismatched mapping between expiration queue and entry queue");
-                            #[cfg(not(debug_assertions))]
-                            {
-                                error!("Mismatched mapping between expiration queue and entry queue");
-                                return Poll::Ready(Err("Topic doesn't exist".into()));
-                            }
                         }
-                    },
-                    Poll::Pending => Poll::Pending,
-                }
+                    }
+                    None => {
+                        #[cfg(debug_assertions)]
+                        panic!("Panic on debug, mismatched mapping between expiration queue and entry queue");
+                        #[cfg(not(debug_assertions))]
+                        {
+                            error!("Mismatched mapping between expiration queue and entry queue");
+                            return Poll::Ready(Err("Topic doesn't exist".into()));
+                        }
+                    }
+                },
+                Poll::Pending => Poll::Pending,
             },
-            Err(e)=> {
+            Err(e) => {
                 debug!("{}", e);
                 Poll::Pending
             }
