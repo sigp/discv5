@@ -12,7 +12,7 @@ use tracing::debug;
 pub mod ticket;
 mod test;
 
-type Topic = [u8; 32];
+pub type Topic = [u8; 32];
 
 #[derive(Debug)]
 pub struct Ad {

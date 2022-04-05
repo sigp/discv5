@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    advertisement::{ticket::{topic_hash, Ticket}, Ads},
+    advertisement::{ticket::{topic_hash, Ticket, Tickets}, Ads, Topic},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -42,6 +42,7 @@ use std::{
     collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Duration, time::Instant,
 };
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::time::DelayQueue;
 use tracing::{debug, error, info, trace, warn};
 
 mod ip_vote;
@@ -192,8 +193,14 @@ pub struct Service {
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 
-    /// Ads
+    /// Ads advertised for other nodes.
     ads: Ads,
+
+    /// Tickets received by other nodes.
+    tickets: Tickets,
+
+    /// Topics advertised on other nodes.
+    topics: DelayQueue<(NodeAddress, Topic)>,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -290,6 +297,7 @@ impl Service {
                     discv5_recv,
                     event_stream: None,
                     ads: Ads::new(Duration::from_secs(60 * 15), 100 as usize, 50000),
+                    tickets: Tickets::new(),
                     exit,
                     config: config.clone(),
                 };
@@ -340,7 +348,13 @@ impl Service {
                                 error!("Failed to return the event stream channel");
                             }
                         }
-                        //ServiceRequest::TopicQuery() => {}
+                        /*ServiceRequest::TopicQuery(topic) => {
+                            // to which nodes?
+                            self.send_topic_query(topic);
+                        }*/
+                        /*ServiceRequest::RegTopic(topic) => {
+                            // to which nodes?
+                        }*/
                     }
                 }
                 Some(event) = self.handler_recv.recv() => {
@@ -423,6 +437,9 @@ impl Service {
                     }
                 }
                 _ = self.ads.next() => {}
+                Some(Ok((node_address, ticket))) = self.tickets.next() => {
+                    self.send_reg_topic_request(node_address, ticket);
+                }
             }
         }
     }
@@ -591,15 +608,17 @@ impl Service {
                     }
                 };
                 let wait_time = self.ads.ticket_wait_time(topic_hash);
-                self.send_ticket_response(wait_time);
+                let new_ticket = Ticket::new(topic_hash);
+                self.send_ticket_response(node_address, new_ticket, wait_time);
+
                 match Ticket::decode(ticket) {
                     Ok(ticket) => match self.ads.regconfirmation(enr, topic_hash, ticket) {
-                        Ok(()) => self.send_regconfirmation_response(),
+                        Ok(()) => self.send_regconfirmation_response(topic_hash),
                         Err(e) => debug!("{}", e),
                     },
                     Err(e) => debug!("{}", e),
                 }
-                debug!("Received RegisterTopic request which is unimplemented");
+                debug!("Received RegisterTopic request which is not fully implemented");
             }
             RequestBody::TopicQuery { topic } => {
                 self.send_topic_query_response(node_address, id, topic);
@@ -837,10 +856,14 @@ impl Service {
                         _ => error!("Invalid callback for response"),
                     }
                 }
-                ResponseBody::Ticket { .. } => {
-                    error!("Received a TICKET response. This is unimplemented and should be unreachable.");
+                ResponseBody::Ticket { ticket, wait_time } => {
+                   // todo(emhane): What should max wait_time be so insert_at in Tickets doesn't panic?
+                   match Ticket::decode(ticket) {
+                       Ok(ticket) => self.tickets.insert(node_address, ticket, Duration::from_secs(wait_time)),
+                       Err(e) => debug!("{}", e),
+                   }
                 }
-                ResponseBody::RegisterConfirmation { .. } => {
+                ResponseBody::RegisterConfirmation { topic } => {
                     error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
                 }
             }
@@ -925,8 +948,18 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
+    fn send_reg_topic_request(
+         &mut self,
+         node_address: NodeAddress,
+         ticket: Ticket,
+    ) {
+        unimplemented!()
+    }
+
     fn send_ticket_response(
         &mut self,
+        node_address: NodeAddress,
+        ticket: Ticket,
         wait_time: Duration,
     ) {
         unimplemented!()
@@ -934,6 +967,7 @@ impl Service {
 
     fn send_regconfirmation_response(
         &mut self,
+        topic: Topic,
     ) {
         unimplemented!()
     }
