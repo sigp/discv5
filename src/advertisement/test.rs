@@ -3,6 +3,7 @@
 use super::*;
 use enr::{CombinedKey, EnrBuilder};
 use std::net::IpAddr;
+use more_asserts::{assert_gt, assert_lt};
 
 #[tokio::test]
 async fn insert_ad_and_get_nodes() {
@@ -17,7 +18,7 @@ async fn insert_ad_and_get_nodes() {
     let key = CombinedKey::generate_secp256k1();
     let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(60));
+    let mut ads = Ads::new(Duration::from_secs(60), 10, 50);
 
     let topic = [1;32];
     let topic_2 = [2;32];
@@ -37,6 +38,42 @@ async fn insert_ad_and_get_nodes() {
     assert_eq!(nodes_topic_2, vec![enr]);
 }
 
+#[tokio::test] 
+async fn ticket_wait_time_no_wait_time() {
+    let ads = Ads::new(Duration::from_secs(1), 10, 50);
+    let topic = [1;32];
+    let wait_time = ads.ticket_wait_time(topic);
+    assert_eq!(wait_time, Duration::from_secs(0))
+}
+
+#[tokio::test] 
+async fn ticket_wait_time() {
+    // Create the test values needed
+    let port = 6666;
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let key = CombinedKey::generate_secp256k1();
+    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+
+    let port = 5000;
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let key = CombinedKey::generate_secp256k1();
+    let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+
+    let mut ads = Ads::new(Duration::from_secs(2), 2, 50);
+
+    let topic = [1;32];
+
+    ads.insert(enr, topic).unwrap();
+    assert_eq!(ads.ticket_wait_time(topic), Duration::from_secs(0));
+
+    ads.insert(enr_2, topic).unwrap();
+    assert_gt!(ads.ticket_wait_time(topic), Duration::from_secs(1));
+    assert_lt!(ads.ticket_wait_time(topic), Duration::from_secs(2));
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(ads.ticket_wait_time(topic), Duration::from_secs(0));
+}
+
 #[tokio::test]
 async fn poll_ads() {
     // Create the test values needed
@@ -50,7 +87,7 @@ async fn poll_ads() {
     let key = CombinedKey::generate_secp256k1();
     let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(1));
+    let mut ads = Ads::new(Duration::from_secs(1), 10, 50);
 
     let topic_1 = [1;32];
     let topic_2 = [2;32];

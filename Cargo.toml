@@ -38,6 +38,7 @@ tracing-subscriber = { version = "0.3.3", features = ["env-filter"] }
 lru = "0.7.1"
 hashlink = "0.7.0"
 delay_map = "0.1.1"
+more-asserts = "0.2.2"
 
 [dev-dependencies]
 rand_07 = { package = "rand", version = "0.7" }

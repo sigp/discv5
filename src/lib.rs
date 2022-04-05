@@ -121,6 +121,7 @@ pub mod socket;
 
 #[macro_use]
 extern crate lazy_static;
+extern crate more_asserts;
 
 pub type Enr = enr::Enr<enr::CombinedKey>;
 

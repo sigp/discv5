@@ -11,9 +11,6 @@ use tracing::debug;
 pub mod ticket;
 mod test;
 
-pub const MAX_ADS_PER_TOPIC: usize = 100;
-pub const MAX_ADS: i32 = 5000;
-
 type Topic = [u8; 32];
 
 #[derive(Debug)]
@@ -32,15 +29,19 @@ pub struct Ads {
     ads: HashMap<Topic, VecDeque<Ad>>,
     total_ads: i32,
     ad_lifetime: Duration,
+    max_ads_per_topic: usize,
+    max_ads: i32,
 }
 
 impl Ads {
-    pub fn new(ad_lifetime: Duration) -> Self {
+    pub fn new(ad_lifetime: Duration, max_ads_per_topic: usize, max_ads: i32) -> Self {
         Ads {
             expirations: VecDeque::new(),
             ads: HashMap::new(),
             total_ads: 0,
             ad_lifetime,
+            max_ads_per_topic,
+            max_ads,
         }
     }
 
@@ -55,7 +56,7 @@ impl Ads {
         let now = Instant::now();
         match self.ads.get(&topic) {
             Some(nodes) => {
-                if nodes.len() < MAX_ADS_PER_TOPIC {
+                if nodes.len() < self.max_ads_per_topic {
                     Duration::from_secs(0)
                 } else {
                     match nodes.get(0) {
@@ -76,7 +77,7 @@ impl Ads {
                 }
             }
             None => {
-                if self.total_ads < MAX_ADS {
+                if self.total_ads < self.max_ads {
                     Duration::from_secs(0)
                 } else {
                     match self.expirations.get(0) {
