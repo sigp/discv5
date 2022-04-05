@@ -16,6 +16,7 @@ pub const MAX_ADS: i32 = 5000;
 
 type Topic = [u8; 32];
 
+#[derive(Debug)]
 pub struct Ad {
     node_record: Enr<CombinedKey>,
     insert_time: Instant,
