@@ -15,9 +15,20 @@ pub const MAX_ADS_PER_TOPIC: usize = 100;
 pub const MAX_ADS: i32 = 5000;
 
 type Topic = [u8; 32];
+
+pub struct Ad {
+    node_record: Enr<CombinedKey>,
+    insert_time: Instant,
+}
+
+impl PartialEq for Ad {
+    fn eq(&self, other: &Self) -> bool {
+        self.node_record == other.node_record
+    }
+}
 pub struct Ads {
     expirations: VecDeque<(Pin<Box<Sleep>>, Topic)>,
-    ads: HashMap<Topic, VecDeque<(Enr<CombinedKey>, Instant)>>,
+    ads: HashMap<Topic, VecDeque<Ad>>,
     total_ads: i32,
     ad_lifetime: Duration,
 }
@@ -34,7 +45,7 @@ impl Ads {
 
     pub fn get_ad_nodes(&self, topic: Topic) -> Result<Vec<Enr<CombinedKey>>, String> {
         match self.ads.get(&topic) {
-            Some(topic_ads) => Ok(topic_ads.into_iter().map(|(enr, _)| enr.clone()).collect()),
+            Some(topic_ads) => Ok(topic_ads.into_iter().map(|ad| ad.node_record.clone()).collect()),
             None => Err("No ads for this topic".into()),
         }
     }
@@ -47,8 +58,8 @@ impl Ads {
                     Duration::from_secs(0)
                 } else {
                     match nodes.get(0) {
-                        Some((_, insert_time)) => {
-                            let elapsed_time = now.saturating_duration_since(*insert_time);
+                        Some(ad) => {
+                            let elapsed_time = now.saturating_duration_since(ad.insert_time);
                             self.ad_lifetime.saturating_sub(elapsed_time)
                         }
                         None => {
@@ -84,22 +95,31 @@ impl Ads {
         }
     }
 
-    pub fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) {
+    /*pub fn regconfirmation(&self, node_record: Enr<CombinedKey>, topic: Topic, ticket: Vec<u8>) -> Result<(), String> {
+       // check if ticket is valid
+        self.insert(node_record, topic);
+    }*/
+
+    fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), String> {
         let now = Instant::now();
         if let Some(nodes) = self.ads.get_mut(&topic) {
-            nodes.push_back((node_record, now));
+            if nodes.contains(&Ad { node_record: node_record.clone(), insert_time: now }) {
+                debug!("This node {} is already advertising this topic", node_record.node_id());
+                return Err("Node already advertising this topic".into());
+            }
+            nodes.push_back(Ad { node_record, insert_time: now });
         } else {
             let mut nodes = VecDeque::new();
-            nodes.push_back((node_record, now));
+            nodes.push_back(Ad { node_record, insert_time: now });
             self.ads.insert(topic, nodes);
         }
         self.expirations
             .push_back((Box::pin(sleep(self.ad_lifetime)), topic));
         self.total_ads += 1;
+        Ok(())
     }
 
-    // Should first be be called after checking if list is empty in
-    fn next_to_expire(&mut self) -> Result<(&mut Pin<Box<Sleep>>, Topic), String> {
+    fn next_to_expire_table(&mut self) -> Result<(&mut Pin<Box<Sleep>>, Topic), String> {
         if self.expirations.is_empty() {
             return Err("No ads in 'table'".into());
         }
@@ -124,17 +144,17 @@ impl Stream for Ads {
     // type returned can be unit type but for testing easier to get values, worth the overhead to keep?
     type Item = Result<((Enr<CombinedKey>, Instant), Topic), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.next_to_expire() {
+        match self.next_to_expire_table() {
             Ok((fut, topic)) => match fut.poll_unpin(cx) {
                 Poll::Ready(()) => match self.ads.get_mut(&topic) {
                     Some(topic_ads) => {
                         match topic_ads.pop_front() {
-                            Some((node_record, insert_time)) => {
+                            Some(ad) => {
                                 if topic_ads.is_empty() {
                                     self.ads.remove(&topic);
                                 }
                                 self.total_ads -= 1;
-                                Poll::Ready(Some(Ok(((node_record, insert_time), topic))))
+                                Poll::Ready(Some(Ok(((ad.node_record, ad.insert_time), topic))))
                             }
                             None => {
                                 #[cfg(debug_assertions)]
