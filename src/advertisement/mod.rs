@@ -13,6 +13,7 @@ pub mod ticket;
 
 pub type Topic = [u8; 32];
 
+/// An ad we are adevrtising for another node
 #[derive(Debug)]
 pub struct Ad {
     node_record: Enr<CombinedKey>,

@@ -3,6 +3,7 @@ use crate::node_info::NodeAddress;
 use delay_map::HashMapDelay;
 use std::cmp::Eq;
 
+
 pub fn topic_hash(topic: Vec<u8>) -> Result<Topic, String> {
     if topic.len() > 32 {
         return Err("Topic is greater than 32 bytes".into());
@@ -25,13 +26,17 @@ impl ActiveTopic {
             topic,
         }
     }
-
+    
     pub fn node_address(&self) -> NodeAddress {
         self.node_address.clone()
     }
+
+    pub fn topic(&self) -> Topic {
+        self.topic
+    }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Ticket {
     //nonce: u64,
     //src_node_id: NodeId,
@@ -95,12 +100,10 @@ impl Tickets {
 }
 
 impl Stream for Tickets {
-    type Item = Result<(NodeAddress, Ticket), String>;
+    type Item = Result<(ActiveTopic, Ticket), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.tickets.poll_next_unpin(cx) {
-            Poll::Ready(Some(Ok((active_topic, ticket)))) => {
-                Poll::Ready(Some(Ok((active_topic.node_address, ticket))))
-            }
+            Poll::Ready(Some(Ok((active_topic, ticket)))) => Poll::Ready(Some(Ok((active_topic, ticket)))),
             Poll::Ready(Some(Err(e))) => {
                 debug!("{}", e);
                 Poll::Pending

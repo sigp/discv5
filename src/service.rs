@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{topic_hash, ActiveTopic, Ticket, Tickets},
+        ticket::{topic_hash, Ticket, Tickets, ActiveTopic},
         Ads, Topic,
     },
     error::{RequestError, ResponseError},
@@ -353,11 +353,10 @@ impl Service {
                             }
                         }
                         /*ServiceRequest::TopicQuery(topic) => {
-                            // to which nodes?
                             self.send_topic_query(topic);
-                        }*/
-                        /*ServiceRequest::RegTopic(topic) => {
-                            // to which nodes?
+                        }
+                        ServiceRequest::RegisterTopic(topic) => {
+                            self.reg_topic_request(topic, self.local_enr(), Ticket::default());
                         }*/
                     }
                 }
@@ -440,11 +439,12 @@ impl Service {
                         self.send_ping(enr);
                     }
                 }
-                Some(Ok((node_address, ticket))) = self.tickets.next() => {
-                    self.send_reg_topic_request(node_address, ticket);
+                Some(Ok((active_topic, ticket))) = self.tickets.next() => {
+                    self.reg_topic_request(active_topic.topic(), self.local_enr(), ticket);
                 }
                 Some(Ok(expired)) = self.topics.next() => {
-                    self.send_reg_topic_request(expired.into_inner().node_address(), Ticket::default());
+                    let expired = expired.into_inner();
+                    self.reg_topic_request(expired.topic(), self.local_enr(), Ticket::default());
                 }
                 _ = self.ads.next() => {}
             }
@@ -611,7 +611,7 @@ impl Service {
                     Ok(topic_hash) => {
                         let wait_time = self.ads.ticket_wait_time(topic_hash);
                         let new_ticket = Ticket::new(topic_hash);
-                        self.send_ticket_response(node_address, new_ticket, wait_time);
+                        self.send_ticket_response(node_address.clone(), id.clone(), new_ticket, wait_time);
 
                         let ticket = match Ticket::decode(ticket) {
                             Ok(ticket) => ticket,
@@ -620,10 +620,12 @@ impl Service {
                                 Ticket::default()
                             }
                         };
+
                         // choose which ad to reg based on ticket, for example if some node has empty ticket
                         // or is coming back, and possibly other stuff
+
                         match self.ads.insert(enr, topic_hash) {
-                            Ok(()) => self.send_regconfirmation_response(topic_hash),
+                            Ok(()) => self.send_regconfirmation_response(node_address, id, topic_hash),
                             Err(e) => debug!("{}", e),
                         }
                     }
@@ -968,21 +970,73 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
-    fn send_reg_topic_request(&mut self, node_address: NodeAddress, ticket: Ticket) {
-        unimplemented!()
+    fn reg_topic_request(
+        &mut self, 
+        topic: Topic, 
+        enr: Enr, 
+        ticket: Ticket
+    ) {
+        /*let request_body = RequestBody::RegisterTopic { 
+            topic: topic.to_vec(), 
+            enr, 
+            ticket: format!("{:?}", ticket).as_bytes().to_vec(),
+        };
+
+        let active_request = ActiveRequest {
+            contact,
+            request_body,
+            query_id: None,
+            callback: None,
+        };
+        self.send_rpc_request(active_request);*/
     }
 
     fn send_ticket_response(
         &mut self,
         node_address: NodeAddress,
+        rpc_id: RequestId,
         ticket: Ticket,
         wait_time: Duration,
     ) {
-        unimplemented!()
+        let response = Response {
+            id: rpc_id,
+            body: ResponseBody::Ticket {
+                ticket: format!("{:?}", ticket).as_bytes().to_vec(),
+                wait_time: wait_time.as_secs(),
+            },
+        };
+        trace!(
+            "Sending TICKET response to: {}. Response: {} ",
+            node_address,
+            response
+        );
+        let _ = self.handler_send.send(HandlerIn::Response(
+            node_address.clone(),
+            Box::new(response),
+        ));
     }
 
-    fn send_regconfirmation_response(&mut self, topic: Topic) {
-        unimplemented!()
+    fn send_regconfirmation_response(
+        &mut self, 
+        node_address: NodeAddress,
+        rpc_id: RequestId,
+        topic: Topic
+    ) {
+        let response = Response {
+            id: rpc_id,
+            body: ResponseBody::RegisterConfirmation {
+                topic: topic.to_vec(),
+            },
+        };
+        trace!(
+            "Sending REGCONFIRMATION response to: {}. Response: {} ",
+            node_address,
+            response
+        );
+        let _ = self.handler_send.send(HandlerIn::Response(
+            node_address.clone(),
+            Box::new(response),
+        ));
     }
 
     fn send_topic_query_response(
@@ -1505,6 +1559,10 @@ impl Service {
         })
         .await
     }
+
+    fn local_enr(&self) -> Enr {
+        self.local_enr.read().clone()
+    } 
 }
 
 /// The result of the `query_event_poll` indicating an action is required to further progress an

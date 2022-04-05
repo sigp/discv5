@@ -606,7 +606,7 @@ impl Handler {
         );
 
         // We do not allow multiple WHOAREYOU packets for a single challenge request. If we have
-        // already sent a WHOAREYOU ourselves, we drop sessions who send us a WHOAREYOU in
+        // already sent a WHOAREYOU ourselves, we drop sessions which send us a WHOAREYOU in
         // response.
         if request_call.handshake_sent {
             warn!(
