@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    advertisement::{ticket::topic_hash, Ads},
+    advertisement::{ticket::{topic_hash, Ticket}, Ads},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -590,10 +590,15 @@ impl Service {
                         [0;32]
                     }
                 };
-                // inspect ticket
-                let ticket_wait_time = self.ads.ticket_wait_time(topic_hash);
-                // send ticket, if has previous valid ticket Duration + 10 secs?
-                // do regconfirmation checks
+                let wait_time = self.ads.ticket_wait_time(topic_hash);
+                self.send_ticket_response(wait_time);
+                match Ticket::decode(ticket) {
+                    Ok(ticket) => match self.ads.regconfirmation(enr, topic_hash, ticket) {
+                        Ok(()) => self.send_regconfirmation_response(),
+                        Err(e) => debug!("{}", e),
+                    },
+                    Err(e) => debug!("{}", e),
+                }
                 debug!("Received RegisterTopic request which is unimplemented");
             }
             RequestBody::TopicQuery { topic } => {
@@ -918,6 +923,19 @@ impl Service {
             callback: Some(CallbackResponse::Talk(callback)),
         };
         self.send_rpc_request(active_request);
+    }
+
+    fn send_ticket_response(
+        &mut self,
+        wait_time: Duration,
+    ) {
+        unimplemented!()
+    }
+
+    fn send_regconfirmation_response(
+        &mut self,
+    ) {
+        unimplemented!()
     }
 
     fn send_topic_query_response(

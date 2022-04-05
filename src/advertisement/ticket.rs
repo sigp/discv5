@@ -9,3 +9,19 @@ pub fn topic_hash(topic: Vec<u8>) -> Result<Topic, String> {
     topic_hash[32 - topic.len()..].copy_from_slice(&topic);
     Ok(topic_hash)
 }
+
+pub struct Ticket {}
+
+impl Ticket {
+    pub fn new() -> Self {
+        Ticket{}
+    }
+
+    pub fn decode(ticket_bytes: Vec<u8>) -> Result<Self, String> {
+        if ticket_bytes.is_empty() {
+            return Err("Ticket has wrong format".into());
+        }
+        Ok(Ticket{})
+    }
+}
+

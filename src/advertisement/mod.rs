@@ -1,4 +1,5 @@
 use super::*;
+use ticket::Ticket;
 use core::time::Duration;
 use enr::{CombinedKey, Enr};
 use futures::prelude::*;
@@ -97,10 +98,10 @@ impl Ads {
         }
     }
 
-    /*pub fn regconfirmation(&self, node_record: Enr<CombinedKey>, topic: Topic, ticket: Vec<u8>) -> Result<(), String> {
-       // check if ticket is valid
-        self.insert(node_record, topic);
-    }*/
+    pub fn regconfirmation(&mut self, node_record: Enr<CombinedKey>, topic: Topic, ticket: Ticket) -> Result<(), String> {
+        // chose which ad to insert from some pool of registrants-within-10-seconds-from-x
+        self.insert(node_record, topic)
+    }
 
     fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), String> {
         let now = Instant::now();
