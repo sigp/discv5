@@ -1,8 +1,8 @@
 use super::*;
 use crate::node_info::NodeAddress;
 use delay_map::HashMapDelay;
+use std::cmp::Eq;
 
-// Temporary, some hash function will probably be used here instead of padding
 pub fn topic_hash(topic: Vec<u8>) -> Result<Topic, String> {
     if topic.len() > 32 {
         return Err("Topic is greater than 32 bytes".into());
@@ -12,6 +12,26 @@ pub fn topic_hash(topic: Vec<u8>) -> Result<Topic, String> {
     Ok(topic_hash)
 }
 
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub struct ActiveTopic {
+    node_address: NodeAddress,
+    topic: Topic,
+}
+
+impl ActiveTopic {
+    pub fn new(node_address: NodeAddress, topic: Topic) -> Self {
+        ActiveTopic {
+            node_address,
+            topic,
+        }
+    }
+
+    pub fn node_address(&self) -> NodeAddress {
+        self.node_address.clone()
+    }
+}
+
+#[derive(Default)]
 pub struct Ticket {
     //nonce: u64,
     //src_node_id: NodeId,
@@ -31,7 +51,7 @@ impl Ticket {
         //req_time: Instant,
         //wait_time: Duration,*/
     ) -> Self {
-        Ticket{
+        Ticket {
             //nonce,
             //src_node_id,
             //src_ip,
@@ -45,23 +65,32 @@ impl Ticket {
         if ticket_bytes.is_empty() {
             return Err("Ticket has wrong format".into());
         }
-        Ok(Ticket{topic: [0u8; 32]})
+        Ok(Ticket { topic: [0u8; 32] })
     }
+
+    /*pub fn regconfirmation(&mut self, node_record: Enr<CombinedKey>, topic: Topic, ticket: Ticket) -> Result<(), String> {
+        // chose which ad to insert from some pool of registrants-within-10-seconds-from-x
+        Ok(())
+    }*/
 }
 
 pub struct Tickets {
-    tickets: HashMapDelay<(NodeAddress, Topic), Ticket>
+    tickets: HashMapDelay<ActiveTopic, Ticket>,
 }
 
 impl Tickets {
     pub fn new() -> Self {
-        Tickets{
+        Tickets {
             tickets: HashMapDelay::new(Duration::default()),
         }
     }
 
     pub fn insert(&mut self, node_address: NodeAddress, ticket: Ticket, wait_time: Duration) {
-        self.tickets.insert_at((node_address, ticket.topic), ticket, wait_time);
+        self.tickets.insert_at(
+            ActiveTopic::new(node_address, ticket.topic),
+            ticket,
+            wait_time,
+        );
     }
 }
 
@@ -69,13 +98,15 @@ impl Stream for Tickets {
     type Item = Result<(NodeAddress, Ticket), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.tickets.poll_next_unpin(cx) {
-            Poll::Ready(Some(Ok(((node_address, _), ticket)))) => Poll::Ready(Some(Ok((node_address, ticket)))),
+            Poll::Ready(Some(Ok((active_topic, ticket)))) => {
+                Poll::Ready(Some(Ok((active_topic.node_address, ticket))))
+            }
             Poll::Ready(Some(Err(e))) => {
                 debug!("{}", e);
                 Poll::Pending
-            },
+            }
             Poll::Ready(None) => Poll::Pending,
             Poll::Pending => Poll::Pending,
-        }   
+        }
     }
 }

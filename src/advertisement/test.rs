@@ -2,8 +2,8 @@
 
 use super::*;
 use enr::{CombinedKey, EnrBuilder};
-use std::net::IpAddr;
 use more_asserts::{assert_gt, assert_lt};
+use std::net::IpAddr;
 
 #[tokio::test]
 async fn insert_ad_and_get_nodes() {
@@ -20,13 +20,16 @@ async fn insert_ad_and_get_nodes() {
 
     let mut ads = Ads::new(Duration::from_secs(60), 10, 50);
 
-    let topic = [1;32];
-    let topic_2 = [2;32];
+    let topic = [1; 32];
+    let topic_2 = [2; 32];
 
     ads.insert(enr.clone(), topic).unwrap();
 
     // Since 60 seconds haven't passed
-    assert_eq!(ads.insert(enr.clone(), topic).map_err(|e| e), Err("Node already advertising this topic".into()));
+    assert_eq!(
+        ads.insert(enr.clone(), topic).map_err(|e| e),
+        Err("Node already advertising this topic".into())
+    );
 
     ads.insert(enr_2.clone(), topic).unwrap();
     ads.insert(enr.clone(), topic_2).unwrap();
@@ -38,15 +41,15 @@ async fn insert_ad_and_get_nodes() {
     assert_eq!(nodes_topic_2, vec![enr]);
 }
 
-#[tokio::test] 
+#[tokio::test]
 async fn ticket_wait_time_no_wait_time() {
     let ads = Ads::new(Duration::from_secs(1), 10, 50);
-    let topic = [1;32];
+    let topic = [1; 32];
     let wait_time = ads.ticket_wait_time(topic);
     assert_eq!(wait_time, Duration::from_secs(0))
 }
 
-#[tokio::test] 
+#[tokio::test]
 async fn ticket_wait_time() {
     // Create the test values needed
     let port = 6666;
@@ -61,7 +64,7 @@ async fn ticket_wait_time() {
 
     let mut ads = Ads::new(Duration::from_secs(2), 2, 50);
 
-    let topic = [1;32];
+    let topic = [1; 32];
 
     ads.insert(enr, topic).unwrap();
     assert_eq!(ads.ticket_wait_time(topic), Duration::from_secs(0));
@@ -89,8 +92,8 @@ async fn poll_ads() {
 
     let mut ads = Ads::new(Duration::from_secs(1), 10, 50);
 
-    let topic_1 = [1;32];
-    let topic_2 = [2;32];
+    let topic_1 = [1; 32];
+    let topic_2 = [2; 32];
 
     ads.insert(enr.clone(), topic_1).unwrap();
     ads.insert(enr_2, topic_1).unwrap();

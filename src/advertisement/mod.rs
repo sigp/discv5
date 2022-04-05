@@ -1,5 +1,4 @@
 use super::*;
-use ticket::Ticket;
 use core::time::Duration;
 use enr::{CombinedKey, Enr};
 use futures::prelude::*;
@@ -9,8 +8,8 @@ use std::task::{Context, Poll};
 use tokio::time::{sleep, Instant, Sleep};
 use tracing::debug;
 
-pub mod ticket;
 mod test;
+pub mod ticket;
 
 pub type Topic = [u8; 32];
 
@@ -18,6 +17,15 @@ pub type Topic = [u8; 32];
 pub struct Ad {
     node_record: Enr<CombinedKey>,
     insert_time: Instant,
+}
+
+impl Ad {
+    fn new(node_record: Enr<CombinedKey>, insert_time: Instant) -> Self {
+        Ad {
+            node_record,
+            insert_time,
+        }
+    }
 }
 
 impl PartialEq for Ad {
@@ -48,7 +56,10 @@ impl Ads {
 
     pub fn get_ad_nodes(&self, topic: Topic) -> Result<Vec<Enr<CombinedKey>>, String> {
         match self.ads.get(&topic) {
-            Some(topic_ads) => Ok(topic_ads.into_iter().map(|ad| ad.node_record.clone()).collect()),
+            Some(topic_ads) => Ok(topic_ads
+                .into_iter()
+                .map(|ad| ad.node_record.clone())
+                .collect()),
             None => Err("No ads for this topic".into()),
         }
     }
@@ -98,22 +109,26 @@ impl Ads {
         }
     }
 
-    pub fn regconfirmation(&mut self, node_record: Enr<CombinedKey>, topic: Topic, ticket: Ticket) -> Result<(), String> {
-        // chose which ad to insert from some pool of registrants-within-10-seconds-from-x
-        self.insert(node_record, topic)
-    }
-
-    fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), String> {
+    pub fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), String> {
         let now = Instant::now();
         if let Some(nodes) = self.ads.get_mut(&topic) {
-            if nodes.contains(&Ad { node_record: node_record.clone(), insert_time: now }) {
-                debug!("This node {} is already advertising this topic", node_record.node_id());
+            if nodes.contains(&Ad::new(node_record.clone(), now)) {
+                debug!(
+                    "This node {} is already advertising this topic",
+                    node_record.node_id()
+                );
                 return Err("Node already advertising this topic".into());
             }
-            nodes.push_back(Ad { node_record, insert_time: now });
+            nodes.push_back(Ad {
+                node_record,
+                insert_time: now,
+            });
         } else {
             let mut nodes = VecDeque::new();
-            nodes.push_back(Ad { node_record, insert_time: now });
+            nodes.push_back(Ad {
+                node_record,
+                insert_time: now,
+            });
             self.ads.insert(topic, nodes);
         }
         self.expirations
@@ -132,42 +147,40 @@ impl Stream for Ads {
             None => {
                 debug!("No ads in 'table'");
                 return Poll::Pending;
-            },
+            }
         };
         match fut.poll_unpin(cx) {
-                Poll::Ready(()) => match self.ads.get_mut(&topic) {
-                    Some(topic_ads) => {
-                        match topic_ads.pop_front() {
-                            Some(ad) => {
-                                if topic_ads.is_empty() {
-                                    self.ads.remove(&topic);
-                                }
-                                self.total_ads -= 1;
-                                self.expirations.remove(0);
-                                Poll::Ready(Some(Ok(((ad.node_record, ad.insert_time), topic))))
-                            }
-                            None => {
-                                #[cfg(debug_assertions)]
-                                panic!("Panic on debug, topic key should be deleted if no ad nodes queued for it");
-                                #[cfg(not(debug_assertions))]
-                                {
-                                    error!("Topic key should be deleted if no ad nodes queued for it");
-                                    return Poll::Ready(Err("No nodes for topic".into()));
-                                }
-                            }
+            Poll::Ready(()) => match self.ads.get_mut(&topic) {
+                Some(topic_ads) => match topic_ads.pop_front() {
+                    Some(ad) => {
+                        if topic_ads.is_empty() {
+                            self.ads.remove(&topic);
                         }
+                        self.total_ads -= 1;
+                        self.expirations.remove(0);
+                        Poll::Ready(Some(Ok(((ad.node_record, ad.insert_time), topic))))
                     }
                     None => {
                         #[cfg(debug_assertions)]
-                        panic!("Panic on debug, mismatched mapping between expiration queue and entry queue");
+                        panic!("Panic on debug, topic key should be deleted if no ad nodes queued for it");
                         #[cfg(not(debug_assertions))]
                         {
-                            error!("Mismatched mapping between expiration queue and entry queue");
-                            return Poll::Ready(Err("Topic doesn't exist".into()));
+                            error!("Topic key should be deleted if no ad nodes queued for it");
+                            return Poll::Ready(Some(Err("No nodes for topic".into())));
                         }
                     }
                 },
-                Poll::Pending => Poll::Pending,
-            }
+                None => {
+                    #[cfg(debug_assertions)]
+                    panic!("Panic on debug, mismatched mapping between expiration queue and entry queue");
+                    #[cfg(not(debug_assertions))]
+                    {
+                        error!("Mismatched mapping between expiration queue and entry queue");
+                        return Poll::Ready(Some(Err("Topic doesn't exist".into())));
+                    }
+                }
+            },
+            Poll::Pending => Poll::Pending,
+        }
     }
 }

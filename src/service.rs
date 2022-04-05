@@ -18,7 +18,10 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    advertisement::{ticket::{topic_hash, Ticket, Tickets}, Ads, Topic},
+    advertisement::{
+        ticket::{topic_hash, ActiveTopic, Ticket, Tickets},
+        Ads, Topic,
+    },
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -200,7 +203,7 @@ pub struct Service {
     tickets: Tickets,
 
     /// Topics advertised on other nodes.
-    topics: DelayQueue<(NodeAddress, Topic)>,
+    topics: DelayQueue<ActiveTopic>,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -298,6 +301,7 @@ impl Service {
                     event_stream: None,
                     ads: Ads::new(Duration::from_secs(60 * 15), 100 as usize, 50000),
                     tickets: Tickets::new(),
+                    topics: DelayQueue::new(),
                     exit,
                     config: config.clone(),
                 };
@@ -436,10 +440,13 @@ impl Service {
                         self.send_ping(enr);
                     }
                 }
-                _ = self.ads.next() => {}
                 Some(Ok((node_address, ticket))) = self.tickets.next() => {
                     self.send_reg_topic_request(node_address, ticket);
                 }
+                Some(Ok(expired)) = self.topics.next() => {
+                    self.send_reg_topic_request(expired.into_inner().node_address(), Ticket::default());
+                }
+                _ = self.ads.next() => {}
             }
         }
     }
@@ -600,24 +607,28 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                let topic_hash = match topic_hash(topic) {
-                    Ok(hash) => hash,
-                    Err(e) => {
-                        debug!("{}", e);
-                        [0;32]
-                    }
-                };
-                let wait_time = self.ads.ticket_wait_time(topic_hash);
-                let new_ticket = Ticket::new(topic_hash);
-                self.send_ticket_response(node_address, new_ticket, wait_time);
+                match topic_hash(topic) {
+                    Ok(topic_hash) => {
+                        let wait_time = self.ads.ticket_wait_time(topic_hash);
+                        let new_ticket = Ticket::new(topic_hash);
+                        self.send_ticket_response(node_address, new_ticket, wait_time);
 
-                match Ticket::decode(ticket) {
-                    Ok(ticket) => match self.ads.regconfirmation(enr, topic_hash, ticket) {
-                        Ok(()) => self.send_regconfirmation_response(topic_hash),
-                        Err(e) => debug!("{}", e),
-                    },
+                        let ticket = match Ticket::decode(ticket) {
+                            Ok(ticket) => ticket,
+                            Err(e) => {
+                                debug!("{}", e);
+                                Ticket::default()
+                            }
+                        };
+                        // choose which ad to reg based on ticket, for example if some node has empty ticket
+                        // or is coming back, and possibly other stuff
+                        match self.ads.insert(enr, topic_hash) {
+                            Ok(()) => self.send_regconfirmation_response(topic_hash),
+                            Err(e) => debug!("{}", e),
+                        }
+                    }
                     Err(e) => debug!("{}", e),
-                }
+                };
                 debug!("Received RegisterTopic request which is not fully implemented");
             }
             RequestBody::TopicQuery { topic } => {
@@ -857,14 +868,23 @@ impl Service {
                     }
                 }
                 ResponseBody::Ticket { ticket, wait_time } => {
-                   // todo(emhane): What should max wait_time be so insert_at in Tickets doesn't panic?
-                   match Ticket::decode(ticket) {
-                       Ok(ticket) => self.tickets.insert(node_address, ticket, Duration::from_secs(wait_time)),
-                       Err(e) => debug!("{}", e),
-                   }
+                    // todo(emhane): What should max wait_time be so insert_at in Tickets doesn't panic?
+                    match Ticket::decode(ticket) {
+                        Ok(ticket) => self.tickets.insert(
+                            node_address,
+                            ticket,
+                            Duration::from_secs(wait_time),
+                        ),
+                        Err(e) => debug!("{}", e),
+                    }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
-                    error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
+                    match topic_hash(topic) {
+                        Ok(topic_hash) => {
+                            self.topics.insert(ActiveTopic::new(node_address, topic_hash), Duration::from_secs(60*15));
+                        },
+                        Err(e) => debug!("{}", e),
+                    }
                 }
             }
         } else {
@@ -948,11 +968,7 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
-    fn send_reg_topic_request(
-         &mut self,
-         node_address: NodeAddress,
-         ticket: Ticket,
-    ) {
+    fn send_reg_topic_request(&mut self, node_address: NodeAddress, ticket: Ticket) {
         unimplemented!()
     }
 
@@ -965,10 +981,7 @@ impl Service {
         unimplemented!()
     }
 
-    fn send_regconfirmation_response(
-        &mut self,
-        topic: Topic,
-    ) {
+    fn send_regconfirmation_response(&mut self, topic: Topic) {
         unimplemented!()
     }
 
