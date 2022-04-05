@@ -118,34 +118,20 @@ impl Ads {
         self.total_ads += 1;
         Ok(())
     }
-
-    fn next_to_expire_table(&mut self) -> Result<(&mut Pin<Box<Sleep>>, Topic), String> {
-        if self.expirations.is_empty() {
-            return Err("No ads in 'table'".into());
-        }
-        match self.expirations.get_mut(0) {
-            Some((fut, topic)) => Ok((fut, *topic)),
-            None => {
-                #[cfg(debug_assertions)]
-                panic!(
-                    "Panic on debug, mismatched mapping between expiration queue and entry queue"
-                );
-                #[cfg(not(debug_assertions))]
-                {
-                    error!("Mismatched mapping between expiration queue and entry queue");
-                    return Err("Topic doesn't exist".into());
-                }
-            }
-        }
-    }
 }
 
 impl Stream for Ads {
     // type returned can be unit type but for testing easier to get values, worth the overhead to keep?
     type Item = Result<((Enr<CombinedKey>, Instant), Topic), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.next_to_expire_table() {
-            Ok((fut, topic)) => match fut.poll_unpin(cx) {
+        let (fut, topic) = match self.expirations.get_mut(0) {
+            Some((fut, topic)) => (fut, *topic),
+            None => {
+                debug!("No ads in 'table'");
+                return Poll::Pending;
+            },
+        };
+        match fut.poll_unpin(cx) {
                 Poll::Ready(()) => match self.ads.get_mut(&topic) {
                     Some(topic_ads) => {
                         match topic_ads.pop_front() {
@@ -154,6 +140,7 @@ impl Stream for Ads {
                                     self.ads.remove(&topic);
                                 }
                                 self.total_ads -= 1;
+                                self.expirations.remove(0);
                                 Poll::Ready(Some(Ok(((ad.node_record, ad.insert_time), topic))))
                             }
                             None => {
@@ -178,11 +165,6 @@ impl Stream for Ads {
                     }
                 },
                 Poll::Pending => Poll::Pending,
-            },
-            Err(e) => {
-                debug!("{}", e);
-                Poll::Pending
             }
-        }
     }
 }
