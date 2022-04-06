@@ -116,7 +116,7 @@ impl Ads {
         let now = Instant::now();
         if let Some(nodes) = self.ads.get_mut(&topic) {
             if nodes.contains(&Ad::new(node_record.clone(), now)) {
-                debug!(
+                error!(
                     "This node {} is already advertising this topic",
                     node_record.node_id()
                 );

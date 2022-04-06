@@ -622,7 +622,6 @@ impl Service {
                         );
 
                         let ticket = Ticket::decode(ticket)
-                            .map(|ticket| ticket)
                             .unwrap_or(Ticket::default());
 
                         // choose which ad to reg based on ticket, for example if some node has empty ticket
@@ -630,7 +629,7 @@ impl Service {
 
                         self.ads
                             .insert(enr, topic)
-                            .map(|e| self.send_regconfirmation_response(node_address, id, topic));
+                            .map(|_| self.send_regconfirmation_response(node_address, id, topic));
                     });
                 });
                 debug!("Received RegisterTopic request which is not fully implemented");
