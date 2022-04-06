@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{topic_hash, Ticket, Tickets, ActiveTopic},
+        ticket::{topic_hash, ActiveTopic, Ticket, Tickets},
         Ads, Topic,
     },
     error::{RequestError, ResponseError},
@@ -42,7 +42,11 @@ use futures::prelude::*;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{
-    collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Duration, time::Instant,
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    task::Poll,
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::time::DelayQueue;
@@ -611,7 +615,12 @@ impl Service {
                     Ok(topic_hash) => {
                         let wait_time = self.ads.ticket_wait_time(topic_hash);
                         let new_ticket = Ticket::new(topic_hash);
-                        self.send_ticket_response(node_address.clone(), id.clone(), new_ticket, wait_time);
+                        self.send_ticket_response(
+                            node_address.clone(),
+                            id.clone(),
+                            new_ticket,
+                            wait_time,
+                        );
 
                         let ticket = match Ticket::decode(ticket) {
                             Ok(ticket) => ticket,
@@ -625,7 +634,9 @@ impl Service {
                         // or is coming back, and possibly other stuff
 
                         match self.ads.insert(enr, topic_hash) {
-                            Ok(()) => self.send_regconfirmation_response(node_address, id, topic_hash),
+                            Ok(()) => {
+                                self.send_regconfirmation_response(node_address, id, topic_hash)
+                            }
                             Err(e) => debug!("{}", e),
                         }
                     }
@@ -880,14 +891,15 @@ impl Service {
                         Err(e) => debug!("{}", e),
                     }
                 }
-                ResponseBody::RegisterConfirmation { topic } => {
-                    match topic_hash(topic) {
-                        Ok(topic_hash) => {
-                            self.topics.insert(ActiveTopic::new(node_address, topic_hash), Duration::from_secs(60*15));
-                        },
-                        Err(e) => debug!("{}", e),
+                ResponseBody::RegisterConfirmation { topic } => match topic_hash(topic) {
+                    Ok(topic_hash) => {
+                        self.topics.insert(
+                            ActiveTopic::new(node_address, topic_hash),
+                            Duration::from_secs(60 * 15),
+                        );
                     }
-                }
+                    Err(e) => debug!("{}", e),
+                },
             }
         } else {
             warn!(
@@ -970,15 +982,10 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
-    fn reg_topic_request(
-        &mut self, 
-        topic: Topic, 
-        enr: Enr, 
-        ticket: Ticket
-    ) {
-        /*let request_body = RequestBody::RegisterTopic { 
-            topic: topic.to_vec(), 
-            enr, 
+    fn reg_topic_request(&mut self, topic: Topic, enr: Enr, ticket: Ticket) {
+        /*let request_body = RequestBody::RegisterTopic {
+            topic: topic.to_vec(),
+            enr,
             ticket: format!("{:?}", ticket).as_bytes().to_vec(),
         };
 
@@ -1017,10 +1024,10 @@ impl Service {
     }
 
     fn send_regconfirmation_response(
-        &mut self, 
+        &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
-        topic: Topic
+        topic: Topic,
     ) {
         let response = Response {
             id: rpc_id,
@@ -1562,7 +1569,7 @@ impl Service {
 
     fn local_enr(&self) -> Enr {
         self.local_enr.read().clone()
-    } 
+    }
 }
 
 /// The result of the `query_event_poll` indicating an action is required to further progress an

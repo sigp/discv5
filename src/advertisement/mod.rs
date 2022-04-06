@@ -2,9 +2,11 @@ use super::*;
 use core::time::Duration;
 use enr::{CombinedKey, Enr};
 use futures::prelude::*;
-use std::collections::{HashMap, VecDeque};
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{
+    collections::{HashMap, VecDeque},
+    pin::Pin,
+    task::{Context, Poll},
+};
 use tokio::time::{sleep, Instant, Sleep};
 use tracing::debug;
 
