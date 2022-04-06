@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{topic_hash, ActiveTopic, Ticket, Tickets},
+        ticket::{topic_hash, Ticket, Tickets},
         Ads, Topic,
     },
     error::{RequestError, ResponseError},
@@ -42,14 +42,16 @@ use futures::prelude::*;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::Arc,
     task::Poll,
     time::{Duration, Instant},
 };
-use tokio::sync::{mpsc, oneshot};
-use tokio_util::time::DelayQueue;
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::interval,
+};
 use tracing::{debug, error, info, trace, warn};
 
 mod ip_vote;
@@ -206,8 +208,11 @@ pub struct Service {
     /// Tickets received by other nodes.
     tickets: Tickets,
 
-    /// Topics advertised on other nodes.
-    topics: DelayQueue<ActiveTopic>,
+    /// Topics to advertise on other nodes.
+    topics: HashSet<Topic>,
+
+    /// Ads currently advertised on other nodes.
+    active_topics: Ads,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -305,7 +310,8 @@ impl Service {
                     event_stream: None,
                     ads: Ads::new(Duration::from_secs(60 * 15), 100 as usize, 50000),
                     tickets: Tickets::new(),
-                    topics: DelayQueue::new(),
+                    topics: HashSet::new(),
+                    active_topics: Ads::new(Duration::from_secs(60 * 15), 100 as usize, 50000),
                     exit,
                     config: config.clone(),
                 };
@@ -319,6 +325,8 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
+        let mut interval = interval(Duration::from_secs(60 * 15));
+
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -333,10 +341,10 @@ impl Service {
                         ServiceRequest::StartQuery(query, callback) => {
                             match query {
                                 QueryKind::FindNode { target_node } => {
-                                    self.start_findnode_query(target_node, callback);
+                                    self.start_findnode_query(target_node, Some(callback));
                                 }
                                 QueryKind::Predicate { target_node, target_peer_no, predicate } => {
-                                    self.start_predicate_query(target_node, target_peer_no, predicate, callback);
+                                    self.start_predicate_query(target_node, target_peer_no, predicate, Some(callback));
                                 }
                             }
                         }
@@ -422,8 +430,24 @@ impl Service {
                                     warn!("ENR not present in queries results");
                                 }
                             }
-                            if result.target.callback.send(found_enrs).is_err() {
-                                warn!("Callback dropped for query {}. Results dropped", *id);
+
+                            let node_id = match result.target.query_type {
+                                QueryType::FindNode(node_id) => node_id,
+                            };
+
+                            let topic = match self.topics.get(&node_id.raw()) {
+                                Some(topic) => Some(*topic),
+                                None => None,
+                            };
+
+                            if let Some(topic) = topic {
+                                found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, self.local_enr(), Ticket::default()));
+                            } else {
+                                if let Some(callback) = result.target.callback {
+                                    if callback.send(found_enrs).is_err() {
+                                        warn!("Callback dropped for query {}. Results dropped", *id);
+                                    }
+                                }
                             }
                         }
                     }
@@ -443,20 +467,22 @@ impl Service {
                         self.send_ping(enr);
                     }
                 }
-                Some(Ok((active_topic, ticket))) = self.tickets.next() => {
-                    self.reg_topic_request(active_topic.topic(), self.local_enr(), ticket);
-                }
-                Some(Ok(expired)) = self.topics.next() => {
-                    let expired = expired.into_inner();
-                    self.reg_topic_request(expired.topic(), self.local_enr(), Ticket::default());
-                }
+                Some(Ok((active_topic, ticket))) = self.tickets.next() => {}
                 _ = self.ads.next() => {}
+                _ = self.active_topics.next() => {}
+                _ = interval.tick() => {
+                    self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
+                }
             }
         }
     }
 
     /// Internal function that starts a query.
-    fn start_findnode_query(&mut self, target_node: NodeId, callback: oneshot::Sender<Vec<Enr>>) {
+    fn start_findnode_query(
+        &mut self,
+        target_node: NodeId,
+        callback: Option<oneshot::Sender<Vec<Enr>>>,
+    ) {
         let mut target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
             untrusted_enrs: Default::default(),
@@ -478,8 +504,10 @@ impl Service {
 
         if known_closest_peers.is_empty() {
             warn!("No known_closest_peers found. Return empty result without sending query.");
-            if target.callback.send(vec![]).is_err() {
-                warn!("Failed to callback");
+            if let Some(callback) = target.callback {
+                if callback.send(vec![]).is_err() {
+                    warn!("Failed to callback");
+                }
             }
         } else {
             let query_config = FindNodeQueryConfig::new_from_config(&self.config);
@@ -494,7 +522,7 @@ impl Service {
         target_node: NodeId,
         num_nodes: usize,
         predicate: Box<dyn Fn(&Enr) -> bool + Send>,
-        callback: oneshot::Sender<Vec<Enr>>,
+        callback: Option<oneshot::Sender<Vec<Enr>>>,
     ) {
         let mut target = QueryInfo {
             query_type: QueryType::FindNode(target_node),
@@ -521,8 +549,10 @@ impl Service {
 
         if known_closest_peers.is_empty() {
             warn!("No known_closest_peers found. Return empty result without sending query.");
-            if target.callback.send(vec![]).is_err() {
-                warn!("Failed to callback");
+            if let Some(callback) = target.callback {
+                if callback.send(vec![]).is_err() {
+                    warn!("Failed to callback");
+                }
             }
         } else {
             let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
@@ -611,27 +641,34 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                topic_hash(topic).map(|topic| {
-                    self.ads.ticket_wait_time(topic).map(|wait_time| {
-                        let new_ticket = Ticket::new(topic);
-                        self.send_ticket_response(
-                            node_address.clone(),
-                            id.clone(),
-                            new_ticket,
-                            wait_time,
-                        );
-
-                        let ticket = Ticket::decode(ticket)
-                            .unwrap_or(Ticket::default());
-
-                        // choose which ad to reg based on ticket, for example if some node has empty ticket
-                        // or is coming back, and possibly other stuff
-
+                topic_hash(topic)
+                    .map(|topic| {
                         self.ads
-                            .insert(enr, topic)
-                            .map(|_| self.send_regconfirmation_response(node_address, id, topic));
-                    });
-                });
+                            .ticket_wait_time(topic)
+                            .map(|wait_time| {
+                                let new_ticket = Ticket::new(topic);
+                                self.send_ticket_response(
+                                    node_address.clone(),
+                                    id.clone(),
+                                    new_ticket,
+                                    wait_time,
+                                );
+
+                                let _ticket = Ticket::decode(ticket).unwrap_or(Ticket::default());
+
+                                // choose which ad to reg based on ticket, for example if some node has empty ticket
+                                // or is coming back, and possibly other stuff
+
+                                self.ads
+                                    .insert(enr, topic)
+                                    .map(|_| {
+                                        self.send_regconfirmation_response(node_address, id, topic)
+                                    })
+                                    .ok();
+                            })
+                            .ok();
+                    })
+                    .ok();
                 debug!("Received RegisterTopic request which is not fully implemented");
             }
             RequestBody::TopicQuery { topic } => {
@@ -881,15 +918,15 @@ impl Service {
                         Err(e) => error!("{}", e),
                     }
                 }
-                ResponseBody::RegisterConfirmation { topic } => match topic_hash(topic) {
+                ResponseBody::RegisterConfirmation { topic } => /* match topic_hash(topic) {
                     Ok(topic_hash) => {
-                        self.topics.insert(
-                            ActiveTopic::new(node_address, topic_hash),
+                        self.active_topics.insert(
+                            topic,
                             Duration::from_secs(60 * 15),
                         );
                     }
                     Err(e) => error!("{}", e),
-                },
+                }*/{},
             }
         } else {
             warn!(
@@ -972,8 +1009,8 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
-    fn reg_topic_request(&mut self, topic: Topic, enr: Enr, ticket: Ticket) {
-        /*let request_body = RequestBody::RegisterTopic {
+    fn reg_topic_request(&mut self, contact: NodeContact, topic: Topic, enr: Enr, ticket: Ticket) {
+        let request_body = RequestBody::RegisterTopic {
             topic: topic.to_vec(),
             enr,
             ticket: format!("{:?}", ticket).as_bytes().to_vec(),
@@ -985,7 +1022,7 @@ impl Service {
             query_id: None,
             callback: None,
         };
-        self.send_rpc_request(active_request);*/
+        self.send_rpc_request(active_request);
     }
 
     fn send_ticket_response(

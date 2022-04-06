@@ -28,6 +28,10 @@ impl ActiveTopic {
         }
     }
 
+    pub fn node_address(&self) -> NodeAddress {
+        self.node_address.clone()
+    }
+
     pub fn topic(&self) -> Topic {
         self.topic
     }

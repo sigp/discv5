@@ -99,7 +99,8 @@ async fn build_service(
         event_stream: None,
         ads: Ads::new(Duration::from_secs(60 * 15), 100 as usize, 50000),
         tickets: Tickets::new(),
-        topics: DelayQueue::new(),
+        topics: HashSet::new(),
+        active_topics: Ads::new(Duration::from_secs(60 * 15), 100 as usize, 50000),
         exit,
         config,
     }

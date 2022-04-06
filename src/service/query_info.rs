@@ -14,7 +14,7 @@ pub struct QueryInfo {
     pub untrusted_enrs: SmallVec<[Enr; 16]>,
 
     /// A callback channel for the service that requested the query.
-    pub callback: oneshot::Sender<Vec<Enr>>,
+    pub callback: Option<oneshot::Sender<Vec<Enr>>>,
 
     /// The number of distances we request for each peer.
     pub distances_to_request: usize,
