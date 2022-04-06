@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::time::{sleep, Instant, Sleep};
-use tracing::debug;
+use tracing::{debug, error};
 
 mod test;
 pub mod ticket;
@@ -67,17 +67,17 @@ impl Ads {
         }
     }
 
-    pub fn ticket_wait_time(&self, topic: Topic) -> Duration {
+    pub fn ticket_wait_time(&self, topic: Topic) -> Result<Duration, String> {
         let now = Instant::now();
         match self.ads.get(&topic) {
             Some(nodes) => {
                 if nodes.len() < self.max_ads_per_topic {
-                    Duration::from_secs(0)
+                    Ok(Duration::from_secs(0))
                 } else {
                     match nodes.get(0) {
                         Some(ad) => {
                             let elapsed_time = now.saturating_duration_since(ad.insert_time);
-                            self.ad_lifetime.saturating_sub(elapsed_time)
+                            Ok(self.ad_lifetime.saturating_sub(elapsed_time))
                         }
                         None => {
                             #[cfg(debug_assertions)]
@@ -85,7 +85,7 @@ impl Ads {
                             #[cfg(not(debug_assertions))]
                             {
                                 error!("Topic key should be deleted if no ad nodes queued for it");
-                                return Poll::Ready(Err("No nodes for topic".into()));
+                                return Err("No nodes for topic".into());
                             }
                         }
                     }
@@ -93,17 +93,17 @@ impl Ads {
             }
             None => {
                 if self.total_ads < self.max_ads {
-                    Duration::from_secs(0)
+                    Ok(Duration::from_secs(0))
                 } else {
                     match self.expirations.get(0) {
-                        Some((fut, _)) => fut.deadline().saturating_duration_since(now),
+                        Some((fut, _)) => Ok(fut.deadline().saturating_duration_since(now)),
                         None => {
                             #[cfg(debug_assertions)]
                             panic!("Panic on debug, mismatched mapping between expiration queue and total ads count");
                             #[cfg(not(debug_assertions))]
                             {
                                 error!("Mismatched mapping between expiration queue and total ads count");
-                                return Duration::from_secs(0);
+                                return Err("No nodes in table".into());
                             }
                         }
                     }

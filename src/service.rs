@@ -611,10 +611,9 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                match topic_hash(topic) {
-                    Ok(topic_hash) => {
-                        let wait_time = self.ads.ticket_wait_time(topic_hash);
-                        let new_ticket = Ticket::new(topic_hash);
+                topic_hash(topic).map(|topic| {
+                    self.ads.ticket_wait_time(topic).map(|wait_time| {
+                        let new_ticket = Ticket::new(topic);
                         self.send_ticket_response(
                             node_address.clone(),
                             id.clone(),
@@ -622,26 +621,18 @@ impl Service {
                             wait_time,
                         );
 
-                        let ticket = match Ticket::decode(ticket) {
-                            Ok(ticket) => ticket,
-                            Err(e) => {
-                                debug!("{}", e);
-                                Ticket::default()
-                            }
-                        };
+                        let ticket = Ticket::decode(ticket)
+                            .map(|ticket| ticket)
+                            .unwrap_or(Ticket::default());
 
                         // choose which ad to reg based on ticket, for example if some node has empty ticket
                         // or is coming back, and possibly other stuff
 
-                        match self.ads.insert(enr, topic_hash) {
-                            Ok(()) => {
-                                self.send_regconfirmation_response(node_address, id, topic_hash)
-                            }
-                            Err(e) => debug!("{}", e),
-                        }
-                    }
-                    Err(e) => debug!("{}", e),
-                };
+                        self.ads
+                            .insert(enr, topic)
+                            .map(|e| self.send_regconfirmation_response(node_address, id, topic));
+                    });
+                });
                 debug!("Received RegisterTopic request which is not fully implemented");
             }
             RequestBody::TopicQuery { topic } => {
@@ -888,7 +879,7 @@ impl Service {
                             ticket,
                             Duration::from_secs(wait_time),
                         ),
-                        Err(e) => debug!("{}", e),
+                        Err(e) => error!("{}", e),
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => match topic_hash(topic) {
@@ -898,7 +889,7 @@ impl Service {
                             Duration::from_secs(60 * 15),
                         );
                     }
-                    Err(e) => debug!("{}", e),
+                    Err(e) => error!("{}", e),
                 },
             }
         } else {
@@ -1053,7 +1044,7 @@ impl Service {
         topic: [u8; 32],
     ) {
         let nodes_to_send = self.ads.get_ad_nodes(topic).unwrap_or_else(|e| {
-            debug!("{}", e);
+            error!("{}", e);
             Vec::new()
         });
         self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY");

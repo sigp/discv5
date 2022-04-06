@@ -26,10 +26,6 @@ impl ActiveTopic {
         }
     }
 
-    pub fn node_address(&self) -> NodeAddress {
-        self.node_address.clone()
-    }
-
     pub fn topic(&self) -> Topic {
         self.topic
     }
@@ -43,7 +39,7 @@ pub struct Ticket {
     topic: Topic,
     //req_time: Instant,
     //wait_time: Duration,
-    //cum_wait: Duration,*/
+    //cum_wait: Option<Duration>,*/
 }
 
 impl Ticket {

@@ -46,7 +46,7 @@ async fn ticket_wait_time_no_wait_time() {
     let ads = Ads::new(Duration::from_secs(1), 10, 50);
     let topic = [1; 32];
     let wait_time = ads.ticket_wait_time(topic);
-    assert_eq!(wait_time, Duration::from_secs(0))
+    assert_eq!(wait_time, Ok(Duration::from_secs(0)))
 }
 
 #[tokio::test]
@@ -67,14 +67,14 @@ async fn ticket_wait_time() {
     let topic = [1; 32];
 
     ads.insert(enr, topic).unwrap();
-    assert_eq!(ads.ticket_wait_time(topic), Duration::from_secs(0));
+    assert_eq!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(0)));
 
     ads.insert(enr_2, topic).unwrap();
-    assert_gt!(ads.ticket_wait_time(topic), Duration::from_secs(1));
-    assert_lt!(ads.ticket_wait_time(topic), Duration::from_secs(2));
+    assert_gt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(1)));
+    assert_lt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(2)));
 
     tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(ads.ticket_wait_time(topic), Duration::from_secs(0));
+    assert_eq!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(0)));
 }
 
 #[tokio::test]
