@@ -62,18 +62,26 @@ async fn ticket_wait_time() {
     let key = CombinedKey::generate_secp256k1();
     let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(2), 2, 50);
+    let mut ads = Ads::new(Duration::from_secs(2), 2, 3);
 
     let topic = [1; 32];
+    let topic_2 = [2; 32];
 
-    ads.insert(enr, topic).unwrap();
+    ads.insert(enr.clone(), topic).unwrap();
     assert_eq!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(0)));
 
-    ads.insert(enr_2, topic).unwrap();
+    ads.insert(enr_2.clone(), topic).unwrap();
+    // Now max_ads_per_topic is reached for topic
+    assert_gt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(1)));
+    assert_lt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(2)));
+
+    ads.insert(enr, topic_2).unwrap();
+    // Now max_ads in table is reched
     assert_gt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(1)));
     assert_lt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(2)));
 
     tokio::time::sleep(Duration::from_secs(2)).await;
+    // The first ads for topic have expired
     assert_eq!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(0)));
 }
 
