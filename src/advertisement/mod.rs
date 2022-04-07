@@ -128,30 +128,18 @@ impl Ads {
 
     pub fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), &str> {
         let now = Instant::now();
-        match self.ads.entry(topic) {
-            Entry::Occupied(ref mut entry) => {
-                let nodes = entry.get_mut();
-                if nodes.contains(&Ad::new(node_record.clone(), now)) {
-                    error!(
-                        "This node {} is already advertising this topic",
-                        node_record.node_id()
-                    );
-                    return Err("Node already advertising this topic");
-                }
-                nodes.push_back(Ad {
-                    node_record,
-                    insert_time: now,
-                });
-            }
-            Entry::Vacant(_) => {
-                let mut nodes = VecDeque::new();
-                nodes.push_back(Ad {
-                    node_record,
-                    insert_time: now,
-                });
-                self.ads.insert(topic, nodes);
-            }
+        let nodes = self.ads.entry(topic).or_default();
+        if nodes.contains(&Ad::new(node_record.clone(), now)) {
+            error!(
+                "This node {} is already advertising this topic",
+                node_record.node_id()
+            );
+            return Err("Node already advertising this topic");
         }
+        nodes.push_back(Ad {
+            node_record,
+            insert_time: now,
+        });
         self.expirations.push_back((now, topic));
         self.total_ads += 1;
         Ok(())
