@@ -18,7 +18,7 @@ async fn insert_ad_and_get_nodes() {
     let key = CombinedKey::generate_secp256k1();
     let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(60), 10, 50);
+    let mut ads = Ads::new(Duration::from_secs(60), 10, 50).unwrap();
 
     let topic = [1; 32];
     let topic_2 = [2; 32];
@@ -51,7 +51,7 @@ async fn insert_ad_and_get_nodes() {
 
 #[tokio::test]
 async fn ticket_wait_time_no_wait_time() {
-    let ads = Ads::new(Duration::from_secs(1), 10, 50);
+    let ads = Ads::new(Duration::from_secs(1), 10, 50).unwrap();
     let topic = [1; 32];
     let wait_time = ads.ticket_wait_time(topic);
     assert_eq!(wait_time, Some(Duration::from_secs(0)))
@@ -70,7 +70,7 @@ async fn ticket_wait_time() {
     let key = CombinedKey::generate_secp256k1();
     let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(2), 2, 3);
+    let mut ads = Ads::new(Duration::from_secs(2), 2, 3).unwrap();
 
     let topic = [1; 32];
     let topic_2 = [2; 32];
@@ -106,7 +106,7 @@ async fn poll_ads() {
     let key = CombinedKey::generate_secp256k1();
     let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(1), 10, 50);
+    let mut ads = Ads::new(Duration::from_secs(1), 10, 50).unwrap();
 
     let topic_1 = [1; 32];
     let topic_2 = [2; 32];

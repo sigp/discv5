@@ -43,6 +43,7 @@ use parking_lot::RwLock;
 use rpc::*;
 use std::{
     collections::{HashMap, HashSet},
+    io::{Error, ErrorKind},
     net::SocketAddr,
     sync::Arc,
     task::Poll,
@@ -265,7 +266,7 @@ impl Service {
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
         listen_socket: SocketAddr,
-    ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
+    ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
             Some(IpVote::new(
@@ -289,6 +290,19 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
+        let ads = match Ads::new(Duration::from_secs(60 * 15), 100, 50000) {
+            Ok(ads) => ads,
+            Err(e) => {
+                return Err(Error::new(ErrorKind::InvalidInput, e));
+            }
+        };
+        let active_topics = match Ads::new(Duration::from_secs(60 * 15), 100, 50000) {
+            Ok(ads) => ads,
+            Err(e) => {
+                return Err(Error::new(ErrorKind::InvalidInput, e));
+            }
+        };
+
         config
             .executor
             .clone()
@@ -308,10 +322,10 @@ impl Service {
                     peers_to_ping: HashSetDelay::new(config.ping_interval),
                     discv5_recv,
                     event_stream: None,
-                    ads: Ads::new(Duration::from_secs(60 * 15), 100 as usize, 50000),
+                    ads,
                     tickets: Tickets::new(),
                     topics: HashSet::new(),
-                    active_topics: Ads::new(Duration::from_secs(60 * 15), 100 as usize, 50000),
+                    active_topics,
                     exit,
                     config: config.clone(),
                 };
@@ -649,34 +663,29 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                topic_hash(topic)
-                    .map(|topic| {
-                        self.ads
-                            .ticket_wait_time(topic)
-                            .map(|wait_time| {
-                                let new_ticket = Ticket::new(topic);
-                                self.send_ticket_response(
-                                    node_address.clone(),
-                                    id.clone(),
-                                    new_ticket,
-                                    wait_time,
-                                );
+                topic_hash(topic).map(|topic| {
+                    self.ads.ticket_wait_time(topic).map(|wait_time| {
+                        let new_ticket = Ticket::new(topic);
+                        self.send_ticket_response(
+                            node_address.clone(),
+                            id.clone(),
+                            new_ticket,
+                            wait_time,
+                        );
 
-                                let _ticket = Ticket::decode(ticket).unwrap_or(Ticket::default());
+                        let _ticket = Ticket::decode(ticket).unwrap_or(Ticket::default());
 
-                                // use wait time to see if there is any point at doing ticket validation
+                        // use wait time to see if there is any point at doing ticket validation
 
-                                // choose which ad to reg based on ticket, for example if some node has empty ticket
-                                // or is coming back, and possibly other stuff
+                        // choose which ad to reg based on ticket, for example if some node has empty ticket
+                        // or is coming back, and possibly other stuff
 
-                                match self.ads.insert(enr, topic) {
-                                    Ok(()) => {
-                                        self.send_regconfirmation_response(node_address, id, topic)
-                                    }
-                                    Err(e) => error!("{}", e),
-                                }
-                            });
+                        match self.ads.insert(enr, topic) {
+                            Ok(()) => self.send_regconfirmation_response(node_address, id, topic),
+                            Err(e) => error!("{}", e),
+                        }
                     });
+                });
                 debug!("Received RegisterTopic request which is not fully implemented");
             }
             RequestBody::TopicQuery { topic } => {

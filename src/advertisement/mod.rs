@@ -3,7 +3,7 @@ use core::time::Duration;
 use enr::{CombinedKey, Enr};
 use futures::prelude::*;
 use std::{
-    collections::{vec_deque::Iter, HashMap, VecDeque},
+    collections::{hash_map::Entry, vec_deque::Iter, HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -50,7 +50,11 @@ pub struct Ads {
 }
 
 impl Ads {
-    pub fn new(ad_lifetime: Duration, max_ads_per_topic: usize, max_ads: usize) -> Result<Self, &'static str> {
+    pub fn new(
+        ad_lifetime: Duration,
+        max_ads_per_topic: usize,
+        max_ads: usize,
+    ) -> Result<Self, &'static str> {
         let (max_ads_per_topic, max_ads) = if max_ads_per_topic <= max_ads {
             (max_ads_per_topic, max_ads)
         } else {
@@ -124,25 +128,29 @@ impl Ads {
 
     pub fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), &str> {
         let now = Instant::now();
-        if let Some(nodes) = self.ads.get_mut(&topic) {
-            if nodes.contains(&Ad::new(node_record.clone(), now)) {
-                error!(
-                    "This node {} is already advertising this topic",
-                    node_record.node_id()
-                );
-                return Err("Node already advertising this topic");
+        match self.ads.entry(topic) {
+            Entry::Occupied(ref mut entry) => {
+                let nodes = entry.get_mut();
+                if nodes.contains(&Ad::new(node_record.clone(), now)) {
+                    error!(
+                        "This node {} is already advertising this topic",
+                        node_record.node_id()
+                    );
+                    return Err("Node already advertising this topic");
+                }
+                nodes.push_back(Ad {
+                    node_record,
+                    insert_time: now,
+                });
             }
-            nodes.push_back(Ad {
-                node_record,
-                insert_time: now,
-            });
-        } else {
-            let mut nodes = VecDeque::new();
-            nodes.push_back(Ad {
-                node_record,
-                insert_time: now,
-            });
-            self.ads.insert(topic, nodes);
+            Entry::Vacant(_) => {
+                let mut nodes = VecDeque::new();
+                nodes.push_back(Ad {
+                    node_record,
+                    insert_time: now,
+                });
+                self.ads.insert(topic, nodes);
+            }
         }
         self.expirations.push_back((now, topic));
         self.total_ads += 1;
