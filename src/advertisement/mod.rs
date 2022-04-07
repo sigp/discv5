@@ -3,7 +3,7 @@ use core::time::Duration;
 use enr::{CombinedKey, Enr};
 use futures::prelude::*;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{vec_deque::Iter, HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -15,9 +15,6 @@ pub mod ticket;
 
 pub type Topic = [u8; 32];
 
-const MAX_ADS_PER_TOPIC_DEFAULT: usize = 100;
-const MAX_ADS_DEFAULT: usize = 50000;
-
 /// An ad we are adevrtising for another node
 #[derive(Debug)]
 pub struct Ad {
@@ -26,11 +23,15 @@ pub struct Ad {
 }
 
 impl Ad {
-    fn new(node_record: Enr<CombinedKey>, insert_time: Instant) -> Self {
+    pub fn new(node_record: Enr<CombinedKey>, insert_time: Instant) -> Self {
         Ad {
             node_record,
             insert_time,
         }
+    }
+
+    pub fn node_record(&self) -> &Enr<CombinedKey> {
+        &self.node_record
     }
 }
 
@@ -49,45 +50,42 @@ pub struct Ads {
 }
 
 impl Ads {
-    pub fn new(ad_lifetime: Duration, max_ads_per_topic: usize, max_ads: usize) -> Self {
+    pub fn new(ad_lifetime: Duration, max_ads_per_topic: usize, max_ads: usize) -> Result<Self, &'static str> {
         let (max_ads_per_topic, max_ads) = if max_ads_per_topic <= max_ads {
             (max_ads_per_topic, max_ads)
         } else {
-            (MAX_ADS_PER_TOPIC_DEFAULT, MAX_ADS_DEFAULT)
+            return Err("Values passed to max_ads_per_topic and max_ads don't make sense");
         };
 
-        Ads {
+        Ok(Ads {
             expirations: VecDeque::new(),
             ads: HashMap::new(),
             total_ads: 0,
             ad_lifetime,
             max_ads_per_topic,
             max_ads,
-        }
+        })
     }
 
-    pub fn get_ad_nodes(&self, topic: Topic) -> Result<Vec<Enr<CombinedKey>>, String> {
+    pub fn get_ad_nodes(&self, topic: Topic) -> Result<Iter<'_, Ad>, &str> {
         match self.ads.get(&topic) {
-            Some(topic_ads) => Ok(topic_ads
-                .into_iter()
-                .map(|ad| ad.node_record.clone())
-                .collect()),
-            None => Err("No ads for this topic".into()),
+            Some(topic_ads) => Ok(topic_ads.into_iter()),
+            None => Err("No ads for this topic"),
         }
     }
 
-    pub fn ticket_wait_time(&self, topic: Topic) -> Result<Duration, String> {
+    pub fn ticket_wait_time(&self, topic: Topic) -> Option<Duration> {
         let now = Instant::now();
         if self.total_ads < self.max_ads {
             match self.ads.get(&topic) {
                 Some(nodes) => {
                     if nodes.len() < self.max_ads_per_topic {
-                        Ok(Duration::from_secs(0))
+                        Some(Duration::from_secs(0))
                     } else {
                         match nodes.get(0) {
                             Some(ad) => {
                                 let elapsed_time = now.saturating_duration_since(ad.insert_time);
-                                Ok(self.ad_lifetime.saturating_sub(elapsed_time))
+                                Some(self.ad_lifetime.saturating_sub(elapsed_time))
                             }
                             None => {
                                 #[cfg(debug_assertions)]
@@ -97,19 +95,19 @@ impl Ads {
                                     error!(
                                         "Topic key should be deleted if no ad nodes queued for it"
                                     );
-                                    return Err("No nodes for topic".into());
+                                    return None;
                                 }
                             }
                         }
                     }
                 }
-                None => Ok(Duration::from_secs(0)),
+                None => Some(Duration::from_secs(0)),
             }
         } else {
             match self.expirations.get(0) {
                 Some((insert_time, _)) => {
                     let elapsed_time = now.saturating_duration_since(*insert_time);
-                    Ok(self.ad_lifetime.saturating_sub(elapsed_time))
+                    Some(self.ad_lifetime.saturating_sub(elapsed_time))
                 }
                 None => {
                     #[cfg(debug_assertions)]
@@ -117,14 +115,14 @@ impl Ads {
                     #[cfg(not(debug_assertions))]
                     {
                         error!("Mismatched mapping between expiration queue and total ads count");
-                        return Err("No nodes in table".into());
+                        return None;
                     }
                 }
             }
         }
     }
 
-    pub fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), String> {
+    pub fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), &str> {
         let now = Instant::now();
         if let Some(nodes) = self.ads.get_mut(&topic) {
             if nodes.contains(&Ad::new(node_record.clone(), now)) {
@@ -132,7 +130,7 @@ impl Ads {
                     "This node {} is already advertising this topic",
                     node_record.node_id()
                 );
-                return Err("Node already advertising this topic".into());
+                return Err("Node already advertising this topic");
             }
             nodes.push_back(Ad {
                 node_record,

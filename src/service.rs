@@ -664,19 +664,19 @@ impl Service {
 
                                 let _ticket = Ticket::decode(ticket).unwrap_or(Ticket::default());
 
+                                // use wait time to see if there is any point at doing ticket validation
+
                                 // choose which ad to reg based on ticket, for example if some node has empty ticket
                                 // or is coming back, and possibly other stuff
 
-                                self.ads
-                                    .insert(enr, topic)
-                                    .map(|_| {
+                                match self.ads.insert(enr, topic) {
+                                    Ok(()) => {
                                         self.send_regconfirmation_response(node_address, id, topic)
-                                    })
-                                    .ok();
-                            })
-                            .ok();
-                    })
-                    .ok();
+                                    }
+                                    Err(e) => error!("{}", e),
+                                }
+                            });
+                    });
                 debug!("Received RegisterTopic request which is not fully implemented");
             }
             RequestBody::TopicQuery { topic } => {
@@ -1109,10 +1109,13 @@ impl Service {
         rpc_id: RequestId,
         topic: [u8; 32],
     ) {
-        let nodes_to_send = self.ads.get_ad_nodes(topic).unwrap_or_else(|e| {
-            error!("{}", e);
-            Vec::new()
-        });
+        let nodes_to_send = match self.ads.get_ad_nodes(topic) {
+            Ok(iter) => iter.map(|ad| ad.node_record().clone()).collect(),
+            Err(e) => {
+                error!("{}", e);
+                Vec::new()
+            }
+        };
         self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY");
     }
 

@@ -34,8 +34,16 @@ async fn insert_ad_and_get_nodes() {
     ads.insert(enr_2.clone(), topic).unwrap();
     ads.insert(enr.clone(), topic_2).unwrap();
 
-    let nodes = ads.get_ad_nodes(topic).unwrap_or(vec![]);
-    let nodes_topic_2 = ads.get_ad_nodes(topic_2).unwrap_or(vec![]);
+    let nodes: Vec<Enr<CombinedKey>> = ads
+        .get_ad_nodes(topic)
+        .unwrap()
+        .map(|ad| ad.node_record().clone())
+        .collect();
+    let nodes_topic_2: Vec<Enr<CombinedKey>> = ads
+        .get_ad_nodes(topic_2)
+        .unwrap()
+        .map(|ad| ad.node_record().clone())
+        .collect();
 
     assert_eq!(nodes, vec![enr.clone(), enr_2]);
     assert_eq!(nodes_topic_2, vec![enr]);
@@ -46,7 +54,7 @@ async fn ticket_wait_time_no_wait_time() {
     let ads = Ads::new(Duration::from_secs(1), 10, 50);
     let topic = [1; 32];
     let wait_time = ads.ticket_wait_time(topic);
-    assert_eq!(wait_time, Ok(Duration::from_secs(0)))
+    assert_eq!(wait_time, Some(Duration::from_secs(0)))
 }
 
 #[tokio::test]
@@ -68,21 +76,21 @@ async fn ticket_wait_time() {
     let topic_2 = [2; 32];
 
     ads.insert(enr.clone(), topic).unwrap();
-    assert_eq!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(0)));
+    assert_eq!(ads.ticket_wait_time(topic), Some(Duration::from_secs(0)));
 
     ads.insert(enr_2.clone(), topic).unwrap();
     // Now max_ads_per_topic is reached for topic
-    assert_gt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(1)));
-    assert_lt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(2)));
+    assert_gt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(1)));
+    assert_lt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(2)));
 
     ads.insert(enr, topic_2).unwrap();
     // Now max_ads in table is reched
-    assert_gt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(1)));
-    assert_lt!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(2)));
+    assert_gt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(1)));
+    assert_lt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(2)));
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     // The first ads for topic have expired
-    assert_eq!(ads.ticket_wait_time(topic), Ok(Duration::from_secs(0)));
+    assert_eq!(ads.ticket_wait_time(topic), Some(Duration::from_secs(0)));
 }
 
 #[tokio::test]

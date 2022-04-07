@@ -4,14 +4,14 @@ use delay_map::HashMapDelay;
 use std::cmp::Eq;
 use tracing::error;
 
-pub fn topic_hash(topic: Vec<u8>) -> Result<Topic, String> {
+pub fn topic_hash(topic: Vec<u8>) -> Option<Topic> {
     if topic.len() > 32 {
         error!("Topic is greater than 32 bytes");
-        return Err("Topic is greater than 32 bytes".into());
+        return None;
     }
     let mut topic_hash = [0u8; 32];
     topic_hash[32 - topic.len()..].copy_from_slice(&topic);
-    Ok(topic_hash)
+    Some(topic_hash)
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
