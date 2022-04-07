@@ -85,7 +85,7 @@ pub enum HandlerIn {
     ///
     /// Note: To update an ENR for an unknown node, we request a FINDNODE with distance 0 to the
     /// `NodeContact` we know of.
-    Request(NodeContact, Box<Request>),
+    Request(RequestContact, Box<Request>),
 
     /// A Response to send to a particular node to answer a HandlerOut::Request has been
     /// received from the application layer.
@@ -149,10 +149,41 @@ pub struct Challenge {
     remote_enr: Option<Enr>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum RequestContact {
+    Auto(NodeAddress),
+    Initiated(NodeContact),
+}
+
+impl RequestContact {
+    pub fn node_address(&self) -> Result<NodeAddress, &str> {
+        match self {
+            RequestContact::Auto(node_address) => Ok(node_address.clone()),
+            RequestContact::Initiated(contact) => contact.node_address(),
+        }
+    }
+
+    pub fn node_id(&self) -> NodeId {
+        match self {
+            RequestContact::Auto(node_address) => node_address.node_id,
+            RequestContact::Initiated(contact) => contact.node_id(),
+        }
+    }
+}
+
+impl std::fmt::Display for RequestContact {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestContact::Auto(node_address) => write!(f, "{}", node_address),
+            RequestContact::Initiated(contact) => write!(f, "{}", contact),
+        }
+    }
+}
+
 /// A request to a node that we are waiting for a response.
 #[derive(Debug)]
 pub(crate) struct RequestCall {
-    contact: NodeContact,
+    contact: RequestContact,
     /// The raw discv5 packet sent.
     packet: Packet,
     /// The unencrypted message. Required if need to re-encrypt and re-send.
@@ -171,7 +202,7 @@ pub(crate) struct RequestCall {
 
 impl RequestCall {
     fn new(
-        contact: NodeContact,
+        contact: RequestContact,
         packet: Packet,
         request: Request,
         initiating_session: bool,
@@ -208,7 +239,7 @@ pub struct Handler {
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Requests awaiting a handshake completion.
-    pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
+    pending_requests: HashMap<NodeAddress, Vec<(RequestContact, Request)>>,
     /// Currently in-progress handshakes with peers.
     active_challenges: LruTimeCache<NodeAddress, Challenge>,
     /// Established sessions with peers.
@@ -447,55 +478,96 @@ impl Handler {
     /// Sends a `Request` to a node.
     async fn send_request(
         &mut self,
-        contact: NodeContact,
+        contact: RequestContact,
         request: Request,
     ) -> Result<(), RequestError> {
-        let node_address = contact
-            .node_address()
-            .map_err(|e| RequestError::InvalidEnr(e.into()))?;
+        match contact.clone() {
+            RequestContact::Auto(_) => self.regtopic_with_ticket(contact, request).await,
+            RequestContact::Initiated(node_contact) => {
+                let node_address = node_contact
+                    .node_address()
+                    .map_err(|e| RequestError::InvalidEnr(e.into()))?;
 
-        if node_address.socket_addr == self.listen_socket {
-            debug!("Filtered request to self");
-            return Err(RequestError::SelfRequest);
+                if node_address.socket_addr == self.listen_socket {
+                    debug!("Filtered request to self");
+                    return Err(RequestError::SelfRequest);
+                }
+
+                // If there is already an active request for this node, add to pending requests
+                if self.active_requests.get(&node_address).is_some() {
+                    trace!("Request queued for node: {}", node_address);
+                    self.pending_requests
+                        .entry(node_address)
+                        .or_insert_with(Vec::new)
+                        .push((contact, request));
+                    return Ok(());
+                }
+
+                let (packet, initiating_session) = {
+                    if let Some(session) = self.sessions.get_mut(&node_address) {
+                        // Encrypt the message and send
+                        let packet = session
+                            .encrypt_message(self.node_id, &request.clone().encode())
+                            .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?;
+                        (packet, false)
+                    } else {
+                        // No session exists, start a new handshake
+                        trace!(
+                            "Starting session. Sending random packet to: {}",
+                            node_address
+                        );
+                        let packet = Packet::new_random(&self.node_id)
+                            .map_err(RequestError::EntropyFailure)?;
+                        // We are initiating a new session
+                        (packet, true)
+                    }
+                };
+
+                let call = RequestCall::new(contact, packet.clone(), request, initiating_session);
+                // let the filter know we are expecting a response
+                self.add_expected_response(node_address.socket_addr);
+                self.send(node_address.clone(), packet).await;
+                self.active_requests.insert(node_address, call);
+                Ok(())
+            }
         }
+    }
 
-        // If there is already an active request for this node, add to pending requests
-        if self.active_requests.get(&node_address).is_some() {
-            trace!("Request queued for node: {}", node_address);
-            self.pending_requests
-                .entry(node_address)
-                .or_insert_with(Vec::new)
-                .push((contact, request));
-            return Ok(());
-        }
-
-        let (packet, initiating_session) = {
+    async fn regtopic_with_ticket(
+        &mut self,
+        contact: RequestContact,
+        request: Request,
+    ) -> Result<(), RequestError> {
+        Ok(if let Ok(node_address) = contact.node_address() {
             if let Some(session) = self.sessions.get_mut(&node_address) {
-                // Encrypt the message and send
+                // If there is already an active request for this node, add to pending requests
+                if self.active_requests.get(&node_address).is_some() {
+                    trace!("Request queued for node: {}", node_address);
+                    self.pending_requests
+                        .entry(node_address)
+                        .or_insert_with(Vec::new)
+                        .push((contact, request));
+                    return Ok(());
+                }
+
                 let packet = session
                     .encrypt_message(self.node_id, &request.clone().encode())
                     .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?;
-                (packet, false)
+
+                let call = RequestCall::new(contact, packet.clone(), request, false);
+                // let the filter know we are expecting a response
+                self.add_expected_response(node_address.socket_addr);
+                self.send(node_address.clone(), packet).await;
+                self.active_requests.insert(node_address, call);
             } else {
-                // No session exists, start a new handshake
-                trace!(
-                    "Starting session. Sending random packet to: {}",
-                    node_address
+                // Either the session is being established or has expired. We simply drop the
+                // response in this case.
+                warn!(
+                    "Session is not established. Dropping request {} for node: {}",
+                    request, node_address.node_id
                 );
-                let packet =
-                    Packet::new_random(&self.node_id).map_err(RequestError::EntropyFailure)?;
-                // We are initiating a new session
-                (packet, true)
             }
-        };
-
-        let call = RequestCall::new(contact, packet.clone(), request, initiating_session);
-        // let the filter know we are expecting a response
-        self.add_expected_response(node_address.socket_addr);
-        self.send(node_address.clone(), packet).await;
-
-        self.active_requests.insert(node_address, call);
-        Ok(())
+        })
     }
 
     /// Sends an RPC Response.
@@ -605,13 +677,28 @@ impl Handler {
             request_call.contact
         );
 
+        // Drop session for REGTOPIC requests automatically re-sent on ticket wait_time
+        // expiration. These packets are only sent to active sessions.
+        let contact = match request_call.contact.clone() {
+            RequestContact::Auto(_) => {
+                warn!(
+                    "REGTOPIC reuqest automatically initiated upon ticket wait time expiration are only set to active sessions. Dropping session. Node: {}",
+                    request_call.contact
+                );
+                self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
+                    .await;
+                return;
+            }
+            RequestContact::Initiated(contact) => contact,
+        };
+
         // We do not allow multiple WHOAREYOU packets for a single challenge request. If we have
         // already sent a WHOAREYOU ourselves, we drop sessions which send us a WHOAREYOU in
         // response.
         if request_call.handshake_sent {
             warn!(
                 "Authentication response already sent. Dropping session. Node: {}",
-                request_call.contact
+                contact
             );
             self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                 .await;
@@ -629,7 +716,7 @@ impl Handler {
 
         // Generate a new session and authentication packet
         let (auth_packet, mut session) = match Session::encrypt_with_header(
-            &request_call.contact,
+            &contact,
             self.key.clone(),
             updated_enr,
             &self.node_id,
@@ -659,11 +746,10 @@ impl Handler {
         //
         // All sent requests must have an associated node_id. Therefore the following
         // must not panic.
-        let node_address = request_call
-            .contact
+        let node_address = contact
             .node_address()
             .expect("All sent requests must have a node address");
-        match request_call.contact.clone() {
+        match contact.clone() {
             NodeContact::Enr(enr) => {
                 // NOTE: Here we decide if the session is outgoing or ingoing. The condition for an
                 // outgoing session is that we originally sent a RANDOM packet (signifying we did
@@ -697,13 +783,10 @@ impl Handler {
                 // Don't know the ENR. Establish the session, but request an ENR also
 
                 // Send the Auth response
-                let contact = request_call.contact.clone();
+                let contact = contact.clone();
                 trace!(
                     "Sending Authentication response to node: {}",
-                    request_call
-                        .contact
-                        .node_address()
-                        .expect("Sanitized contact")
+                    contact.node_address().expect("Sanitized contact")
                 );
                 request_call.packet = auth_packet.clone();
                 request_call.handshake_sent = true;
@@ -718,7 +801,9 @@ impl Handler {
                 };
 
                 session.awaiting_enr = Some(id);
-                let _ = self.send_request(contact, request).await;
+                let _ = self
+                    .send_request(RequestContact::Initiated(contact), request)
+                    .await;
             }
         }
         self.new_session(node_address, session);
@@ -974,7 +1059,6 @@ impl Handler {
                         *remaining_responses -= 1;
                         if remaining_responses != &0 {
                             // more responses remaining, add back the request and send the response
-                            // add back the request and send the response
                             self.active_requests
                                 .insert(node_address.clone(), request_call);
                             let _ = self

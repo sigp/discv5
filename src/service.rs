@@ -23,7 +23,7 @@ use crate::{
         Ads, Topic,
     },
     error::{RequestError, ResponseError},
-    handler::{Handler, HandlerIn, HandlerOut},
+    handler::{Handler, HandlerIn, HandlerOut, RequestContact},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
@@ -218,7 +218,7 @@ pub struct Service {
 /// Active RPC request awaiting a response from the handler.
 struct ActiveRequest {
     /// The address the request was sent to.
-    pub contact: NodeContact,
+    pub contact: RequestContact,
     /// The request that was sent.
     pub request_body: RequestBody,
     /// The query ID if the request was related to a query.
@@ -441,7 +441,10 @@ impl Service {
                             };
 
                             if let Some(topic) = topic {
-                                found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, self.local_enr(), Ticket::default()));
+                                let local_enr = match self.local_enr.read().clone() {
+                                    enr => enr,
+                                };
+                                found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, local_enr.clone(), Ticket::default()));
                             } else {
                                 if let Some(callback) = result.target.callback {
                                     if callback.send(found_enrs).is_err() {
@@ -467,12 +470,17 @@ impl Service {
                         self.send_ping(enr);
                     }
                 }
-                Some(Ok((active_topic, ticket))) = self.tickets.next() => {}
-                _ = self.ads.next() => {}
-                _ = self.active_topics.next() => {}
+                Some(Ok((active_topic, ticket))) = self.tickets.next() => {
+                    let enr = match self.local_enr.read().clone() {
+                        enr => enr,
+                    };
+                    self.auto_reattempt_reg_topic_request(active_topic.node_address(), active_topic.topic(), enr, ticket);
+                }
                 _ = interval.tick() => {
                     self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
                 }
+                _ = self.ads.next() => {}
+                _ = self.active_topics.next() => {}
             }
         }
     }
@@ -944,7 +952,7 @@ impl Service {
             enr_seq: self.local_enr.read().seq(),
         };
         let active_request = ActiveRequest {
-            contact: enr.into(),
+            contact: RequestContact::Initiated(enr.into()),
             request_body,
             query_id: None,
             callback: None,
@@ -982,7 +990,7 @@ impl Service {
     ) {
         let request_body = RequestBody::FindNode { distances: vec![0] };
         let active_request = ActiveRequest {
-            contact,
+            contact: RequestContact::Initiated(contact),
             request_body,
             query_id: None,
             callback: callback.map(CallbackResponse::Enr),
@@ -1001,7 +1009,7 @@ impl Service {
         let request_body = RequestBody::Talk { protocol, request };
 
         let active_request = ActiveRequest {
-            contact,
+            contact: RequestContact::Initiated(contact),
             request_body,
             query_id: None,
             callback: Some(CallbackResponse::Talk(callback)),
@@ -1017,7 +1025,29 @@ impl Service {
         };
 
         let active_request = ActiveRequest {
-            contact,
+            contact: RequestContact::Initiated(contact),
+            request_body,
+            query_id: None,
+            callback: None,
+        };
+        self.send_rpc_request(active_request);
+    }
+
+    fn auto_reattempt_reg_topic_request(
+        &mut self,
+        node_address: NodeAddress,
+        topic: Topic,
+        enr: Enr,
+        ticket: Ticket,
+    ) {
+        let request_body = RequestBody::RegisterTopic {
+            topic: topic.to_vec(),
+            enr,
+            ticket: format!("{:?}", ticket).as_bytes().to_vec(),
+        };
+
+        let active_request = ActiveRequest {
+            contact: RequestContact::Auto(node_address),
             request_body,
             query_id: None,
             callback: None,
@@ -1224,7 +1254,7 @@ impl Service {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
             let active_request = ActiveRequest {
-                contact: enr.into(),
+                contact: RequestContact::Initiated(enr.into()),
                 request_body,
                 query_id: Some(query_id),
                 callback: None,
@@ -1592,10 +1622,6 @@ impl Service {
             QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         })
         .await
-    }
-
-    fn local_enr(&self) -> Enr {
-        self.local_enr.read().clone()
     }
 }
 

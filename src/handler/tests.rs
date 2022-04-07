@@ -71,7 +71,7 @@ async fn simple_session_message() {
     });
 
     let _ = sender_send.send(HandlerIn::Request(
-        receiver_enr.into(),
+        RequestContact::Initiated(receiver_enr.into()),
         send_message.clone(),
     ));
 
@@ -148,7 +148,7 @@ async fn multiple_messages() {
 
     // sender to send the first message then await for the session to be established
     let _ = sender_handler.send(HandlerIn::Request(
-        receiver_enr.clone().into(),
+        RequestContact::Initiated(receiver_enr.clone().into()),
         send_message.clone(),
     ));
 
@@ -173,7 +173,7 @@ async fn multiple_messages() {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
                         let _ = sender_handler.send(HandlerIn::Request(
-                            receiver_enr.clone().into(),
+                            RequestContact::Initiated(receiver_enr.clone().into()),
                             send_message.clone(),
                         ));
                     }
@@ -240,7 +240,12 @@ async fn test_active_requests_insert() {
         body: RequestBody::Ping { enr_seq: 1 },
     };
     let initiating_session = true;
-    let request_call = RequestCall::new(contact, packet, request, initiating_session);
+    let request_call = RequestCall::new(
+        RequestContact::Initiated(contact),
+        packet,
+        request,
+        initiating_session,
+    );
 
     // insert the pair and verify the mapping remains in sync
     let nonce = request_call.packet.message_nonce().clone();
