@@ -15,6 +15,9 @@ pub mod ticket;
 
 pub type Topic = [u8; 32];
 
+const MAX_ADS_PER_TOPIC_DEFAULT: usize = 100;
+const MAX_ADS_DEFAULT: usize = 50000;
+
 /// An ad we are adevrtising for another node
 #[derive(Debug)]
 pub struct Ad {
@@ -39,14 +42,20 @@ impl PartialEq for Ad {
 pub struct Ads {
     expirations: VecDeque<(Instant, Topic)>,
     ads: HashMap<Topic, VecDeque<Ad>>,
-    total_ads: i32,
+    total_ads: usize,
     ad_lifetime: Duration,
     max_ads_per_topic: usize,
-    max_ads: i32,
+    max_ads: usize,
 }
 
 impl Ads {
-    pub fn new(ad_lifetime: Duration, max_ads_per_topic: usize, max_ads: i32) -> Self {
+    pub fn new(ad_lifetime: Duration, max_ads_per_topic: usize, max_ads: usize) -> Self {
+        let (max_ads_per_topic, max_ads) = if max_ads_per_topic <= max_ads {
+            (max_ads_per_topic, max_ads)
+        } else {
+            (MAX_ADS_PER_TOPIC_DEFAULT, MAX_ADS_DEFAULT)
+        };
+
         Ads {
             expirations: VecDeque::new(),
             ads: HashMap::new(),
