@@ -325,7 +325,7 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
-        let mut interval = interval(Duration::from_secs(60 * 15));
+        let mut publish_topics = interval(Duration::from_secs(60 * 15));
 
         loop {
             tokio::select! {
@@ -476,7 +476,7 @@ impl Service {
                     };
                     self.auto_reattempt_reg_topic_request(active_topic.node_address(), active_topic.topic(), enr, ticket);
                 }
-                _ = interval.tick() => {
+                _ = publish_topics.tick() => {
                     self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
                 }
                 _ = self.ads.next() => {}

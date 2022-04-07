@@ -103,7 +103,9 @@ async fn poll_ads() {
 
     let mut expired_ads = Vec::new();
 
-    for _ in 0..4 {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+    for _ in 0..10 {
         tokio::select! {
             Some(Ok((_, topic))) = ads.next() => {
                 expired_ads.push(topic);
@@ -112,6 +114,7 @@ async fn poll_ads() {
                     ads.insert(enr.clone(), topic_1).unwrap();
                 }
             }
+            _ = interval.tick() => {}
         }
     }
 

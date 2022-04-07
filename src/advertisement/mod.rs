@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::time::{sleep, Instant, Sleep};
+use tokio::time::Instant;
 use tracing::{debug, error};
 
 mod test;
@@ -37,7 +37,7 @@ impl PartialEq for Ad {
     }
 }
 pub struct Ads {
-    expirations: VecDeque<(Pin<Box<Sleep>>, Topic)>,
+    expirations: VecDeque<(Instant, Topic)>,
     ads: HashMap<Topic, VecDeque<Ad>>,
     total_ads: i32,
     ad_lifetime: Duration,
@@ -96,7 +96,10 @@ impl Ads {
                     Ok(Duration::from_secs(0))
                 } else {
                     match self.expirations.get(0) {
-                        Some((fut, _)) => Ok(fut.deadline().saturating_duration_since(now)),
+                        Some((insert_time, _)) => {
+                            let elapsed_time = now.saturating_duration_since(*insert_time);
+                            Ok(self.ad_lifetime.saturating_sub(elapsed_time))
+                        }
                         None => {
                             #[cfg(debug_assertions)]
                             panic!("Panic on debug, mismatched mapping between expiration queue and total ads count");
@@ -134,8 +137,7 @@ impl Ads {
             });
             self.ads.insert(topic, nodes);
         }
-        self.expirations
-            .push_back((Box::pin(sleep(self.ad_lifetime)), topic));
+        self.expirations.push_back((now, topic));
         self.total_ads += 1;
         Ok(())
     }
@@ -144,24 +146,29 @@ impl Ads {
 impl Stream for Ads {
     // type returned can be unit type but for testing easier to get values, worth the overhead to keep?
     type Item = Result<((Enr<CombinedKey>, Instant), Topic), String>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let (fut, topic) = match self.expirations.get_mut(0) {
-            Some((fut, topic)) => (fut, *topic),
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let (insert_time, topic) = match self.expirations.get_mut(0) {
+            Some((insert_time, topic)) => (insert_time, *topic),
             None => {
                 debug!("No ads in 'table'");
                 return Poll::Pending;
             }
         };
-        match fut.poll_unpin(cx) {
-            Poll::Ready(()) => match self.ads.get_mut(&topic) {
-                Some(topic_ads) => match topic_ads.pop_front() {
+
+        if insert_time.elapsed() < self.ad_lifetime {
+            return Poll::Pending;
+        }
+
+        match self.ads.get_mut(&topic) {
+            Some(topic_ads) => {
+                match topic_ads.pop_front() {
                     Some(ad) => {
                         if topic_ads.is_empty() {
                             self.ads.remove(&topic);
                         }
                         self.total_ads -= 1;
                         self.expirations.remove(0);
-                        Poll::Ready(Some(Ok(((ad.node_record, ad.insert_time), topic))))
+                        return Poll::Ready(Some(Ok(((ad.node_record, ad.insert_time), topic))));
                     }
                     None => {
                         #[cfg(debug_assertions)]
@@ -172,18 +179,19 @@ impl Stream for Ads {
                             return Poll::Ready(Some(Err("No nodes for topic".into())));
                         }
                     }
-                },
-                None => {
-                    #[cfg(debug_assertions)]
-                    panic!("Panic on debug, mismatched mapping between expiration queue and entry queue");
-                    #[cfg(not(debug_assertions))]
-                    {
-                        error!("Mismatched mapping between expiration queue and entry queue");
-                        return Poll::Ready(Some(Err("Topic doesn't exist".into())));
-                    }
                 }
-            },
-            Poll::Pending => Poll::Pending,
+            }
+            None => {
+                #[cfg(debug_assertions)]
+                panic!(
+                    "Panic on debug, mismatched mapping between expiration queue and entry queue"
+                );
+                #[cfg(not(debug_assertions))]
+                {
+                    error!("Mismatched mapping between expiration queue and entry queue");
+                    return Poll::Ready(Some(Err("Topic doesn't exist".into())));
+                }
+            }
         }
     }
 }
