@@ -63,11 +63,9 @@ impl Ads {
         max_ads_per_topic: usize,
         max_ads: usize,
     ) -> Result<Self, &'static str> {
-        let (max_ads_per_topic, max_ads) = if max_ads_per_topic <= max_ads {
-            (max_ads_per_topic, max_ads)
-        } else {
-            return Err("Values passed to max_ads_per_topic and max_ads don't make sense");
-        };
+        if max_ads_per_topic > max_ads {
+            return Err("Adds per topic cannot be > max_ads");
+        }
 
         Ok(Ads {
             expirations: VecDeque::new(),
