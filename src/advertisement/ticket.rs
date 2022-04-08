@@ -1,6 +1,7 @@
 use super::*;
-use crate::node_info::NodeAddress;
 use delay_map::HashMapDelay;
+use enr::NodeId;
+use node_info::NodeContact;
 use std::cmp::Eq;
 use tracing::error;
 
@@ -16,20 +17,13 @@ pub fn topic_hash(topic: Vec<u8>) -> Option<Topic> {
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ActiveTopic {
-    node_address: NodeAddress,
+    node_id: NodeId,
     topic: Topic,
 }
 
 impl ActiveTopic {
-    pub fn new(node_address: NodeAddress, topic: Topic) -> Self {
-        ActiveTopic {
-            node_address,
-            topic,
-        }
-    }
-
-    pub fn node_address(&self) -> NodeAddress {
-        self.node_address.clone()
+    pub fn new(node_id: NodeId, topic: Topic) -> Self {
+        ActiveTopic { node_id, topic }
     }
 
     pub fn topic(&self) -> Topic {
@@ -37,7 +31,7 @@ impl ActiveTopic {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct Ticket {
     //nonce: u64,
     //src_node_id: NodeId,
@@ -80,8 +74,30 @@ impl Ticket {
     }*/
 }
 
+pub struct ActiveTicket {
+    contact: NodeContact,
+    ticket: Ticket,
+}
+
+impl ActiveTicket {
+    pub fn new(contact: NodeContact, ticket: Ticket) -> Self {
+        ActiveTicket {
+            contact,
+            ticket,
+        }
+    }
+
+    pub fn contact(&self) -> NodeContact {
+        self.contact.clone()
+    }
+
+    pub fn ticket(&self) -> Ticket {
+        self.ticket
+    }
+}
+
 pub struct Tickets {
-    tickets: HashMapDelay<ActiveTopic, Ticket>,
+    tickets: HashMapDelay<ActiveTopic, ActiveTicket>,
 }
 
 impl Tickets {
@@ -91,17 +107,17 @@ impl Tickets {
         }
     }
 
-    pub fn insert(&mut self, node_address: NodeAddress, ticket: Ticket, wait_time: Duration) {
+    pub fn insert(&mut self, contact: NodeContact, ticket: Ticket, wait_time: Duration) {
         self.tickets.insert_at(
-            ActiveTopic::new(node_address, ticket.topic),
-            ticket,
+            ActiveTopic::new(contact.node_id(), ticket.topic),
+            ActiveTicket::new(contact, ticket),
             wait_time,
         );
     }
 }
 
 impl Stream for Tickets {
-    type Item = Result<(ActiveTopic, Ticket), String>;
+    type Item = Result<(ActiveTopic, ActiveTicket), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.tickets.poll_next_unpin(cx) {
             Poll::Ready(Some(Ok((active_topic, ticket)))) => {

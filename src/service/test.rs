@@ -162,7 +162,7 @@ async fn test_updating_connection_on_ping() {
     service.active_requests.insert(
         RequestId(vec![1]),
         ActiveRequest {
-            contact: RequestContact::Initiated(node_contact),
+            contact: node_contact,
             request_body: rpc::RequestBody::Ping { enr_seq: 2 },
             query_id: Some(QueryId(1)),
             callback: None,
