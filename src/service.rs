@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{topic_hash, ActiveTicket, ActiveTopic, Ticket, Tickets},
+        ticket::{topic_hash, Ticket, Tickets},
         Ads, Topic,
     },
     error::{RequestError, ResponseError},
@@ -340,6 +340,7 @@ impl Service {
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
         let mut publish_topics = interval(Duration::from_secs(60 * 15));
+        let mut prune_active_topics = interval(Duration::from_secs(60 * 13));
 
         loop {
             tokio::select! {
@@ -493,8 +494,9 @@ impl Service {
                 _ = publish_topics.tick() => {
                     self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
                 }
-                _ = self.ads.next() => {}
-                _ = self.active_topics.next() => {}
+                _ = prune_active_topics.tick() => {
+                    self.active_topics.remove_expired();
+                }
             }
         }
     }
@@ -663,29 +665,20 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                topic_hash(topic).map(|topic| {
-                    self.ads.ticket_wait_time(topic).map(|wait_time| {
-                        let new_ticket = Ticket::new(topic);
-                        self.send_ticket_response(
-                            node_address.clone(),
-                            id.clone(),
-                            new_ticket,
-                            wait_time,
-                        );
+                let topic = topic_hash(topic);
+                let wait_time = self
+                    .ads
+                    .ticket_wait_time(topic)
+                    .unwrap_or(Duration::from_secs(0));
+                let new_ticket = Ticket::new(topic);
+                self.send_ticket_response(node_address.clone(), id.clone(), new_ticket, wait_time);
 
-                        let _ticket = Ticket::decode(ticket).unwrap_or(Ticket::default());
+                let ticket = Ticket::decode(ticket).unwrap_or(Ticket::default());
 
-                        // use wait time to see if there is any point at doing ticket validation
-
-                        // choose which ad to reg based on ticket, for example if some node has empty ticket
-                        // or is coming back, and possibly other stuff
-
-                        match self.ads.insert(enr, topic) {
-                            Ok(()) => self.send_regconfirmation_response(node_address, id, topic),
-                            Err(e) => error!("{}", e),
-                        }
-                    });
-                });
+                match self.ads.regconfirmation(enr, topic, wait_time, ticket) {
+                    Ok(()) => self.send_regconfirmation_response(node_address, id, topic),
+                    Err(e) => error!("{}", e),
+                }
                 debug!("Received RegisterTopic request which is not fully implemented");
             }
             RequestBody::TopicQuery { topic } => {
@@ -928,22 +921,14 @@ impl Service {
                     // todo(emhane): What should max wait_time be so insert_at in Tickets doesn't panic?
                     match Ticket::decode(ticket) {
                         Ok(ticket) => self.tickets.insert(
-                            active_request.contact, 
+                            active_request.contact,
                             ticket,
                             Duration::from_secs(wait_time),
                         ),
                         Err(e) => error!("{}", e),
                     }
                 }
-                ResponseBody::RegisterConfirmation { topic } => /* match topic_hash(topic) {
-                    Ok(topic_hash) => {
-                        self.active_topics.insert(
-                            topic,
-                            Duration::from_secs(60 * 15),
-                        );
-                    }
-                    Err(e) => error!("{}", e),
-                }*/{},
+                ResponseBody::RegisterConfirmation { topic } => {}
             }
         } else {
             warn!(

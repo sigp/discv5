@@ -240,12 +240,7 @@ async fn test_active_requests_insert() {
         body: RequestBody::Ping { enr_seq: 1 },
     };
     let initiating_session = true;
-    let request_call = RequestCall::new(
-        contact,
-        packet,
-        request,
-        initiating_session,
-    );
+    let request_call = RequestCall::new(contact, packet, request, initiating_session);
 
     // insert the pair and verify the mapping remains in sync
     let nonce = request_call.packet.message_nonce().clone();

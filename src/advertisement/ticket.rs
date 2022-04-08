@@ -3,16 +3,12 @@ use delay_map::HashMapDelay;
 use enr::NodeId;
 use node_info::NodeContact;
 use std::cmp::Eq;
-use tracing::error;
 
-pub fn topic_hash(topic: Vec<u8>) -> Option<Topic> {
-    if topic.len() > 32 {
-        error!("Topic is greater than 32 bytes");
-        return None;
-    }
+// Placeholder function
+pub fn topic_hash(topic: Vec<u8>) -> Topic {
     let mut topic_hash = [0u8; 32];
     topic_hash[32 - topic.len()..].copy_from_slice(&topic);
-    Some(topic_hash)
+    topic_hash
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
@@ -67,11 +63,6 @@ impl Ticket {
         }
         Ok(Ticket { topic: [0u8; 32] })
     }
-
-    /*pub fn regconfirmation(&mut self, node_record: Enr<CombinedKey>, topic: Topic, ticket: Ticket) -> Result<(), String> {
-        // chose which ad to insert from some pool of registrants-within-10-seconds-from-x
-        Ok(())
-    }*/
 }
 
 pub struct ActiveTicket {
@@ -81,10 +72,7 @@ pub struct ActiveTicket {
 
 impl ActiveTicket {
     pub fn new(contact: NodeContact, ticket: Ticket) -> Self {
-        ActiveTicket {
-            contact,
-            ticket,
-        }
+        ActiveTicket { contact, ticket }
     }
 
     pub fn contact(&self) -> NodeContact {
