@@ -108,42 +108,25 @@ impl Ads {
         self.remove_expired();
         let now = Instant::now();
         if self.expirations.len() < self.max_ads {
-            match self.ads.get(&topic) {
-                Some(nodes) => {
-                    if nodes.len() < self.max_ads_per_topic {
-                        None
-                    } else {
-                        match nodes.get(0) {
-                            Some(ad) => {
-                                let elapsed_time = now.saturating_duration_since(ad.insert_time);
-                                Some(self.ad_lifetime.saturating_sub(elapsed_time))
-                            }
-                            None => {
-                                debug_unreachable!("Panic on debug,topic key should be deleted if no ad nodes queued for it");
-                                error!("Topic key should be deleted if no ad nodes queued for it");
-                                return None;
-                            }
-                        }
-                    }
-                }
-                None => None,
-            }
+            self.ads
+                .get(&topic)
+                .filter(|nodes| nodes.len() >= self.max_ads_per_topic)
+                .map(|nodes| {
+                    nodes.get(0).map(|ad| {
+                        let elapsed_time = now.saturating_duration_since(ad.insert_time);
+                        self.ad_lifetime.saturating_sub(elapsed_time)
+                    })
+                })
+                .unwrap_or_default()
         } else {
-            match self.expirations.get(0) {
-                Some(ad) => {
-                    let elapsed_time = now.saturating_duration_since(ad.insert_time);
-                    Some(self.ad_lifetime.saturating_sub(elapsed_time))
-                }
-                None => {
-                    debug_unreachable!("Panic on debug, mismatched mapping between expiration queue and total ads count");
-                    error!("Mismatched mapping between expiration queue and total ads count");
-                    return None;
-                }
-            }
+            self.expirations.get(0).map(|ad| {
+                let elapsed_time = now.saturating_duration_since(ad.insert_time);
+                self.ad_lifetime.saturating_sub(elapsed_time)
+            })
         }
     }
 
-    pub fn remove_expired(&mut self) -> Option<((Enr, Instant), Topic)> {
+    pub fn remove_expired(&mut self) {
         let mut map: HashMap<Topic, usize> = HashMap::new();
 
         self.expirations
@@ -164,8 +147,6 @@ impl Ads {
                 self.ads.remove(&topic);
             }
         });
-
-        None
     }
 
     pub fn regconfirmation(
