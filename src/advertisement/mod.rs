@@ -1,6 +1,6 @@
 use super::*;
+use crate::Enr;
 use core::time::Duration;
-use enr::{CombinedKey, Enr};
 use futures::prelude::*;
 use more_asserts::debug_unreachable;
 use std::{
@@ -19,19 +19,19 @@ pub type Topic = [u8; 32];
 /// An ad we are adevrtising for another node
 #[derive(Debug)]
 pub struct Ad {
-    node_record: Enr<CombinedKey>,
+    node_record: Enr,
     insert_time: Instant,
 }
 
 impl Ad {
-    pub fn new(node_record: Enr<CombinedKey>, insert_time: Instant) -> Self {
+    pub fn new(node_record: Enr, insert_time: Instant) -> Self {
         Ad {
             node_record,
             insert_time,
         }
     }
 
-    pub fn node_record(&self) -> &Enr<CombinedKey> {
+    pub fn node_record(&self) -> &Enr {
         &self.node_record
     }
 }
@@ -117,7 +117,7 @@ impl Ads {
         }
     }
 
-    pub fn insert(&mut self, node_record: Enr<CombinedKey>, topic: Topic) -> Result<(), &str> {
+    pub fn insert(&mut self, node_record: Enr, topic: Topic) -> Result<(), &str> {
         let now = Instant::now();
         let nodes = self.ads.entry(topic).or_default();
         if nodes.contains(&Ad::new(node_record.clone(), now)) {
@@ -139,7 +139,7 @@ impl Ads {
 
 impl Stream for Ads {
     // type returned can be unit type but for testing easier to get values, worth the overhead to keep?
-    type Item = Result<((Enr<CombinedKey>, Instant), Topic), String>;
+    type Item = Result<((Enr, Instant), Topic), String>;
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let (insert_time, topic) = match self.expirations.get_mut(0) {
             Some((insert_time, topic)) => (insert_time, *topic),

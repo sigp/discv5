@@ -34,12 +34,12 @@ async fn insert_ad_and_get_nodes() {
     ads.insert(enr_2.clone(), topic).unwrap();
     ads.insert(enr.clone(), topic_2).unwrap();
 
-    let nodes: Vec<Enr<CombinedKey>> = ads
+    let nodes: Vec<Enr> = ads
         .get_ad_nodes(topic)
         .unwrap()
         .map(|ad| ad.node_record().clone())
         .collect();
-    let nodes_topic_2: Vec<Enr<CombinedKey>> = ads
+    let nodes_topic_2: Vec<Enr> = ads
         .get_ad_nodes(topic_2)
         .unwrap()
         .map(|ad| ad.node_record().clone())
