@@ -82,8 +82,7 @@ impl Ads {
         self.ads
             .get(&topic)
             .into_iter()
-            .map(|nodes| nodes.into_iter())
-            .flatten()
+            .flat_map(|nodes| nodes.iter())
             .map(|node| node.node_record.clone())
     }
 
