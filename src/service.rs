@@ -433,7 +433,7 @@ impl Service {
                             let mut result = query.into_result();
                             // obtain the ENR's for the resulting nodes
                             let mut found_enrs = Vec::new();
-                            for node_id in result.closest_peers.into_iter() {
+                            for node_id in result.closest_peers {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
                                     let enr = result.target.untrusted_enrs.swap_remove(position);
                                     found_enrs.push(enr);
@@ -446,27 +446,18 @@ impl Service {
                                 }
                             }
 
-                            let node_id = match result.target.query_type {
-                                QueryType::FindNode(node_id) => node_id,
-                            };
+                            let QueryType::FindNode(node_id) = result.target.query_type;
 
-                            let topic = match self.topics.get(&node_id.raw()) {
-                                Some(topic) => Some(*topic),
-                                None => None,
-                            };
+                            let topic = self.topics.get(&node_id.raw()).copied();
 
                             if let Some(topic) = topic {
-                                let local_enr = match self.local_enr.read().clone() {
-                                    enr => enr,
-                                };
+                                let local_enr = self.local_enr.read().clone();
                                 found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, local_enr.clone(), Ticket::default()));
-                            } else {
-                                if let Some(callback) = result.target.callback {
+                            } else if let Some(callback) = result.target.callback {
                                     if callback.send(found_enrs).is_err() {
                                         warn!("Callback dropped for query {}. Results dropped", *id);
                                     }
                                 }
-                            }
                         }
                     }
                 }
@@ -486,9 +477,7 @@ impl Service {
                     }
                 }
                 Some(Ok((active_topic, active_ticket))) = self.tickets.next() => {
-                    let enr = match self.local_enr.read().clone() {
-                        enr => enr,
-                    };
+                    let enr = self.local_enr.read().clone();
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, active_ticket.ticket());
                 }
                 _ = publish_topics.tick() => {
@@ -673,7 +662,7 @@ impl Service {
                 let new_ticket = Ticket::new(topic);
                 self.send_ticket_response(node_address.clone(), id.clone(), new_ticket, wait_time);
 
-                let ticket = Ticket::decode(ticket).unwrap_or(Ticket::default());
+                let ticket = Ticket::decode(ticket).unwrap_or_default();
 
                 match self.ads.regconfirmation(enr, topic, wait_time, ticket) {
                     Ok(()) => self.send_regconfirmation_response(node_address, id, topic),
@@ -928,7 +917,7 @@ impl Service {
                         Err(e) => error!("{}", e),
                     }
                 }
-                ResponseBody::RegisterConfirmation { topic } => {}
+                ResponseBody::RegisterConfirmation { .. } => {}
             }
         } else {
             warn!(
@@ -984,7 +973,7 @@ impl Service {
     ) {
         let request_body = RequestBody::FindNode { distances: vec![0] };
         let active_request = ActiveRequest {
-            contact: contact,
+            contact,
             request_body,
             query_id: None,
             callback: callback.map(CallbackResponse::Enr),
@@ -1003,7 +992,7 @@ impl Service {
         let request_body = RequestBody::Talk { protocol, request };
 
         let active_request = ActiveRequest {
-            contact: contact,
+            contact,
             request_body,
             query_id: None,
             callback: Some(CallbackResponse::Talk(callback)),
@@ -1019,7 +1008,7 @@ impl Service {
         };
 
         let active_request = ActiveRequest {
-            contact: contact,
+            contact,
             request_body,
             query_id: None,
             callback: None,
@@ -1046,10 +1035,9 @@ impl Service {
             node_address,
             response
         );
-        let _ = self.handler_send.send(HandlerIn::Response(
-            node_address.clone(),
-            Box::new(response),
-        ));
+        let _ = self
+            .handler_send
+            .send(HandlerIn::Response(node_address, Box::new(response)));
     }
 
     fn send_regconfirmation_response(
@@ -1069,10 +1057,9 @@ impl Service {
             node_address,
             response
         );
-        let _ = self.handler_send.send(HandlerIn::Response(
-            node_address.clone(),
-            Box::new(response),
-        ));
+        let _ = self
+            .handler_send
+            .send(HandlerIn::Response(node_address, Box::new(response)));
     }
 
     fn send_topic_query_response(

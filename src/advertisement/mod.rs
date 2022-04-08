@@ -84,7 +84,7 @@ impl Ads {
 
     pub fn get_ad_nodes(&self, topic: Topic) -> Result<Iter<'_, AdNode>, &str> {
         match self.ads.get(&topic) {
-            Some(topic_ads) => Ok(topic_ads.into_iter()),
+            Some(topic_ads) => Ok(topic_ads.iter()),
             None => Err("No ads for this topic"),
         }
     }

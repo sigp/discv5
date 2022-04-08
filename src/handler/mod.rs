@@ -1077,7 +1077,7 @@ impl Handler {
         for request in self
             .pending_requests
             .remove(node_address)
-            .unwrap_or_else(Vec::new)
+            .unwrap_or_default()
         {
             let _ = self
                 .service_send

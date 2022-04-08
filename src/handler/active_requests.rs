@@ -42,7 +42,7 @@ impl ActiveRequests {
                 None => {
                     debug_unreachable!("Panic on debug, a matching request call doesn't exist");
                     error!("A matching request call doesn't exist");
-                    return None;
+                    None
                 }
             },
             None => None,
@@ -63,7 +63,7 @@ impl ActiveRequests {
                             "Panic on debug, a matching nonce mapping doesn't exist"
                         );
                         error!("A matching nonce mapping doesn't exist");
-                        return None;
+                        None
                     }
                 }
             }
