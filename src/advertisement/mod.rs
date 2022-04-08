@@ -2,9 +2,7 @@ use super::*;
 use crate::Enr;
 use core::time::Duration;
 use futures::prelude::*;
-use more_asserts::debug_unreachable;
 use std::{
-    cmp::Ordering,
     collections::{vec_deque::Iter, HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
@@ -44,7 +42,6 @@ impl PartialEq for AdNode {
     }
 }
 
-#[derive(Ord, Eq)]
 struct AdTopic {
     topic: Topic,
     insert_time: Instant,
@@ -53,18 +50,6 @@ struct AdTopic {
 impl AdTopic {
     pub fn new(topic: Topic, insert_time: Instant) -> Self {
         AdTopic { topic, insert_time }
-    }
-}
-
-impl PartialEq for AdTopic {
-    fn eq(&self, other: &Self) -> bool {
-        self.topic == other.topic
-    }
-}
-
-impl PartialOrd for AdTopic {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.topic.cmp(&other.topic))
     }
 }
 
