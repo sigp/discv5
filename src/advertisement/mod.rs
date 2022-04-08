@@ -2,8 +2,9 @@ use super::*;
 use core::time::Duration;
 use enr::{CombinedKey, Enr};
 use futures::prelude::*;
+use more_asserts::debug_unreachable;
 use std::{
-    collections::{hash_map::Entry, vec_deque::Iter, HashMap, VecDeque},
+    collections::{vec_deque::Iter, HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -92,15 +93,9 @@ impl Ads {
                                 Some(self.ad_lifetime.saturating_sub(elapsed_time))
                             }
                             None => {
-                                #[cfg(debug_assertions)]
-                                panic!("Panic on debug,topic key should be deleted if no ad nodes queued for it");
-                                #[cfg(not(debug_assertions))]
-                                {
-                                    error!(
-                                        "Topic key should be deleted if no ad nodes queued for it"
-                                    );
-                                    return None;
-                                }
+                                debug_unreachable!("Panic on debug,topic key should be deleted if no ad nodes queued for it");
+                                error!("Topic key should be deleted if no ad nodes queued for it");
+                                return None;
                             }
                         }
                     }
@@ -114,13 +109,9 @@ impl Ads {
                     Some(self.ad_lifetime.saturating_sub(elapsed_time))
                 }
                 None => {
-                    #[cfg(debug_assertions)]
-                    panic!("Panic on debug, mismatched mapping between expiration queue and total ads count");
-                    #[cfg(not(debug_assertions))]
-                    {
-                        error!("Mismatched mapping between expiration queue and total ads count");
-                        return None;
-                    }
+                    debug_unreachable!("Panic on debug, mismatched mapping between expiration queue and total ads count");
+                    error!("Mismatched mapping between expiration queue and total ads count");
+                    return None;
                 }
             }
         }
@@ -174,26 +165,18 @@ impl Stream for Ads {
                         return Poll::Ready(Some(Ok(((ad.node_record, ad.insert_time), topic))));
                     }
                     None => {
-                        #[cfg(debug_assertions)]
-                        panic!("Panic on debug, topic key should be deleted if no ad nodes queued for it");
-                        #[cfg(not(debug_assertions))]
-                        {
-                            error!("Topic key should be deleted if no ad nodes queued for it");
-                            return Poll::Ready(Some(Err("No nodes for topic".into())));
-                        }
+                        debug_unreachable!("Panic on debug, topic key should be deleted if no ad nodes queued for it");
+                        error!("Topic key should be deleted if no ad nodes queued for it");
+                        return Poll::Ready(Some(Err("No nodes for topic".into())));
                     }
                 }
             }
             None => {
-                #[cfg(debug_assertions)]
-                panic!(
+                debug_unreachable!(
                     "Panic on debug, mismatched mapping between expiration queue and entry queue"
                 );
-                #[cfg(not(debug_assertions))]
-                {
-                    error!("Mismatched mapping between expiration queue and entry queue");
-                    return Poll::Ready(Some(Err("Topic doesn't exist".into())));
-                }
+                error!("Mismatched mapping between expiration queue and entry queue");
+                return Poll::Ready(Some(Err("Topic doesn't exist".into())));
             }
         }
     }
