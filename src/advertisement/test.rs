@@ -62,17 +62,9 @@ async fn insert_ad_and_get_nodes() {
     // Add an ad for topic_2 from enr
     ads.insert(enr.clone(), topic_2).unwrap();
 
-    let nodes: Vec<Enr> = ads
-        .get_ad_nodes(topic)
-        .unwrap()
-        .map(|ad| ad.node_record().clone())
-        .collect();
+    let nodes: Vec<Enr> = ads.get_ad_nodes(topic).collect();
 
-    let nodes_topic_2: Vec<Enr> = ads
-        .get_ad_nodes(topic_2)
-        .unwrap()
-        .map(|ad| ad.node_record().clone())
-        .collect();
+    let nodes_topic_2: Vec<Enr> = ads.get_ad_nodes(topic_2).collect();
 
     assert_eq!(nodes, vec![enr.clone(), enr_2]);
     assert_eq!(nodes_topic_2, vec![enr]);

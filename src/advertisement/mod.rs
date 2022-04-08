@@ -3,7 +3,7 @@ use crate::Enr;
 use core::time::Duration;
 use futures::prelude::*;
 use std::{
-    collections::{vec_deque::Iter, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -29,10 +29,6 @@ impl AdNode {
             node_record,
             insert_time,
         }
-    }
-
-    pub fn node_record(&self) -> &Enr {
-        &self.node_record
     }
 }
 
@@ -82,11 +78,13 @@ impl Ads {
         })
     }
 
-    pub fn get_ad_nodes(&self, topic: Topic) -> Result<Iter<'_, AdNode>, &str> {
-        match self.ads.get(&topic) {
-            Some(topic_ads) => Ok(topic_ads.iter()),
-            None => Err("No ads for this topic"),
-        }
+    pub fn get_ad_nodes(&self, topic: Topic) -> impl Iterator<Item = Enr> + '_ {
+        self.ads
+            .get(&topic)
+            .into_iter()
+            .map(|nodes| nodes.into_iter())
+            .flatten()
+            .map(|node| node.node_record.clone())
     }
 
     pub fn ticket_wait_time(&mut self, topic: Topic) -> Option<Duration> {

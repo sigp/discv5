@@ -1068,13 +1068,8 @@ impl Service {
         rpc_id: RequestId,
         topic: [u8; 32],
     ) {
-        let nodes_to_send = match self.ads.get_ad_nodes(topic) {
-            Ok(iter) => iter.map(|ad| ad.node_record().clone()).collect(),
-            Err(e) => {
-                error!("{}", e);
-                Vec::new()
-            }
-        };
+        let nodes_to_send = self.ads.get_ad_nodes(topic).collect();
+
         self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY");
     }
 
