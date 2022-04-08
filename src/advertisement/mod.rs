@@ -71,7 +71,6 @@ impl PartialOrd for AdTopic {
 pub struct Ads {
     expirations: VecDeque<AdTopic>,
     ads: HashMap<Topic, VecDeque<AdNode>>,
-    total_ads: usize,
     ad_lifetime: Duration,
     max_ads_per_topic: usize,
     max_ads: usize,
@@ -92,7 +91,6 @@ impl Ads {
         Ok(Ads {
             expirations: VecDeque::new(),
             ads: HashMap::new(),
-            total_ads: 0,
             ad_lifetime,
             max_ads_per_topic,
             max_ads,
@@ -109,7 +107,7 @@ impl Ads {
     pub fn ticket_wait_time(&mut self, topic: Topic) -> Option<Duration> {
         self.remove_expired();
         let now = Instant::now();
-        if self.total_ads < self.max_ads {
+        if self.expirations.len() < self.max_ads {
             match self.ads.get(&topic) {
                 Some(nodes) => {
                     if nodes.len() < self.max_ads_per_topic {
@@ -160,11 +158,11 @@ impl Ads {
             let entry_ref = self.ads.entry(topic).or_default();
             for _ in 0..index {
                 entry_ref.pop_front();
+                self.expirations.remove(0);
             }
             if entry_ref.is_empty() {
                 self.ads.remove(&topic);
             }
-            self.total_ads -= index;
         });
 
         None
@@ -200,7 +198,6 @@ impl Ads {
             insert_time: now,
         });
         self.expirations.push_back(AdTopic::new(topic, now));
-        self.total_ads += 1;
         Ok(())
     }
 }

@@ -111,7 +111,7 @@ async fn ticket_wait_time_full_table() {
     // Now max_ads in table is reached so the second ad for topic_2 has to wait
     assert_ne!(ads.ticket_wait_time(topic_2), None);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Now the first ads have expired and the table is not full so no neither topic
     // or topic_2 ads have to wait
