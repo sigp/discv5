@@ -101,6 +101,7 @@ async fn build_service(
         tickets: Tickets::new(Duration::from_secs(60 * 15)),
         topics: HashSet::new(),
         active_topics: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
+        ticket_pools: TicketPools::new(),
         exit,
         config,
     }

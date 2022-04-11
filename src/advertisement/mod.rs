@@ -7,7 +7,6 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use ticket::Ticket;
 use tokio::time::Instant;
 use tracing::{debug, error};
 
@@ -127,20 +126,6 @@ impl Ads {
                 self.ads.remove(&topic);
             }
         });
-    }
-
-    pub fn regconfirmation(
-        &mut self,
-        node_record: Enr,
-        topic: Topic,
-        wait_time: Duration,
-        _ticket: Ticket,
-    ) -> Result<(), &str> {
-        if wait_time > Duration::from_secs(0) {
-            return Err("currently no space for this ad");
-        }
-        // do some validation of tiket against other tickets received in registration window
-        self.insert(node_record, topic)
     }
 
     pub fn insert(&mut self, node_record: Enr, topic: Topic) -> Result<(), &str> {

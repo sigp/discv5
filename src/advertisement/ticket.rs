@@ -1,8 +1,12 @@
 use super::*;
+use crate::{
+    enr::{CombinedKey, EnrBuilder},
+    rpc::RequestId,
+};
 use delay_map::HashMapDelay;
 use enr::NodeId;
 use node_info::NodeContact;
-use std::cmp::Eq;
+use std::{cmp::Eq, net::IpAddr};
 
 // Placeholder function
 pub fn topic_hash(topic: Vec<u8>) -> Topic {
@@ -30,17 +34,28 @@ impl ActiveTopic {
 #[derive(Debug, Copy, Clone)]
 pub struct Ticket {
     //nonce: u64,
-    //src_node_id: NodeId,
-    //src_ip: IpAddr,
+    src_node_id: NodeId,
+    src_ip: IpAddr,
     topic: Topic,
     req_time: Instant,
     wait_time: Duration,
     //cum_wait: Option<Duration>,*/
 }
 
+// DEBUG
 impl Default for Ticket {
     fn default() -> Self {
+        let port = 5000;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+        let key = CombinedKey::generate_secp256k1();
+
+        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let node_id = enr.node_id();
+
         Ticket {
+            src_node_id: node_id,
+            src_ip: ip,
             topic: [0u8; 32],
             req_time: Instant::now(),
             wait_time: Duration::default(),
@@ -48,31 +63,35 @@ impl Default for Ticket {
     }
 }
 
+impl PartialEq for Ticket {
+    fn eq(&self, other: &Self) -> bool {
+        self.src_node_id == other.src_node_id
+            && self.src_ip == other.src_ip
+            && self.topic == other.topic
+    }
+}
+
 impl Ticket {
     pub fn new(
         //nonce: u64,
-        //src_node_id: NodeId,
-        //src_ip: IpAddr,
+        src_node_id: NodeId,
+        src_ip: IpAddr,
         topic: Topic,
         req_time: Instant,
         wait_time: Duration,
     ) -> Self {
         Ticket {
             //nonce,
-            //src_node_id,
-            //src_ip,
+            src_node_id,
+            src_ip,
             topic,
             req_time,
             wait_time,
         }
     }
 
-    pub fn decode(ticket_bytes: Vec<u8>) -> Option<Self> {
-        if ticket_bytes.is_empty() {
-            debug!("Empty ticket");
-            return None;
-        }
-        Some(Ticket::default())
+    pub fn decode(_ticket_bytes: Vec<u8>) -> Result<Self, String> {
+        Ok(Ticket::default())
     }
 }
 
@@ -95,6 +114,7 @@ impl ActiveTicket {
     }
 }
 
+/// Tickets received from other nodes as response to REGTOPIC req
 pub struct Tickets {
     tickets: HashMapDelay<ActiveTopic, ActiveTicket>,
     ticket_history: TicketHistory,
@@ -155,7 +175,7 @@ struct TicketHistory {
 }
 
 impl TicketHistory {
-    pub fn new(ticket_cache_duration: Duration) -> Self {
+    fn new(ticket_cache_duration: Duration) -> Self {
         TicketHistory {
             ticket_cache: HashMap::new(),
             expirations: VecDeque::new(),
@@ -190,5 +210,66 @@ impl TicketHistory {
             self.ticket_cache.remove(active_topic);
             self.expirations.pop_front();
         });
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RegistrationWindow {
+    topic: Topic,
+    open_time: Instant,
+}
+
+pub struct TicketPools {
+    ticket_pools: HashMap<Topic, HashMap<NodeId, (Enr, RequestId, Ticket)>>,
+    expirations: VecDeque<RegistrationWindow>,
+}
+
+impl TicketPools {
+    pub fn new() -> Self {
+        TicketPools {
+            ticket_pools: HashMap::new(),
+            expirations: VecDeque::new(),
+        }
+    }
+
+    pub fn insert(&mut self, node_record: Enr, req_id: RequestId, ticket: Ticket) {
+        let open_time = ticket.req_time.checked_add(ticket.wait_time).unwrap();
+        if open_time.elapsed() > Duration::from_secs(10) {
+            return;
+        }
+        let pool = self.ticket_pools.entry(ticket.topic).or_default();
+        if pool.is_empty() {
+            self.expirations.push_back(RegistrationWindow {
+                topic: ticket.topic,
+                open_time,
+            });
+        }
+        pool.insert(node_record.node_id(), (node_record, req_id, ticket));
+    }
+}
+
+impl Stream for TicketPools {
+    type Item = Result<(Topic, Enr, RequestId), String>;
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.expirations
+            .get(0)
+            .map(|reg_window| *reg_window)
+            .map(|reg_window| {
+                if reg_window.open_time.elapsed() >= Duration::from_secs(10) {
+                    self.ticket_pools
+                        .remove_entry(&reg_window.topic)
+                        .map(|(topic, ticket_pool)| {
+                            // do some proper selection based on node_address and ticket
+                            let (_node_id, (node_record, req_id, _ticket)) =
+                                ticket_pool.into_iter().next().unwrap();
+                            self.expirations.pop_front();
+                            Poll::Ready(Some(Ok((topic, node_record, req_id))))
+                        })
+                        .unwrap_or(Poll::Ready(Some(Err("Ticket selection failed".into()))))
+                } else {
+                    Poll::Pending
+                }
+            })
+            .unwrap_or(Poll::Pending)
     }
 }

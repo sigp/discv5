@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{topic_hash, Ticket, Tickets},
+        ticket::{topic_hash, Ticket, TicketPools, Tickets},
         Ads, Topic,
     },
     error::{RequestError, ResponseError},
@@ -217,6 +217,9 @@ pub struct Service {
 
     /// Ads currently advertised on other nodes.
     active_topics: Ads,
+
+    /// Tickets pending registration
+    ticket_pools: TicketPools,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -329,6 +332,7 @@ impl Service {
                     tickets: Tickets::new(Duration::from_secs(60 * 15)),
                     topics: HashSet::new(),
                     active_topics,
+                    ticket_pools: TicketPools::new(),
                     exit,
                     config: config.clone(),
                 };
@@ -484,6 +488,12 @@ impl Service {
                 }
                 _ = publish_topics.tick() => {
                     self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
+                }
+                Some(Ok((topic, node_record, req_id))) = self.ticket_pools.next() => {
+                    self.ads.insert(node_record.clone(), topic).ok();
+                    NodeContact::from(node_record).node_address().map(|node_address| {
+                        self.send_regconfirmation_response(node_address, req_id, topic);
+                    }).ok();
                 }
             }
         }
@@ -654,20 +664,34 @@ impl Service {
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
                 let topic = topic_hash(topic);
-                let wait_time = self
-                    .ads
-                    .ticket_wait_time(topic)
-                    .unwrap_or(Duration::from_secs(0));
-                let new_ticket = Ticket::new(topic, tokio::time::Instant::now(), wait_time);
-                self.send_ticket_response(node_address.clone(), id.clone(), new_ticket, wait_time);
+                let wait_time = self.ads.ticket_wait_time(topic);
 
-                let ticket = Ticket::decode(ticket).unwrap_or_default();
+                let new_ticket = Ticket::new(
+                    node_address.node_id,
+                    node_address.socket_addr.ip(),
+                    topic,
+                    tokio::time::Instant::now(),
+                    wait_time.unwrap_or(Duration::from_secs(0)),
+                );
+                self.send_ticket_response(
+                    node_address.clone(),
+                    id.clone(),
+                    new_ticket,
+                    wait_time.unwrap_or(Duration::from_secs(0)),
+                );
 
-                match self.ads.regconfirmation(enr, topic, wait_time, ticket) {
-                    Ok(()) => self.send_regconfirmation_response(node_address, id, topic),
-                    Err(e) => error!("{}", e),
+                if ticket.is_empty() {
+                    self.ticket_pools.insert(enr, id, new_ticket);
+                } else {
+                    Ticket::decode(ticket)
+                        .map(|ticket| {
+                            // Validate ticket
+                            if ticket == new_ticket {
+                                self.ticket_pools.insert(enr, id, ticket);
+                            }
+                        })
+                        .ok();
                 }
-                debug!("Received RegisterTopic request which is not fully implemented");
             }
             RequestBody::TopicQuery { topic } => {
                 self.send_topic_query_response(node_address, id, topic);
@@ -907,15 +931,17 @@ impl Service {
                 }
                 ResponseBody::Ticket { ticket, wait_time } => {
                     if wait_time <= MAX_WAIT_TIME_TICKET {
-                        Ticket::decode(ticket).map(|ticket| {
-                            self.tickets
-                                .insert(
-                                    active_request.contact,
-                                    ticket,
-                                    Duration::from_secs(wait_time),
-                                )
-                                .ok();
-                        });
+                        Ticket::decode(ticket)
+                            .map(|ticket| {
+                                self.tickets
+                                    .insert(
+                                        active_request.contact,
+                                        ticket,
+                                        Duration::from_secs(wait_time),
+                                    )
+                                    .ok();
+                            })
+                            .ok();
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
