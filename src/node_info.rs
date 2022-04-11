@@ -9,70 +9,49 @@ use libp2p_core::{identity::PublicKey, multiaddr::Protocol, multihash, Multiaddr
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
 #[derive(Debug, Clone, PartialEq)]
-pub enum NodeContact {
-    /// We know the ENR of the node we are contacting.
-    Enr(Box<Enr>),
-    /// We don't have an ENR, but have enough information to start a handshake.
-    ///
-    /// The handshake will request the ENR at the first opportunity.
-    /// The public key can be derived from multiaddr's whose keys can be inlined. The `TryFrom`
-    /// implementation for `String` and `MultiAddr`. This is gated behind the `libp2p` feature.
-    Raw {
-        /// An ENR compatible public key, required for handshaking with peers.
-        public_key: Box<CombinedPublicKey>,
-        /// The socket address and `NodeId` of the peer to connect to.
-        node_address: Box<NodeAddress>,
-    },
+pub struct NodeContact {
+    /// Key to use for communications with this node.
+    public_key: CombinedPublicKey,
+    /// Address to use to contact the node.
+    socket_addr: SocketAddr,
+    /// The ENR of the node if known
+    enr: Option<Enr>,
 }
 
 impl NodeContact {
     pub fn node_id(&self) -> NodeId {
-        match self {
-            NodeContact::Enr(enr) => enr.node_id(),
-            NodeContact::Raw { node_address, .. } => node_address.node_id,
-        }
+        self.public_key.into()
     }
 
     pub fn seq_no(&self) -> Option<u64> {
-        match self {
-            NodeContact::Enr(enr) => Some(enr.seq()),
-            _ => None,
-        }
+        self.enr.as_ref().map(|enr| enr.seq())
     }
 
     pub fn public_key(&self) -> CombinedPublicKey {
-        match self {
-            NodeContact::Enr(ref enr) => enr.public_key(),
-            NodeContact::Raw { public_key, .. } => *public_key.clone(),
-        }
+        self.public_key.clone()
     }
 
     pub fn is_enr(&self) -> bool {
-        matches!(self, NodeContact::Enr(_))
+        self.enr.is_some()
     }
 
-    pub fn udp_socket(&self) -> Result<SocketAddr, &'static str> {
-        match self {
-            NodeContact::Enr(enr) => enr
-                .udp_socket()
-                .ok_or("ENR does not contain an IP and UDP port"),
-            NodeContact::Raw { node_address, .. } => Ok(node_address.socket_addr),
+    pub fn udp_socket(&self) -> SocketAddr {
+        self.udp_socket()
+    }
+
+    pub fn node_address(&self) -> NodeAddress {
+        NodeAddress {
+            socket_addr: self.socket_addr,
+            node_id: self.node_id(),
         }
     }
 
-    pub fn node_address(&self) -> Result<NodeAddress, &'static str> {
-        let socket_addr = self.udp_socket()?;
-        let node_id = self.node_id();
-        Ok(NodeAddress {
-            socket_addr,
-            node_id,
+    pub fn try_from_enr(enr: Enr) -> Result<Self, &'static str> {
+        Ok(NodeContact {
+            public_key: enr.public_key(),
+            socket_addr: enr.udp_socket().ok_or("Non contactable node")?,
+            enr: Some(enr),
         })
-    }
-}
-
-impl From<Enr> for NodeContact {
-    fn from(enr: Enr) -> Self {
-        NodeContact::Enr(Box::new(enr))
     }
 }
 
@@ -136,12 +115,7 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
 
 impl std::fmt::Display for NodeContact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NodeContact::Enr(enr) => {
-                write!(f, "Node: {}, addr: {:?}", enr.node_id(), enr.udp_socket())
-            }
-            NodeContact::Raw { node_address, .. } => write!(f, "{}", node_address),
-        }
+        write!(f, "Node: {}, addr: {:?}", self.node_id(), self.socket_addr)
     }
 }
 
