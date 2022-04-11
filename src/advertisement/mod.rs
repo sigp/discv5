@@ -64,7 +64,7 @@ impl Ads {
         max_ads: usize,
     ) -> Result<Self, &'static str> {
         if max_ads_per_topic > max_ads {
-            return Err("Adds per topic cannot be > max_ads");
+            return Err("Ads per topic cannot be > max_ads");
         }
 
         Ok(Ads {
@@ -106,7 +106,7 @@ impl Ads {
         }
     }
 
-    pub fn remove_expired(&mut self) {
+    fn remove_expired(&mut self) {
         let mut map: HashMap<Topic, usize> = HashMap::new();
 
         self.expirations
@@ -143,7 +143,7 @@ impl Ads {
         self.insert(node_record, topic)
     }
 
-    fn insert(&mut self, node_record: Enr, topic: Topic) -> Result<(), &str> {
+    pub fn insert(&mut self, node_record: Enr, topic: Topic) -> Result<(), &str> {
         self.remove_expired();
         let now = Instant::now();
         let nodes = self.ads.entry(topic).or_default();

@@ -340,7 +340,6 @@ impl Service {
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
         let mut publish_topics = interval(Duration::from_secs(60 * 15));
-        let mut prune_active_topics = interval(Duration::from_secs(60 * 13));
 
         loop {
             tokio::select! {
@@ -482,9 +481,6 @@ impl Service {
                 }
                 _ = publish_topics.tick() => {
                     self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
-                }
-                _ = prune_active_topics.tick() => {
-                    self.active_topics.remove_expired();
                 }
             }
         }
@@ -917,7 +913,12 @@ impl Service {
                         Err(e) => error!("{}", e),
                     }
                 }
-                ResponseBody::RegisterConfirmation { .. } => {}
+                ResponseBody::RegisterConfirmation { topic } => {
+                        if let NodeContact::Enr(enr) = active_request.contact {
+                        let topic = topic_hash(topic);
+                        self.active_topics.insert(*enr, topic).ok();
+                    }
+                }
             }
         } else {
             warn!(
