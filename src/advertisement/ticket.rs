@@ -11,7 +11,7 @@ pub fn topic_hash(topic: Vec<u8>) -> Topic {
     topic_hash
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub struct ActiveTopic {
     node_id: NodeId,
     topic: Topic,
@@ -27,15 +27,25 @@ impl ActiveTopic {
     }
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Ticket {
     //nonce: u64,
     //src_node_id: NodeId,
     //src_ip: IpAddr,
     topic: Topic,
-    //req_time: Instant,
-    //wait_time: Duration,
+    req_time: Instant,
+    wait_time: Duration,
     //cum_wait: Option<Duration>,*/
+}
+
+impl Default for Ticket {
+    fn default() -> Self {
+        Ticket {
+            topic: [0u8; 32],
+            req_time: Instant::now(),
+            wait_time: Duration::default(),
+        }
+    }
 }
 
 impl Ticket {
@@ -44,24 +54,25 @@ impl Ticket {
         //src_node_id: NodeId,
         //src_ip: IpAddr,
         topic: Topic,
-        //req_time: Instant,
-        //wait_time: Duration,*/
+        req_time: Instant,
+        wait_time: Duration,
     ) -> Self {
         Ticket {
             //nonce,
             //src_node_id,
             //src_ip,
             topic,
-            //req_time,
-            //wait_time,
+            req_time,
+            wait_time,
         }
     }
 
-    pub fn decode(ticket_bytes: Vec<u8>) -> Result<Self, String> {
+    pub fn decode(ticket_bytes: Vec<u8>) -> Option<Self> {
         if ticket_bytes.is_empty() {
-            return Err("Ticket has wrong format".into());
+            debug!("Empty ticket");
+            return None;
         }
-        Ok(Ticket { topic: [0u8; 32] })
+        Some(Ticket::default())
     }
 }
 
@@ -86,21 +97,31 @@ impl ActiveTicket {
 
 pub struct Tickets {
     tickets: HashMapDelay<ActiveTopic, ActiveTicket>,
+    ticket_history: TicketHistory,
 }
 
 impl Tickets {
-    pub fn new() -> Self {
+    pub fn new(ticket_cache_duration: Duration) -> Self {
         Tickets {
             tickets: HashMapDelay::new(Duration::default()),
+            ticket_history: TicketHistory::new(ticket_cache_duration),
         }
     }
 
-    pub fn insert(&mut self, contact: NodeContact, ticket: Ticket, wait_time: Duration) {
-        self.tickets.insert_at(
-            ActiveTopic::new(contact.node_id(), ticket.topic),
-            ActiveTicket::new(contact, ticket),
-            wait_time,
-        );
+    pub fn insert(
+        &mut self,
+        contact: NodeContact,
+        ticket: Ticket,
+        wait_time: Duration,
+    ) -> Result<(), &str> {
+        let active_topic = ActiveTopic::new(contact.node_id(), ticket.topic);
+
+        if let Err(e) = self.ticket_history.insert(active_topic) {
+            return Err(e);
+        }
+        self.tickets
+            .insert_at(active_topic, ActiveTicket::new(contact, ticket), wait_time);
+        Ok(())
     }
 }
 
@@ -118,5 +139,56 @@ impl Stream for Tickets {
             Poll::Ready(None) => Poll::Pending,
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+struct TicketLimiter {
+    active_topic: ActiveTopic,
+    first_seen: Instant,
+}
+
+#[derive(Default)]
+struct TicketHistory {
+    ticket_cache: HashMap<ActiveTopic, u8>,
+    expirations: VecDeque<TicketLimiter>,
+    ticket_cache_duration: Duration,
+}
+
+impl TicketHistory {
+    pub fn new(ticket_cache_duration: Duration) -> Self {
+        TicketHistory {
+            ticket_cache: HashMap::new(),
+            expirations: VecDeque::new(),
+            ticket_cache_duration,
+        }
+    }
+
+    pub fn insert(&mut self, active_topic: ActiveTopic) -> Result<(), &str> {
+        self.remove_expired();
+        let count = self.ticket_cache.entry(active_topic).or_default();
+        if *count >= 3 {
+            error!("Max 3 tickets per (NodeId, Topic) accepted in 15 minutes");
+            return Err("Ticket limit reached");
+        }
+        *count += 1;
+        Ok(())
+    }
+
+    fn remove_expired(&mut self) {
+        let now = Instant::now();
+        let cached_tickets = self
+            .expirations
+            .iter()
+            .take_while(|ticket_limiter| {
+                now.saturating_duration_since(ticket_limiter.first_seen)
+                    >= self.ticket_cache_duration
+            })
+            .map(|ticket_limiter| ticket_limiter.active_topic)
+            .collect::<Vec<ActiveTopic>>();
+
+        cached_tickets.iter().for_each(|active_topic| {
+            self.ticket_cache.remove(active_topic);
+            self.expirations.pop_front();
+        });
     }
 }

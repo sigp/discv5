@@ -133,6 +133,9 @@ impl TalkRequest {
 /// The number of distances (buckets) we simultaneously request from each peer.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
+/// The max wait time accpeted for tickets.
+const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
+
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
     /// A request to start a query. There are two types of queries:
@@ -323,7 +326,7 @@ impl Service {
                     discv5_recv,
                     event_stream: None,
                     ads,
-                    tickets: Tickets::new(),
+                    tickets: Tickets::new(Duration::from_secs(60 * 15)),
                     topics: HashSet::new(),
                     active_topics,
                     exit,
@@ -655,7 +658,7 @@ impl Service {
                     .ads
                     .ticket_wait_time(topic)
                     .unwrap_or(Duration::from_secs(0));
-                let new_ticket = Ticket::new(topic);
+                let new_ticket = Ticket::new(topic, tokio::time::Instant::now(), wait_time);
                 self.send_ticket_response(node_address.clone(), id.clone(), new_ticket, wait_time);
 
                 let ticket = Ticket::decode(ticket).unwrap_or_default();
@@ -903,18 +906,20 @@ impl Service {
                     }
                 }
                 ResponseBody::Ticket { ticket, wait_time } => {
-                    // todo(emhane): What should max wait_time be so insert_at in Tickets doesn't panic?
-                    match Ticket::decode(ticket) {
-                        Ok(ticket) => self.tickets.insert(
-                            active_request.contact,
-                            ticket,
-                            Duration::from_secs(wait_time),
-                        ),
-                        Err(e) => error!("{}", e),
+                    if wait_time <= MAX_WAIT_TIME_TICKET {
+                        Ticket::decode(ticket).map(|ticket| {
+                            self.tickets
+                                .insert(
+                                    active_request.contact,
+                                    ticket,
+                                    Duration::from_secs(wait_time),
+                                )
+                                .ok();
+                        });
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
-                        if let NodeContact::Enr(enr) = active_request.contact {
+                    if let NodeContact::Enr(enr) = active_request.contact {
                         let topic = topic_hash(topic);
                         self.active_topics.insert(*enr, topic).ok();
                     }
