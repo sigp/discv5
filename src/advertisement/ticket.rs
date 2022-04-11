@@ -142,7 +142,7 @@ impl Stream for Tickets {
     }
 }
 
-struct TicketLimiter {
+struct TicketRateLimiter {
     active_topic: ActiveTopic,
     first_seen: Instant,
 }
@@ -150,7 +150,7 @@ struct TicketLimiter {
 #[derive(Default)]
 struct TicketHistory {
     ticket_cache: HashMap<ActiveTopic, u8>,
-    expirations: VecDeque<TicketLimiter>,
+    expirations: VecDeque<TicketRateLimiter>,
     ticket_cache_duration: Duration,
 }
 

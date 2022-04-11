@@ -98,7 +98,7 @@ async fn build_service(
         discv5_recv,
         event_stream: None,
         ads: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
-        tickets: Tickets::new(),
+        tickets: Tickets::new(Duration::from_secs(60 * 15)),
         topics: HashSet::new(),
         active_topics: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
         exit,
