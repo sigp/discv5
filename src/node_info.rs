@@ -71,21 +71,9 @@ impl NodeContact {
             enr: Some(enr),
         })
     }
-}
 
-#[cfg(test)]
-impl From<Enr> for NodeContact {
-    #[track_caller]
-    fn from(enr: Enr) -> Self {
-        NodeContact::try_from_enr(enr).unwrap()
-    }
-}
-
-#[cfg(feature = "libp2p")]
-impl std::convert::TryFrom<Multiaddr> for NodeContact {
-    type Error = &'static str;
-
-    fn try_from(multiaddr: Multiaddr) -> Result<Self, Self::Error> {
+    #[cfg(feature = "libp2p")]
+    pub fn try_from_multiaddr(multiaddr: Multiaddr) -> Result<Self, &'static str> {
         // The multiaddr must contain either the ip4 or ip6 protocols, the UDP protocol and the P2P
         // protocol with either secp256k1 or ed25519 keys.
 
@@ -129,13 +117,19 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
                 _ => return Err("The key type is not supported"),
             };
 
-        Ok(NodeContact::Raw {
-            public_key: Box::new(public_key.clone()),
-            node_address: Box::new(NodeAddress {
-                socket_addr: SocketAddr::new(ip_addr, udp_port),
-                node_id: public_key.into(),
-            }),
+        Ok(NodeContact {
+            public_key: public_key.clone(),
+            socket_addr: SocketAddr::new(ip_addr, udp_port),
+            enr: None,
         })
+    }
+}
+
+#[cfg(test)]
+impl From<Enr> for NodeContact {
+    #[track_caller]
+    fn from(enr: Enr) -> Self {
+        NodeContact::try_from_enr(enr).unwrap()
     }
 }
 

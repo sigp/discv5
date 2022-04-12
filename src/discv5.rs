@@ -34,7 +34,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 #[cfg(feature = "libp2p")]
-use {libp2p_core::Multiaddr, std::convert::TryFrom};
+use libp2p_core::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
 use crate::metrics::{Metrics, METRICS};
@@ -431,8 +431,8 @@ impl Discv5 {
             let multiaddr: Multiaddr = multiaddr.try_into().map_err(|_| {
                 RequestError::InvalidMultiaddr("Could not convert to multiaddr".into())
             })?;
-            let node_contact: NodeContact = NodeContact::try_from(multiaddr)
-                .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
+            let node_contact: NodeContact = NodeContact::try_from_multiaddr(multiaddr)
+                .map_err(|e| RequestError::InvalidMultiaddr(e))?;
 
             let (callback_send, callback_recv) = oneshot::channel();
 
