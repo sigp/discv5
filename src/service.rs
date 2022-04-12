@@ -489,11 +489,21 @@ impl Service {
                 _ = publish_topics.tick() => {
                     self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
                 }
-                Some(Ok((topic, node_record, req_id))) = self.ticket_pools.next() => {
-                    self.ads.insert(node_record.clone(), topic).ok();
-                    NodeContact::from(node_record).node_address().map(|node_address| {
-                        self.send_regconfirmation_response(node_address, req_id, topic);
-                    }).ok();
+                Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
+                    // Selection of node for free ad slot
+                    let kbucket_keys = self.kbuckets.write().iter().map(|entry| *entry.node.key.preimage()).collect::<HashSet<NodeId>>();
+                    let selection = ticket_pool.keys().filter(|node_id| !kbucket_keys.contains(node_id)).collect::<HashSet<&NodeId>>();
+                    let new_ad: Option<&(Enr, RequestId, Ticket)> = if selection.is_empty() {
+                        ticket_pool.values().next()
+                    } else {
+                        selection.into_iter().next().map(|node_id| ticket_pool.get(node_id)).unwrap_or(None)
+                    };
+                    new_ad.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)).map(|(node_record, req_id, _ticket)| {
+                        self.ads.insert(node_record.clone(), topic).ok();
+                        NodeContact::from(node_record).node_address().map(|node_address| {
+                            self.send_regconfirmation_response(node_address, req_id, topic);
+                        }).ok();
+                    });
                 }
             }
         }
