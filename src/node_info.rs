@@ -18,9 +18,12 @@ pub struct NodeContact {
     enr: Option<Enr>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct NonContactable;
+
 impl NodeContact {
     pub fn node_id(&self) -> NodeId {
-        self.public_key.into()
+        self.public_key.clone().into()
     }
 
     pub fn seq_no(&self) -> Option<u64> {
@@ -31,12 +34,12 @@ impl NodeContact {
         self.public_key.clone()
     }
 
-    pub fn is_enr(&self) -> bool {
-        self.enr.is_some()
+    pub fn enr(&self) -> Option<Enr> {
+        self.enr.clone()
     }
 
-    pub fn udp_socket(&self) -> SocketAddr {
-        self.udp_socket()
+    pub fn socket_addr(&self) -> SocketAddr {
+        self.socket_addr
     }
 
     pub fn node_address(&self) -> NodeAddress {
@@ -46,12 +49,35 @@ impl NodeContact {
         }
     }
 
-    pub fn try_from_enr(enr: Enr) -> Result<Self, &'static str> {
+    pub fn to_address_and_enr(self) -> (NodeAddress, Option<Enr>) {
+        let NodeContact {
+            public_key,
+            socket_addr,
+            enr,
+        } = self;
+        (
+            NodeAddress {
+                node_id: public_key.into(),
+                socket_addr,
+            },
+            enr,
+        )
+    }
+
+    pub fn try_from_enr(enr: Enr) -> Result<Self, NonContactable> {
         Ok(NodeContact {
             public_key: enr.public_key(),
-            socket_addr: enr.udp_socket().ok_or("Non contactable node")?,
+            socket_addr: enr.udp_socket().ok_or(NonContactable)?,
             enr: Some(enr),
         })
+    }
+}
+
+#[cfg(test)]
+impl From<Enr> for NodeContact {
+    #[track_caller]
+    fn from(enr: Enr) -> Self {
+        NodeContact::try_from_enr(enr).unwrap()
     }
 }
 

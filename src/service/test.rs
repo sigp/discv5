@@ -152,8 +152,8 @@ async fn test_updating_connection_on_ping() {
         },
     };
 
-    let node_contact = NodeContact::Enr(Box::new(enr2));
-    let expected_return_addr = node_contact.node_address().unwrap();
+    let node_contact: NodeContact = enr2.into();
+    let expected_return_addr = node_contact.node_address();
 
     service.active_requests.insert(
         RequestId(vec![1]),
