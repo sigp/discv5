@@ -270,7 +270,7 @@ impl Handler {
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
-        let socket = socket::Socket::new_socket(&socket_config.socket_addr).await?;
+        let socket = socket::Socket::new_socket(&socket_config.socket_addr, config.ip_mode).await?;
 
         config
             .executor

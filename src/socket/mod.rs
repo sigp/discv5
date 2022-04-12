@@ -1,8 +1,15 @@
-use crate::Executor;
+use crate::{Executor, IpMode};
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use socket2::{Domain, Protocol, Socket as Socket2, Type};
+use std::{
+    collections::HashMap,
+    io::{Error, ErrorKind},
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::{mpsc, oneshot};
 
 mod filter;
@@ -43,18 +50,41 @@ impl Socket {
     /// This creates and binds a new UDP socket.
     // In general this function can be expanded to handle more advanced socket creation.
     pub(crate) async fn new_socket(
-        socket: &SocketAddr,
-    ) -> Result<tokio::net::UdpSocket, std::io::Error> {
-        tokio::net::UdpSocket::bind(socket).await
+        socket_addr: &SocketAddr,
+        ip_mode: IpMode,
+    ) -> Result<tokio::net::UdpSocket, Error> {
+        match ip_mode {
+            IpMode::Ip4 => match socket_addr {
+                SocketAddr::V6(_) => Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "Cannot create an ipv4 socket from an ipv6 address",
+                )),
+                ip4 => tokio::net::UdpSocket::bind(ip4).await,
+            },
+            IpMode::Ip6 {
+                enable_mapped_addresses,
+            } => {
+                let addr = match socket_addr {
+                    SocketAddr::V4(_) => Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "Cannot create an ipv6 socket from an ipv4 address",
+                    )),
+                    SocketAddr::V6(ip6) => Ok(ip6.clone().into()),
+                }?;
+                let socket = Socket2::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+                let only_v6 = !enable_mapped_addresses;
+                socket.set_only_v6(only_v6)?;
+                socket.set_nonblocking(true)?;
+                socket.bind(&addr)?;
+                tokio::net::UdpSocket::from_std(socket.into())
+            }
+        }
     }
 
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
     /// This needs to be run inside of a tokio executor.
-    pub(crate) fn new(
-        socket: tokio::net::UdpSocket,
-        config: SocketConfig,
-    ) -> Result<Self, std::io::Error> {
+    pub(crate) fn new(socket: tokio::net::UdpSocket, config: SocketConfig) -> Result<Self, Error> {
         // Arc the udp socket for the send/recv tasks.
         let recv_udp = Arc::new(socket);
         let send_udp = recv_udp.clone();
