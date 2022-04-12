@@ -1,19 +1,15 @@
 use crate::{
     kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
 };
-///! A set of configuration parameters to tune the discovery protocol.
+use std::net::SocketAddr;
 use std::time::Duration;
 
-#[derive(Debug, Clone, Copy)]
+///! A set of configuration parameters to tune the discovery protocol.
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IpMode {
     Ip4,
     Ip6 { enable_mapped_addresses: bool },
-}
-
-impl Default for IpMode {
-    fn default() -> Self {
-        IpMode::Ip4
-    }
 }
 
 /// Configuration parameters that define the performance of the gossipsub network.
@@ -356,5 +352,17 @@ impl std::fmt::Debug for Discv5Config {
         let _ = builder.field("ping_interval", &self.ping_interval);
         let _ = builder.field("ban_duration", &self.ban_duration);
         builder.finish()
+    }
+}
+
+impl Default for IpMode {
+    fn default() -> Self {
+        IpMode::Ip4
+    }
+}
+
+impl IpMode {
+    pub fn is_ipv4(&self) -> bool {
+        self == &IpMode::Ip4
     }
 }

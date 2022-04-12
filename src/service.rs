@@ -744,10 +744,7 @@ impl Service {
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
-                    //
-                    // only attempt the majority-update if the peer supplies an ipv4 address to
-                    // mitigate https://github.com/sigp/lighthouse/issues/2215
-                    //
+
                     // Only count votes that from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
                     let should_count = match self.kbuckets.write().entry(&key) {
@@ -759,23 +756,56 @@ impl Service {
                         _ => false,
                     };
 
-                    if should_count && socket.is_ipv4() {
-                        let local_socket = self.local_enr.read().udp_socket();
+                    if should_count {
+                        // get the advertized local addresses
+                        let (local_ip4_socket, local_ip6_socket) = {
+                            let local_enr = self.local_enr.read();
+                            (local_enr.udp4_socket(), local_enr.udp6_socket())
+                        };
+
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
-                            if let Some(majority_socket) = ip_votes.majority() {
-                                if Some(majority_socket) != local_socket {
-                                    info!("Local UDP socket updated to: {}", majority_socket);
-                                    self.send_event(Discv5Event::SocketUpdated(majority_socket));
-                                    // Update the UDP socket
-                                    if self
-                                        .local_enr
-                                        .write()
-                                        .set_udp_socket(majority_socket, &self.enr_key.read())
-                                        .is_ok()
-                                    {
-                                        self.ping_connected_peers();
-                                    }
+                            let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
+
+                            // TODO: carefully check this.
+                            let new_ip4 = maybe_ip4_majority.and_then(|majority| {
+                                if Some(majority) != local_ip4_socket {
+                                    Some(majority)
+                                } else {
+                                    None
+                                }
+                            });
+                            let new_ip6 = maybe_ip6_majority.and_then(|majority| {
+                                if Some(majority) != local_ip6_socket {
+                                    Some(majority)
+                                } else {
+                                    None
+                                }
+                            });
+
+                            if new_ip4.is_some() || new_ip6.is_some() {
+                                let local_enr = self.local_enr.write();
+                                let mut updated = false;
+
+                                // Check if our advertized IPV6 address needs to be updated.
+                                if let Some(new_ip6) = new_ip6 {
+                                    info!("Local UDP ip6 socket updated to: {}", new_ip6);
+                                    let new_ip6: SocketAddr = new_ip6.into();
+                                    self.send_event(Discv5Event::SocketUpdated(new_ip6));
+                                    updated |= local_enr
+                                        .set_udp_socket(new_ip6, &self.enr_key.read())
+                                        .is_ok();
+                                }
+                                if let Some(new_ip4) = new_ip4 {
+                                    info!("Local UDP socket updated to: {}", new_ip4);
+                                    let new_ip4: SocketAddr = new_ip4.into();
+                                    self.send_event(Discv5Event::SocketUpdated(new_ip4));
+                                    updated |= local_enr
+                                        .set_udp_socket(new_ip4, &self.enr_key.read())
+                                        .is_ok();
+                                }
+                                if updated {
+                                    self.ping_connected_peers();
                                 }
                             }
                         }
