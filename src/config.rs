@@ -4,6 +4,18 @@ use crate::{
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy)]
+pub enum IpMode {
+    Ip4,
+    Ip6 { enable_mapped_addresses: bool },
+}
+
+impl Default for IpMode {
+    fn default() -> Self {
+        IpMode::Ip4
+    }
+}
+
 /// Configuration parameters that define the performance of the gossipsub network.
 #[derive(Clone)]
 pub struct Discv5Config {
@@ -62,6 +74,9 @@ pub struct Discv5Config {
     /// The time between pings to ensure connectivity amongst connected nodes. Default: 300
     /// seconds.
     pub ping_interval: Duration,
+
+    /// TODO: note everything this denotes.
+    pub ip_mode: IpMode,
 
     /// Reports all discovered ENR's when traversing the DHT to the event stream. Default true.
     pub report_discovered_peers: bool,
@@ -131,6 +146,7 @@ impl Default for Discv5Config {
             filter_max_bans_per_ip: Some(5),
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
+            ip_mode: IpMode::default(),
             executor: None,
         }
     }
@@ -298,6 +314,11 @@ impl Discv5ConfigBuilder {
     /// timing support.
     pub fn executor(&mut self, executor: Box<dyn Executor + Send + Sync>) -> &mut Self {
         self.config.executor = Some(executor);
+        self
+    }
+
+    pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
+        self.config.ip_mode = ip_mode;
         self
     }
 
