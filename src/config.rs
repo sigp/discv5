@@ -6,6 +6,7 @@ use std::time::Duration;
 
 ///! A set of configuration parameters to tune the discovery protocol.
 
+// TODO: move to another file
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IpMode {
     Ip4,
@@ -364,5 +365,37 @@ impl Default for IpMode {
 impl IpMode {
     pub fn is_ipv4(&self) -> bool {
         self == &IpMode::Ip4
+    }
+
+    pub fn is_addr_contactable(&self, socket_addr: &SocketAddr) -> bool {
+        // TODO: check this
+        match self {
+            IpMode::Ip4 => socket_addr.is_ipv4(),
+            IpMode::Ip6 {
+                enable_mapped_addresses,
+            } => {
+                // on a node with dual stack, all addresses should be contactable.
+                // on an ipv6 only node only ipv6 addresses are contactable
+                *enable_mapped_addresses || socket_addr.is_ipv6()
+            }
+        }
+    }
+
+    pub fn get_contactable_addr(&self, enr: &Enr) -> Option<SocketAddr> {
+        match self {
+            IpMode::Ip4 => enr.udp4_socket().map(SocketAddr::V4),
+            IpMode::Ip6 {
+                enable_mapped_addresses,
+            } => {
+                if *enable_mapped_addresses {
+                    // NOTE: general consensus is that ipv6 addresses should be preferred
+                    enr.udp6_socket()
+                        .map(SocketAddr::V6)
+                        .or_else(|| enr.udp4_socket().map(SocketAddr::V4))
+                } else {
+                    enr.udp6_socket().map(SocketAddr::V6)
+                }
+            }
+        }
     }
 }
