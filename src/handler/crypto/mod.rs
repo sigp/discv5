@@ -342,13 +342,13 @@ mod tests {
         let node2_key = CombinedKey::generate_secp256k1();
 
         let node1_enr = EnrBuilder::new("v4")
-            .ip("127.0.0.1".parse().unwrap())
-            .udp(9000)
+            .ip4("127.0.0.1".parse().unwrap())
+            .udp4(9000)
             .build(&node1_key)
             .unwrap();
         let node2_enr = EnrBuilder::new("v4")
-            .ip("127.0.0.1".parse().unwrap())
-            .udp(9000)
+            .ip4("127.0.0.1".parse().unwrap())
+            .udp4(9000)
             .build(&node2_key)
             .unwrap();
 

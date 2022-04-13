@@ -37,13 +37,13 @@ async fn simple_session_message() {
     let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
 
     let sender_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(sender_port)
+        .ip4(ip)
+        .udp4(sender_port)
         .build(&key1)
         .unwrap();
     let receiver_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(receiver_port)
+        .ip4(ip)
+        .udp4(receiver_port)
         .build(&key2)
         .unwrap();
 
@@ -113,13 +113,13 @@ async fn multiple_messages() {
 
     let config = Discv5ConfigBuilder::new().build();
     let sender_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(sender_port)
+        .ip4(ip)
+        .udp4(sender_port)
         .build(&key1)
         .unwrap();
     let receiver_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(receiver_port)
+        .ip4(ip)
+        .udp4(receiver_port)
         .build(&key2)
         .unwrap();
 
@@ -228,7 +228,11 @@ async fn test_active_requests_insert() {
 
     let key = CombinedKey::generate_secp256k1();
 
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(port)
+        .build(&key)
+        .unwrap();
     let node_id = enr.node_id();
 
     let contact: NodeContact = enr.into();
