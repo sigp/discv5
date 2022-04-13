@@ -1,8 +1,7 @@
 use crate::{
     kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
 };
-use std::net::SocketAddr;
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 ///! A set of configuration parameters to tune the discovery protocol.
 
