@@ -691,7 +691,7 @@ impl rlp::Decodable for Ticket {
                 return Err(DecoderError::RlpIsTooBig);
             }
             let mut raw = [0u8; 32];
-            raw.copy_from_slice(&data);
+            raw.copy_from_slice(data);
             NodeId::new(&raw)
         };
 
@@ -700,13 +700,20 @@ impl rlp::Decodable for Ticket {
             match data.len() {
                 4 => {
                     let mut ip = [0u8; 4];
-                    ip.copy_from_slice(&data);
+                    ip.copy_from_slice(data);
                     IpAddr::from(ip)
                 }
                 16 => {
                     let mut ip = [0u8; 16];
-                    ip.copy_from_slice(&data);
-                    IpAddr::from(ip)
+                    ip.copy_from_slice(data);
+                    let ipv6 = Ipv6Addr::from(ip);
+                    // If the ipv6 is ipv4 compatible/mapped, simply return the ipv4.
+                    // Ipv6 for Discv5 is coming soon.
+                    if let Some(ipv4) = ipv6.to_ipv4() {
+                        IpAddr::V4(ipv4)
+                    } else {
+                        IpAddr::V6(ipv6)
+                    }
                 }
                 _ => {
                     debug!("Ticket has incorrect byte length for IP");
@@ -721,7 +728,7 @@ impl rlp::Decodable for Ticket {
                 return Err(DecoderError::RlpIsTooBig);
             }
             let mut topic = [0u8; 32];
-            topic.copy_from_slice(&data);
+            topic.copy_from_slice(data);
             topic
         };
         let req_time = {

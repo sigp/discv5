@@ -434,7 +434,7 @@ impl Service {
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
                         QueryEvent::Waiting(query_id, node_id, request_body) => {
-                            self.send_rpc_query(query_id, node_id, request_body);
+                            self.send_rpc_query(query_id, node_id, *request_body);
                         }
                         // Note: Currently the distinction between a timed-out query and a finished
                         // query is superfluous, however it may be useful in future versions.
@@ -1633,7 +1633,7 @@ impl Service {
                     }
                 };
 
-                Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
+                Poll::Ready(QueryEvent::Waiting(query.id(), node_id, Box::new(request_body)))
             }
             QueryPoolState::Timeout(query) => {
                 warn!("Query id: {:?} timed out", query.id());
@@ -1649,7 +1649,7 @@ impl Service {
 /// active query.
 enum QueryEvent {
     /// The query is waiting for a peer to be contacted.
-    Waiting(QueryId, NodeId, RequestBody),
+    Waiting(QueryId, NodeId, Box<RequestBody>),
     /// The query has timed out, possible returning peers.
     TimedOut(Box<crate::query_pool::Query<QueryInfo, NodeId, Enr>>),
     /// The query has completed successfully.
