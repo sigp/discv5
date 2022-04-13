@@ -1018,7 +1018,7 @@ impl Handler {
                     Box::new(response),
                 ))
                 .await;
-            self.send_next_request(node_address).await;
+            self.send_next_request(node_address.clone()).await;
             trace!("REGCONFIRMATION response from node: {}", node_address);
         } else {
             // This is likely a late response and we have already failed the request. These get
