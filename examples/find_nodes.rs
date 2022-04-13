@@ -49,7 +49,7 @@ use std::{
 #[tokio::main]
 async fn main() {
     let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
-        .or_else(|_| tracing_subscriber::EnvFilter::try_new("debug"))
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("trace"))
         .unwrap();
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter_layer)
@@ -131,9 +131,9 @@ async fn main() {
 
     // the address to listen on
     let listen_addr: IpAddr = if is_ip6 == Some(true) {
-        Ipv6Addr::UNSPECIFIED.into()
+        Ipv6Addr::LOCALHOST.into()
     } else {
-        Ipv4Addr::UNSPECIFIED.into()
+        Ipv4Addr::LOCALHOST.into()
     };
     let socket_addr = SocketAddr::new(listen_addr, port);
 
