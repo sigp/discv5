@@ -1010,6 +1010,16 @@ impl Handler {
                 ))
                 .await;
             self.send_next_request(node_address).await;
+        } else if let ResponseBody::RegisterConfirmation { .. } = response.body {
+            let _ = self
+                .service_send
+                .send(HandlerOut::Response(
+                    node_address.clone(),
+                    Box::new(response),
+                ))
+                .await;
+            self.send_next_request(node_address).await;
+            trace!("REGCONFIRMATION response from node: {}", node_address);
         } else {
             // This is likely a late response and we have already failed the request. These get
             // dropped here.
