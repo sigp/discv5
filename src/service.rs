@@ -502,12 +502,12 @@ impl Service {
                     } else {
                         selection.into_iter().next().map(|node_id| ticket_pool.get(node_id)).unwrap_or(None)
                     };
-                    new_ad.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)).map(|(node_record, req_id, _ticket)| {
+                    if let Some((node_record, req_id, _ticket)) = new_ad.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
                         self.ads.insert(node_record.clone(), topic).ok();
                         NodeContact::from(node_record).node_address().map(|node_address| {
                             self.send_regconfirmation_response(node_address, req_id, topic);
                         }).ok();
-                    });
+                    }
                 }
             }
         }
@@ -693,7 +693,7 @@ impl Service {
                     );
 
                     self.send_ticket_response(
-                        node_address.clone(),
+                        node_address,
                         id.clone(),
                         new_ticket,
                         wait_time.unwrap_or(Duration::from_secs(0)),
@@ -969,13 +969,15 @@ impl Service {
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
                     let topic = topic_hash(topic);
-                    self.active_regtopic_requests
+                    if self
+                        .active_regtopic_requests
                         .is_active_req(id, node_id, topic)
-                        .map(|_| {
-                            if let NodeContact::Enr(enr) = active_request.contact {
-                                self.active_topics.insert(*enr, topic).ok();
-                            }
-                        });
+                        .is_some()
+                    {
+                        if let NodeContact::Enr(enr) = active_request.contact {
+                            self.active_topics.insert(*enr, topic).ok();
+                        }
+                    }
                 }
             }
         } else {
@@ -1060,6 +1062,7 @@ impl Service {
     }
 
     fn reg_topic_request(&mut self, contact: NodeContact, topic: Topic, enr: Enr, ticket: Ticket) {
+        let node_id = enr.node_id();
         let request_body = RequestBody::RegisterTopic {
             topic: topic.to_vec(),
             enr,
@@ -1072,7 +1075,8 @@ impl Service {
             query_id: None,
             callback: None,
         };
-        self.send_rpc_request(active_request);
+        let req_id = self.send_rpc_request(active_request);
+        self.active_regtopic_requests.insert(node_id, topic, req_id);
     }
 
     fn send_ticket_response(
@@ -1282,7 +1286,7 @@ impl Service {
     }
 
     /// Sends generic RPC requests. Each request gets added to known outputs, awaiting a response.
-    fn send_rpc_request(&mut self, active_request: ActiveRequest) {
+    fn send_rpc_request(&mut self, active_request: ActiveRequest) -> RequestId {
         // Generate a random rpc_id which is matched per node id
         let id = RequestId::random();
         let request: Request = Request {
@@ -1290,12 +1294,14 @@ impl Service {
             body: active_request.request_body.clone(),
         };
         let contact = active_request.contact.clone();
-        self.active_requests.insert(id, active_request);
+        self.active_requests.insert(id.clone(), active_request);
         debug!("Sending RPC {} to node: {}", request, contact);
 
         let _ = self
             .handler_send
             .send(HandlerIn::Request(contact, Box::new(request)));
+
+        id
     }
 
     fn send_event(&mut self, event: Discv5Event) {

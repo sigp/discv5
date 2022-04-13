@@ -233,24 +233,21 @@ impl TicketPools {
     }
 
     pub fn insert(&mut self, node_record: Enr, req_id: RequestId, ticket: Ticket) {
-        ticket
-            .req_time
-            .checked_add(ticket.wait_time)
-            .map(|open_time| {
-                if open_time.elapsed() <= Duration::from_secs(10) {
-                    let pool = self.ticket_pools.entry(ticket.topic).or_default();
-                    // Drop request if pool contains 50 nodes
-                    if pool.len() < 50 {
-                        if pool.is_empty() {
-                            self.expirations.push_back(RegistrationWindow {
-                                topic: ticket.topic,
-                                open_time,
-                            });
-                        }
-                        pool.insert(node_record.node_id(), (node_record, req_id, ticket));
+        if let Some(open_time) = ticket.req_time.checked_add(ticket.wait_time) {
+            if open_time.elapsed() <= Duration::from_secs(10) {
+                let pool = self.ticket_pools.entry(ticket.topic).or_default();
+                // Drop request if pool contains 50 nodes
+                if pool.len() < 50 {
+                    if pool.is_empty() {
+                        self.expirations.push_back(RegistrationWindow {
+                            topic: ticket.topic,
+                            open_time,
+                        });
                     }
+                    pool.insert(node_record.node_id(), (node_record, req_id, ticket));
                 }
-            });
+            }
+        }
     }
 }
 
@@ -258,8 +255,7 @@ impl Stream for TicketPools {
     type Item = Result<(Topic, HashMap<NodeId, (Enr, RequestId, Ticket)>), String>;
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.expirations
-            .get(0)
-            .map(|reg_window| *reg_window)
+            .pop_front()
             .map(|reg_window| {
                 if reg_window.open_time.elapsed() > Duration::from_secs(10) {
                     self.ticket_pools
@@ -268,7 +264,7 @@ impl Stream for TicketPools {
                             self.expirations.pop_front();
                             Poll::Ready(Some(Ok((topic, ticket_pool))))
                         })
-                        .unwrap_or(Poll::Ready(Some(Err("Ticket selection failed".into()))))
+                        .unwrap_or_else(|| Poll::Ready(Some(Err("Ticket selection failed".into()))))
                 } else {
                     Poll::Pending
                 }
@@ -346,7 +342,7 @@ impl ActiveRegtopicRequests {
         self.expirations
             .iter()
             .take_while(|req| req.insert_time.elapsed() >= Duration::from_secs(15))
-            .map(|req| *req)
+            .copied()
             .collect::<Vec<_>>()
             .iter()
             .for_each(|req| {
