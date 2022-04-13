@@ -545,8 +545,8 @@ impl Service {
                 }
                 if let Some(enr) = to_request_enr {
                     // TODO: check this
-                    let contact =
-                        NodeContact::try_from_enr(enr).expect("stored ENRs are contactable.");
+                    let contact = NodeContact::try_from_enr(enr, self.config.ip_mode)
+                        .expect("stored ENRs are contactable.");
                     self.request_enr(contact, None);
                 }
 
@@ -784,7 +784,6 @@ impl Service {
                             });
 
                             if new_ip4.is_some() || new_ip6.is_some() {
-                                let local_enr = self.local_enr.write();
                                 let mut updated = false;
 
                                 // Check if our advertized IPV6 address needs to be updated.
@@ -792,7 +791,9 @@ impl Service {
                                     info!("Local UDP ip6 socket updated to: {}", new_ip6);
                                     let new_ip6: SocketAddr = new_ip6.into();
                                     self.send_event(Discv5Event::SocketUpdated(new_ip6));
-                                    updated |= local_enr
+                                    updated |= self
+                                        .local_enr
+                                        .write()
                                         .set_udp_socket(new_ip6, &self.enr_key.read())
                                         .is_ok();
                                 }
@@ -800,7 +801,9 @@ impl Service {
                                     info!("Local UDP socket updated to: {}", new_ip4);
                                     let new_ip4: SocketAddr = new_ip4.into();
                                     self.send_event(Discv5Event::SocketUpdated(new_ip4));
-                                    updated |= local_enr
+                                    updated |= self
+                                        .local_enr
+                                        .write()
                                         .set_udp_socket(new_ip4, &self.enr_key.read())
                                         .is_ok();
                                 }
@@ -856,7 +859,7 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr) {
-        if let Ok(contact) = NodeContact::try_from_enr(enr) {
+        if let Ok(contact) = NodeContact::try_from_enr(enr, self.config.ip_mode) {
             let request_body = RequestBody::Ping {
                 enr_seq: self.local_enr.read().seq(),
             };
@@ -1053,7 +1056,7 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
-            let contact = match NodeContact::try_from_enr(enr) {
+            let contact = match NodeContact::try_from_enr(enr, self.config.ip_mode) {
                 Ok(contact) => contact,
                 Err(NonContactable) => {
                     return error!("Query {} has a non contactable enr", *query_id)
@@ -1290,7 +1293,7 @@ impl Service {
     /// session key-pair has been negotiated.
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
-        if enr.udp_socket().is_none() {
+        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
         }
 

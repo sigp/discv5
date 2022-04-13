@@ -176,7 +176,7 @@ impl Discv5 {
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
-        if enr.udp_socket().is_none() {
+        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             warn!("ENR attempted to be added without a UDP socket has been ignored");
             return Err("ENR has no UDP socket to connect to");
         }
@@ -348,17 +348,33 @@ impl Discv5 {
 
     /// Updates the local ENR TCP/UDP socket.
     pub fn update_local_enr_socket(&self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
-        let local_socket = self.local_enr.read().udp_socket();
-        if local_socket != Some(socket_addr) {
+        let local_enr = self.local_enr.read();
+        let update_socket: Option<SocketAddr> = match socket_addr {
+            SocketAddr::V4(socket_addr) => {
+                if Some(socket_addr) != local_enr.udp4_socket() {
+                    Some(socket_addr.into())
+                } else {
+                    None
+                }
+            }
+            SocketAddr::V6(socket_addr) => {
+                if Some(socket_addr) != local_enr.udp6_socket() {
+                    Some(socket_addr.into())
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(new_socket_addr) = update_socket {
             if is_tcp {
                 self.local_enr
                     .write()
-                    .set_tcp_socket(socket_addr, &self.enr_key.read())
+                    .set_tcp_socket(new_socket_addr, &self.enr_key.read())
                     .is_ok()
             } else {
                 self.local_enr
                     .write()
-                    .set_udp_socket(socket_addr, &self.enr_key.read())
+                    .set_udp_socket(new_socket_addr, &self.enr_key.read())
                     .is_ok()
             }
         } else {
@@ -458,9 +474,10 @@ impl Discv5 {
 
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
+        let ip_mode = self.config.ip_mode;
 
         async move {
-            let node_contact = NodeContact::try_from_enr(enr)?;
+            let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);

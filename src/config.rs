@@ -381,6 +381,7 @@ impl IpMode {
         }
     }
 
+    /// Get the contactable Socket address of an Enr under current configuration.
     pub fn get_contactable_addr(&self, enr: &Enr) -> Option<SocketAddr> {
         match self {
             IpMode::Ip4 => enr.udp4_socket().map(SocketAddr::V4),

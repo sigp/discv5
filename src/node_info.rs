@@ -64,10 +64,10 @@ impl NodeContact {
         )
     }
 
-    pub fn try_from_enr(enr: Enr) -> Result<Self, NonContactable> {
+    pub fn try_from_enr(enr: Enr, ip_mode: IpMode) -> Result<Self, NonContactable> {
         Ok(NodeContact {
             public_key: enr.public_key(),
-            socket_addr: enr.udp_socket().ok_or(NonContactable)?,
+            socket_addr: ip_mode.get_contactable_addr(&enr).ok_or(NonContactable)?,
             enr: Some(enr),
         })
     }
@@ -129,7 +129,7 @@ impl NodeContact {
 impl From<Enr> for NodeContact {
     #[track_caller]
     fn from(enr: Enr) -> Self {
-        NodeContact::try_from_enr(enr).unwrap()
+        NodeContact::try_from_enr(enr, IpMode::default()).unwrap()
     }
 }
 

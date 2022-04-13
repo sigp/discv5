@@ -61,7 +61,7 @@ impl IpVote {
 
 fn majority<K>(iter: impl Iterator<Item = (K, usize)>, threshold: &usize) -> Option<K> {
     iter.filter(|(_k, count)| count >= threshold)
-        .max_by_key(|(_k, count)| count)
+        .max_by_key(|(_k, count)| *count)
         .map(|(k, _count)| k)
 }
 
