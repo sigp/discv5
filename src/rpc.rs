@@ -687,7 +687,7 @@ impl rlp::Decodable for Ticket {
         let src_node_id = {
             let data = decoded_list.remove(0).data()?;
             if data.len() != 32 {
-                debug!("Ticket's node id is not 32 bytes");
+                debug!("Ticket's src-node-id is not 32 bytes");
                 return Err(DecoderError::RlpIsTooBig);
             }
             let mut raw = [0u8; 32];
@@ -716,7 +716,7 @@ impl rlp::Decodable for Ticket {
                     }
                 }
                 _ => {
-                    debug!("Ticket has incorrect byte length for IP");
+                    debug!("Ticket has incorrect byte length for src-ip");
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
             }
@@ -733,8 +733,11 @@ impl rlp::Decodable for Ticket {
         };
         let req_time = {
             if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                let ms = rlp.val_at::<u64>(0)?;
-                let req_time_since_unix = Duration::from_millis(ms);
+                let s_bytes = decoded_list.remove(0).data()?;
+                let mut s = [0u8; 8];
+                s.copy_from_slice(s_bytes);
+                let secs = u64::from_be_bytes(s);
+                let req_time_since_unix = Duration::from_secs(secs);
                 let time_since_req = time_since_unix - req_time_since_unix;
                 if let Some(req_time) = Instant::now().checked_sub(time_since_req) {
                     req_time
@@ -747,7 +750,13 @@ impl rlp::Decodable for Ticket {
                 return Err(DecoderError::Custom("SystemTime before UNIX EPOCH!"));
             }
         };
-        let wait_time = Duration::from_secs(rlp.val_at::<u64>(1)?);
+        let wait_time = {
+            let s_bytes = decoded_list.remove(0).data()?;
+            let mut s = [0u8; 8];
+            s.copy_from_slice(s_bytes);
+            let secs = u64::from_be_bytes(s);
+            Duration::from_secs(secs)
+        };
         Ok(Self {
             src_node_id,
             src_ip,
@@ -1062,6 +1071,38 @@ mod tests {
         let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn encode_decode_ticket() {
+        // Create the test values needed
+        let port = 5000;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+        let key = CombinedKey::generate_secp256k1();
+
+        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let node_id = enr.node_id();
+        let ticket = Ticket::new(
+            node_id,
+            ip,
+            [1; 32],
+            Instant::now(),
+            Duration::from_secs(11),
+        );
+
+        let mut buf = Vec::with_capacity(60);
+
+        let mut s = RlpStream::new();
+        s.begin_list(1);
+        s.append(&ticket);
+        buf.extend_from_slice(&s.out());
+        println!("{:?}", buf);
+
+        let rlp = rlp::Rlp::new(&buf);
+        let decoded = rlp.val_at::<Ticket>(0).unwrap();
+        println!("{:?}", decoded);
+        assert_eq!(ticket, decoded);
     }
 
     #[test]
