@@ -6,7 +6,7 @@ use crate::{
 use delay_map::HashMapDelay;
 use enr::NodeId;
 use node_info::NodeContact;
-use std::{cmp::Eq, net::IpAddr};
+use std::{cmp::Eq, collections::HashSet, net::IpAddr};
 
 // Placeholder function
 pub fn topic_hash(topic: Vec<u8>) -> Topic {
@@ -239,13 +239,16 @@ impl TicketPools {
             .map(|open_time| {
                 if open_time.elapsed() <= Duration::from_secs(10) {
                     let pool = self.ticket_pools.entry(ticket.topic).or_default();
-                    if pool.is_empty() {
-                        self.expirations.push_back(RegistrationWindow {
-                            topic: ticket.topic,
-                            open_time,
-                        });
+                    // Drop request if pool contains 50 nodes
+                    if pool.len() < 50 {
+                        if pool.is_empty() {
+                            self.expirations.push_back(RegistrationWindow {
+                                topic: ticket.topic,
+                                open_time,
+                            });
+                        }
+                        pool.insert(node_record.node_id(), (node_record, req_id, ticket));
                     }
-                    pool.insert(node_record.node_id(), (node_record, req_id, ticket));
                 }
             });
     }
@@ -271,5 +274,84 @@ impl Stream for TicketPools {
                 }
             })
             .unwrap_or(Poll::Pending)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ActiveRegtopicRequest {
+    active_topic: ActiveTopic,
+    insert_time: Instant,
+}
+
+impl ActiveRegtopicRequest {
+    fn new(active_topic: ActiveTopic, insert_time: Instant) -> Self {
+        ActiveRegtopicRequest {
+            active_topic,
+            insert_time,
+        }
+    }
+}
+
+pub struct ActiveRegtopicRequests {
+    requests: HashMap<ActiveTopic, HashSet<RequestId>>,
+    expirations: VecDeque<ActiveRegtopicRequest>,
+}
+
+impl ActiveRegtopicRequests {
+    pub fn new() -> Self {
+        ActiveRegtopicRequests {
+            requests: HashMap::new(),
+            expirations: VecDeque::new(),
+        }
+    }
+
+    pub fn is_active_req(
+        &mut self,
+        req_id: RequestId,
+        node_id: NodeId,
+        topic: Topic,
+    ) -> Option<bool> {
+        self.remove_expired();
+        self.requests
+            .remove(&ActiveTopic::new(node_id, topic))
+            .map(|ids| ids.contains(&req_id))
+    }
+
+    pub fn insert(&mut self, node_id: NodeId, topic: Topic, req_id: RequestId) {
+        self.remove_expired();
+        let now = Instant::now();
+        let active_topic = ActiveTopic::new(node_id, topic);
+
+        // Since a REGTOPIC request always receives a TICKET response, when we come to register with a ticket which
+        // wait-time is up we get a TICKET response with wait-time 0, hence we initiate a new REGTOPIC request.
+        // Since the registration window is 10 seconds, incase we would receive a RECONGIRMATION for that first
+        // REGTOPIC, that req-id would have been replaced, so we use a set. We extend the req-id set life-time upon
+        // each insert incase a REGCONFIRMATION comes to a later req-id. Max req-ids in a set is limited by our
+        // implementation accepting max 3 tickets for a (NodeId, Topic) within 15 minutes.
+        self.requests
+            .entry(active_topic)
+            .or_default()
+            .insert(req_id);
+        self.expirations
+            .iter()
+            .enumerate()
+            .find(|(_, req)| req.active_topic == active_topic)
+            .map(|(index, _)| index)
+            .map(|index| self.expirations.remove(index));
+        self.expirations
+            .push_back(ActiveRegtopicRequest::new(active_topic, now));
+    }
+
+    fn remove_expired(&mut self) {
+        self.expirations
+            .iter()
+            .take_while(|req| req.insert_time.elapsed() >= Duration::from_secs(15))
+            .map(|req| *req)
+            .collect::<Vec<_>>()
+            .iter()
+            .for_each(|req| {
+                self.requests.remove(&req.active_topic);
+                self.expirations.pop_front();
+            });
     }
 }

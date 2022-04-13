@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{topic_hash, Ticket, TicketPools, Tickets},
+        ticket::{topic_hash, ActiveRegtopicRequests, Ticket, TicketPools, Tickets},
         Ads, Topic,
     },
     error::{RequestError, ResponseError},
@@ -182,6 +182,9 @@ pub struct Service {
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
+    /// Keeps track of expected REGCONFIRMATION responses that may be received from a REGTOPIC request.
+    active_regtopic_requests: ActiveRegtopicRequests,
+
     /// A map of votes nodes have made about our external IP address. We accept the majority.
     ip_votes: Option<IpVote>,
 
@@ -321,6 +324,7 @@ impl Service {
                     queries: QueryPool::new(config.query_timeout),
                     active_requests: Default::default(),
                     active_nodes_responses: HashMap::new(),
+                    active_regtopic_requests: ActiveRegtopicRequests::new(),
                     ip_votes,
                     handler_send,
                     handler_recv,
@@ -673,34 +677,43 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                let topic = topic_hash(topic);
-                let wait_time = self.ads.ticket_wait_time(topic);
+                // Drop if request tries to advertise another node than sender
+                if enr.node_id() == node_address.node_id
+                    && enr.udp_socket() == Some(node_address.socket_addr)
+                {
+                    let topic = topic_hash(topic);
+                    let wait_time = self.ads.ticket_wait_time(topic);
 
-                let new_ticket = Ticket::new(
-                    node_address.node_id,
-                    node_address.socket_addr.ip(),
-                    topic,
-                    tokio::time::Instant::now(),
-                    wait_time.unwrap_or(Duration::from_secs(0)),
-                );
-                self.send_ticket_response(
-                    node_address.clone(),
-                    id.clone(),
-                    new_ticket,
-                    wait_time.unwrap_or(Duration::from_secs(0)),
-                );
+                    let new_ticket = Ticket::new(
+                        node_address.node_id,
+                        node_address.socket_addr.ip(),
+                        topic,
+                        tokio::time::Instant::now(),
+                        wait_time.unwrap_or(Duration::from_secs(0)),
+                    );
 
-                if ticket.is_empty() {
-                    self.ticket_pools.insert(enr, id, new_ticket);
-                } else {
-                    Ticket::decode(ticket)
-                        .map(|ticket| {
-                            // Validate ticket
-                            if ticket == new_ticket {
-                                self.ticket_pools.insert(enr, id, ticket);
-                            }
-                        })
-                        .ok();
+                    self.send_ticket_response(
+                        node_address.clone(),
+                        id.clone(),
+                        new_ticket,
+                        wait_time.unwrap_or(Duration::from_secs(0)),
+                    );
+
+                    // use id for expecting regconfirmation
+
+                    if ticket.is_empty() {
+                        self.ticket_pools.insert(enr, id, new_ticket);
+                    } else {
+                        Ticket::decode(ticket)
+                            .map(|ticket| {
+                                // Drop if src_node_id, src_ip and topic derived from node_address and request
+                                // don't match those in ticket
+                                if ticket == new_ticket {
+                                    self.ticket_pools.insert(enr, id, ticket);
+                                }
+                            })
+                            .ok();
+                    }
                 }
             }
             RequestBody::TopicQuery { topic } => {
@@ -955,10 +968,14 @@ impl Service {
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
-                    if let NodeContact::Enr(enr) = active_request.contact {
-                        let topic = topic_hash(topic);
-                        self.active_topics.insert(*enr, topic).ok();
-                    }
+                    let topic = topic_hash(topic);
+                    self.active_regtopic_requests
+                        .is_active_req(id, node_id, topic)
+                        .map(|_| {
+                            if let NodeContact::Enr(enr) = active_request.contact {
+                                self.active_topics.insert(*enr, topic).ok();
+                            }
+                        });
                 }
             }
         } else {

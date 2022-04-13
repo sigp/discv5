@@ -90,6 +90,7 @@ async fn build_service(
         queries: QueryPool::new(config.query_timeout),
         active_requests: Default::default(),
         active_nodes_responses: HashMap::new(),
+        active_regtopic_requests: ActiveRegtopicRequests::new(),
         ip_votes: None,
         handler_send,
         handler_recv,

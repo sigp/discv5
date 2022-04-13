@@ -15,7 +15,6 @@ pub mod ticket;
 
 pub type Topic = [u8; 32];
 
-/// An ad we are adevrtising for another node
 #[derive(Debug)]
 pub struct AdNode {
     node_record: Enr,
@@ -120,7 +119,7 @@ impl Ads {
             let entry_ref = self.ads.entry(topic).or_default();
             for _ in 0..index {
                 entry_ref.pop_front();
-                self.expirations.remove(0);
+                self.expirations.pop_front();
             }
             if entry_ref.is_empty() {
                 self.ads.remove(&topic);
