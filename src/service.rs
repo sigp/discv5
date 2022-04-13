@@ -19,8 +19,8 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{topic_hash, ActiveRegtopicRequests, Ticket, TicketPools, Tickets},
-        Ads, Topic,
+        ticket::{topic_hash, ActiveRegtopicRequests, TicketPools, Tickets},
+        Ads,
     },
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
@@ -393,7 +393,7 @@ impl Service {
                             self.send_topic_query(topic);
                         }
                         ServiceRequest::RegisterTopic(topic) => {
-                            self.reg_topic_request(topic, self.local_enr(), Ticket::default());
+                            self.reg_topic_request(topic, self.local_enr(), None);
                         }*/
                     }
                 }
@@ -462,7 +462,7 @@ impl Service {
 
                             if let Some(topic) = topic {
                                 let local_enr = self.local_enr.read().clone();
-                                found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, local_enr.clone(), Ticket::default()));
+                                found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, local_enr.clone(), None));
                             } else if let Some(callback) = result.target.callback {
                                     if callback.send(found_enrs).is_err() {
                                         warn!("Callback dropped for query {}. Results dropped", *id);
@@ -488,7 +488,7 @@ impl Service {
                 }
                 Some(Ok((active_topic, active_ticket))) = self.tickets.next() => {
                     let enr = self.local_enr.read().clone();
-                    self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, active_ticket.ticket());
+                    self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
                 }
                 _ = publish_topics.tick() => {
                     self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
@@ -701,18 +701,14 @@ impl Service {
 
                     // use id for expecting regconfirmation
 
-                    if ticket.is_empty() {
-                        self.ticket_pools.insert(enr, id, new_ticket);
+                    if let Some(ticket) = ticket {
+                        // Drop if src_node_id, src_ip and topic derived from node_address and request
+                        // don't match those in ticket
+                        if ticket == new_ticket {
+                            self.ticket_pools.insert(enr, id, ticket);
+                        }
                     } else {
-                        Ticket::decode(ticket)
-                            .map(|ticket| {
-                                // Drop if src_node_id, src_ip and topic derived from node_address and request
-                                // don't match those in ticket
-                                if ticket == new_ticket {
-                                    self.ticket_pools.insert(enr, id, ticket);
-                                }
-                            })
-                            .ok();
+                        self.ticket_pools.insert(enr, id, new_ticket);
                     }
                 }
             }
@@ -954,16 +950,12 @@ impl Service {
                 }
                 ResponseBody::Ticket { ticket, wait_time } => {
                     if wait_time <= MAX_WAIT_TIME_TICKET {
-                        Ticket::decode(ticket)
-                            .map(|ticket| {
-                                self.tickets
-                                    .insert(
-                                        active_request.contact,
-                                        ticket,
-                                        Duration::from_secs(wait_time),
-                                    )
-                                    .ok();
-                            })
+                        self.tickets
+                            .insert(
+                                active_request.contact,
+                                ticket,
+                                Duration::from_secs(wait_time),
+                            )
                             .ok();
                     }
                 }
@@ -1061,12 +1053,18 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
-    fn reg_topic_request(&mut self, contact: NodeContact, topic: Topic, enr: Enr, ticket: Ticket) {
+    fn reg_topic_request(
+        &mut self,
+        contact: NodeContact,
+        topic: Topic,
+        enr: Enr,
+        ticket: Option<Ticket>,
+    ) {
         let node_id = enr.node_id();
         let request_body = RequestBody::RegisterTopic {
             topic: topic.to_vec(),
             enr,
-            ticket: format!("{:?}", ticket).as_bytes().to_vec(),
+            ticket,
         };
 
         let active_request = ActiveRequest {
@@ -1089,7 +1087,7 @@ impl Service {
         let response = Response {
             id: rpc_id,
             body: ResponseBody::Ticket {
-                ticket: format!("{:?}", ticket).as_bytes().to_vec(),
+                ticket,
                 wait_time: wait_time.as_secs(),
             },
         };

@@ -1,6 +1,10 @@
-use enr::{CombinedKey, Enr};
-use rlp::{DecoderError, RlpStream};
-use std::net::{IpAddr, Ipv6Addr};
+use enr::{CombinedKey, Enr, NodeId};
+use rlp::{DecoderError, Rlp, RlpStream};
+use std::{
+    net::{IpAddr, Ipv6Addr},
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::time::{Duration, Instant};
 use tracing::{debug, warn};
 
 type TopicHash = [u8; 32];
@@ -87,7 +91,7 @@ pub enum RequestBody {
         // Current node record of sender.
         enr: crate::Enr,
         // Ticket content of ticket from a previous registration attempt or empty.
-        ticket: Vec<u8>,
+        ticket: Option<Ticket>,
     },
     /// A TOPICQUERY request.
     TopicQuery {
@@ -122,7 +126,7 @@ pub enum ResponseBody {
     /// The TICKET response.
     Ticket {
         /// The response to a REGTOPIC request.
-        ticket: Vec<u8>,
+        ticket: Ticket,
         /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
     },
@@ -374,10 +378,10 @@ impl std::fmt::Display for RequestBody {
             RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
             RequestBody::RegisterTopic { topic, enr, ticket } => write!(
                 f,
-                "RegisterTopic: topic: {}, enr: {}, ticket: {}",
+                "RegisterTopic: topic: {}, enr: {}, ticket: {:?}",
                 hex::encode(topic),
                 enr.to_base64(),
-                hex::encode(ticket)
+                ticket,
             ),
         }
     }
@@ -569,7 +573,7 @@ impl Message {
                 let topic = rlp.val_at::<Vec<u8>>(1)?;
                 let enr_rlp = rlp.at(2)?;
                 let enr = enr_rlp.as_val::<Enr<CombinedKey>>()?;
-                let ticket = rlp.val_at::<Vec<u8>>(3)?;
+                let ticket = rlp.val_at::<Option<Ticket>>(3)?;
                 Message::Request(Request {
                     id,
                     body: RequestBody::RegisterTopic { topic, enr, ticket },
@@ -581,7 +585,7 @@ impl Message {
                     debug!("RegisterTopic Response has an invalid RLP list length. Expected 2, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                let ticket = rlp.val_at::<Vec<u8>>(1)?;
+                let ticket = rlp.val_at::<Ticket>(1)?;
                 let wait_time = rlp.val_at::<u64>(2)?;
                 Message::Response(Response {
                     id,
@@ -633,6 +637,159 @@ impl Message {
         };
 
         Ok(message)
+    }
+}
+
+pub type Topic = [u8; 32];
+
+#[derive(Debug, Copy, Clone)]
+pub struct Ticket {
+    //nonce: u64,
+    src_node_id: NodeId,
+    src_ip: IpAddr,
+    topic: Topic,
+    req_time: Instant,
+    wait_time: Duration,
+    //cum_wait: Option<Duration>,
+}
+
+impl rlp::Encodable for Ticket {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(5);
+        s.append(&self.src_node_id.raw().to_vec());
+        match self.src_ip {
+            IpAddr::V4(addr) => s.append(&(addr.octets().to_vec())),
+            IpAddr::V6(addr) => s.append(&(addr.octets().to_vec())),
+        };
+        s.append(&(self.topic.to_vec()));
+        if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            let time_since_req = self.req_time.elapsed();
+            let time_stamp = time_since_unix - time_since_req;
+            s.append(&time_stamp.as_millis());
+        }
+        s.append(&self.wait_time.as_secs());
+    }
+}
+
+impl rlp::Decodable for Ticket {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+        if !rlp.is_list() {
+            debug!("Failed to decode ENR. Not an RLP list: {}", rlp);
+            return Err(DecoderError::RlpExpectedToBeList);
+        }
+
+        if rlp.item_count() != Ok(5) {
+            return Err(DecoderError::Custom("List has wrong item count"));
+        }
+
+        let mut decoded_list: Vec<Rlp<'_>> = rlp.iter().collect();
+
+        let src_node_id = {
+            let data = decoded_list.remove(0).data()?;
+            if data.len() != 32 {
+                debug!("Ticket's node id is not 32 bytes");
+                return Err(DecoderError::RlpIsTooBig);
+            }
+            let mut raw = [0u8; 32];
+            raw.copy_from_slice(&data);
+            NodeId::new(&raw)
+        };
+
+        let src_ip = {
+            let data = decoded_list.remove(0).data()?;
+            match data.len() {
+                4 => {
+                    let mut ip = [0u8; 4];
+                    ip.copy_from_slice(&data);
+                    IpAddr::from(ip)
+                }
+                16 => {
+                    let mut ip = [0u8; 16];
+                    ip.copy_from_slice(&data);
+                    IpAddr::from(ip)
+                }
+                _ => {
+                    debug!("Ticket has incorrect byte length for IP");
+                    return Err(DecoderError::RlpIncorrectListLen);
+                }
+            }
+        };
+        let topic = {
+            let data = decoded_list.remove(0).data()?;
+            if data.len() != 32 {
+                debug!("Ticket's topic hash is not 32 bytes");
+                return Err(DecoderError::RlpIsTooBig);
+            }
+            let mut topic = [0u8; 32];
+            topic.copy_from_slice(&data);
+            topic
+        };
+        let req_time = {
+            if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
+                let ms = rlp.val_at::<u64>(0)?;
+                let req_time_since_unix = Duration::from_millis(ms);
+                let time_since_req = time_since_unix - req_time_since_unix;
+                if let Some(req_time) = Instant::now().checked_sub(time_since_req) {
+                    req_time
+                } else {
+                    return Err(DecoderError::Custom(
+                        "Could not compute ticket req-time instant",
+                    ));
+                }
+            } else {
+                return Err(DecoderError::Custom("SystemTime before UNIX EPOCH!"));
+            }
+        };
+        let wait_time = Duration::from_secs(rlp.val_at::<u64>(1)?);
+        Ok(Self {
+            src_node_id,
+            src_ip,
+            topic,
+            req_time,
+            wait_time,
+        })
+    }
+}
+
+impl PartialEq for Ticket {
+    fn eq(&self, other: &Self) -> bool {
+        self.src_node_id == other.src_node_id
+            && self.src_ip == other.src_ip
+            && self.topic == other.topic
+    }
+}
+
+impl Ticket {
+    pub fn new(
+        //nonce: u64,
+        src_node_id: NodeId,
+        src_ip: IpAddr,
+        topic: Topic,
+        req_time: Instant,
+        wait_time: Duration,
+        //cum_wait: Option<Duration>,
+    ) -> Self {
+        Ticket {
+            //nonce,
+            src_node_id,
+            src_ip,
+            topic,
+            req_time,
+            wait_time,
+            //cum_wait,
+        }
+    }
+
+    pub fn topic(&self) -> Topic {
+        self.topic
+    }
+
+    pub fn req_time(&self) -> Instant {
+        self.req_time
+    }
+
+    pub fn wait_time(&self) -> Duration {
+        self.wait_time
     }
 }
 
@@ -890,7 +1047,7 @@ mod tests {
             body: RequestBody::RegisterTopic {
                 topic: vec![1, 2, 3],
                 enr,
-                ticket: vec![1, 2, 3, 4, 5],
+                ticket: None,
             },
         });
 
@@ -902,15 +1059,31 @@ mod tests {
 
     #[test]
     fn encode_decode_ticket_response() {
+        // Create the test values needed
+        let port = 5000;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+        let key = CombinedKey::generate_secp256k1();
+
+        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let node_id = enr.node_id();
+        let ticket = Ticket::new(
+            node_id,
+            ip,
+            [1; 32],
+            Instant::now(),
+            Duration::from_secs(11),
+        );
         let response = Message::Response(Response {
             id: RequestId(vec![1]),
             body: ResponseBody::Ticket {
-                ticket: vec![1, 2, 3],
+                ticket,
                 wait_time: 1u64,
             },
         });
 
         let encoded = response.clone().encode();
+        println!("{:?}", encoded);
         let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(response, decoded);

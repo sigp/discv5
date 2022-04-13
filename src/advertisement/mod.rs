@@ -2,6 +2,7 @@ use super::*;
 use crate::Enr;
 use core::time::Duration;
 use futures::prelude::*;
+use rpc::Topic;
 use std::{
     collections::{HashMap, VecDeque},
     pin::Pin,
@@ -12,8 +13,6 @@ use tracing::{debug, error};
 
 mod test;
 pub mod ticket;
-
-pub type Topic = [u8; 32];
 
 #[derive(Debug)]
 pub struct AdNode {

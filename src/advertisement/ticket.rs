@@ -1,12 +1,9 @@
 use super::*;
-use crate::{
-    enr::{CombinedKey, EnrBuilder},
-    rpc::RequestId,
-};
+use crate::rpc::{RequestId, Ticket};
 use delay_map::HashMapDelay;
 use enr::NodeId;
 use node_info::NodeContact;
-use std::{cmp::Eq, collections::HashSet, net::IpAddr};
+use std::{cmp::Eq, collections::HashSet};
 
 // Placeholder function
 pub fn topic_hash(topic: Vec<u8>) -> Topic {
@@ -28,70 +25,6 @@ impl ActiveTopic {
 
     pub fn topic(&self) -> Topic {
         self.topic
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct Ticket {
-    //nonce: u64,
-    src_node_id: NodeId,
-    src_ip: IpAddr,
-    topic: Topic,
-    req_time: Instant,
-    wait_time: Duration,
-    //cum_wait: Option<Duration>,*/
-}
-
-// DEBUG
-impl Default for Ticket {
-    fn default() -> Self {
-        let port = 5000;
-        let ip: IpAddr = "127.0.0.1".parse().unwrap();
-
-        let key = CombinedKey::generate_secp256k1();
-
-        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
-        let node_id = enr.node_id();
-
-        Ticket {
-            src_node_id: node_id,
-            src_ip: ip,
-            topic: [0u8; 32],
-            req_time: Instant::now(),
-            wait_time: Duration::default(),
-        }
-    }
-}
-
-impl PartialEq for Ticket {
-    fn eq(&self, other: &Self) -> bool {
-        self.src_node_id == other.src_node_id
-            && self.src_ip == other.src_ip
-            && self.topic == other.topic
-    }
-}
-
-impl Ticket {
-    pub fn new(
-        //nonce: u64,
-        src_node_id: NodeId,
-        src_ip: IpAddr,
-        topic: Topic,
-        req_time: Instant,
-        wait_time: Duration,
-    ) -> Self {
-        Ticket {
-            //nonce,
-            src_node_id,
-            src_ip,
-            topic,
-            req_time,
-            wait_time,
-        }
-    }
-
-    pub fn decode(_ticket_bytes: Vec<u8>) -> Result<Self, String> {
-        Ok(Ticket::default())
     }
 }
 
@@ -134,7 +67,7 @@ impl Tickets {
         ticket: Ticket,
         wait_time: Duration,
     ) -> Result<(), &str> {
-        let active_topic = ActiveTopic::new(contact.node_id(), ticket.topic);
+        let active_topic = ActiveTopic::new(contact.node_id(), ticket.topic());
 
         if let Err(e) = self.ticket_history.insert(active_topic) {
             return Err(e);
@@ -233,14 +166,14 @@ impl TicketPools {
     }
 
     pub fn insert(&mut self, node_record: Enr, req_id: RequestId, ticket: Ticket) {
-        if let Some(open_time) = ticket.req_time.checked_add(ticket.wait_time) {
+        if let Some(open_time) = ticket.req_time().checked_add(ticket.wait_time()) {
             if open_time.elapsed() <= Duration::from_secs(10) {
-                let pool = self.ticket_pools.entry(ticket.topic).or_default();
+                let pool = self.ticket_pools.entry(ticket.topic()).or_default();
                 // Drop request if pool contains 50 nodes
                 if pool.len() < 50 {
                     if pool.is_empty() {
                         self.expirations.push_back(RegistrationWindow {
-                            topic: ticket.topic,
+                            topic: ticket.topic(),
                             open_time,
                         });
                     }
