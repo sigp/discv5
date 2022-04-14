@@ -1,3 +1,7 @@
+use aes_gcm::{
+    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+    Aes128Gcm,
+};
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
@@ -807,6 +811,15 @@ impl Ticket {
     pub fn wait_time(&self) -> Duration {
         self.wait_time
     }
+
+    /*pub fn encrypt_rlp_encoded_ticket(&mut self, ticket: &[u8], none: u64) -> Result<Vec<u8>, String> {
+        let cipher = crypto::encrypt_message(
+            key,
+            nonce,
+            ticket,
+            b"",
+        );
+    }*/
 }
 
 #[cfg(test)]
