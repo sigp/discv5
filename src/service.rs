@@ -1633,7 +1633,11 @@ impl Service {
                     }
                 };
 
-                Poll::Ready(QueryEvent::Waiting(query.id(), node_id, Box::new(request_body)))
+                Poll::Ready(QueryEvent::Waiting(
+                    query.id(),
+                    node_id,
+                    Box::new(request_body),
+                ))
             }
             QueryPoolState::Timeout(query) => {
                 warn!("Query id: {:?} timed out", query.id());

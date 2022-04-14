@@ -665,7 +665,8 @@ impl rlp::Encodable for Ticket {
         if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
             let time_since_req = self.req_time.elapsed();
             let time_stamp = time_since_unix - time_since_req;
-            s.append(&time_stamp.as_millis());
+            s.append(&time_stamp.as_secs());
+            println!("{:?}", &time_stamp.as_secs());
         }
         s.append(&self.wait_time.as_secs());
     }
