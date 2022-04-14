@@ -766,15 +766,27 @@ impl Handler {
                 Ok((session, enr)) => {
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
                     // Verify the ENR is valid
-                    if self.verify_enr(&enr, &node_address) {
-                        // Session is valid
-                        // Notify the application
+                    if enr.node_id() == node_address.node_id {
+                        // Signature is valid, but socket may not be
                         // The session established here are from WHOAREYOU packets that we sent.
                         // This occurs when a node established a connection with us.
-                        let _ = self
-                            .service_send
-                            .send(HandlerOut::Established(enr, ConnectionDirection::Incoming))
-                            .await;
+
+                        if self.verify_enr(&enr, &node_address) {
+                            // Notify the application that the ENR is fully validated
+                            let _ = self
+                                .service_send
+                                .send(HandlerOut::Established(enr, ConnectionDirection::Incoming))
+                                .await;
+                        } else {
+                            // When the ENR IP:port doesn't match the observed, we accept the
+                            // connection, but do not populate the routing tables
+                            warn!(
+                                "Accepting inbound session, despite mismatch socket. ENR claims: {:?}; actual: {}",
+                                enr.udp_socket(),
+                                node_address
+                            );
+                        }
+
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
                             node_address,
