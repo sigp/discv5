@@ -1074,6 +1074,37 @@ mod tests {
     }
 
     #[test]
+    fn encode_decode_register_topic_request_with_ticket() {
+        let port = 5000;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+        let key = CombinedKey::generate_secp256k1();
+        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+
+        let node_id = enr.node_id();
+        let ticket = Ticket::new(
+            node_id,
+            ip,
+            [1; 32],
+            Instant::now(),
+            Duration::from_secs(11),
+        );
+
+        let request = Message::Request(Request {
+            id: RequestId(vec![1]),
+            body: RequestBody::RegisterTopic {
+                topic: vec![1, 2, 3],
+                enr,
+                ticket: Some(ticket),
+            },
+        });
+
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(&encoded).unwrap();
+
+        assert_eq!(request, decoded);
+    }
+
+    #[test]
     fn encode_decode_ticket() {
         // Create the test values needed
         let port = 5000;
