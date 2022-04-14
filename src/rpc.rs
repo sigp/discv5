@@ -665,10 +665,9 @@ impl rlp::Encodable for Ticket {
         if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
             let time_since_req = self.req_time.elapsed();
             let time_stamp = time_since_unix - time_since_req;
-            s.append(&time_stamp.as_secs());
-            println!("{:?}", &time_stamp.as_secs());
+            s.append(&time_stamp.as_secs().to_be_bytes().to_vec());
         }
-        s.append(&self.wait_time.as_secs());
+        s.append(&self.wait_time.as_secs().to_be_bytes().to_vec());
     }
 }
 
@@ -1098,11 +1097,9 @@ mod tests {
         s.begin_list(1);
         s.append(&ticket);
         buf.extend_from_slice(&s.out());
-        println!("{:?}", buf);
 
         let rlp = rlp::Rlp::new(&buf);
         let decoded = rlp.val_at::<Ticket>(0).unwrap();
-        println!("{:?}", decoded);
         assert_eq!(ticket, decoded);
     }
 
@@ -1132,7 +1129,6 @@ mod tests {
         });
 
         let encoded = response.clone().encode();
-        println!("{:?}", encoded);
         let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(response, decoded);
