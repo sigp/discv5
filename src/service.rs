@@ -316,8 +316,11 @@ impl Service {
         };
 
         let ticket_key: [u8; 16] = rand::random();
-        match local_enr.write().insert("ticket_key", &ticket_key, &enr_key.write()) {
-            Ok(_) => {},
+        match local_enr
+            .write()
+            .insert("ticket_key", &ticket_key, &enr_key.write())
+        {
+            Ok(_) => {}
             Err(e) => {
                 return Err(Error::new(ErrorKind::Other, format!("{:?}", e)));
             }
@@ -710,7 +713,7 @@ impl Service {
                         wait_time.unwrap_or(Duration::from_secs(0)),
                     );
 
-                    if ticket.len() > 0 {
+                    if ticket.is_empty() {
                         Ticket::decode(&ticket)
                             .map_err(|e| error!("{}", e))
                             .map(|ticket| {
@@ -1112,8 +1115,7 @@ impl Service {
         ticket: Ticket,
         wait_time: Duration,
     ) {
-        self
-            .local_enr
+        self.local_enr
             .write()
             .to_base64()
             .parse::<Enr>()
@@ -1125,8 +1127,7 @@ impl Service {
                         msg: &ticket.encode(),
                         aad: b"",
                     };
-                    aead
-                        .encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                    aead.encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
                         .map_err(|e| error!("Failed to send TICKET response: {}", e))
                         .map(|encrypted_ticket| {
                             let response = Response {
@@ -1144,9 +1145,11 @@ impl Service {
                             let _ = self
                                 .handler_send
                                 .send(HandlerIn::Response(node_address, Box::new(response)));
-                        }).ok();
+                        })
+                        .ok();
                 }
-            }).ok();
+            })
+            .ok();
     }
 
     fn send_regconfirmation_response(
