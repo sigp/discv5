@@ -692,21 +692,25 @@ impl Service {
                         wait_time.unwrap_or(Duration::from_secs(0)),
                     );
 
+                    let new_ticket_bytes = new_ticket.encode();
+
                     self.send_ticket_response(
                         node_address,
                         id.clone(),
-                        new_ticket,
+                        new_ticket_bytes,
                         wait_time.unwrap_or(Duration::from_secs(0)),
                     );
-
-                    // use id for expecting regconfirmation
-
-                    if let Some(ticket) = ticket {
-                        // Drop if src_node_id, src_ip and topic derived from node_address and request
-                        // don't match those in ticket
-                        if ticket == new_ticket {
-                            self.ticket_pools.insert(enr, id, ticket);
-                        }
+                    
+                    if ticket.len() > 0 {
+                        Ticket::decode(&ticket).map_err(|e| error!("{}", e)).map(|ticket| {
+                            // Drop if src_node_id, src_ip and topic derived from node_address and request
+                            // don't match those in ticket
+                            if let Some(ticket) = ticket {
+                                if ticket == new_ticket {
+                                    self.ticket_pools.insert(enr, id, ticket);
+                                }
+                            }
+                        }).ok();
                     } else {
                         self.ticket_pools.insert(enr, id, new_ticket);
                     }
@@ -949,15 +953,19 @@ impl Service {
                     }
                 }
                 ResponseBody::Ticket { ticket, wait_time } => {
-                    if wait_time <= MAX_WAIT_TIME_TICKET {
-                        self.tickets
-                            .insert(
-                                active_request.contact,
-                                ticket,
-                                Duration::from_secs(wait_time),
-                            )
-                            .ok();
-                    }
+                    Ticket::decode(&ticket).map_err(|e| error!("{}", e)).map(|ticket| {
+                        if let Some(ticket) = ticket {
+                            if wait_time <= MAX_WAIT_TIME_TICKET {
+                                self.tickets
+                                    .insert(
+                                        active_request.contact,
+                                        ticket,
+                                        Duration::from_secs(wait_time),
+                                    )
+                                    .ok();
+                            }
+                        }
+                    }).ok();
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
                     let topic = topic_hash(topic);
@@ -1060,11 +1068,17 @@ impl Service {
         enr: Enr,
         ticket: Option<Ticket>,
     ) {
+
+        let ticket_bytes = if let Some(ticket) = ticket {
+            ticket.encode()
+        } else {
+            Vec::new()
+        };
         let node_id = enr.node_id();
         let request_body = RequestBody::RegisterTopic {
             topic: topic.to_vec(),
             enr,
-            ticket,
+            ticket: ticket_bytes,
         };
 
         let active_request = ActiveRequest {
@@ -1081,7 +1095,7 @@ impl Service {
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
-        ticket: Ticket,
+        ticket: Vec<u8>,
         wait_time: Duration,
     ) {
         let response = Response {

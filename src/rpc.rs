@@ -1,7 +1,3 @@
-use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
-    Aes128Gcm,
-};
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
@@ -95,7 +91,7 @@ pub enum RequestBody {
         // Current node record of sender.
         enr: crate::Enr,
         // Ticket content of ticket from a previous registration attempt or empty.
-        ticket: Option<Ticket>,
+        ticket: Vec<u8>,
     },
     /// A TOPICQUERY request.
     TopicQuery {
@@ -130,7 +126,7 @@ pub enum ResponseBody {
     /// The TICKET response.
     Ticket {
         /// The response to a REGTOPIC request.
-        ticket: Ticket,
+        ticket: Vec<u8>,
         /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
     },
@@ -577,7 +573,7 @@ impl Message {
                 let topic = rlp.val_at::<Vec<u8>>(1)?;
                 let enr_rlp = rlp.at(2)?;
                 let enr = enr_rlp.as_val::<Enr<CombinedKey>>()?;
-                let ticket = rlp.val_at::<Option<Ticket>>(3)?;
+                let ticket = rlp.val_at::<Vec<u8>>(3)?;
                 Message::Request(Request {
                     id,
                     body: RequestBody::RegisterTopic { topic, enr, ticket },
@@ -589,7 +585,7 @@ impl Message {
                     debug!("RegisterTopic Response has an invalid RLP list length. Expected 2, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                let ticket = rlp.val_at::<Ticket>(1)?;
+                let ticket = rlp.val_at::<Vec<u8>>(1)?;
                 let wait_time = rlp.val_at::<u64>(2)?;
                 Message::Response(Response {
                     id,
@@ -812,14 +808,22 @@ impl Ticket {
         self.wait_time
     }
 
-    /*pub fn encrypt_rlp_encoded_ticket(&mut self, ticket: &[u8], none: u64) -> Result<Vec<u8>, String> {
-        let cipher = crypto::encrypt_message(
-            key,
-            nonce,
-            ticket,
-            b"",
-        );
-    }*/
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut s =RlpStream::new();
+        s.append(self);
+        buf.extend_from_slice(&s.out());
+        buf
+    }
+
+    pub fn decode(ticket: &[u8]) -> Result<Option<Self>, DecoderError> {
+        if ticket.len() > 0 {
+            let rlp = rlp::Rlp::new(&ticket);
+            let ticket = rlp.as_val::<Ticket>()?;
+            return Ok(Some(ticket));
+        }
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
@@ -1065,7 +1069,7 @@ mod tests {
     }
 
     #[test]
-    fn encode_decode_register_topic_request() {
+    fn encode_decode_register_topic_request_empty_ticket() {
         let port = 5000;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let key = CombinedKey::generate_secp256k1();
@@ -1076,7 +1080,7 @@ mod tests {
             body: RequestBody::RegisterTopic {
                 topic: vec![1, 2, 3],
                 enr,
-                ticket: None,
+                ticket: Vec::new(),
             },
         });
 
@@ -1087,7 +1091,7 @@ mod tests {
     }
 
     #[test]
-    fn encode_decode_register_topic_request_with_ticket() {
+    fn encode_decode_register_topic_request() {
         let port = 5000;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let key = CombinedKey::generate_secp256k1();
@@ -1102,12 +1106,14 @@ mod tests {
             Duration::from_secs(11),
         );
 
+        let ticket = ticket.encode();
+
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::RegisterTopic {
                 topic: vec![1, 2, 3],
                 enr,
-                ticket: Some(ticket),
+                ticket: ticket,
             },
         });
 
@@ -1135,16 +1141,10 @@ mod tests {
             Duration::from_secs(11),
         );
 
-        let mut buf = Vec::with_capacity(60);
+        let encoded = ticket.encode();
+        let decoded = Ticket::decode(&encoded).unwrap();
 
-        let mut s = RlpStream::new();
-        s.begin_list(1);
-        s.append(&ticket);
-        buf.extend_from_slice(&s.out());
-
-        let rlp = rlp::Rlp::new(&buf);
-        let decoded = rlp.val_at::<Ticket>(0).unwrap();
-        assert_eq!(ticket, decoded);
+        assert_eq!(Some(ticket), decoded);
     }
 
     #[test]
@@ -1164,6 +1164,8 @@ mod tests {
             Instant::now(),
             Duration::from_secs(11),
         );
+
+        let ticket = ticket.encode();
         let response = Message::Response(Response {
             id: RequestId(vec![1]),
             body: ResponseBody::Ticket {
