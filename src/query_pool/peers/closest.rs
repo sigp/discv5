@@ -175,6 +175,10 @@ where
 
         // Incorporate the reported closer peers into the query.
         for peer in closer_peers {
+            // Skip if the peer is the target in order to avoid self-find query.
+            if &peer == self.target_key.preimage() {
+                continue;
+            }
             let key: Key<TNodeId> = peer.into();
             let distance = self.target_key.distance(&key);
             let peer = QueryPeer::new(key, QueryPeerState::NotContacted);
