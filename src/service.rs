@@ -714,18 +714,46 @@ impl Service {
                     );
 
                     if !ticket.is_empty() {
-                        Ticket::decode(&ticket)
-                            .map_err(|e| error!("{}", e))
-                            .map(|ticket| {
-                                // Drop if src_node_id, src_ip and topic derived from node_address and request
-                                // don't match those in ticket
-                                if let Some(ticket) = ticket {
-                                    if ticket == new_ticket {
-                                        self.ticket_pools.insert(enr, id, ticket);
-                                    }
+                        let decoded_enr = self
+                            .local_enr
+                            .write()
+                            .to_base64()
+                            .parse::<Enr>()
+                            .map_err(|e| {
+                                error!("Failed to decode ticket in REGTOPIC query: {}", e)
+                            });
+                        if let Ok(decoded_enr) = decoded_enr {
+                            if let Some(ticket_key) = decoded_enr.get("ticket_key") {
+                                let decrypted_ticket = {
+                                    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
+                                    let payload = Payload {
+                                        msg: &ticket,
+                                        aad: b"",
+                                    };
+                                    aead.encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                                        .map_err(|e| {
+                                            error!(
+                                                "Failed to decode ticket in REGTOPIC query: {}",
+                                                e
+                                            )
+                                        })
+                                };
+                                if let Ok(decrypted_ticket) = decrypted_ticket {
+                                    Ticket::decode(&decrypted_ticket)
+                                        .map_err(|e| error!("{}", e))
+                                        .map(|ticket| {
+                                            // Drop if src_node_id, src_ip and topic derived from node_address and request
+                                            // don't match those in ticket
+                                            if let Some(ticket) = ticket {
+                                                if ticket == new_ticket {
+                                                    self.ticket_pools.insert(enr, id, ticket);
+                                                }
+                                            }
+                                        })
+                                        .ok();
                                 }
-                            })
-                            .ok();
+                            }
+                        }
                     } else {
                         self.ticket_pools.insert(enr, id, new_ticket);
                     }
