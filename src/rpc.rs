@@ -817,7 +817,7 @@ impl Ticket {
     }
 
     pub fn decode(ticket: &[u8]) -> Result<Option<Self>, DecoderError> {
-        if ticket.is_empty() {
+        if !ticket.is_empty() {
             let rlp = rlp::Rlp::new(ticket);
             let ticket = rlp.as_val::<Ticket>()?;
             return Ok(Some(ticket));

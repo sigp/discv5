@@ -713,7 +713,7 @@ impl Service {
                         wait_time.unwrap_or(Duration::from_secs(0)),
                     );
 
-                    if ticket.is_empty() {
+                    if !ticket.is_empty() {
                         Ticket::decode(&ticket)
                             .map_err(|e| error!("{}", e))
                             .map(|ticket| {
