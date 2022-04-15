@@ -810,7 +810,7 @@ impl Ticket {
 
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        let mut s =RlpStream::new();
+        let mut s = RlpStream::new();
         s.append(self);
         buf.extend_from_slice(&s.out());
         buf

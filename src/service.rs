@@ -12,7 +12,6 @@
 //! Note that although the ENR crate does support Ed25519 keys, these are currently not
 //! supported as the ECDH procedure isn't specified in the specification. Therefore, only
 //! secp256k1 keys are supported currently.
-
 use self::{
     ip_vote::IpVote,
     query_info::{QueryInfo, QueryType},
@@ -34,6 +33,10 @@ use crate::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
     rpc, Discv5Config, Discv5Event, Enr,
+};
+use aes_gcm::{
+    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+    Aes128Gcm,
 };
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
@@ -311,6 +314,14 @@ impl Service {
                 return Err(Error::new(ErrorKind::InvalidInput, e));
             }
         };
+
+        let ticket_key: [u8; 16] = rand::random();
+        match local_enr.write().insert("ticket_key", &ticket_key, &enr_key.write()) {
+            Ok(_) => {},
+            Err(e) => {
+                return Err(Error::new(ErrorKind::Other, format!("{:?}", e)));
+            }
+        }
 
         config
             .executor
@@ -692,25 +703,26 @@ impl Service {
                         wait_time.unwrap_or(Duration::from_secs(0)),
                     );
 
-                    let new_ticket_bytes = new_ticket.encode();
-
                     self.send_ticket_response(
                         node_address,
                         id.clone(),
-                        new_ticket_bytes,
+                        new_ticket,
                         wait_time.unwrap_or(Duration::from_secs(0)),
                     );
-                    
+
                     if ticket.len() > 0 {
-                        Ticket::decode(&ticket).map_err(|e| error!("{}", e)).map(|ticket| {
-                            // Drop if src_node_id, src_ip and topic derived from node_address and request
-                            // don't match those in ticket
-                            if let Some(ticket) = ticket {
-                                if ticket == new_ticket {
-                                    self.ticket_pools.insert(enr, id, ticket);
+                        Ticket::decode(&ticket)
+                            .map_err(|e| error!("{}", e))
+                            .map(|ticket| {
+                                // Drop if src_node_id, src_ip and topic derived from node_address and request
+                                // don't match those in ticket
+                                if let Some(ticket) = ticket {
+                                    if ticket == new_ticket {
+                                        self.ticket_pools.insert(enr, id, ticket);
+                                    }
                                 }
-                            }
-                        }).ok();
+                            })
+                            .ok();
                     } else {
                         self.ticket_pools.insert(enr, id, new_ticket);
                     }
@@ -953,19 +965,22 @@ impl Service {
                     }
                 }
                 ResponseBody::Ticket { ticket, wait_time } => {
-                    Ticket::decode(&ticket).map_err(|e| error!("{}", e)).map(|ticket| {
-                        if let Some(ticket) = ticket {
-                            if wait_time <= MAX_WAIT_TIME_TICKET {
-                                self.tickets
-                                    .insert(
-                                        active_request.contact,
-                                        ticket,
-                                        Duration::from_secs(wait_time),
-                                    )
-                                    .ok();
+                    Ticket::decode(&ticket)
+                        .map_err(|e| error!("{}", e))
+                        .map(|ticket| {
+                            if let Some(ticket) = ticket {
+                                if wait_time <= MAX_WAIT_TIME_TICKET {
+                                    self.tickets
+                                        .insert(
+                                            active_request.contact,
+                                            ticket,
+                                            Duration::from_secs(wait_time),
+                                        )
+                                        .ok();
+                                }
                             }
-                        }
-                    }).ok();
+                        })
+                        .ok();
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
                     let topic = topic_hash(topic);
@@ -1068,7 +1083,6 @@ impl Service {
         enr: Enr,
         ticket: Option<Ticket>,
     ) {
-
         let ticket_bytes = if let Some(ticket) = ticket {
             ticket.encode()
         } else {
@@ -1095,24 +1109,44 @@ impl Service {
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
-        ticket: Vec<u8>,
+        ticket: Ticket,
         wait_time: Duration,
     ) {
-        let response = Response {
-            id: rpc_id,
-            body: ResponseBody::Ticket {
-                ticket,
-                wait_time: wait_time.as_secs(),
-            },
-        };
-        trace!(
-            "Sending TICKET response to: {}. Response: {} ",
-            node_address,
-            response
-        );
-        let _ = self
-            .handler_send
-            .send(HandlerIn::Response(node_address, Box::new(response)));
+        self
+            .local_enr
+            .write()
+            .to_base64()
+            .parse::<Enr>()
+            .map_err(|e| error!("Failed to send TICKET response: {}", e))
+            .map(|decoded_enr| {
+                if let Some(ticket_key) = decoded_enr.get("ticket_key") {
+                    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
+                    let payload = Payload {
+                        msg: &ticket.encode(),
+                        aad: b"",
+                    };
+                    aead
+                        .encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                        .map_err(|e| error!("Failed to send TICKET response: {}", e))
+                        .map(|encrypted_ticket| {
+                            let response = Response {
+                                id: rpc_id,
+                                body: ResponseBody::Ticket {
+                                    ticket: encrypted_ticket,
+                                    wait_time: wait_time.as_secs(),
+                                },
+                            };
+                            trace!(
+                                "Sending TICKET response to: {}. Response: {} ",
+                                node_address,
+                                response
+                            );
+                            let _ = self
+                                .handler_send
+                                .send(HandlerIn::Response(node_address, Box::new(response)));
+                        }).ok();
+                }
+            }).ok();
     }
 
     fn send_regconfirmation_response(
