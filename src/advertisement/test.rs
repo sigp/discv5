@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use crate::advertisement::topic::{Sha256Topic as Topic} ;
+use crate::advertisement::topic::Sha256Topic as Topic;
 use enr::{CombinedKey, EnrBuilder};
 use more_asserts::{assert_gt, assert_lt};
 use std::net::IpAddr;
@@ -93,7 +93,10 @@ async fn ticket_wait_time_duration() {
     // Add an add for topic
     ads.insert(enr.clone(), topic.clone()).unwrap();
 
-    assert_gt!(ads.ticket_wait_time(topic.clone()), Some(Duration::from_secs(2)));
+    assert_gt!(
+        ads.ticket_wait_time(topic.clone()),
+        Some(Duration::from_secs(2))
+    );
     assert_lt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(3)));
 }
 

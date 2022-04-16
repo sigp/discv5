@@ -626,7 +626,9 @@ impl Message {
                     let topic_string = match std::str::from_utf8(data) {
                         Ok(topic_string) => topic_string,
                         Err(_) => {
-                            return Err(DecoderError::Custom("Cannot convert from byte data to utf8 string"));
+                            return Err(DecoderError::Custom(
+                                "Cannot convert from byte data to utf8 string",
+                            ));
                         }
                     };
                     Topic::new(topic_string).hash()
@@ -734,7 +736,9 @@ impl rlp::Decodable for Ticket {
             let topic_string = match std::str::from_utf8(data) {
                 Ok(topic_string) => topic_string,
                 Err(_) => {
-                    return Err(DecoderError::Custom("Cannot convert from byte data to utf8 string"));
+                    return Err(DecoderError::Custom(
+                        "Cannot convert from byte data to utf8 string",
+                    ));
                 }
             };
             Topic::new(topic_string).hash()

@@ -19,7 +19,7 @@ use self::{
 use crate::{
     advertisement::{
         ticket::{ActiveRegtopicRequests, TicketPools, Tickets},
-        topic::{IdentTopic as Topic, TopicHash},
+        topic::{Sha256Topic as Topic, TopicHash},
         Ads,
     },
     error::{RequestError, ResponseError},
@@ -472,7 +472,7 @@ impl Service {
                             }
 
                             let QueryType::FindNode(node_id) = result.target.query_type;
-                            
+
                             if let Ok(topic_str) = std::str::from_utf8(&node_id.raw()).map_err(|e| error!("{}", e)) {
                                 let topic = Topic::new(topic_str.to_owned()).hash();
                                 if self.topics.get(&topic).is_some() {

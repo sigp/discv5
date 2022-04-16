@@ -92,11 +92,15 @@ impl rlp::Decodable for TopicHash {
         let data = rlp.data()?;
         let topic_string = match std::str::from_utf8(data) {
             Ok(topic_string) => topic_string,
-            Err(e) => {
-                return Err(DecoderError::Custom("Cannot convert from byte data to utf8 string"));
+            Err(_) => {
+                return Err(DecoderError::Custom(
+                    "Cannot convert from byte data to utf8 string",
+                ));
             }
         };
-        Ok(TopicHash { hash: topic_string.into() })
+        Ok(TopicHash {
+            hash: topic_string.into(),
+        })
     }
 }
 
