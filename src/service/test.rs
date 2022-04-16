@@ -218,10 +218,11 @@ async fn encrypt_decrypt_ticket() {
     let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
     let node_id = enr.node_id();
 
+    let topic_hash = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
     let ticket = Ticket::new(
         node_id,
         ip,
-        TopicHash::from_bytes(&[2u8; 32]).unwrap(),
+        topic_hash,
         tokio::time::Instant::now(),
         tokio::time::Duration::from_secs(5),
     );

@@ -19,7 +19,7 @@ use self::{
 use crate::{
     advertisement::{
         ticket::{ActiveRegtopicRequests, TicketPools, Tickets},
-        topic::{Sha256Topic as Topic, TopicHash},
+        topic::{IdentTopic as Topic, TopicHash},
         Ads,
     },
     error::{RequestError, ResponseError},
@@ -472,11 +472,12 @@ impl Service {
                             }
 
                             let QueryType::FindNode(node_id) = result.target.query_type;
-
-                            if let Ok(topic_hash) = TopicHash::from_bytes(&node_id.raw()).map_err(|e| error!("{}", e)) {
-                                if self.topics.get(&topic_hash).is_some() {
+                            
+                            if let Ok(topic_str) = std::str::from_utf8(&node_id.raw()).map_err(|e| error!("{}", e)) {
+                                let topic = Topic::new(topic_str.to_owned()).hash();
+                                if self.topics.get(&topic).is_some() {
                                         let local_enr = self.local_enr.read().clone();
-                                        found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic_hash.clone(), local_enr.clone(), None));
+                                        found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic.clone(), local_enr.clone(), None));
                                     } else if let Some(callback) = result.target.callback {
                                             if callback.send(found_enrs).is_err() {
                                                 warn!("Callback dropped for query {}. Results dropped", *id);

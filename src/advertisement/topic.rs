@@ -23,6 +23,7 @@ use rlp::{DecoderError, Rlp, RlpStream};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub type IdentTopic = Topic<IdentityHash>;
 pub type Sha256Topic = Topic<Sha256Hash>;
 
 /// A generic trait that can be extended for various hashing types for a topic.
@@ -65,16 +66,6 @@ impl TopicHash {
         TopicHash { hash: hash.into() }
     }
 
-    pub fn from_bytes(hash: &[u8; 32]) -> Result<Self, &'static str> {
-        if hash.len() != 32 {
-            return Err("Hash is not 32 bytes");
-        }
-        match std::str::from_utf8(hash) {
-            Ok(hash) => Ok(TopicHash { hash: hash.into() }),
-            Err(_) => Err("Cannot decode utf8 string"),
-        }
-    }
-
     pub fn as_bytes(&self) -> [u8; 32] {
         let mut buf = [0u8; 32];
         buf.copy_from_slice(self.as_str().as_bytes());
@@ -99,12 +90,13 @@ impl rlp::Encodable for TopicHash {
 impl rlp::Decodable for TopicHash {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let data = rlp.data()?;
-        let mut buf = [0u8; 32];
-        buf.copy_from_slice(data);
-        match TopicHash::from_bytes(&buf) {
-            Ok(topic_hash) => Ok(topic_hash),
-            Err(e) => Err(DecoderError::Custom(e)),
-        }
+        let topic_string = match std::str::from_utf8(data) {
+            Ok(topic_string) => topic_string,
+            Err(e) => {
+                return Err(DecoderError::Custom("Cannot convert from byte data to utf8 string"));
+            }
+        };
+        Ok(TopicHash { hash: topic_string.into() })
     }
 }
 

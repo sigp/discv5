@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use super::*;
+use crate::advertisement::topic::{Sha256Topic as Topic} ;
 use enr::{CombinedKey, EnrBuilder};
 use more_asserts::{assert_gt, assert_lt};
 use std::net::IpAddr;
@@ -15,7 +16,7 @@ async fn insert_same_node() {
 
     let mut ads = Ads::new(Duration::from_secs(2), 10, 50).unwrap();
 
-    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
+    let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
 
     ads.insert(enr.clone(), topic.clone()).unwrap();
 
@@ -44,8 +45,8 @@ async fn insert_ad_and_get_nodes() {
 
     let mut ads = Ads::new(Duration::from_secs(2), 10, 50).unwrap();
 
-    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
-    let topic_2 = TopicHash::from_bytes(&[2u8; 32]).unwrap();
+    let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
+    let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
 
     // Add an ad for topic from enr
     ads.insert(enr.clone(), topic.clone()).unwrap();
@@ -73,7 +74,7 @@ async fn insert_ad_and_get_nodes() {
 #[tokio::test]
 async fn ticket_wait_time_no_wait_time() {
     let mut ads = Ads::new(Duration::from_secs(1), 10, 50).unwrap();
-    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
+    let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
     assert_eq!(ads.ticket_wait_time(topic), None)
 }
 
@@ -87,15 +88,12 @@ async fn ticket_wait_time_duration() {
 
     let mut ads = Ads::new(Duration::from_secs(3), 1, 3).unwrap();
 
-    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
+    let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
 
     // Add an add for topic
     ads.insert(enr.clone(), topic.clone()).unwrap();
 
-    assert_gt!(
-        ads.ticket_wait_time(topic.clone()),
-        Some(Duration::from_secs(2))
-    );
+    assert_gt!(ads.ticket_wait_time(topic.clone()), Some(Duration::from_secs(2)));
     assert_lt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(3)));
 }
 
@@ -114,8 +112,8 @@ async fn ticket_wait_time_full_table() {
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 3).unwrap();
 
-    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
-    let topic_2 = TopicHash::from_bytes(&[2u8; 32]).unwrap();
+    let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
+    let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
 
     // Add 2 ads for topic
     ads.insert(enr.clone(), topic.clone()).unwrap();
@@ -152,8 +150,8 @@ async fn ticket_wait_time_full_topic() {
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 4).unwrap();
 
-    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
-    let topic_2 = TopicHash::from_bytes(&[2u8; 32]).unwrap();
+    let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
+    let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
 
     // Add 2 ads for topic
     ads.insert(enr.clone(), topic.clone()).unwrap();

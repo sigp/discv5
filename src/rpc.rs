@@ -1,4 +1,4 @@
-use crate::advertisement::topic::TopicHash;
+use crate::advertisement::topic::{IdentTopic as Topic, TopicHash};
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
@@ -623,14 +623,13 @@ impl Message {
                     }
                     let mut topic = [0u8; 32];
                     topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
-                    topic
-                };
-                let topic = match TopicHash::from_bytes(&topic) {
-                    Ok(topic) => topic,
-                    Err(e) => {
-                        debug!("Failed converting topic bytes to TopicHash");
-                        return Err(DecoderError::Custom(e));
-                    }
+                    let topic_string = match std::str::from_utf8(data) {
+                        Ok(topic_string) => topic_string,
+                        Err(_) => {
+                            return Err(DecoderError::Custom("Cannot convert from byte data to utf8 string"));
+                        }
+                    };
+                    Topic::new(topic_string).hash()
                 };
                 Message::Request(Request {
                     id,
@@ -731,16 +730,14 @@ impl rlp::Decodable for Ticket {
                 debug!("Ticket's topic hash is not 32 bytes");
                 return Err(DecoderError::RlpIsTooBig);
             }
-            let mut topic = [0u8; 32];
-            topic.copy_from_slice(data);
-            let topic_hash = match TopicHash::from_bytes(&topic) {
-                Ok(topic_hash) => topic_hash,
-                Err(e) => {
-                    debug!("Ticket has incorrect topic hash");
-                    return Err(DecoderError::Custom(e));
+            // IdentTopic is used as the topic is already a hash
+            let topic_string = match std::str::from_utf8(data) {
+                Ok(topic_string) => topic_string,
+                Err(_) => {
+                    return Err(DecoderError::Custom("Cannot convert from byte data to utf8 string"));
                 }
             };
-            topic_hash
+            Topic::new(topic_string).hash()
         };
         let req_time = {
             if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -1112,7 +1109,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            TopicHash::from_bytes(&[1u8; 32]).unwrap(),
+            Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash(),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1147,7 +1144,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            TopicHash::from_bytes(&[1u8; 32]).unwrap(),
+            Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash(),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1171,7 +1168,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            TopicHash::from_bytes(&[1u8; 32]).unwrap(),
+            Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash(),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1211,7 +1208,7 @@ mod tests {
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::TopicQuery {
-                topic: TopicHash::from_bytes(&[0u8; 32]).unwrap(),
+                topic: Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash(),
             },
         });
 
