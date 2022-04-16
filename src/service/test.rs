@@ -185,7 +185,7 @@ async fn encrypt_decrypt_ticket() {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
         .ip(ip)
-        .udp(10001)
+        .udp(10006)
         .build(&enr_key)
         .unwrap();
 
