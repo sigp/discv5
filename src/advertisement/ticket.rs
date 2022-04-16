@@ -5,26 +5,19 @@ use enr::NodeId;
 use node_info::NodeContact;
 use std::{cmp::Eq, collections::HashSet};
 
-// Placeholder function
-pub fn topic_hash(topic: Vec<u8>) -> Topic {
-    let mut topic_hash = [0u8; 32];
-    topic_hash[32 - topic.len()..].copy_from_slice(&topic);
-    topic_hash
-}
-
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ActiveTopic {
     node_id: NodeId,
-    topic: Topic,
+    topic: TopicHash,
 }
 
 impl ActiveTopic {
-    pub fn new(node_id: NodeId, topic: Topic) -> Self {
+    pub fn new(node_id: NodeId, topic: TopicHash) -> Self {
         ActiveTopic { node_id, topic }
     }
 
-    pub fn topic(&self) -> Topic {
-        self.topic
+    pub fn topic(&self) -> TopicHash {
+        self.topic.clone()
     }
 }
 
@@ -43,7 +36,7 @@ impl ActiveTicket {
     }
 
     pub fn ticket(&self) -> Ticket {
-        self.ticket
+        self.ticket.clone()
     }
 }
 
@@ -69,7 +62,7 @@ impl Tickets {
     ) -> Result<(), &str> {
         let active_topic = ActiveTopic::new(contact.node_id(), ticket.topic());
 
-        if let Err(e) = self.ticket_history.insert(active_topic) {
+        if let Err(e) = self.ticket_history.insert(active_topic.clone()) {
             return Err(e);
         }
         self.tickets
@@ -136,7 +129,7 @@ impl TicketHistory {
                 now.saturating_duration_since(ticket_limiter.first_seen)
                     >= self.ticket_cache_duration
             })
-            .map(|ticket_limiter| ticket_limiter.active_topic)
+            .map(|ticket_limiter| ticket_limiter.active_topic.clone())
             .collect::<Vec<ActiveTopic>>();
 
         cached_tickets.iter().for_each(|active_topic| {
@@ -146,14 +139,14 @@ impl TicketHistory {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct RegistrationWindow {
-    topic: Topic,
+    topic: TopicHash,
     open_time: Instant,
 }
 
 pub struct TicketPools {
-    ticket_pools: HashMap<Topic, HashMap<NodeId, (Enr, RequestId, Ticket)>>,
+    ticket_pools: HashMap<TopicHash, HashMap<NodeId, (Enr, RequestId, Ticket)>>,
     expirations: VecDeque<RegistrationWindow>,
 }
 
@@ -185,7 +178,7 @@ impl TicketPools {
 }
 
 impl Stream for TicketPools {
-    type Item = Result<(Topic, HashMap<NodeId, (Enr, RequestId, Ticket)>), String>;
+    type Item = Result<(TopicHash, HashMap<NodeId, (Enr, RequestId, Ticket)>), String>;
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.expirations
             .pop_front()
@@ -206,7 +199,7 @@ impl Stream for TicketPools {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ActiveRegtopicRequest {
     active_topic: ActiveTopic,
     insert_time: Instant,
@@ -238,7 +231,7 @@ impl ActiveRegtopicRequests {
         &mut self,
         req_id: RequestId,
         node_id: NodeId,
-        topic: Topic,
+        topic: TopicHash,
     ) -> Option<bool> {
         self.remove_expired();
         self.requests
@@ -246,7 +239,7 @@ impl ActiveRegtopicRequests {
             .map(|ids| ids.contains(&req_id))
     }
 
-    pub fn insert(&mut self, node_id: NodeId, topic: Topic, req_id: RequestId) {
+    pub fn insert(&mut self, node_id: NodeId, topic: TopicHash, req_id: RequestId) {
         self.remove_expired();
         let now = Instant::now();
         let active_topic = ActiveTopic::new(node_id, topic);
@@ -258,7 +251,7 @@ impl ActiveRegtopicRequests {
         // each insert incase a REGCONFIRMATION comes to a later req-id. Max req-ids in a set is limited by our
         // implementation accepting max 3 tickets for a (NodeId, Topic) within 15 minutes.
         self.requests
-            .entry(active_topic)
+            .entry(active_topic.clone())
             .or_default()
             .insert(req_id);
         self.expirations
@@ -272,15 +265,18 @@ impl ActiveRegtopicRequests {
     }
 
     fn remove_expired(&mut self) {
+        let mut expired = Vec::new();
+
         self.expirations
             .iter()
             .take_while(|req| req.insert_time.elapsed() >= Duration::from_secs(15))
-            .copied()
-            .collect::<Vec<_>>()
-            .iter()
             .for_each(|req| {
-                self.requests.remove(&req.active_topic);
-                self.expirations.pop_front();
+                expired.push(req.clone());
             });
+
+        expired.into_iter().for_each(|req| {
+            self.requests.remove(&req.active_topic);
+            self.expirations.pop_front();
+        });
     }
 }

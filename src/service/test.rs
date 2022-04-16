@@ -221,7 +221,7 @@ async fn encrypt_decrypt_ticket() {
     let ticket = Ticket::new(
         node_id,
         ip,
-        [2u8; 32],
+        TopicHash::from_bytes(&[2u8; 32]).unwrap(),
         tokio::time::Instant::now(),
         tokio::time::Duration::from_secs(5),
     );

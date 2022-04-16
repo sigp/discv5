@@ -18,7 +18,8 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{topic_hash, ActiveRegtopicRequests, TicketPools, Tickets},
+        ticket::{ActiveRegtopicRequests, TicketPools, Tickets},
+        topic::{Sha256Topic as Topic, TopicHash},
         Ads,
     },
     error::{RequestError, ResponseError},
@@ -219,7 +220,7 @@ pub struct Service {
     tickets: Tickets,
 
     /// Topics to advertise on other nodes.
-    topics: HashSet<Topic>,
+    topics: HashSet<TopicHash>,
 
     /// Ads currently advertised on other nodes.
     active_topics: Ads,
@@ -472,16 +473,16 @@ impl Service {
 
                             let QueryType::FindNode(node_id) = result.target.query_type;
 
-                            let topic = self.topics.get(&node_id.raw()).copied();
-
-                            if let Some(topic) = topic {
-                                let local_enr = self.local_enr.read().clone();
-                                found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, local_enr.clone(), None));
-                            } else if let Some(callback) = result.target.callback {
-                                    if callback.send(found_enrs).is_err() {
-                                        warn!("Callback dropped for query {}. Results dropped", *id);
+                            if let Ok(topic_hash) = TopicHash::from_bytes(&node_id.raw()).map_err(|e| error!("{}", e)) {
+                                if self.topics.get(&topic_hash).is_some() {
+                                        let local_enr = self.local_enr.read().clone();
+                                        found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic_hash.clone(), local_enr.clone(), None));
+                                    } else if let Some(callback) = result.target.callback {
+                                            if callback.send(found_enrs).is_err() {
+                                                warn!("Callback dropped for query {}. Results dropped", *id);
+                                            }
                                     }
-                                }
+                            }
                         }
                     }
                 }
@@ -505,7 +506,7 @@ impl Service {
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
                 }
                 _ = publish_topics.tick() => {
-                    self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic), None));
+                    self.topics.clone().into_iter().for_each(|topic| self.start_findnode_query(NodeId::new(&topic.as_bytes()), None));
                 }
                 Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
                     // Selection of node for free ad slot
@@ -517,7 +518,7 @@ impl Service {
                         selection.into_iter().next().map(|node_id| ticket_pool.get(node_id)).unwrap_or(None)
                     };
                     if let Some((node_record, req_id, _ticket)) = new_ad.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
-                        self.ads.insert(node_record.clone(), topic).ok();
+                        self.ads.insert(node_record.clone(), topic.clone()).ok();
                         NodeContact::from(node_record).node_address().map(|node_address| {
                             self.send_regconfirmation_response(node_address, req_id, topic);
                         }).ok();
@@ -695,67 +696,71 @@ impl Service {
                 if enr.node_id() == node_address.node_id
                     && enr.udp_socket() == Some(node_address.socket_addr)
                 {
-                    let topic = topic_hash(topic);
-                    let wait_time = self.ads.ticket_wait_time(topic);
+                    if let Ok(topic_str) = std::str::from_utf8(&topic).map_err(|e| error!("{}", e))
+                    {
+                        let topic = Topic::new(topic_str.to_owned()).hash();
+                        let wait_time = self.ads.ticket_wait_time(topic.clone());
 
-                    let new_ticket = Ticket::new(
-                        node_address.node_id,
-                        node_address.socket_addr.ip(),
-                        topic,
-                        tokio::time::Instant::now(),
-                        wait_time.unwrap_or(Duration::from_secs(0)),
-                    );
+                        let new_ticket = Ticket::new(
+                            node_address.node_id,
+                            node_address.socket_addr.ip(),
+                            topic,
+                            tokio::time::Instant::now(),
+                            wait_time.unwrap_or(Duration::from_secs(0)),
+                        );
 
-                    self.send_ticket_response(
-                        node_address,
-                        id.clone(),
-                        new_ticket,
-                        wait_time.unwrap_or(Duration::from_secs(0)),
-                    );
+                        self.send_ticket_response(
+                            node_address,
+                            id.clone(),
+                            new_ticket.clone(),
+                            wait_time.unwrap_or(Duration::from_secs(0)),
+                        );
 
-                    if !ticket.is_empty() {
-                        let decoded_enr = self
-                            .local_enr
-                            .write()
-                            .to_base64()
-                            .parse::<Enr>()
-                            .map_err(|e| {
-                                error!("Failed to decode ticket in REGTOPIC query: {}", e)
-                            });
-                        if let Ok(decoded_enr) = decoded_enr {
-                            if let Some(ticket_key) = decoded_enr.get("ticket_key") {
-                                let decrypted_ticket = {
-                                    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
-                                    let payload = Payload {
-                                        msg: &ticket,
-                                        aad: b"",
+                        if !ticket.is_empty() {
+                            let decoded_enr = self
+                                .local_enr
+                                .write()
+                                .to_base64()
+                                .parse::<Enr>()
+                                .map_err(|e| {
+                                    error!("Failed to decode ticket in REGTOPIC query: {}", e)
+                                });
+                            if let Ok(decoded_enr) = decoded_enr {
+                                if let Some(ticket_key) = decoded_enr.get("ticket_key") {
+                                    let decrypted_ticket = {
+                                        let aead =
+                                            Aes128Gcm::new(GenericArray::from_slice(ticket_key));
+                                        let payload = Payload {
+                                            msg: &ticket,
+                                            aad: b"",
+                                        };
+                                        aead.encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                                            .map_err(|e| {
+                                                error!(
+                                                    "Failed to decode ticket in REGTOPIC query: {}",
+                                                    e
+                                                )
+                                            })
                                     };
-                                    aead.encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
-                                        .map_err(|e| {
-                                            error!(
-                                                "Failed to decode ticket in REGTOPIC query: {}",
-                                                e
-                                            )
-                                        })
-                                };
-                                if let Ok(decrypted_ticket) = decrypted_ticket {
-                                    Ticket::decode(&decrypted_ticket)
-                                        .map_err(|e| error!("{}", e))
-                                        .map(|ticket| {
-                                            // Drop if src_node_id, src_ip and topic derived from node_address and request
-                                            // don't match those in ticket
-                                            if let Some(ticket) = ticket {
-                                                if ticket == new_ticket {
-                                                    self.ticket_pools.insert(enr, id, ticket);
+                                    if let Ok(decrypted_ticket) = decrypted_ticket {
+                                        Ticket::decode(&decrypted_ticket)
+                                            .map_err(|e| error!("{}", e))
+                                            .map(|ticket| {
+                                                // Drop if src_node_id, src_ip and topic derived from node_address and request
+                                                // don't match those in ticket
+                                                if let Some(ticket) = ticket {
+                                                    if ticket == new_ticket {
+                                                        self.ticket_pools.insert(enr, id, ticket);
+                                                    }
                                                 }
-                                            }
-                                        })
-                                        .ok();
+                                            })
+                                            .ok();
+                                    }
                                 }
                             }
+                        } else {
+                            self.ticket_pools.insert(enr, id, new_ticket);
                         }
-                    } else {
-                        self.ticket_pools.insert(enr, id, new_ticket);
                     }
                 }
             }
@@ -1014,14 +1019,17 @@ impl Service {
                         .ok();
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
-                    let topic = topic_hash(topic);
-                    if self
-                        .active_regtopic_requests
-                        .is_active_req(id, node_id, topic)
-                        .is_some()
+                    if let Ok(topic_str) = std::str::from_utf8(&topic).map_err(|e| error!("{}", e))
                     {
-                        if let NodeContact::Enr(enr) = active_request.contact {
-                            self.active_topics.insert(*enr, topic).ok();
+                        let topic = Topic::new(topic_str.to_owned()).hash();
+                        if self
+                            .active_regtopic_requests
+                            .is_active_req(id, node_id, topic.clone())
+                            .is_some()
+                        {
+                            if let NodeContact::Enr(enr) = active_request.contact {
+                                self.active_topics.insert(*enr, topic).ok();
+                            }
                         }
                     }
                 }
@@ -1110,7 +1118,7 @@ impl Service {
     fn reg_topic_request(
         &mut self,
         contact: NodeContact,
-        topic: Topic,
+        topic: TopicHash,
         enr: Enr,
         ticket: Option<Ticket>,
     ) {
@@ -1121,7 +1129,7 @@ impl Service {
         };
         let node_id = enr.node_id();
         let request_body = RequestBody::RegisterTopic {
-            topic: topic.to_vec(),
+            topic: topic.as_bytes().to_vec(),
             enr,
             ticket: ticket_bytes,
         };
@@ -1184,12 +1192,12 @@ impl Service {
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
-        topic: Topic,
+        topic: TopicHash,
     ) {
         let response = Response {
             id: rpc_id,
             body: ResponseBody::RegisterConfirmation {
-                topic: topic.to_vec(),
+                topic: topic.as_bytes().to_vec(),
             },
         };
         trace!(
@@ -1206,7 +1214,7 @@ impl Service {
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
-        topic: [u8; 32],
+        topic: TopicHash,
     ) {
         let nodes_to_send = self.ads.get_ad_nodes(topic).collect();
 

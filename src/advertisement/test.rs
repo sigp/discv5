@@ -15,13 +15,13 @@ async fn insert_same_node() {
 
     let mut ads = Ads::new(Duration::from_secs(2), 10, 50).unwrap();
 
-    let topic = [1; 32];
+    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
 
-    ads.insert(enr.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic.clone()).unwrap();
 
     // Since 2 seconds haven't passed
     assert_eq!(
-        ads.insert(enr.clone(), topic).map_err(|e| e),
+        ads.insert(enr.clone(), topic.clone()).map_err(|e| e),
         Err("Node already advertising this topic".into())
     );
 
@@ -44,23 +44,23 @@ async fn insert_ad_and_get_nodes() {
 
     let mut ads = Ads::new(Duration::from_secs(2), 10, 50).unwrap();
 
-    let topic = [1; 32];
-    let topic_2 = [2; 32];
+    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
+    let topic_2 = TopicHash::from_bytes(&[2u8; 32]).unwrap();
 
     // Add an ad for topic from enr
-    ads.insert(enr.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic.clone()).unwrap();
 
     // The ad hasn't expired and duplicates are not allowed
     assert_eq!(
-        ads.insert(enr.clone(), topic).map_err(|e| e),
+        ads.insert(enr.clone(), topic.clone()).map_err(|e| e),
         Err("Node already advertising this topic".into())
     );
 
     // Add an ad for topic from enr_2
-    ads.insert(enr_2.clone(), topic).unwrap();
+    ads.insert(enr_2.clone(), topic.clone()).unwrap();
 
     // Add an ad for topic_2 from enr
-    ads.insert(enr.clone(), topic_2).unwrap();
+    ads.insert(enr.clone(), topic_2.clone()).unwrap();
 
     let nodes: Vec<Enr> = ads.get_ad_nodes(topic).collect();
 
@@ -73,7 +73,7 @@ async fn insert_ad_and_get_nodes() {
 #[tokio::test]
 async fn ticket_wait_time_no_wait_time() {
     let mut ads = Ads::new(Duration::from_secs(1), 10, 50).unwrap();
-    let topic = [1; 32];
+    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
     assert_eq!(ads.ticket_wait_time(topic), None)
 }
 
@@ -87,12 +87,15 @@ async fn ticket_wait_time_duration() {
 
     let mut ads = Ads::new(Duration::from_secs(3), 1, 3).unwrap();
 
-    let topic = [1; 32];
+    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
 
     // Add an add for topic
-    ads.insert(enr.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic.clone()).unwrap();
 
-    assert_gt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(2)));
+    assert_gt!(
+        ads.ticket_wait_time(topic.clone()),
+        Some(Duration::from_secs(2))
+    );
     assert_lt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(3)));
 }
 
@@ -111,20 +114,20 @@ async fn ticket_wait_time_full_table() {
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 3).unwrap();
 
-    let topic = [1; 32];
-    let topic_2 = [2; 32];
+    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
+    let topic_2 = TopicHash::from_bytes(&[2u8; 32]).unwrap();
 
     // Add 2 ads for topic
-    ads.insert(enr.clone(), topic).unwrap();
-    ads.insert(enr_2.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic.clone()).unwrap();
+    ads.insert(enr_2.clone(), topic.clone()).unwrap();
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Add an ad for topic_2
-    ads.insert(enr.clone(), topic_2).unwrap();
+    ads.insert(enr.clone(), topic_2.clone()).unwrap();
 
     // Now max_ads in table is reached so the second ad for topic_2 has to wait
-    assert_ne!(ads.ticket_wait_time(topic_2), None);
+    assert_ne!(ads.ticket_wait_time(topic_2.clone()), None);
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -149,24 +152,24 @@ async fn ticket_wait_time_full_topic() {
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 4).unwrap();
 
-    let topic = [1; 32];
-    let topic_2 = [2; 32];
+    let topic = TopicHash::from_bytes(&[1u8; 32]).unwrap();
+    let topic_2 = TopicHash::from_bytes(&[2u8; 32]).unwrap();
 
     // Add 2 ads for topic
-    ads.insert(enr.clone(), topic).unwrap();
-    ads.insert(enr_2.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic.clone()).unwrap();
+    ads.insert(enr_2.clone(), topic.clone()).unwrap();
 
     // Now max_ads_per_topic is reached for topic
-    assert_ne!(ads.ticket_wait_time(topic), None);
+    assert_ne!(ads.ticket_wait_time(topic.clone()), None);
 
     // Add a topic_2 ad
-    ads.insert(enr, topic_2).unwrap();
+    ads.insert(enr, topic_2.clone()).unwrap();
 
     // The table isn't full so topic_2 ads don't have to wait
     assert_eq!(ads.ticket_wait_time(topic_2), None);
 
     // But for topic they do until the first ads have expired
-    assert_ne!(ads.ticket_wait_time(topic), None);
+    assert_ne!(ads.ticket_wait_time(topic.clone()), None);
 
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(ads.ticket_wait_time(topic), None);

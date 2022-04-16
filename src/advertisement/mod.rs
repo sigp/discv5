@@ -2,17 +2,18 @@ use super::*;
 use crate::Enr;
 use core::time::Duration;
 use futures::prelude::*;
-use rpc::Topic;
 use std::{
     collections::{HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
 };
 use tokio::time::Instant;
+use topic::TopicHash;
 use tracing::{debug, error};
 
 mod test;
 pub mod ticket;
+pub mod topic;
 
 #[derive(Debug)]
 pub struct AdNode {
@@ -36,19 +37,19 @@ impl PartialEq for AdNode {
 }
 
 struct AdTopic {
-    topic: Topic,
+    topic: TopicHash,
     insert_time: Instant,
 }
 
 impl AdTopic {
-    pub fn new(topic: Topic, insert_time: Instant) -> Self {
+    pub fn new(topic: TopicHash, insert_time: Instant) -> Self {
         AdTopic { topic, insert_time }
     }
 }
 
 pub struct Ads {
     expirations: VecDeque<AdTopic>,
-    ads: HashMap<Topic, VecDeque<AdNode>>,
+    ads: HashMap<TopicHash, VecDeque<AdNode>>,
     ad_lifetime: Duration,
     max_ads_per_topic: usize,
     max_ads: usize,
@@ -73,7 +74,7 @@ impl Ads {
         })
     }
 
-    pub fn get_ad_nodes(&self, topic: Topic) -> impl Iterator<Item = Enr> + '_ {
+    pub fn get_ad_nodes(&self, topic: TopicHash) -> impl Iterator<Item = Enr> + '_ {
         self.ads
             .get(&topic)
             .into_iter()
@@ -81,7 +82,7 @@ impl Ads {
             .map(|node| node.node_record.clone())
     }
 
-    pub fn ticket_wait_time(&mut self, topic: Topic) -> Option<Duration> {
+    pub fn ticket_wait_time(&mut self, topic: TopicHash) -> Option<Duration> {
         self.remove_expired();
         let now = Instant::now();
         if self.expirations.len() < self.max_ads {
@@ -104,18 +105,18 @@ impl Ads {
     }
 
     fn remove_expired(&mut self) {
-        let mut map: HashMap<Topic, usize> = HashMap::new();
+        let mut map: HashMap<TopicHash, usize> = HashMap::new();
 
         self.expirations
             .iter()
             .take_while(|ad| ad.insert_time.elapsed() >= self.ad_lifetime)
             .for_each(|ad| {
-                let count = map.entry(ad.topic).or_default();
+                let count = map.entry(ad.topic.clone()).or_default();
                 *count += 1;
             });
 
         map.into_iter().for_each(|(topic, index)| {
-            let entry_ref = self.ads.entry(topic).or_default();
+            let entry_ref = self.ads.entry(topic.clone()).or_default();
             for _ in 0..index {
                 entry_ref.pop_front();
                 self.expirations.pop_front();
@@ -126,10 +127,10 @@ impl Ads {
         });
     }
 
-    pub fn insert(&mut self, node_record: Enr, topic: Topic) -> Result<(), &str> {
+    pub fn insert(&mut self, node_record: Enr, topic: TopicHash) -> Result<(), &str> {
         self.remove_expired();
         let now = Instant::now();
-        let nodes = self.ads.entry(topic).or_default();
+        let nodes = self.ads.entry(topic.clone()).or_default();
         if nodes.contains(&AdNode::new(node_record.clone(), now)) {
             error!(
                 "This node {} is already advertising this topic",

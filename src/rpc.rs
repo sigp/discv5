@@ -1,3 +1,4 @@
+use crate::advertisement::topic::TopicHash;
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
@@ -6,8 +7,6 @@ use std::{
 };
 use tokio::time::{Duration, Instant};
 use tracing::{debug, warn};
-
-type TopicHash = [u8; 32];
 
 /// Type to manage the request IDs.
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
@@ -197,7 +196,7 @@ impl Request {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(&id.as_bytes());
-                s.append(&(&topic as &[u8]));
+                s.append(&topic);
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -626,6 +625,13 @@ impl Message {
                     topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
                     topic
                 };
+                let topic = match TopicHash::from_bytes(&topic) {
+                    Ok(topic) => topic,
+                    Err(e) => {
+                        debug!("Failed converting topic bytes to TopicHash");
+                        return Err(DecoderError::Custom(e));
+                    }
+                };
                 Message::Request(Request {
                     id,
                     body: RequestBody::TopicQuery { topic },
@@ -640,14 +646,12 @@ impl Message {
     }
 }
 
-pub type Topic = [u8; 32];
-
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct Ticket {
     //nonce: u64,
     src_node_id: NodeId,
     src_ip: IpAddr,
-    topic: Topic,
+    topic: TopicHash,
     req_time: Instant,
     wait_time: Duration,
     //cum_wait: Option<Duration>,
@@ -661,7 +665,7 @@ impl rlp::Encodable for Ticket {
             IpAddr::V4(addr) => s.append(&(addr.octets().to_vec())),
             IpAddr::V6(addr) => s.append(&(addr.octets().to_vec())),
         };
-        s.append(&(self.topic.to_vec()));
+        s.append(&self.topic);
         if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
             let time_since_req = self.req_time.elapsed();
             let time_stamp = time_since_unix - time_since_req;
@@ -729,7 +733,14 @@ impl rlp::Decodable for Ticket {
             }
             let mut topic = [0u8; 32];
             topic.copy_from_slice(data);
-            topic
+            let topic_hash = match TopicHash::from_bytes(&topic) {
+                Ok(topic_hash) => topic_hash,
+                Err(e) => {
+                    debug!("Ticket has incorrect topic hash");
+                    return Err(DecoderError::Custom(e));
+                }
+            };
+            topic_hash
         };
         let req_time = {
             if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -780,7 +791,7 @@ impl Ticket {
         //nonce: u64,
         src_node_id: NodeId,
         src_ip: IpAddr,
-        topic: Topic,
+        topic: TopicHash,
         req_time: Instant,
         wait_time: Duration,
         //cum_wait: Option<Duration>,
@@ -796,8 +807,8 @@ impl Ticket {
         }
     }
 
-    pub fn topic(&self) -> Topic {
-        self.topic
+    pub fn topic(&self) -> TopicHash {
+        self.topic.clone()
     }
 
     pub fn req_time(&self) -> Instant {
@@ -1101,7 +1112,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            [1; 32],
+            TopicHash::from_bytes(&[1u8; 32]).unwrap(),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1136,7 +1147,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            [1; 32],
+            TopicHash::from_bytes(&[1u8; 32]).unwrap(),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1160,7 +1171,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            [1; 32],
+            TopicHash::from_bytes(&[1u8; 32]).unwrap(),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1199,7 +1210,9 @@ mod tests {
     fn encode_decode_topic_query_request() {
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
-            body: RequestBody::TopicQuery { topic: [0u8; 32] },
+            body: RequestBody::TopicQuery {
+                topic: TopicHash::from_bytes(&[0u8; 32]).unwrap(),
+            },
         });
 
         let encoded = request.clone().encode();
