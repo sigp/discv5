@@ -48,7 +48,7 @@ impl Hasher for Sha256Hash {
     /// Creates a [`TopicHash`] by SHA256 hashing the topic then base64 encoding the
     /// hash.
     fn hash(topic_string: String) -> TopicHash {
-        let mut bytes = Vec::with_capacity(topic_string.len());
+        let mut bytes = [0u8; 32];
         bytes.copy_from_slice(topic_string.as_bytes());
         let hash = encode(Sha256::digest(&bytes).as_slice());
         TopicHash { hash }
