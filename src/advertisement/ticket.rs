@@ -17,7 +17,7 @@ impl ActiveTopic {
     }
 
     pub fn topic(&self) -> TopicHash {
-        self.topic.clone()
+        self.topic
     }
 }
 

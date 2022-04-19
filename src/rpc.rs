@@ -1,4 +1,4 @@
-use crate::advertisement::topic::{IdentTopic as Topic, TopicHash};
+use crate::advertisement::topic::TopicHash;
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
@@ -86,7 +86,7 @@ pub enum RequestBody {
     /// A REGTOPIC request.
     RegisterTopic {
         /// The topic we want to advertise at the node receiving this request.
-        topic: Vec<u8>,
+        topic: TopicHash,
         // Current node record of sender.
         enr: crate::Enr,
         // Ticket content of ticket from a previous registration attempt or empty.
@@ -132,7 +132,7 @@ pub enum ResponseBody {
     /// The REGCONFIRMATION response.
     RegisterConfirmation {
         /// The topic of a successful REGTOPIC request.
-        topic: Vec<u8>,
+        topic: TopicHash,
     },
 }
 
@@ -186,7 +186,7 @@ impl Request {
                 let mut s = RlpStream::new();
                 s.begin_list(4);
                 s.append(&id.as_bytes());
-                s.append(&topic);
+                s.append(&topic.as_bytes().to_vec());
                 s.append(&enr);
                 s.append(&ticket);
                 buf.extend_from_slice(&s.out());
@@ -196,7 +196,7 @@ impl Request {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(&id.as_bytes());
-                s.append(&topic);
+                s.append(&topic.as_bytes().to_vec());
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -291,7 +291,7 @@ impl Response {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(&id.as_bytes());
-                s.append(&topic);
+                s.append(&topic.as_bytes().to_vec());
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -349,7 +349,11 @@ impl std::fmt::Display for ResponseBody {
                 write!(f, "TICKET: Ticket: {:?}, Wait time: {}", ticket, wait_time)
             }
             ResponseBody::RegisterConfirmation { topic } => {
-                write!(f, "REGTOPIC: Registered: {}", hex::encode(topic))
+                write!(
+                    f,
+                    "REGTOPIC: Registered: {}",
+                    hex::encode(topic.to_string())
+                )
             }
         }
     }
@@ -378,7 +382,7 @@ impl std::fmt::Display for RequestBody {
             RequestBody::RegisterTopic { topic, enr, ticket } => write!(
                 f,
                 "RegisterTopic: topic: {}, enr: {}, ticket: {:?}",
-                hex::encode(topic),
+                hex::encode(topic.to_string()),
                 enr.to_base64(),
                 ticket,
             ),
@@ -569,7 +573,16 @@ impl Message {
                     debug!("RegisterTopic Request has an invalid RLP list length. Expected 2, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                let topic = rlp.val_at::<Vec<u8>>(1)?;
+                let topic = {
+                    let topic_bytes = rlp.val_at::<Vec<u8>>(1)?;
+                    if topic_bytes.len() > 32 {
+                        debug!("RegisterTopic Request has a topic greater than 32 bytes");
+                        return Err(DecoderError::RlpIsTooBig);
+                    }
+                    let mut topic = [0u8; 32];
+                    topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
+                    TopicHash::from_raw(topic)
+                };
                 let enr_rlp = rlp.at(2)?;
                 let enr = enr_rlp.as_val::<Enr<CombinedKey>>()?;
                 let ticket = rlp.val_at::<Vec<u8>>(3)?;
@@ -600,7 +613,16 @@ impl Message {
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                let topic = rlp.val_at::<Vec<u8>>(1)?;
+                let topic = {
+                    let topic_bytes = rlp.val_at::<Vec<u8>>(1)?;
+                    if topic_bytes.len() > 32 {
+                        debug!("RegisterConfirmation Request has a topic greater than 32 bytes");
+                        return Err(DecoderError::RlpIsTooBig);
+                    }
+                    let mut topic = [0u8; 32];
+                    topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
+                    TopicHash::from_raw(topic)
+                };
                 Message::Response(Response {
                     id,
                     body: ResponseBody::RegisterConfirmation { topic },
@@ -623,15 +645,7 @@ impl Message {
                     }
                     let mut topic = [0u8; 32];
                     topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
-                    let topic_string = match std::str::from_utf8(data) {
-                        Ok(topic_string) => topic_string,
-                        Err(_) => {
-                            return Err(DecoderError::Custom(
-                                "Cannot convert from byte data to utf8 string",
-                            ));
-                        }
-                    };
-                    Topic::new(topic_string).hash()
+                    TopicHash::from_raw(topic)
                 };
                 Message::Request(Request {
                     id,
@@ -726,23 +740,9 @@ impl rlp::Decodable for Ticket {
                 }
             }
         };
-        let topic = {
-            let data = decoded_list.remove(0).data()?;
-            if data.len() != 32 {
-                debug!("Ticket's topic hash is not 32 bytes");
-                return Err(DecoderError::RlpIsTooBig);
-            }
-            // IdentTopic is used as the topic is already a hash
-            let topic_string = match std::str::from_utf8(data) {
-                Ok(topic_string) => topic_string,
-                Err(_) => {
-                    return Err(DecoderError::Custom(
-                        "Cannot convert from byte data to utf8 string",
-                    ));
-                }
-            };
-            Topic::new(topic_string).hash()
-        };
+
+        let topic = decoded_list.remove(0).as_val::<TopicHash>()?;
+
         let req_time = {
             if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
                 let s_bytes = decoded_list.remove(0).data()?;
@@ -762,6 +762,7 @@ impl rlp::Decodable for Ticket {
                 return Err(DecoderError::Custom("SystemTime before UNIX EPOCH!"));
             }
         };
+
         let wait_time = {
             let s_bytes = decoded_list.remove(0).data()?;
             let mut s = [0u8; 8];
@@ -769,6 +770,7 @@ impl rlp::Decodable for Ticket {
             let secs = u64::from_be_bytes(s);
             Duration::from_secs(secs)
         };
+
         Ok(Self {
             src_node_id,
             src_ip,
@@ -809,7 +811,7 @@ impl Ticket {
     }
 
     pub fn topic(&self) -> TopicHash {
-        self.topic.clone()
+        self.topic
     }
 
     pub fn req_time(&self) -> Instant {
@@ -1090,7 +1092,7 @@ mod tests {
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::RegisterTopic {
-                topic: vec![1, 2, 3],
+                topic: TopicHash::from_raw([1u8; 32]),
                 enr,
                 ticket: Vec::new(),
             },
@@ -1113,7 +1115,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash(),
+            TopicHash::from_raw([1u8; 32]),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1123,9 +1125,9 @@ mod tests {
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::RegisterTopic {
-                topic: vec![1, 2, 3],
+                topic: TopicHash::from_raw([1u8; 32]),
                 enr,
-                ticket: ticket,
+                ticket,
             },
         });
 
@@ -1148,7 +1150,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash(),
+            TopicHash::from_raw([1u8; 32]),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1172,7 +1174,7 @@ mod tests {
         let ticket = Ticket::new(
             node_id,
             ip,
-            Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash(),
+            TopicHash::from_raw([1u8; 32]),
             Instant::now(),
             Duration::from_secs(11),
         );
@@ -1197,7 +1199,7 @@ mod tests {
         let response = Message::Response(Response {
             id: RequestId(vec![1]),
             body: ResponseBody::RegisterConfirmation {
-                topic: vec![1, 2, 3],
+                topic: TopicHash::from_raw([1u8; 32]),
             },
         });
 
@@ -1212,10 +1214,9 @@ mod tests {
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::TopicQuery {
-                topic: Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash(),
+                topic: TopicHash::from_raw([1u8; 32]),
             },
         });
-
         let encoded = request.clone().encode();
         let decoded = Message::decode(&encoded).unwrap();
 

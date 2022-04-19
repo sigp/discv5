@@ -100,7 +100,7 @@ async fn build_service(
         event_stream: None,
         ads: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
         tickets: Tickets::new(Duration::from_secs(60 * 15)),
-        topics: HashSet::new(),
+        topics: HashMap::new(),
         active_topics: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
         ticket_pools: TicketPools::new(),
         exit,
@@ -218,11 +218,10 @@ async fn encrypt_decrypt_ticket() {
     let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
     let node_id = enr.node_id();
 
-    let topic_hash = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
     let ticket = Ticket::new(
         node_id,
         ip,
-        topic_hash,
+        TopicHash::from_raw([1u8; 32]),
         tokio::time::Instant::now(),
         tokio::time::Duration::from_secs(5),
     );
