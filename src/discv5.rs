@@ -13,6 +13,7 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
+    advertisement::topic::{Sha256Topic as Topic, TopicHash},
     error::{Discv5Error, QueryError, RequestError},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
@@ -477,6 +478,70 @@ impl Discv5 {
                 .await
                 .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
         }
+    }
+
+    // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
+    // and send the topic query to these nodes
+    pub fn topic_query_req(
+        &self,
+        enr: Enr,
+        topic_hash: TopicHash,
+    ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
+        // convert the ENR to a node_contact.
+        let node_contact = NodeContact::from(enr);
+
+        // the service will verify if this node is contactable, we just send it and
+        // await a response.
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+            let event = ServiceRequest::TopicQuery(node_contact, topic_hash, callback_send);
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
+    }
+
+    // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
+    // and send the topic query to these nodes
+    pub fn reg_topic_req(
+        &self,
+        enr: Enr,
+        topic: Topic,
+    ) -> impl Future<Output = Result<(), RequestError>> + 'static {
+        // convert the ENR to a node_contact.
+        let node_contact = NodeContact::from(enr);
+
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+            let event = ServiceRequest::RegisterTopic(node_contact, topic);
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            Ok(())
+        }
+    }
+
+    pub fn find_topic(
+        &self,
+        topic_hash: TopicHash,
+    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
+        let key = NodeId::new(&topic_hash.as_bytes());
+        self.find_node(key)
     }
 
     /// Runs an iterative `FIND_NODE` request.

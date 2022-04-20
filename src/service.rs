@@ -142,10 +142,11 @@ const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
-    /// A request to start a query. There are two types of queries:
+    /// A request to start a query. There are three types of queries:
     /// - A FindNode Query - Searches for peers using a random target.
     /// - A Predicate Query - Searches for peers closest to a random target that match a specified
     /// predicate.
+    /// /// - A Topic Query - Searches for peers advertising a given topic.
     StartQuery(QueryKind, oneshot::Sender<Vec<Enr>>),
     /// Find the ENR of a node given its multiaddr.
     FindEnr(NodeContact, oneshot::Sender<Result<Enr, RequestError>>),
@@ -159,6 +160,14 @@ pub enum ServiceRequest {
     /// Sets up an event stream where the discv5 server will return various events such as
     /// discovered nodes as it traverses the DHT.
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
+    /// Queries given node for nodes advertising a topic hash
+    TopicQuery(
+        NodeContact,
+        TopicHash,
+        oneshot::Sender<Result<Vec<Enr>, RequestError>>,
+    ),
+    /// RegisterTopic publishes this node as an advertiser for a topic at given node
+    RegisterTopic(NodeContact, Topic),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
@@ -245,8 +254,10 @@ struct ActiveRequest {
 pub enum CallbackResponse {
     /// A response to a requested ENR.
     Enr(oneshot::Sender<Result<Enr, RequestError>>),
-    /// A response from a TALK request
+    /// A response from a TALK request.
     Talk(oneshot::Sender<Result<Vec<u8>, RequestError>>),
+    /// A response to a Topic Query.
+    Topic(oneshot::Sender<Result<Vec<Enr>, RequestError>>),
 }
 
 /// For multiple responses to a FindNodes request, this keeps track of the request count
@@ -404,12 +415,15 @@ impl Service {
                                 error!("Failed to return the event stream channel");
                             }
                         }
-                        /*ServiceRequest::TopicQuery(topic) => {
-                            self.send_topic_query(topic);
+                        ServiceRequest::TopicQuery(node_contact, topic_hash, callback) => {
+                            self.topic_query_request(node_contact, topic_hash, callback);
                         }
-                        ServiceRequest::RegisterTopic(topic) => {
-                            self.reg_topic_request(topic, self.local_enr(), None);
-                        }*/
+                        ServiceRequest::RegisterTopic(node_contact, topic) => {
+                            let topic_hash = topic.hash();
+                            self.topics.insert(topic_hash, topic);
+                            let local_enr = self.local_enr.read().clone();
+                            self.reg_topic_request(node_contact, topic_hash, local_enr, None)
+                        }
                     }
                 }
                 Some(event) = self.handler_recv.recv() => {
@@ -1135,6 +1149,23 @@ impl Service {
         self.active_regtopic_requests.insert(node_id, topic, req_id);
     }
 
+    fn topic_query_request(
+        &mut self,
+        contact: NodeContact,
+        topic: TopicHash,
+        callback: oneshot::Sender<Result<Vec<Enr>, RequestError>>,
+    ) {
+        let request_body = RequestBody::TopicQuery { topic };
+
+        let active_request = ActiveRequest {
+            contact,
+            request_body,
+            query_id: None,
+            callback: Some(CallbackResponse::Topic(callback)),
+        };
+        self.send_rpc_request(active_request);
+    }
+
     fn send_ticket_response(
         &mut self,
         node_address: NodeAddress,
@@ -1206,7 +1237,6 @@ impl Service {
         topic: TopicHash,
     ) {
         let nodes_to_send = self.ads.get_ad_nodes(topic).collect();
-
         self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY");
     }
 
@@ -1600,7 +1630,7 @@ impl Service {
                 Some(CallbackResponse::Enr(callback)) => {
                     callback
                         .send(Err(error))
-                        .unwrap_or_else(|_| debug!("Couldn't send TALK error response to user"));
+                        .unwrap_or_else(|_| debug!("Couldn't send ENR error response to user"));
                     return;
                 }
                 Some(CallbackResponse::Talk(callback)) => {
@@ -1608,6 +1638,12 @@ impl Service {
                     callback
                         .send(Err(error))
                         .unwrap_or_else(|_| debug!("Couldn't send TALK error response to user"));
+                    return;
+                }
+                Some(CallbackResponse::Topic(callback)) => {
+                    callback
+                        .send(Err(error))
+                        .unwrap_or_else(|_| debug!("Couldn't send TOPIC error response to user"));
                     return;
                 }
                 None => {
