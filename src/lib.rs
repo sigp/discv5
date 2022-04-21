@@ -102,7 +102,7 @@
 //! [`Service`]: service/struct.Service.html
 //! [`Session`]: session/struct.Session.html
 
-mod advertisement;
+pub mod advertisement;
 mod config;
 mod discv5;
 mod error;
