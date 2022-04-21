@@ -408,7 +408,7 @@ impl Discv5 {
             .collect()
     }
 
-    pub fn hashes(topic: String) -> Vec<(TopicHash, String)> {
+    pub fn hashes(&self, topic: String) -> Vec<(TopicHash, String)> {
         let sha256_topic = Topic::new(topic);
         vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
     }
