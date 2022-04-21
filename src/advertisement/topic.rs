@@ -31,6 +31,7 @@ pub type Sha256Topic = Topic<Sha256Hash>;
 pub trait Hasher {
     /// The function that takes a topic string and creates a topic hash.
     fn hash(topic_string: String) -> TopicHash;
+    fn hash_function_name() -> String;
 }
 
 /// A type for representing topics who use the identity hash.
@@ -53,6 +54,10 @@ impl Hasher for Sha256Hash {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&sha256);
         TopicHash { hash }
+    }
+
+    fn hash_function_name() -> String {
+        "Sha256".to_owned()
     }
 }
 
@@ -122,6 +127,10 @@ impl<H: Hasher> Topic<H> {
 
     pub fn hash(&self) -> TopicHash {
         H::hash(self.topic.clone())
+    }
+
+    pub fn hash_function_name(&self) -> String {
+        H::hash_function_name()
     }
 
     pub fn topic(&self) -> String {

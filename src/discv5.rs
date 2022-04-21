@@ -408,6 +408,11 @@ impl Discv5 {
             .collect()
     }
 
+    pub fn hashes(topic: String) -> Vec<(TopicHash, String)> {
+        let sha256_topic = Topic::new(topic);
+        vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
+    }
+
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
     /// Only `ed25519` and `secp256k1` key types are currently supported.
@@ -536,7 +541,7 @@ impl Discv5 {
         }
     }
 
-    pub fn find_topic(
+    pub fn find_closest_nodes_to_topic(
         &self,
         topic_hash: TopicHash,
     ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
