@@ -15,7 +15,7 @@ mod test;
 pub mod ticket;
 pub mod topic;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AdNode {
     node_record: Enr,
     insert_time: Instant,
@@ -36,6 +36,7 @@ impl PartialEq for AdNode {
     }
 }
 
+#[derive(Clone)]
 struct AdTopic {
     topic: TopicHash,
     insert_time: Instant,
@@ -47,6 +48,7 @@ impl AdTopic {
     }
 }
 
+#[derive(Clone)]
 pub struct Ads {
     expirations: VecDeque<AdTopic>,
     ads: HashMap<TopicHash, VecDeque<AdNode>>,

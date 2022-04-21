@@ -13,7 +13,10 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
-    advertisement::topic::{Sha256Topic as Topic, TopicHash},
+    advertisement::{
+        topic::{Sha256Topic as Topic, TopicHash},
+        Ads,
+    },
     error::{Discv5Error, QueryError, RequestError},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
@@ -538,6 +541,29 @@ impl Discv5 {
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             Ok(())
+        }
+    }
+
+    pub fn active_topics(&self) -> impl Future<Output = Result<Ads, RequestError>> + 'static {
+        // the service will verify if this node is contactable, we just send it and
+        // await a response.
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+            let event = ServiceRequest::ActiveTopics(callback_send);
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
         }
     }
 

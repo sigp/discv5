@@ -142,11 +142,10 @@ const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
-    /// A request to start a query. There are three types of queries:
+    /// A request to start a query. There are two types of queries:
     /// - A FindNode Query - Searches for peers using a random target.
     /// - A Predicate Query - Searches for peers closest to a random target that match a specified
     /// predicate.
-    /// /// - A Topic Query - Searches for peers advertising a given topic.
     StartQuery(QueryKind, oneshot::Sender<Vec<Enr>>),
     /// Find the ENR of a node given its multiaddr.
     FindEnr(NodeContact, oneshot::Sender<Result<Enr, RequestError>>),
@@ -168,6 +167,7 @@ pub enum ServiceRequest {
     ),
     /// RegisterTopic publishes this node as an advertiser for a topic at given node
     RegisterTopic(NodeContact, Topic),
+    ActiveTopics(oneshot::Sender<Result<Ads, RequestError>>),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
@@ -423,6 +423,11 @@ impl Service {
                             self.topics.insert(topic_hash, topic);
                             let local_enr = self.local_enr.read().clone();
                             self.reg_topic_request(node_contact, topic_hash, local_enr, None)
+                        }
+                        ServiceRequest::ActiveTopics(callback) => {
+                            if callback.send(Ok(self.active_topics.clone())).is_err() {
+                                error!("Failed to return active topics");
+                            }
                         }
                     }
                 }
@@ -824,7 +829,7 @@ impl Service {
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
                         RequestBody::TopicQuery { .. } => &all_distances,
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     };
 
                     // This could be an ENR request from the outer service. If so respond to the
