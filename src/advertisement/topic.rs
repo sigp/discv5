@@ -104,6 +104,12 @@ impl rlp::Decodable for TopicHash {
     }
 }
 
+impl fmt::Display for TopicHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", encode(self.hash))
+    }
+}
+
 /// A gossipsub topic.
 #[derive(Debug, Clone)]
 pub struct Topic<H: Hasher> {
@@ -170,11 +176,5 @@ impl<H: Hasher> Ord for Topic<H> {
 impl<H: Hasher> fmt::Display for Topic<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.topic)
-    }
-}
-
-impl fmt::Display for TopicHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", encode(self.hash))
     }
 }

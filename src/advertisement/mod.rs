@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::time::Instant;
-pub use topic::TopicHash;
+use topic::TopicHash;
 use tracing::{debug, error};
 
 mod test;

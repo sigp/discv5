@@ -819,10 +819,12 @@ impl Service {
                         );
                     }
 
+                    let all_distances = vec![256 as u64];
                     // These are sanitized and ordered
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
-                        _ => unreachable!(),
+                        RequestBody::TopicQuery { .. } => &all_distances,
+                        _ => unreachable!()
                     };
 
                     // This could be an ENR request from the outer service. If so respond to the
