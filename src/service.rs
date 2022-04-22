@@ -350,7 +350,7 @@ impl Service {
                     queries: QueryPool::new(config.query_timeout),
                     active_requests: Default::default(),
                     active_nodes_responses: HashMap::new(),
-                    active_regtopic_requests: ActiveRegtopicRequests::new(),
+                    active_regtopic_requests: ActiveRegtopicRequests::default(),
                     ip_votes,
                     handler_send,
                     handler_recv,
@@ -362,7 +362,7 @@ impl Service {
                     tickets: Tickets::new(Duration::from_secs(60 * 15)),
                     topics: HashMap::new(),
                     active_topics,
-                    ticket_pools: TicketPools::new(),
+                    ticket_pools: TicketPools::default(),
                     exit,
                     config: config.clone(),
                 };
@@ -829,7 +829,7 @@ impl Service {
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
                         RequestBody::TopicQuery { .. } => &topic_radius,
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     };
 
                     // This could be an ENR request from the outer service. If so respond to the

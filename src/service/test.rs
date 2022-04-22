@@ -90,7 +90,7 @@ async fn build_service(
         queries: QueryPool::new(config.query_timeout),
         active_requests: Default::default(),
         active_nodes_responses: HashMap::new(),
-        active_regtopic_requests: ActiveRegtopicRequests::new(),
+        active_regtopic_requests: ActiveRegtopicRequests::default(),
         ip_votes: None,
         handler_send,
         handler_recv,
@@ -102,7 +102,7 @@ async fn build_service(
         tickets: Tickets::new(Duration::from_secs(60 * 15)),
         topics: HashMap::new(),
         active_topics: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
-        ticket_pools: TicketPools::new(),
+        ticket_pools: TicketPools::default(),
         exit,
         config,
     }

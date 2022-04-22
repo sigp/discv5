@@ -145,19 +145,13 @@ struct RegistrationWindow {
     open_time: Instant,
 }
 
+#[derive(Default)]
 pub struct TicketPools {
     ticket_pools: HashMap<TopicHash, HashMap<NodeId, (Enr, RequestId, Ticket)>>,
     expirations: VecDeque<RegistrationWindow>,
 }
 
 impl TicketPools {
-    pub fn new() -> Self {
-        TicketPools {
-            ticket_pools: HashMap::new(),
-            expirations: VecDeque::new(),
-        }
-    }
-
     pub fn insert(&mut self, node_record: Enr, req_id: RequestId, ticket: Ticket) {
         if let Some(open_time) = ticket.req_time().checked_add(ticket.wait_time()) {
             if open_time.elapsed() <= Duration::from_secs(10) {
@@ -214,19 +208,13 @@ impl ActiveRegtopicRequest {
     }
 }
 
+#[derive(Default)]
 pub struct ActiveRegtopicRequests {
     requests: HashMap<ActiveTopic, HashSet<RequestId>>,
     expirations: VecDeque<ActiveRegtopicRequest>,
 }
 
 impl ActiveRegtopicRequests {
-    pub fn new() -> Self {
-        ActiveRegtopicRequests {
-            requests: HashMap::new(),
-            expirations: VecDeque::new(),
-        }
-    }
-
     pub fn is_active_req(
         &mut self,
         req_id: RequestId,
