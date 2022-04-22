@@ -540,7 +540,7 @@ impl Service {
                         self.ads.insert(node_record.clone(), topic).ok();
                         NodeContact::from(node_record).node_address().map(|node_address| {
                             self.send_regconfirmation_response(node_address, req_id, topic);
-                            info!("Sent REGCONFIRMATION response");
+                            error!("Sent REGCONFIRMATION response");
                         }).ok();
                     }
                 }
@@ -712,7 +712,7 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                info!("Received RETOPIC request");
+                error!("Received RETOPIC request");
                 // Drop if request tries to advertise another node than sender
                 if enr.node_id() == node_address.node_id
                     && enr.udp_socket() == Some(node_address.socket_addr)
@@ -1037,7 +1037,7 @@ impl Service {
                         .ok();
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
-                    info!("Received REGCONFIRMATION response");
+                    error!("Received REGCONFIRMATION response");
                     if self
                         .active_regtopic_requests
                         .is_active_req(id, node_id, topic)
