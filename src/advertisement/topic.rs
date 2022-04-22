@@ -84,6 +84,7 @@ impl TopicHash {
 
 impl rlp::Encodable for TopicHash {
     fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(1);
         s.append(&self.hash.to_vec());
     }
 }

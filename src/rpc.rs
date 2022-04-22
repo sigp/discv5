@@ -188,7 +188,7 @@ impl Request {
                 let mut s = RlpStream::new();
                 s.begin_list(4);
                 s.append(&id.as_bytes());
-                s.append(&topic.as_bytes().to_vec());
+                s.append(&topic);
                 s.append(&enr);
                 s.append(&ticket);
                 buf.extend_from_slice(&s.out());
@@ -198,7 +198,7 @@ impl Request {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(&id.as_bytes());
-                s.append(&topic.as_bytes().to_vec());
+                s.append(&topic);
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -298,7 +298,7 @@ impl Response {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(&id.as_bytes());
-                s.append(&topic.as_bytes().to_vec());
+                s.append(&topic);
                 buf.extend_from_slice(&s.out());
                 buf
             }
