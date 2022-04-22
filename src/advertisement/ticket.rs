@@ -23,11 +23,11 @@ impl ActiveTopic {
 
 pub struct ActiveTicket {
     contact: NodeContact,
-    ticket: Ticket,
+    ticket: Vec<u8>,
 }
 
 impl ActiveTicket {
-    pub fn new(contact: NodeContact, ticket: Ticket) -> Self {
+    pub fn new(contact: NodeContact, ticket: Vec<u8>) -> Self {
         ActiveTicket { contact, ticket }
     }
 
@@ -35,7 +35,7 @@ impl ActiveTicket {
         self.contact.clone()
     }
 
-    pub fn ticket(&self) -> Ticket {
+    pub fn ticket(&self) -> Vec<u8> {
         self.ticket.clone()
     }
 }
@@ -57,10 +57,11 @@ impl Tickets {
     pub fn insert(
         &mut self,
         contact: NodeContact,
-        ticket: Ticket,
+        ticket: Vec<u8>,
         wait_time: Duration,
+        topic: TopicHash,
     ) -> Result<(), &str> {
-        let active_topic = ActiveTopic::new(contact.node_id(), ticket.topic());
+        let active_topic = ActiveTopic::new(contact.node_id(), topic);
 
         if let Err(e) = self.ticket_history.insert(active_topic.clone()) {
             return Err(e);

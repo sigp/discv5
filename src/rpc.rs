@@ -128,6 +128,8 @@ pub enum ResponseBody {
         ticket: Vec<u8>,
         /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
+        /// The topic hash for which the opaque ticket is issued
+        topic: TopicHash,
     },
     /// The REGCONFIRMATION response.
     RegisterConfirmation {
@@ -278,12 +280,17 @@ impl Response {
                 buf.extend_from_slice(&s.out());
                 buf
             }
-            ResponseBody::Ticket { ticket, wait_time } => {
+            ResponseBody::Ticket {
+                ticket,
+                wait_time,
+                topic,
+            } => {
                 let mut s = RlpStream::new();
-                s.begin_list(3);
+                s.begin_list(4);
                 s.append(&id.as_bytes());
                 s.append(&ticket);
                 s.append(&wait_time);
+                s.append(&topic);
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -345,8 +352,16 @@ impl std::fmt::Display for ResponseBody {
             ResponseBody::Talk { response } => {
                 write!(f, "Response: Response {}", hex::encode(response))
             }
-            ResponseBody::Ticket { ticket, wait_time } => {
-                write!(f, "TICKET: Ticket: {:?}, Wait time: {}", ticket, wait_time)
+            ResponseBody::Ticket {
+                ticket,
+                wait_time,
+                topic,
+            } => {
+                write!(
+                    f,
+                    "TICKET: Ticket: {:?}, Wait time: {}, TopicHash: {}",
+                    ticket, wait_time, topic
+                )
             }
             ResponseBody::RegisterConfirmation { topic } => {
                 write!(
@@ -593,15 +608,20 @@ impl Message {
             }
             8 => {
                 // TicketResponse
-                if list_len != 3 {
+                if list_len != 4 {
                     debug!("RegisterTopic Response has an invalid RLP list length. Expected 2, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
                 let ticket = rlp.val_at::<Vec<u8>>(1)?;
                 let wait_time = rlp.val_at::<u64>(2)?;
+                let topic = rlp.val_at::<TopicHash>(3)?;
                 Message::Response(Response {
                     id,
-                    body: ResponseBody::Ticket { ticket, wait_time },
+                    body: ResponseBody::Ticket {
+                        ticket,
+                        wait_time,
+                        topic,
+                    },
                 })
             }
             9 => {
@@ -1185,6 +1205,7 @@ mod tests {
             body: ResponseBody::Ticket {
                 ticket,
                 wait_time: 1u64,
+                topic: TopicHash::from_raw([1u8; 32]),
             },
         });
 

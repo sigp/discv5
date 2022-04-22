@@ -1016,23 +1016,21 @@ impl Service {
                         _ => error!("Invalid callback for response"),
                     }
                 }
-                ResponseBody::Ticket { ticket, wait_time } => {
-                    Ticket::decode(&ticket)
-                        .map_err(|e| error!("Failed to decode ticket of TICKET response. Error: {}", e))
-                        .map(|ticket| {
-                            if let Some(ticket) = ticket {
-                                if wait_time <= MAX_WAIT_TIME_TICKET {
-                                    self.tickets
-                                        .insert(
-                                            active_request.contact,
-                                            ticket,
-                                            Duration::from_secs(wait_time),
-                                        )
-                                        .ok();
-                                }
-                            }
-                        })
-                        .ok();
+                ResponseBody::Ticket {
+                    ticket,
+                    wait_time,
+                    topic,
+                } => {
+                    if wait_time <= MAX_WAIT_TIME_TICKET {
+                        self.tickets
+                            .insert(
+                                active_request.contact,
+                                ticket,
+                                Duration::from_secs(wait_time),
+                                topic,
+                            )
+                            .ok();
+                    }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
                     if self
@@ -1132,10 +1130,10 @@ impl Service {
         contact: NodeContact,
         topic: TopicHash,
         enr: Enr,
-        ticket: Option<Ticket>,
+        ticket: Option<Vec<u8>>,
     ) {
         let ticket_bytes = if let Some(ticket) = ticket {
-            ticket.encode()
+            ticket
         } else {
             Vec::new()
         };
@@ -1200,6 +1198,7 @@ impl Service {
                                 body: ResponseBody::Ticket {
                                     ticket: encrypted_ticket,
                                     wait_time: wait_time.as_secs(),
+                                    topic: ticket.topic(),
                                 },
                             };
                             trace!(
