@@ -739,7 +739,7 @@ impl Service {
                             .to_base64()
                             .parse::<Enr>()
                             .map_err(|e| {
-                                error!("Failed to decode ticket in REGTOPIC query: {}", e)
+                                error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
                             });
                         if let Ok(decoded_enr) = decoded_enr {
                             if let Some(ticket_key) = decoded_enr.get("ticket_key") {
@@ -749,17 +749,22 @@ impl Service {
                                         msg: &ticket,
                                         aad: b"",
                                     };
-                                    aead.encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                                    aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
                                         .map_err(|e| {
                                             error!(
-                                                "Failed to decode ticket in REGTOPIC query: {}",
+                                                "Failed to decrypt ticket in REGTOPIC request. Error: {}",
                                                 e
                                             )
                                         })
                                 };
                                 if let Ok(decrypted_ticket) = decrypted_ticket {
                                     Ticket::decode(&decrypted_ticket)
-                                        .map_err(|e| error!("{}", e))
+                                        .map_err(|e| {
+                                            error!(
+                                                "Failed to decode ticket in REGTOPIC request. Error: {}",
+                                                e
+                                            )
+                                        })
                                         .map(|ticket| {
                                             // Drop if src_node_id, src_ip and topic derived from node_address and request
                                             // don't match those in ticket

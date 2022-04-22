@@ -1,4 +1,8 @@
 use crate::advertisement::topic::TopicHash;
+use aes_gcm::{
+    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+    Aes128Gcm,
+};
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
@@ -6,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::time::{Duration, Instant};
-use tracing::{debug, warn, error};
+use tracing::{debug, error, warn};
 
 /// Type to manage the request IDs.
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
@@ -719,7 +723,10 @@ impl rlp::Decodable for Ticket {
         }
 
         if rlp.item_count() != Ok(5) {
-            error!("List has wrong item count, should be 5 but is {:?}", rlp.item_count());
+            error!(
+                "List has wrong item count, should be 5 but is {:?}",
+                rlp.item_count()
+            );
             return Err(DecoderError::Custom("List has wrong item count"));
         }
 
@@ -1180,6 +1187,55 @@ mod tests {
         let encoded = ticket.encode();
         let decoded = Ticket::decode(&encoded).unwrap();
 
+        assert_eq!(Some(ticket), decoded);
+    }
+
+    #[test]
+    fn encode_decode_ticket_with_encryption() {
+        // Create the test values needed
+        let port = 5000;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+        let key = CombinedKey::generate_secp256k1();
+
+        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let node_id = enr.node_id();
+        let ticket = Ticket::new(
+            node_id,
+            ip,
+            TopicHash::from_raw([1u8; 32]),
+            Instant::now(),
+            Duration::from_secs(11),
+        );
+
+        let ticket_key: [u8; 16] = rand::random();
+
+        let encoded = ticket.encode();
+
+        let encrypted_ticket = {
+            let aead = Aes128Gcm::new(GenericArray::from_slice(&ticket_key));
+            let payload = Payload {
+                msg: &encoded,
+                aad: b"",
+            };
+            aead.encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                .unwrap()
+        };
+
+        let decrypted_ticket = {
+            let aead = Aes128Gcm::new(GenericArray::from_slice(&ticket_key));
+            let payload = Payload {
+                msg: &encrypted_ticket,
+                aad: b"",
+            };
+            aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                .map_err(|e| error!("Failed to decode ticket in REGTOPIC query: {}", e))
+        }
+        .unwrap();
+
+        let decoded = Ticket::decode(&decrypted_ticket).unwrap();
+
+        assert_eq!(encoded, decrypted_ticket);
         assert_eq!(Some(ticket), decoded);
     }
 
