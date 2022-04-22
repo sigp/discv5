@@ -1018,7 +1018,7 @@ impl Service {
                 }
                 ResponseBody::Ticket { ticket, wait_time } => {
                     Ticket::decode(&ticket)
-                        .map_err(|e| error!("{}", e))
+                        .map_err(|e| error!("Failed to decode ticket of TICKET response. Error: {}", e))
                         .map(|ticket| {
                             if let Some(ticket) = ticket {
                                 if wait_time <= MAX_WAIT_TIME_TICKET {
