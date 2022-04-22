@@ -540,6 +540,7 @@ impl Service {
                         self.ads.insert(node_record.clone(), topic).ok();
                         NodeContact::from(node_record).node_address().map(|node_address| {
                             self.send_regconfirmation_response(node_address, req_id, topic);
+                            info!("Sent REGCONFIRMATION response");
                         }).ok();
                     }
                 }
@@ -711,6 +712,7 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
+                info!("Received RETOPIC request");
                 // Drop if request tries to advertise another node than sender
                 if enr.node_id() == node_address.node_id
                     && enr.udp_socket() == Some(node_address.socket_addr)
@@ -824,12 +826,12 @@ impl Service {
                         );
                     }
 
-                    let all_distances = vec![256 as u64];
+                    let topic_radius = vec![self.config.topic_radius];
                     // These are sanitized and ordered
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
-                        RequestBody::TopicQuery { .. } => &all_distances,
-                        _ => unreachable!(),
+                        RequestBody::TopicQuery { .. } => &topic_radius,
+                        _ => unreachable!()
                     };
 
                     // This could be an ENR request from the outer service. If so respond to the
@@ -1035,6 +1037,7 @@ impl Service {
                         .ok();
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
+                    info!("Received REGCONFIRMATION response");
                     if self
                         .active_regtopic_requests
                         .is_active_req(id, node_id, topic)

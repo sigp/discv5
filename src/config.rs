@@ -91,7 +91,7 @@ pub struct Discv5Config {
     /// will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
-    pub topic_radius: Option<u64>,
+    pub topic_radius: u64,
 
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
@@ -133,7 +133,7 @@ impl Default for Discv5Config {
             filter_max_bans_per_ip: Some(5),
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
-            topic_radius: Some(3),
+            topic_radius: 256,
             executor: None,
         }
     }
@@ -297,7 +297,7 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    pub fn topic_radius(&mut self, topic_radius: Option<u64>) -> &mut Self {
+    pub fn topic_radius(&mut self, topic_radius: u64) -> &mut Self {
         self.config.topic_radius = topic_radius;
         self
     }
