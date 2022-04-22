@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::time::{Duration, Instant};
-use tracing::{debug, warn};
+use tracing::{debug, warn, error};
 
 /// Type to manage the request IDs.
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
@@ -719,6 +719,7 @@ impl rlp::Decodable for Ticket {
         }
 
         if rlp.item_count() != Ok(5) {
+            error!("List has wrong item count, should be 5 but is {:?}", rlp.item_count());
             return Err(DecoderError::Custom("List has wrong item count"));
         }
 
