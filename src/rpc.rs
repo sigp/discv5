@@ -585,13 +585,13 @@ impl Message {
             7 => {
                 // RegisterTopicRequest
                 if list_len != 4 {
-                    debug!("RegisterTopic Request has an invalid RLP list length. Expected 2, found {}", list_len);
+                    debug!("RegisterTopic request has an invalid RLP list length. Expected 4, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
                 let topic = {
                     let topic_bytes = rlp.val_at::<Vec<u8>>(1)?;
                     if topic_bytes.len() > 32 {
-                        debug!("RegisterTopic Request has a topic greater than 32 bytes");
+                        debug!("RegisterTopic request has a topic greater than 32 bytes");
                         return Err(DecoderError::RlpIsTooBig);
                     }
                     let mut topic = [0u8; 32];
@@ -609,7 +609,7 @@ impl Message {
             8 => {
                 // TicketResponse
                 if list_len != 4 {
-                    debug!("RegisterTopic Response has an invalid RLP list length. Expected 2, found {}", list_len);
+                    debug!("Ticket Response has an invalid RLP list length. Expected 4, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
                 let ticket = rlp.val_at::<Vec<u8>>(1)?;
@@ -628,7 +628,7 @@ impl Message {
                 // RegisterConfirmationResponse
                 if list_len != 2 {
                     debug!(
-                        "TopicQuery Request has an invalid RLP list length. Expected 2, found {}",
+                        "RegisterConfirmation response has an invalid RLP list length. Expected 2, found {}",
                         list_len
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
@@ -652,7 +652,7 @@ impl Message {
                 // TopicQueryRequest
                 if list_len != 2 {
                     debug!(
-                        "TopicQuery Request has an invalid RLP list length. Expected 2, found {}",
+                        "TopicQuery request has an invalid RLP list length. Expected 2, found {}",
                         list_len
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
@@ -660,7 +660,7 @@ impl Message {
                 let topic = {
                     let topic_bytes = rlp.val_at::<Vec<u8>>(1)?;
                     if topic_bytes.len() > 32 {
-                        debug!("TopicQuery Request has a topic greater than 32 bytes");
+                        debug!("TopicQuery request has a topic greater than 32 bytes");
                         return Err(DecoderError::RlpIsTooBig);
                     }
                     let mut topic = [0u8; 32];
