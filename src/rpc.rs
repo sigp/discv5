@@ -359,16 +359,14 @@ impl std::fmt::Display for ResponseBody {
             } => {
                 write!(
                     f,
-                    "TICKET: Ticket: {:?}, Wait time: {}, TopicHash: {}",
-                    ticket, wait_time, topic
+                    "TICKET: Ticket: {}, Wait time: {}, Topic: {}",
+                    hex::encode(ticket),
+                    wait_time,
+                    topic
                 )
             }
             ResponseBody::RegisterConfirmation { topic } => {
-                write!(
-                    f,
-                    "REGTOPIC: Registered: {}",
-                    hex::encode(topic.to_string())
-                )
+                write!(f, "REGTOPIC: Registered: {}", topic)
             }
         }
     }
@@ -393,13 +391,13 @@ impl std::fmt::Display for RequestBody {
                 hex::encode(protocol),
                 hex::encode(request)
             ),
-            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
+            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {}", topic),
             RequestBody::RegisterTopic { topic, enr, ticket } => write!(
                 f,
-                "RegisterTopic: topic: {}, enr: {}, ticket: {:?}",
-                hex::encode(topic.to_string()),
+                "RegisterTopic: topic: {}, enr: {}, ticket: {}",
+                topic,
                 enr.to_base64(),
-                ticket,
+                hex::encode(ticket),
             ),
         }
     }
@@ -609,7 +607,10 @@ impl Message {
             8 => {
                 // TicketResponse
                 if list_len != 4 {
-                    debug!("Ticket Response has an invalid RLP list length. Expected 4, found {}", list_len);
+                    debug!(
+                        "Ticket Response has an invalid RLP list length. Expected 4, found {}",
+                        list_len
+                    );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
                 let ticket = rlp.val_at::<Vec<u8>>(1)?;
