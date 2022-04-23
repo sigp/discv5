@@ -43,7 +43,7 @@ use discv5::{
     Discv5, Discv5ConfigBuilder,
 };
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
 use tracing::{info, warn};
@@ -52,63 +52,66 @@ use tracing::{info, warn};
 struct FindNodesArgs {
     /// Ip to bind. To get local Ipv6 - Ipv4 communication use UNSPECIFIED addresses instead of
     /// LOCALHOST (:: instead of ::1, 0.0.0.0 instead of 127.0.0.1)
+    #[clap(long, default_value_t = IpAddr::V6(Ipv6Addr::UNSPECIFIED))]
     ip: IpAddr,
     /// Port to bind
-    port: u16,
+    #[clap(long)]
+    port: Option<u16>,
     /// Generate a new key instead of the default testing one.
     #[clap(long)]
-    generate_key: bool,
-    /// Set the ip and port in the ENR for advertisement to other peers.
-    #[clap(long)]
-    set_enr_socket: bool,
+    use_test_key: bool,
     /// A remote peer to try to connect to.
-    peer: Option<discv5::Enr>,
-}
-
-impl Default for FindNodesArgs {
-    fn default() -> Self {
-        FindNodesArgs {
-            ip: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            set_enr_socket: false,
-            port: 9000,
-            generate_key: false,
-            peer: None,
-        }
-    }
+    #[clap(long)]
+    remote_peers: Vec<discv5::Enr>,
+    /// If the address we are binding to is an IpV6 address, disable mapped addresses to ensure
+    /// only ipv6 communication.
+    #[clap(long)]
+    ipv6_only: bool,
 }
 
 #[tokio::main]
 async fn main() {
     let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
-        .or_else(|_| tracing_subscriber::EnvFilter::try_new("trace"))
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("info"))
         .unwrap();
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter_layer)
         .try_init();
 
     let args = FindNodesArgs::parse();
+    let port = args
+        .port
+        .unwrap_or_else(|| (rand::random::<u16>() % 1000) + 9000);
 
-    let enr_key = if args.generate_key {
-        // use a new key if specified
-        CombinedKey::generate_secp256k1()
-    } else {
+    let enr_key = if args.use_test_key {
         // A fixed key for testing
         let raw_key =
             hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
                 .unwrap();
         let secret_key = k256::ecdsa::SigningKey::from_bytes(&raw_key).unwrap();
         CombinedKey::from(secret_key)
+    } else {
+        // use a new key if specified
+        CombinedKey::generate_secp256k1()
     };
 
     let enr = {
         let mut builder = enr::EnrBuilder::new("v4");
-        if args.set_enr_socket {
-            match args.ip {
-                IpAddr::V4(ip4) => {
-                    builder.ip4(ip4).udp4(args.port);
+        match args.ip {
+            IpAddr::V4(ip4) => {
+                // if the given address is the UNSPECIFIED address we want to advertise localhost
+                if ip4.is_unspecified() {
+                    builder.ip4(Ipv4Addr::LOCALHOST).udp4(port);
+                } else {
+                    builder.ip4(ip4).udp4(port);
                 }
-                IpAddr::V6(ip6) => {
-                    builder.ip6(ip6).udp6(args.port);
+            }
+            IpAddr::V6(ip6) => {
+                // if the given address is the UNSPECIFIED address we want to advertise localhost
+                if ip6.is_unspecified() {
+                    builder.ip6(Ipv6Addr::LOCALHOST).udp6(port);
+                } else {
+                    builder.ip6(ip6).udp6(port);
                 }
             }
         }
@@ -121,40 +124,42 @@ async fn main() {
     let config = {
         let mut builder = &mut Discv5ConfigBuilder::new();
         if args.ip.is_ipv6() {
-            println!("Setting dual stack ipv6 mode with mapped addresses enabled");
             builder = builder.ip_mode(discv5::IpMode::Ip6 {
-                enable_mapped_addresses: true,
+                enable_mapped_addresses: !args.ipv6_only,
             });
         }
         builder.build()
     };
 
     info!("Node Id: {}", enr.node_id());
-    if args.set_enr_socket {
-        // if the ENR is useful print it
-        info!("Base64 ENR: {}", enr.to_base64());
-        if args.ip.is_ipv6() {
-            info!("IpV6 socket: {}", enr.udp6_socket().unwrap());
-        } else {
-            info!("IpV4 socket: {}", enr.udp4_socket().unwrap());
-        }
+    // if the ENR is useful print it
+    info!("Base64 ENR: {}", enr.to_base64());
+    if args.ip.is_ipv6() {
+        info!("Local ENR IpV6 socket: {}", enr.udp6_socket().unwrap());
+    } else {
+        info!("Local ENR IpV4 socket: {}", enr.udp4_socket().unwrap());
     }
 
     // the address to listen on.
-    let socket_addr = SocketAddr::new(args.ip, args.port);
+    let socket_addr = SocketAddr::new(args.ip, port);
 
     // construct the discv5 server
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
-    if let Some(enr) = args.peer {
+    for enr in args.remote_peers {
         info!(
-            "Remote ENR read. ip4: {:?}, ip6:{:?}, udp_port {:?}, tcp_port: {:?}",
-            enr.ip4(),
-            enr.ip6(),
-            enr.udp4(),
-            enr.tcp4()
+            "Remote ENR read. ip4 socket: {:?}, ip6 socket: {:?}, tcp4_port {:?}, tcp6_port: {:?}",
+            enr.udp4_socket(),
+            enr.udp6_socket(),
+            enr.tcp4(),
+            enr.tcp6()
         );
+        if let Err(e) = discv5.add_enr(enr) {
+            warn!("Failed to add remote ENR {}", e);
+            // It's unlikely we want to continue in this example after this
+            return;
+        };
     }
 
     // start the discv5 service
