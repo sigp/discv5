@@ -50,6 +50,7 @@ tokio-util = { version = "0.6.9", features = ["time"] }
 tokio = { version = "1.15.0", features = ["full"] }
 rand_xorshift = "0.3.0"
 rand_core = "0.6.3"
+clap = { version = "3.1", features = ["derive"] }
 
 [features]
 libp2p = ["libp2p-core"]
