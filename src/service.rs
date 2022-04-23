@@ -71,10 +71,12 @@ impl Drop for TalkRequest {
         };
 
         debug!("Sending empty TALK response to {}", self.node_address);
-        let _ = sender.send(HandlerIn::Response(
+        if let Err(e) = sender.send(HandlerIn::Response(
             self.node_address.clone(),
             Box::new(response),
-        ));
+        )) {
+            warn!("Failed to send empty talk response {}", e)
+        }
     }
 }
 
@@ -300,7 +302,7 @@ impl Service {
             tokio::select! {
                 _ = &mut self.exit => {
                     if let Some(exit) = self.handler_exit.take() {
-                        let _ = exit.send(());
+                        exit.send(()).unwrap();
                         info!("Discv5 Service shutdown");
                     }
                     return;
@@ -349,11 +351,15 @@ impl Service {
                         HandlerOut::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr)));
+                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
+                                    warn!("Failed to send whoareyou {}", e);
+                                };
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None));
+                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
+                                    warn!("Failed to send who are you to unknonw enr peer {}", e);
+                                }
                             }
                         }
                         HandlerOut::RequestFailed(request_id, error) => {
@@ -561,9 +567,12 @@ impl Service {
                     },
                 };
                 debug!("Sending PONG response to {}", node_address);
-                let _ = self
+                if let Err(e) = self
                     .handler_send
-                    .send(HandlerIn::Response(node_address, Box::new(response)));
+                    .send(HandlerIn::Response(node_address, Box::new(response)))
+                {
+                    warn!("Failed to send response {}", e)
+                }
             }
             RequestBody::Talk { protocol, request } => {
                 let req = TalkRequest {
@@ -653,7 +662,9 @@ impl Service {
                         let response = nodes
                             .pop()
                             .ok_or_else(|| RequestError::InvalidEnr("Peer did not return an ENR"));
-                        let _ = callback.send(response);
+                        if let Err(e) = callback.send(response) {
+                            warn!("Failed to send response in callback {:?}", e)
+                        }
                         return;
                     }
 
@@ -835,7 +846,9 @@ impl Service {
                     // Send the response to the user
                     match active_request.callback {
                         Some(CallbackResponse::Talk(callback)) => {
-                            let _ = callback.send(Ok(response));
+                            if let Err(e) = callback.send(Ok(response)) {
+                                warn!("Failed to send callback response {:?}", e)
+                            };
                         }
                         _ => error!("Invalid callback for response"),
                     }
@@ -982,9 +995,12 @@ impl Service {
                 "Sending empty FINDNODES response to: {}",
                 node_address.node_id
             );
-            let _ = self
+            if let Err(e) = self
                 .handler_send
-                .send(HandlerIn::Response(node_address, Box::new(response)));
+                .send(HandlerIn::Response(node_address, Box::new(response)))
+            {
+                warn!("Failed to send empty FINDNODES response {}", e)
+            }
         } else {
             // build the NODES response
             let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
@@ -1039,10 +1055,12 @@ impl Service {
                     node_address,
                     response
                 );
-                let _ = self.handler_send.send(HandlerIn::Response(
+                if let Err(e) = self.handler_send.send(HandlerIn::Response(
                     node_address.clone(),
                     Box::new(response),
-                ));
+                )) {
+                    warn!("Failed to send FINDNODES response {}", e)
+                }
             }
         }
     }

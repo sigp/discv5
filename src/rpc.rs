@@ -315,7 +315,7 @@ impl std::fmt::Display for ResponseBody {
                 enr_seq, ip, port
             ),
             ResponseBody::Nodes { total, nodes } => {
-                let _ = write!(f, "NODES: total: {}, Nodes: [", total);
+                write!(f, "NODES: total: {}, Nodes: [", total)?;
                 let mut first = true;
                 for id in nodes {
                     if !first {
