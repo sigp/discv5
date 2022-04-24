@@ -72,7 +72,7 @@ struct FindNodesArgs {
 #[tokio::main]
 async fn main() {
     let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
-        .or_else(|_| tracing_subscriber::EnvFilter::try_new("info"))
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("trace"))
         .unwrap();
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter_layer)
@@ -113,6 +113,9 @@ async fn main() {
                 } else {
                     builder.ip6(ip6).udp6(port);
                 }
+                if ip6.is_unspecified() && !args.ipv6_only {
+                    builder.ip4(Ipv4Addr::LOCALHOST).udp4(port);
+                }
             }
         }
         builder.build(&enr_key).unwrap()
@@ -135,7 +138,15 @@ async fn main() {
     // if the ENR is useful print it
     info!("Base64 ENR: {}", enr.to_base64());
     if args.ip.is_ipv6() {
-        info!("Local ENR IpV6 socket: {}", enr.udp6_socket().unwrap());
+        if let Some(socket) = enr.udp4_socket() {
+            info!(
+                "Local ENR IpV6 socket: {}. Local ENR IpV4 socket: {}",
+                enr.udp6_socket().unwrap(),
+                socket
+            );
+        } else {
+            info!("Local ENR IpV6 socket: {}", enr.udp6_socket().unwrap());
+        }
     } else {
         info!("Local ENR IpV4 socket: {}", enr.udp4_socket().unwrap());
     }
