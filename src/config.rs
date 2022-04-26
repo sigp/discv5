@@ -1,16 +1,8 @@
 use crate::{
-    kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
+    ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter,
+    RateLimiterBuilder,
 };
-use std::{net::SocketAddr, time::Duration};
-
-///! A set of configuration parameters to tune the discovery protocol.
-
-// TODO: move to another file
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum IpMode {
-    Ip4,
-    Ip6 { enable_mapped_addresses: bool },
-}
+use std::time::Duration;
 
 /// Configuration parameters that define the performance of the gossipsub network.
 #[derive(Clone)]
@@ -352,50 +344,5 @@ impl std::fmt::Debug for Discv5Config {
             .field("ping_interval", &self.ping_interval)
             .field("ban_duration", &self.ban_duration)
             .finish()
-    }
-}
-
-impl Default for IpMode {
-    fn default() -> Self {
-        IpMode::Ip4
-    }
-}
-
-impl IpMode {
-    pub fn is_ipv4(&self) -> bool {
-        self == &IpMode::Ip4
-    }
-
-    pub fn is_addr_contactable(&self, socket_addr: &SocketAddr) -> bool {
-        // TODO: check this
-        match self {
-            IpMode::Ip4 => socket_addr.is_ipv4(),
-            IpMode::Ip6 {
-                enable_mapped_addresses,
-            } => {
-                // on a node with dual stack, all addresses should be contactable.
-                // on an ipv6 only node only ipv6 addresses are contactable
-                *enable_mapped_addresses || socket_addr.is_ipv6()
-            }
-        }
-    }
-
-    /// Get the contactable Socket address of an Enr under current configuration.
-    pub fn get_contactable_addr(&self, enr: &Enr) -> Option<SocketAddr> {
-        match self {
-            IpMode::Ip4 => enr.udp4_socket().map(SocketAddr::V4),
-            IpMode::Ip6 {
-                enable_mapped_addresses,
-            } => {
-                if *enable_mapped_addresses {
-                    // NOTE: general consensus is that ipv6 addresses should be preferred
-                    enr.udp6_socket()
-                        .map(SocketAddr::V6)
-                        .or_else(|| enr.udp4_socket().map(SocketAddr::V4))
-                } else {
-                    enr.udp6_socket().map(SocketAddr::V6)
-                }
-            }
-        }
     }
 }

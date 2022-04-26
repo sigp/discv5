@@ -298,6 +298,7 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
+        tracing::info!("{:?}", self.config.ip_mode);
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
