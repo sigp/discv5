@@ -9,30 +9,10 @@
 //! participating node in the command line. The nodes should discover each other over a period of
 //! time. (It is probabilistic that nodes to find each other on any given query).
 //!
-//! A single instance listening on a UDP socket `0.0.0.0:9000` (with an ENR that has an empty IP
-//! and UDP port) can be created via:
-//!
+//! See the example's help with
 //! ```
-//! sh cargo run --example find_nodes
+//! sh cargo run --example find_nodes -- --help
 //! ```
-//!
-//! As the associated ENR has no IP/Port it is not displayed, as it cannot be used to connect to.
-//!
-//! An ENR IP address (to allow another nodes to dial this service), port and ENR node can also be
-//! passed as command line options. Therefore, a second instance, in a new terminal, can be run on
-//! port 9001 and connected to another node with a valid ENR:
-//!
-//! ```
-//! sh cargo run --example find_nodes -- 127.0.0.1 9001 <GENERATE_KEY> <BASE64_ENR>
-//! ```
-//! Here `127.0.0.1` represents the external IP address that others may connect to this node on. The
-//! `9001` represents the external port and the port to listen on. The `<BASE64_ENR>` is the base64
-//! ENR given from executing the first node with an IP and port
-//! given in the CLI.
-//! `<GENERATE_KEY>` is a boolean (`true` or `false`) specifying if a new key should be generated.
-//! These steps can be repeated to add further nodes to the test network.
-//!
-//! The parameters are optional.
 //!
 //!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
@@ -43,26 +23,31 @@ use discv5::{
     Discv5, Discv5ConfigBuilder,
 };
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
 use tracing::{info, warn};
 
 #[derive(Parser)]
 struct FindNodesArgs {
-    /// Ip to bind. To get local Ipv6 - Ipv4 communication use UNSPECIFIED addresses instead of
-    /// LOCALHOST (:: instead of ::1, 0.0.0.0 instead of 127.0.0.1)
-    #[clap(long, default_value_t = IpAddr::V6(Ipv6Addr::UNSPECIFIED))]
-    ip: IpAddr,
+    /// Type of socket to bind ['ds', 'ip4', 'ip6']. The dual stack option will enable mapped
+    /// addresses.
+    #[clap(long, default_value_t = SocketKind::Ds)]
+    socket_kind: SocketKind,
+    /// IpV4 to advertise en the ENR. This is needed so that other IpV4 nodes can connect to us.
+    enr_ip4: Option<Ipv4Addr>,
+    /// IpV6 to advertise en the ENR. This is needed so that other IpV6 nodes can connect to us.
+    #[clap(long)]
+    enr_ip6: Option<Ipv6Addr>,
     /// Port to bind
     #[clap(long)]
     port: Option<u16>,
-    /// Generate a new key instead of the default testing one.
+    /// Use a default test key.
     #[clap(long)]
     use_test_key: bool,
-    /// A remote peer to try to connect to.
+    /// A remote peer to try to connect to. Several peers can be added repeating this option.
     #[clap(long)]
-    remote_peers: Vec<discv5::Enr>,
+    remote_peer: Vec<discv5::Enr>,
     /// If the address we are binding to is an IpV6 address, disable mapped addresses to ensure
     /// only ipv6 communication.
     #[clap(long)]
@@ -97,25 +82,20 @@ async fn main() {
 
     let enr = {
         let mut builder = enr::EnrBuilder::new("v4");
-        match args.ip {
-            IpAddr::V4(ip4) => {
-                // if the given address is the UNSPECIFIED address we want to advertise localhost
-                if ip4.is_unspecified() {
-                    builder.ip4(Ipv4Addr::LOCALHOST).udp4(port);
-                } else {
-                    builder.ip4(ip4).udp4(port);
-                }
+        if let Some(ip4) = args.enr_ip4 {
+            // if the given address is the UNSPECIFIED address we want to advertise localhost
+            if ip4.is_unspecified() {
+                builder.ip4(Ipv4Addr::LOCALHOST).udp4(port);
+            } else {
+                builder.ip4(ip4).udp4(port);
             }
-            IpAddr::V6(ip6) => {
-                // if the given address is the UNSPECIFIED address we want to advertise localhost
-                if ip6.is_unspecified() {
-                    builder.ip6(Ipv6Addr::LOCALHOST).udp6(port);
-                } else {
-                    builder.ip6(ip6).udp6(port);
-                }
-                if ip6.is_unspecified() && !args.ipv6_only {
-                    builder.ip4(Ipv4Addr::LOCALHOST).udp4(port);
-                }
+        }
+        if let Some(ip6) = args.enr_ip6 {
+            // if the given address is the UNSPECIFIED address we want to advertise localhost
+            if ip6.is_unspecified() {
+                builder.ip6(Ipv6Addr::LOCALHOST).udp6(port);
+            } else {
+                builder.ip6(ip6).udp6(port);
             }
         }
         builder.build(&enr_key).unwrap()
@@ -124,41 +104,40 @@ async fn main() {
     // default configuration with packet filtering
     // let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
     // default configuration without packet filtering
-    let config = {
-        let mut builder = &mut Discv5ConfigBuilder::new();
-        if args.ip.is_ipv6() {
-            builder = builder.ip_mode(discv5::IpMode::Ip6 {
-                enable_mapped_addresses: !args.ipv6_only,
-            });
-        }
-        builder.build()
-    };
+    let config = Discv5ConfigBuilder::new()
+        .ip_mode(match args.socket_kind {
+            SocketKind::Ip4 => discv5::IpMode::Ip4,
+            SocketKind::Ip6 => discv5::IpMode::Ip6 {
+                enable_mapped_addresses: false,
+            },
+            SocketKind::Ds => discv5::IpMode::Ip6 {
+                enable_mapped_addresses: true,
+            },
+        })
+        .build();
 
     info!("Node Id: {}", enr.node_id());
-    // if the ENR is useful print it
-    info!("Base64 ENR: {}", enr.to_base64());
-    if args.ip.is_ipv6() {
-        if let Some(socket) = enr.udp4_socket() {
-            info!(
-                "Local ENR IpV6 socket: {}. Local ENR IpV4 socket: {}",
-                enr.udp6_socket().unwrap(),
-                socket
-            );
-        } else {
-            info!("Local ENR IpV6 socket: {}", enr.udp6_socket().unwrap());
-        }
-    } else {
-        info!("Local ENR IpV4 socket: {}", enr.udp4_socket().unwrap());
+    if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
+        // if the ENR is useful print it
+        info!("Base64 ENR: {}", enr.to_base64());
+        info!(
+            "Local ENR IpV6 socket: {:?}. Local ENR IpV4 socket: {:?}",
+            enr.udp6_socket(),
+            enr.udp4_socket()
+        );
     }
-
     // the address to listen on.
-    let socket_addr = SocketAddr::new(args.ip, port);
+    let bind_addr = match args.socket_kind {
+        SocketKind::Ip4 => Ipv4Addr::UNSPECIFIED.into(),
+        SocketKind::Ip6 | SocketKind::Ds => Ipv6Addr::UNSPECIFIED.into(),
+    };
+    let socket_addr = SocketAddr::new(bind_addr, port);
 
     // construct the discv5 server
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
-    for enr in args.remote_peers {
+    for enr in args.remote_peer {
         info!(
             "Remote ENR read. ip4 socket: {:?}, ip6 socket: {:?}, tcp4_port {:?}, tcp6_port: {:?}",
             enr.udp4_socket(),
@@ -202,6 +181,35 @@ async fn main() {
                     }
                 }
             }
+        }
+    }
+}
+
+pub enum SocketKind {
+    Ip4,
+    Ip6,
+    Ds,
+}
+
+impl std::fmt::Display for SocketKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SocketKind::Ip4 => f.write_str("ip4"),
+            SocketKind::Ip6 => f.write_str("ip6"),
+            SocketKind::Ds => f.write_str("ds"),
+        }
+    }
+}
+
+impl std::str::FromStr for SocketKind {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ip4" => Ok(SocketKind::Ip4),
+            "ip6" => Ok(SocketKind::Ip6),
+            "ds" => Ok(SocketKind::Ds),
+            _ => Err("bad kind"),
         }
     }
 }
