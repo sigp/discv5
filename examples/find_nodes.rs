@@ -35,6 +35,7 @@ struct FindNodesArgs {
     #[clap(long, default_value_t = SocketKind::Ds)]
     socket_kind: SocketKind,
     /// IpV4 to advertise en the ENR. This is needed so that other IpV4 nodes can connect to us.
+    #[clap(long)]
     enr_ip4: Option<Ipv4Addr>,
     /// IpV6 to advertise en the ENR. This is needed so that other IpV6 nodes can connect to us.
     #[clap(long)]
@@ -48,10 +49,6 @@ struct FindNodesArgs {
     /// A remote peer to try to connect to. Several peers can be added repeating this option.
     #[clap(long)]
     remote_peer: Vec<discv5::Enr>,
-    /// If the address we are binding to is an IpV6 address, disable mapped addresses to ensure
-    /// only ipv6 communication.
-    #[clap(long)]
-    ipv6_only: bool,
 }
 
 #[tokio::main]
@@ -139,7 +136,7 @@ async fn main() {
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {
         info!(
-            "Remote ENR read. ip4 socket: {:?}, ip6 socket: {:?}, tcp4_port {:?}, tcp6_port: {:?}",
+            "Remote ENR read. udp4 socket: {:?}, udp6 socket: {:?}, tcp4_port {:?}, tcp6_port: {:?}",
             enr.udp4_socket(),
             enr.udp6_socket(),
             enr.tcp4(),
