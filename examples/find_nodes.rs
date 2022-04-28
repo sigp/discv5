@@ -20,7 +20,7 @@ use clap::Parser;
 use discv5::{
     enr,
     enr::{k256, CombinedKey},
-    Discv5, Discv5ConfigBuilder,
+    Discv5, Discv5ConfigBuilder, Discv5Event,
 };
 use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -49,12 +49,14 @@ struct FindNodesArgs {
     /// A remote peer to try to connect to. Several peers can be added repeating this option.
     #[clap(long)]
     remote_peer: Vec<discv5::Enr>,
+    #[clap(long)]
+    events: bool,
 }
 
 #[tokio::main]
 async fn main() {
     let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
-        .or_else(|_| tracing_subscriber::EnvFilter::try_new("trace"))
+        .or_else(|_| tracing_subscriber::EnvFilter::try_new("info"))
         .unwrap();
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter_layer)
@@ -151,9 +153,11 @@ async fn main() {
 
     // start the discv5 service
     discv5.start(socket_addr).await.unwrap();
+    let mut event_stream = discv5.event_stream().await.unwrap();
+    let check_evs = args.events;
 
     // construct a 30 second interval to search for new peers.
-    let mut query_interval = tokio::time::interval(Duration::from_secs(60));
+    let mut query_interval = tokio::time::interval(Duration::from_secs(30));
 
     loop {
         tokio::select! {
@@ -177,6 +181,19 @@ async fn main() {
                         }
                     }
                 }
+            }
+            Some(discv5_ev) = event_stream.recv() => {
+                // consume the events even if not printed
+                if !check_evs {
+                    continue;
+                }
+                match discv5_ev {
+                    Discv5Event::Discovered(enr) => info!("Enr discovered {}", enr),
+                    Discv5Event::EnrAdded { enr, replaced: _ } => info!("Enr added {}", enr),
+                    Discv5Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
+                    Discv5Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
+                    Discv5Event::TalkRequest(_) => info!("Talk request received"),
+                };
             }
         }
     }
