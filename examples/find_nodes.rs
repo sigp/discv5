@@ -1,9 +1,8 @@
 //! Demonstrates how to run a basic Discovery v5 Service.
 //!
-//! This example creates a discv5 service which searches for peers every 60 seconds. On
-//! creation, the local ENR created for this service is displayed in base64. This can be used to
-//! allow other instances to connect and join the network. The service can be stopped by pressing
-//! Ctrl-C.
+//! This example creates a discv5 service which searches for peers every 60 seconds. On creation,
+//! the local ENR created for this service is displayed in base64. This can be used to allow other
+//! instances to connect and join the network. The service can be stopped by pressing Ctrl-C.
 //!
 //! To add peers to the network, create multiple instances of this service adding the ENR of a
 //! participating node in the command line. The nodes should discover each other over a period of

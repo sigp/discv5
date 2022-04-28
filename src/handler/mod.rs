@@ -775,7 +775,7 @@ impl Handler {
                             .send(HandlerOut::Established(enr, ConnectionDirection::Incoming))
                             .await
                         {
-                            warn!("Failed to inform of stablished session {}", e)
+                            warn!("Failed to inform of established session {}", e)
                         }
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
@@ -836,7 +836,7 @@ impl Handler {
                 }
                 trace!("Sending next awaiting message. Node: {}", request.0);
                 if let Err(e) = self.send_request(request.0, request.1).await {
-                    warn!("Failed to send next request {}", e)
+                    warn!("Failed to send next awaiting request {}", e)
                 }
             }
         }
@@ -961,7 +961,7 @@ impl Handler {
                 .await
             {
                 warn!(
-                    "spawn a WHOAREYOU event to check for highest known ENR failed {}",
+                    "Spawn a WHOAREYOU event to check for highest known ENR failed {}",
                     e
                 )
             }
@@ -1017,7 +1017,7 @@ impl Handler {
                             .send(HandlerOut::Response(node_address, Box::new(response)))
                             .await
                         {
-                            warn!("Also failed to inform of response! {}", e)
+                            warn!("Failed to inform of response {}", e)
                         }
                         return;
                     }
@@ -1036,7 +1036,7 @@ impl Handler {
                 ))
                 .await
             {
-                warn!("Failed to inform response about something oh god {}", e)
+                warn!("Failed to inform of response {}", e)
             }
             self.send_next_request(node_address).await;
         } else {
@@ -1080,7 +1080,7 @@ impl Handler {
             .send(HandlerOut::RequestFailed(request_id, error.clone()))
             .await
         {
-            warn!("Failed to inform request failed {}", e)
+            warn!("Failed to inform request failure {}", e)
         }
 
         let node_address = request_call.contact.node_address();
@@ -1111,7 +1111,7 @@ impl Handler {
                 .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
                 .await
             {
-                warn!("Failed to inform request failed here too {}", e)
+                warn!("Failed to inform request failure {}", e)
             }
         }
     }

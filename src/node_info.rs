@@ -14,7 +14,7 @@ pub struct NodeContact {
     public_key: CombinedPublicKey,
     /// Address to use to contact the node.
     socket_addr: SocketAddr,
-    /// The ENR of the node if known
+    /// The ENR of the node if known.
     enr: Option<Enr>,
 }
 

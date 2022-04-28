@@ -612,7 +612,6 @@ impl Service {
             if expected_node_address != node_address {
                 warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
                 // TODO: here we removed the request. Check it
-                // TODO: check if this is needed, can this we relly on the handler?
                 return;
             }
 
@@ -769,7 +768,7 @@ impl Service {
                     };
 
                     if should_count {
-                        // get the advertized local addresses
+                        // get the advertised local addresses
                         let (local_ip4_socket, local_ip6_socket) = {
                             let local_enr = self.local_enr.read();
                             (local_enr.udp4_socket(), local_enr.udp6_socket())
@@ -779,7 +778,6 @@ impl Service {
                             ip_votes.insert(node_id, socket);
                             let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
 
-                            // TODO: carefully check this.
                             let new_ip4 = maybe_ip4_majority.and_then(|majority| {
                                 if Some(majority) != local_ip4_socket {
                                     Some(majority)
@@ -798,7 +796,7 @@ impl Service {
                             if new_ip4.is_some() || new_ip6.is_some() {
                                 let mut updated = false;
 
-                                // Check if our advertized IPV6 address needs to be updated.
+                                // Check if our advertised IPV6 address needs to be updated.
                                 if let Some(new_ip6) = new_ip6 {
                                     info!("Local UDP ip6 socket updated to: {}", new_ip6);
                                     let new_ip6: SocketAddr = new_ip6.into();
