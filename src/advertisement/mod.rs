@@ -81,10 +81,7 @@ impl Ads {
     }
 
     pub fn get_ad_nodes(&self, topic: TopicHash) -> impl Iterator<Item = &AdNode> + '_ {
-        self.ads
-            .get(&topic)
-            .into_iter()
-            .flat_map(|nodes| nodes)
+        self.ads.get(&topic).into_iter().flatten()
     }
 
     pub fn ticket_wait_time(&mut self, topic: TopicHash) -> Option<Duration> {
@@ -116,8 +113,7 @@ impl Ads {
             .iter()
             .take_while(|ad| ad.insert_time.elapsed() >= self.ad_lifetime)
             .for_each(|ad| {
-                let count = map.entry(ad.topic).or_default();
-                *count += 1;
+                *map.entry(ad.topic).or_default() += 1;
             });
 
         map.into_iter().for_each(|(topic, index)| {
