@@ -1247,7 +1247,7 @@ impl Service {
         rpc_id: RequestId,
         topic: TopicHash,
     ) {
-        let nodes_to_send = self.ads.get_ad_nodes(topic).collect();
+        let nodes_to_send = self.ads.get_ad_nodes(topic).map(|ad| ad.node_record().clone()).collect();
         self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY");
     }
 

@@ -28,6 +28,10 @@ impl AdNode {
             insert_time,
         }
     }
+
+    pub fn node_record(&self) -> &Enr {
+        &self.node_record
+    }
 }
 
 impl PartialEq for AdNode {
@@ -76,12 +80,11 @@ impl Ads {
         })
     }
 
-    pub fn get_ad_nodes(&self, topic: TopicHash) -> impl Iterator<Item = Enr> + '_ {
+    pub fn get_ad_nodes(&self, topic: TopicHash) -> impl Iterator<Item = &AdNode> + '_ {
         self.ads
             .get(&topic)
             .into_iter()
-            .flat_map(|nodes| nodes.iter())
-            .map(|node| node.node_record.clone())
+            .flat_map(|nodes| nodes)
     }
 
     pub fn ticket_wait_time(&mut self, topic: TopicHash) -> Option<Duration> {
