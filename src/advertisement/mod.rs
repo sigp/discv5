@@ -117,12 +117,12 @@ impl Ads {
             });
 
         map.into_iter().for_each(|(topic, index)| {
-            let entry_ref = self.ads.entry(topic).or_default();
+            let topic_ads = self.ads.entry(topic).or_default();
             for _ in 0..index {
-                entry_ref.pop_front();
+                topic_ads.pop_front();
                 self.expirations.pop_front();
             }
-            if entry_ref.is_empty() {
+            if topic_ads.is_empty() {
                 self.ads.remove(&topic);
             }
         });
