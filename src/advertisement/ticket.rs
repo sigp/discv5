@@ -2,6 +2,7 @@ use super::*;
 use crate::rpc::{RequestId, Ticket};
 use delay_map::HashMapDelay;
 use enr::NodeId;
+use more_asserts::debug_unreachable;
 use node_info::NodeContact;
 use std::{cmp::Eq, collections::HashSet};
 
@@ -98,6 +99,7 @@ impl Stream for Tickets {
 }
 
 // The PendingTicket has an ActiveTopic that maps to a ticket in Tickets
+#[derive(Clone)]
 struct PendingTicket {
     active_topic: ActiveTopic,
     insert_time: Instant,
@@ -212,7 +214,12 @@ impl Stream for TicketPools {
                         self.expirations.pop_front();
                         Poll::Ready(Some(Ok((topic, ticket_pool))))
                     })
-                    .unwrap_or_else(|| Poll::Ready(Some(Err("Ticket selection failed".into()))))
+                    .unwrap_or_else(|| {
+                        debug_unreachable!(
+                            "Mismatched mapping between ticket_pools and expirations invariant"
+                        );
+                        Poll::Pending
+                    })
             })
             .unwrap_or(Poll::Pending)
     }
@@ -248,7 +255,7 @@ impl ActiveRegtopicRequests {
     ) -> Option<bool> {
         self.remove_expired();
         self.requests
-            .remove(&ActiveTopic::new(node_id, topic))
+            .get(&ActiveTopic::new(node_id, topic))
             .map(|ids| ids.contains(&req_id))
     }
 

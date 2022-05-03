@@ -7,6 +7,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use more_asserts::debug_unreachable;
 use tokio::time::Instant;
 use topic::TopicHash;
 use tracing::{debug, error};
@@ -117,13 +118,16 @@ impl Ads {
             });
 
         to_remove_ads.into_iter().for_each(|(topic, index)| {
-            let topic_ads = self.ads.entry(topic).or_default();
-            for _ in 0..index {
-                topic_ads.pop_front();
-                self.expirations.pop_front();
-            }
-            if topic_ads.is_empty() {
-                self.ads.remove(&topic);
+            if let Some(topic_ads) = self.ads.get_mut(&topic) {
+                for _ in 0..index {
+                    topic_ads.pop_front();
+                    self.expirations.pop_front();
+                }
+                if topic_ads.is_empty() {
+                    self.ads.remove(&topic);
+                }
+            } else {
+                debug_unreachable!("Mismatched mapping between ads and their expirations");
             }
         });
     }
