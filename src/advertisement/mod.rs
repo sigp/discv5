@@ -2,12 +2,12 @@ use super::*;
 use crate::Enr;
 use core::time::Duration;
 use futures::prelude::*;
+use more_asserts::debug_unreachable;
 use std::{
     collections::{HashMap, VecDeque},
     pin::Pin,
     task::{Context, Poll},
 };
-use more_asserts::debug_unreachable;
 use tokio::time::Instant;
 use topic::TopicHash;
 use tracing::{debug, error};
