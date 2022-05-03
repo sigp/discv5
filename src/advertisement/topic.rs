@@ -21,7 +21,7 @@
 use base64::encode;
 use rlp::{DecoderError, Rlp, RlpStream};
 use sha2::{Digest, Sha256};
-use std::{cmp::Ordering, fmt, hash::Hash};
+use std::{fmt, hash::Hash};
 use tracing::debug;
 
 //pub type IdentTopic = Topic<IdentityHash>;
@@ -63,7 +63,7 @@ impl Hasher for Sha256Hash {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TopicHash {
-    /// The topic hash. Stored as a string to align with the protobuf API.
+    /// The topic hash. Stored as a fixed length byte array.
     hash: [u8; 32],
 }
 
@@ -110,7 +110,7 @@ impl fmt::Display for TopicHash {
     }
 }
 
-/// A gossipsub topic.
+/// A topic, as in sigpi/rust-libp2p/protocols/gossipsub
 #[derive(Debug, Clone)]
 pub struct Topic<H: Hasher> {
     topic: String,
@@ -153,25 +153,6 @@ impl<H: Hasher> PartialEq for Topic<H> {
 }
 
 impl<H: Hasher> Eq for Topic<H> {}
-
-impl<H: Hasher> Hash for Topic<H> {
-    fn hash<T: std::hash::Hasher>(&self, _state: &mut T) {
-        self.hash();
-    }
-}
-
-// When sorted topics should group based on the topic string
-impl<H: Hasher> PartialOrd for Topic<H> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.topic.cmp(&other.topic))
-    }
-}
-
-impl<H: Hasher> Ord for Topic<H> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.topic.cmp(&other.topic)
-    }
-}
 
 impl<H: Hasher> fmt::Display for Topic<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

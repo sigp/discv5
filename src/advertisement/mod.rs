@@ -107,16 +107,16 @@ impl Ads {
     }
 
     fn remove_expired(&mut self) {
-        let mut map: HashMap<TopicHash, usize> = HashMap::new();
+        let mut to_remove_ads: HashMap<TopicHash, usize> = HashMap::new();
 
         self.expirations
             .iter()
             .take_while(|ad| ad.insert_time.elapsed() >= self.ad_lifetime)
             .for_each(|ad| {
-                *map.entry(ad.topic).or_default() += 1;
+                *to_remove_ads.entry(ad.topic).or_default() += 1;
             });
 
-        map.into_iter().for_each(|(topic, index)| {
+        to_remove_ads.into_iter().for_each(|(topic, index)| {
             let topic_ads = self.ads.entry(topic).or_default();
             for _ in 0..index {
                 topic_ads.pop_front();
@@ -132,17 +132,15 @@ impl Ads {
         self.remove_expired();
         let now = Instant::now();
         let nodes = self.ads.entry(topic).or_default();
-        if nodes.contains(&AdNode::new(node_record.clone(), now)) {
+        let ad_node = AdNode::new(node_record, now);
+        if nodes.contains(&ad_node) {
             error!(
                 "This node {} is already advertising this topic",
-                node_record.node_id()
+                ad_node.node_record().node_id()
             );
             return Err("Node already advertising this topic");
         }
-        nodes.push_back(AdNode {
-            node_record,
-            insert_time: now,
-        });
+        nodes.push_back(ad_node);
         self.expirations.push_back(AdTopic::new(topic, now));
         Ok(())
     }

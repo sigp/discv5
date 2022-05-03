@@ -89,15 +89,16 @@ impl Stream for Tickets {
     }
 }
 
-struct TicketRateLimiter {
+// The PendingTicket has an ActiveTopic that maps to a ticket in Tickets
+struct PendingTicket {
     active_topic: ActiveTopic,
-    first_seen: Instant,
+    insert_time: Instant,
 }
 
 #[derive(Default)]
 struct TicketHistory {
     ticket_cache: HashMap<ActiveTopic, u8>,
-    expirations: VecDeque<TicketRateLimiter>,
+    expirations: VecDeque<PendingTicket>,
     ticket_cache_duration: Duration,
 }
 
@@ -112,12 +113,17 @@ impl TicketHistory {
 
     pub fn insert(&mut self, active_topic: ActiveTopic) -> Result<(), &str> {
         self.remove_expired();
-        let count = self.ticket_cache.entry(active_topic).or_default();
+        let insert_time = Instant::now();
+        let count = self.ticket_cache.entry(active_topic.clone()).or_default();
         if *count >= 3 {
             error!("Max 3 tickets per (NodeId, Topic) accepted in 15 minutes");
             return Err("Ticket limit reached");
         }
         *count += 1;
+        self.expirations.push_back(PendingTicket{
+            active_topic,
+            insert_time,
+        });
         Ok(())
     }
 
@@ -126,15 +132,20 @@ impl TicketHistory {
         let cached_tickets = self
             .expirations
             .iter()
-            .take_while(|ticket_limiter| {
-                now.saturating_duration_since(ticket_limiter.first_seen)
+            .take_while(|pending_ticket| {
+                now.saturating_duration_since(pending_ticket.insert_time)
                     >= self.ticket_cache_duration
             })
-            .map(|ticket_limiter| ticket_limiter.active_topic.clone())
+            .map(|pending_ticket| pending_ticket.active_topic.clone())
             .collect::<Vec<ActiveTopic>>();
 
-        cached_tickets.iter().for_each(|active_topic| {
-            self.ticket_cache.remove(active_topic);
+        cached_tickets.into_iter().for_each(|active_topic| {
+            let count = self.ticket_cache.entry(active_topic.clone()).or_default();
+            if *count > 0 {
+                *count -= 1;
+            } else {
+                self.ticket_cache.remove(&active_topic);
+            }
             self.expirations.pop_front();
         });
     }
