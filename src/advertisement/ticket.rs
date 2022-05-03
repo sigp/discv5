@@ -128,7 +128,7 @@ impl TicketHistory {
             return Err("Ticket limit reached");
         }
         *count += 1;
-        self.expirations.push_back(PendingTicket{
+        self.expirations.push_back(PendingTicket {
             active_topic,
             insert_time,
         });
@@ -195,20 +195,24 @@ impl TicketPools {
 impl Stream for TicketPools {
     type Item = Result<(TopicHash, HashMap<NodeId, (Enr, RequestId, Ticket)>), String>;
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let ticket_pool = self.expirations.front();
+        if let Some(reg_window) = ticket_pool {
+            if reg_window.open_time.elapsed() < Duration::from_secs(REGISTRATION_WINDOW_IN_SECS) {
+                return Poll::Pending;
+            }
+        } else {
+            return Poll::Pending;
+        }
         self.expirations
             .pop_front()
             .map(|reg_window| {
-                if reg_window.open_time.elapsed() > Duration::from_secs(REGISTRATION_WINDOW_IN_SECS) {
-                    self.ticket_pools
-                        .remove_entry(&reg_window.topic)
-                        .map(|(topic, ticket_pool)| {
-                            self.expirations.pop_front();
-                            Poll::Ready(Some(Ok((topic, ticket_pool))))
-                        })
-                        .unwrap_or_else(|| Poll::Ready(Some(Err("Ticket selection failed".into()))))
-                } else {
-                    Poll::Pending
-                }
+                self.ticket_pools
+                    .remove_entry(&reg_window.topic)
+                    .map(|(topic, ticket_pool)| {
+                        self.expirations.pop_front();
+                        Poll::Ready(Some(Ok((topic, ticket_pool))))
+                    })
+                    .unwrap_or_else(|| Poll::Ready(Some(Err("Ticket selection failed".into()))))
             })
             .unwrap_or(Poll::Pending)
     }
