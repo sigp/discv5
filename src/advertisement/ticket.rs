@@ -5,6 +5,14 @@ use enr::NodeId;
 use node_info::NodeContact;
 use std::{cmp::Eq, collections::HashSet};
 
+// Max tickets that are stored from one node for a topic (in the configured
+// time period)
+const MAX_TICKETS_PER_NODE_TOPIC: u8 = 3;
+//
+const REGISTRATION_WINDOW_IN_SECS: u64 = 10;
+// Max nodes that are considered in the selection process for an ad slot.
+const MAX_REGISTRANTS_PER_AD_SLOT: usize = 50;
+
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ActiveTopic {
     node_id: NodeId,
@@ -115,7 +123,7 @@ impl TicketHistory {
         self.remove_expired();
         let insert_time = Instant::now();
         let count = self.ticket_cache.entry(active_topic.clone()).or_default();
-        if *count >= 3 {
+        if *count >= MAX_TICKETS_PER_NODE_TOPIC {
             error!("Max 3 tickets per (NodeId, Topic) accepted in 15 minutes");
             return Err("Ticket limit reached");
         }
@@ -141,7 +149,7 @@ impl TicketHistory {
 
         cached_tickets.into_iter().for_each(|active_topic| {
             let count = self.ticket_cache.entry(active_topic.clone()).or_default();
-            if *count > 0 {
+            if *count > 1 {
                 *count -= 1;
             } else {
                 self.ticket_cache.remove(&active_topic);
@@ -166,10 +174,11 @@ pub struct TicketPools {
 impl TicketPools {
     pub fn insert(&mut self, node_record: Enr, req_id: RequestId, ticket: Ticket) {
         if let Some(open_time) = ticket.req_time().checked_add(ticket.wait_time()) {
-            if open_time.elapsed() <= Duration::from_secs(10) {
+            if open_time.elapsed() <= Duration::from_secs(REGISTRATION_WINDOW_IN_SECS) {
                 let pool = self.ticket_pools.entry(ticket.topic()).or_default();
-                // Drop request if pool contains 50 nodes
-                if pool.len() < 50 {
+                // Drop request if pool contains 50 nodes, these nodes are out of luck and
+                // won't be automatically included in next registration window for this topic
+                if pool.len() < MAX_REGISTRANTS_PER_AD_SLOT {
                     if pool.is_empty() {
                         self.expirations.push_back(RegistrationWindow {
                             topic: ticket.topic(),
@@ -189,7 +198,7 @@ impl Stream for TicketPools {
         self.expirations
             .pop_front()
             .map(|reg_window| {
-                if reg_window.open_time.elapsed() > Duration::from_secs(10) {
+                if reg_window.open_time.elapsed() > Duration::from_secs(REGISTRATION_WINDOW_IN_SECS) {
                     self.ticket_pools
                         .remove_entry(&reg_window.topic)
                         .map(|(topic, ticket_pool)| {
