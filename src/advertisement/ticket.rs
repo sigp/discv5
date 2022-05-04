@@ -131,7 +131,7 @@ impl TicketHistory {
         let insert_time = Instant::now();
         let count = self.ticket_cache.entry(active_topic.clone()).or_default();
         if *count >= MAX_TICKETS_PER_NODE_TOPIC {
-            error!("Max 3 tickets per (NodeId, Topic) accepted in 15 minutes");
+            debug!("Max 3 tickets per (NodeId, Topic) accepted in 15 minutes");
             return Err("Ticket limit reached");
         }
         *count += 1;
