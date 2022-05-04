@@ -492,13 +492,14 @@ impl Discv5 {
         &self,
         topic_hash: TopicHash,
     ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
+        let find_future = self.find_closest_nodes_to_topic(topic_hash);
+        let channel = self.clone_channel();
 
         async move {
-            let all_found_ad_nodes: Vec<Enr> = Vec::new();
+            let mut all_found_ad_nodes = Vec::new();
             // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
             // and send the topic query to these nodes
-            let enrs = self
-                .find_closest_nodes_to_topic(topic_hash)
+            let enrs = find_future
                 .await
                 .map_err(|e| RequestError::TopicMetrics(e.to_string()))?;
 
@@ -509,10 +510,12 @@ impl Discv5 {
                 // the service will verify if this node is contactable, we just send it and
                 // await a response.
                 let (callback_send, callback_recv) = oneshot::channel();
-                let channel = self.clone_channel();
-                let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
                 let event = ServiceRequest::TopicQuery(node_contact, topic_hash, callback_send);
+                let channel = channel
+                    .as_ref()
+                    .clone()
+                    .map_err(|_| RequestError::ServiceNotStarted)?;
 
                 // send the request
                 channel
@@ -520,17 +523,13 @@ impl Discv5 {
                     .await
                     .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
                 // await the response
-                let found_ad_nodes = callback_recv
+                callback_recv
                     .await
-                    .map_err(|e| RequestError::ChannelFailed(e.to_string()))?;
-                
-                if let Ok(found_ad_nodes) = found_ad_nodes {
-                    for ad_node in found_ad_nodes.into_iter() {
-                        all_found_ad_nodes.push(ad_node);
-                    }
-                }
+                    .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+                    .map(|ad_nodes| all_found_ad_nodes.push(ad_nodes))
+                    .ok();
             }
-            //let ad_nodes = all_found_ad_nodes.into_iter().flatten().collect();
+            let all_found_ad_nodes = all_found_ad_nodes.into_iter().flatten().collect();
             Ok(all_found_ad_nodes)
         }
     }
@@ -539,20 +538,23 @@ impl Discv5 {
         &'static self,
         topic: Topic,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
+        let find_future = self.find_closest_nodes_to_topic(topic.hash());
+        let channel = self.clone_channel();
+
         async move {
             // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
             // and send the regtopic to these nodes
-            let enrs = self
-                .find_closest_nodes_to_topic(topic.hash())
+            let enrs = find_future
                 .await
                 .map_err(|e| RequestError::TopicMetrics(e.to_string()))?;
 
             // convert the ENR to a node_contact.
             for enr in enrs.into_iter() {
                 let node_contact = NodeContact::from(enr);
-
-                let channel = self.clone_channel();
-                let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+                let channel = channel
+                    .as_ref()
+                    .clone()
+                    .map_err(|_| RequestError::ServiceNotStarted)?;
                 let event = ServiceRequest::RegisterTopic(node_contact, topic.clone());
                 // send the request
                 channel
