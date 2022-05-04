@@ -177,8 +177,8 @@ impl Discv5 {
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
-            warn!("ENR attempted to be added without a UDP socket has been ignored");
-            return Err("ENR has no UDP socket to connect to");
+            warn!("ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored.");
+            return Err("ENR has no compatible UDP socket to connect to");
         }
 
         if !(self.config.table_filter)(&enr) {
