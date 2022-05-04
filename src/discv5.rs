@@ -34,7 +34,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 #[cfg(feature = "libp2p")]
-use {libp2p_core::Multiaddr, std::convert::TryFrom};
+use {libp2p_core::Multiaddr};
 
 // Create lazy static variable for the global permit/ban list
 use crate::metrics::{Metrics, METRICS};
@@ -315,7 +315,7 @@ impl Discv5 {
         PERMIT_BAN_LIST.write().ban_nodes.remove(node_id);
     }
 
-    /// Permits a node, allowing the node to bypass the packet filter.  
+    /// Permits a node, allowing the node to bypass the packet filter.
     pub fn permit_node(&self, node_id: &NodeId) {
         PERMIT_BAN_LIST.write().permit_nodes.insert(*node_id);
     }
@@ -336,7 +336,7 @@ impl Discv5 {
         PERMIT_BAN_LIST.write().ban_ips.remove(ip);
     }
 
-    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.  
+    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.
     pub fn permit_ip(&self, ip: std::net::IpAddr) {
         PERMIT_BAN_LIST.write().permit_ips.insert(ip);
     }
@@ -432,7 +432,7 @@ impl Discv5 {
                 RequestError::InvalidMultiaddr("Could not convert to multiaddr".into())
             })?;
             let node_contact: NodeContact = NodeContact::try_from_multiaddr(multiaddr)
-                .map_err(|e| RequestError::InvalidMultiaddr(e))?;
+                .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
 
             let (callback_send, callback_recv) = oneshot::channel();
 
