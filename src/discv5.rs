@@ -514,7 +514,6 @@ impl Discv5 {
                 let event = ServiceRequest::TopicQuery(node_contact, topic_hash, callback_send);
                 let channel = channel
                     .as_ref()
-                    .clone()
                     .map_err(|_| RequestError::ServiceNotStarted)?;
 
                 // send the request
@@ -538,6 +537,7 @@ impl Discv5 {
         &'static self,
         topic: Topic,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
+
         let find_future = self.find_closest_nodes_to_topic(topic.hash());
         let channel = self.clone_channel();
 
@@ -553,7 +553,6 @@ impl Discv5 {
                 let node_contact = NodeContact::from(enr);
                 let channel = channel
                     .as_ref()
-                    .clone()
                     .map_err(|_| RequestError::ServiceNotStarted)?;
                 let event = ServiceRequest::RegisterTopic(node_contact, topic.clone());
                 // send the request
