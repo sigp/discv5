@@ -235,7 +235,7 @@ async fn test_active_requests_insert() {
         .unwrap();
     let node_id = enr.node_id();
 
-    let contact: NodeContact = enr.into();
+    let contact = NodeContact::Enr(Box::new(enr));
     let node_address = contact.node_address().unwrap();
 
     let packet = Packet::new_random(&node_id).unwrap();
