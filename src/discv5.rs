@@ -431,8 +431,8 @@ impl Discv5 {
             let multiaddr: Multiaddr = multiaddr.try_into().map_err(|_| {
                 RequestError::InvalidMultiaddr("Could not convert to multiaddr".into())
             })?;
-            let node_contact: NodeContact = NodeContact::try_from(multiaddr)
-                .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
+            let node_contact: NodeContact = NodeContact::try_from_multiaddr(multiaddr)
+                .map_err(|e| RequestError::InvalidMultiaddr(e))?;
 
             let (callback_send, callback_recv) = oneshot::channel();
 
@@ -455,7 +455,6 @@ impl Discv5 {
         request: Vec<u8>,
     ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static {
         // convert the ENR to a node_contact.
-        let node_contact = NodeContact::from(enr);
 
         // the service will verify if this node is contactable, we just send it and
         // await a response.
@@ -463,6 +462,7 @@ impl Discv5 {
         let channel = self.clone_channel();
 
         async move {
+            let node_contact = NodeContact::try_from_enr(enr)?;
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);

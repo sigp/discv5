@@ -24,7 +24,7 @@ use crate::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
     },
-    node_info::{NodeAddress, NodeContact},
+    node_info::{NodeAddress, NodeContact, NonContactable},
     packet::MAX_PACKET_SIZE,
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
@@ -531,20 +531,23 @@ impl Service {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            to_request_enr = Some(enr.into());
+                            to_request_enr = Some(enr);
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            to_request_enr = Some(enr.into());
+                            to_request_enr = Some(enr);
                         }
                     }
                     // don't know of the ENR, request the update
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    self.request_enr(enr, None);
+                    // TODO: check this
+                    let contact = NodeContact::try_from_enr(enr)
+                        .expect("stored ENRs are contactable.");
+                    self.request_enr(contact, None);
                 }
 
                 // build the PONG response
@@ -594,21 +597,24 @@ impl Service {
             );
 
             // Check that the responder matches the expected request
-            if let Ok(request_node_address) = active_request.contact.node_address() {
-                if request_node_address != node_address {
-                    warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", request_node_address, node_address, id);
-                    return;
-                }
+
+            let expected_node_address = active_request.contact.node_address();
+            if expected_node_address != node_address {
+                warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
+                // TODO: here we removed the request. Check it
+                return;
             }
 
-            let node_id = active_request.contact.node_id();
             if !response.match_request(&active_request.request_body) {
                 warn!(
                     "Node gave an incorrect response type. Ignoring response from: {}",
-                    active_request.contact
+                    node_address
                 );
                 return;
             }
+
+            let node_id = node_address.node_id;
+
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
                     // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can be returned. Datagrams have a max
@@ -660,17 +666,11 @@ impl Service {
                         if nodes.len() > 1 {
                             warn!(
                                 "Peer returned more than one ENR for itself. Blacklisting {}",
-                                active_request.contact
+                                node_address
                             );
                         }
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST.write().ban(
-                            active_request
-                                .contact
-                                .node_address()
-                                .expect("Sanitized request"),
-                            ban_timeout,
-                        );
+                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
                         let before_len = nodes.len();
@@ -688,13 +688,7 @@ impl Service {
                                 active_request.contact
                             );
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(
-                                active_request
-                                    .contact
-                                    .node_address()
-                                    .expect("Sanitized request"),
-                                ban_timeout,
-                            );
+                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         }
                     }
 
@@ -831,16 +825,18 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr) {
-        let request_body = RequestBody::Ping {
-            enr_seq: self.local_enr.read().seq(),
-        };
-        let active_request = ActiveRequest {
-            contact: enr.into(),
-            request_body,
-            query_id: None,
-            callback: None,
-        };
-        self.send_rpc_request(active_request);
+        if let Ok(contact) = NodeContact::try_from_enr(enr) {
+            let request_body = RequestBody::Ping {
+                enr_seq: self.local_enr.read().seq(),
+            };
+            let active_request = ActiveRequest {
+                contact,
+                request_body,
+                query_id: None,
+                callback: None,
+            };
+            self.send_rpc_request(active_request);
+        }
     }
 
     /// Ping all peers that are connected in the routing table.
@@ -1026,8 +1022,14 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
+            let contact = match NodeContact::try_from_enr(enr) {
+                Ok(contact) => contact,
+                Err(NonContactable) => {
+                    return error!("Query {} has a non contactable enr", *query_id)
+                }
+            };
             let active_request = ActiveRequest {
-                contact: enr.into(),
+                contact,
                 request_body,
                 query_id: Some(query_id),
                 callback: None,
