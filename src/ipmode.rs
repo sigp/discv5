@@ -26,22 +26,24 @@ impl IpMode {
             IpMode::Ip6 {
                 enable_mapped_addresses,
             } => {
-                if *enable_mapped_addresses {
-                    // NOTE: general consensus is that ipv6 addresses should be preferred.
+                // NOTE: general consensus is that ipv6 addresses should be preferred.
+                let maybe_ipv6_addr = enr.udp6_socket().and_then(|socket_addr| {
                     // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
                     // transmited in the ENR. Here we choose to enforce canonical addresses since
-                    // it simplies the logic of matching socket_addr verification.
-                    enr.udp6_socket()
-                        .and_then(|socket_addr| {
-                            if to_ipv4_mapped(socket_addr.ip()).is_some() {
-                                None
-                            } else {
-                                Some(SocketAddr::V6(socket_addr))
-                            }
-                        })
-                        .or_else(|| enr.udp4_socket().map(SocketAddr::V4))
+                    // it simplies the logic of matching socket_addr verification. For this we prevent
+                    // communications with Ipv4 addresses advertized in the Ipv6 field.
+                    if to_ipv4_mapped(socket_addr.ip()).is_some() {
+                        None
+                    } else {
+                        Some(SocketAddr::V6(socket_addr))
+                    }
+                });
+                if *enable_mapped_addresses {
+                    // If mapped addresses are enabled we can use the Ipv4 address of the node in
+                    // case it doesn't have an ipv6 one
+                    maybe_ipv6_addr.or_else(|| enr.udp4_socket().map(SocketAddr::V4))
                 } else {
-                    enr.udp6_socket().map(SocketAddr::V6)
+                    maybe_ipv6_addr
                 }
             }
         }
@@ -226,7 +228,7 @@ mod tests {
     }
 }
 
-/// Copied from https://github.com/rust-lang/rust/issues/27709
+/// Copied from the standard library. See https://github.com/rust-lang/rust/issues/27709
 /// The current code is behind the `ip` feature.
 pub const fn to_ipv4_mapped(ip: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
     match ip.octets() {
