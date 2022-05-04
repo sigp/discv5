@@ -488,58 +488,78 @@ impl Discv5 {
         }
     }
 
-    // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
-    // and send the topic query to these nodes
     pub fn topic_query_req(
         &self,
-        enr: Enr,
         topic_hash: TopicHash,
     ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
-        // convert the ENR to a node_contact.
-        let node_contact = NodeContact::from(enr);
-
-        // the service will verify if this node is contactable, we just send it and
-        // await a response.
-        let (callback_send, callback_recv) = oneshot::channel();
-        let channel = self.clone_channel();
 
         async move {
-            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
-
-            let event = ServiceRequest::TopicQuery(node_contact, topic_hash, callback_send);
-
-            // send the request
-            channel
-                .send(event)
+            let all_found_ad_nodes: Vec<Enr> = Vec::new();
+            // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
+            // and send the topic query to these nodes
+            let enrs = self
+                .find_closest_nodes_to_topic(topic_hash)
                 .await
-                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
-            // await the response
-            callback_recv
-                .await
-                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+                .map_err(|e| RequestError::TopicMetrics(e.to_string()))?;
+
+            for enr in enrs.into_iter() {
+                // convert the ENR to a node_contact.
+                let node_contact = NodeContact::from(enr);
+
+                // the service will verify if this node is contactable, we just send it and
+                // await a response.
+                let (callback_send, callback_recv) = oneshot::channel();
+                let channel = self.clone_channel();
+                let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+                let event = ServiceRequest::TopicQuery(node_contact, topic_hash, callback_send);
+
+                // send the request
+                channel
+                    .send(event)
+                    .await
+                    .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+                // await the response
+                let found_ad_nodes = callback_recv
+                    .await
+                    .map_err(|e| RequestError::ChannelFailed(e.to_string()))?;
+                
+                if let Ok(found_ad_nodes) = found_ad_nodes {
+                    for ad_node in found_ad_nodes.into_iter() {
+                        all_found_ad_nodes.push(ad_node);
+                    }
+                }
+            }
+            //let ad_nodes = all_found_ad_nodes.into_iter().flatten().collect();
+            Ok(all_found_ad_nodes)
         }
     }
 
-    // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
-    // and send the topic query to these nodes
     pub fn reg_topic_req(
-        &self,
-        enr: Enr,
+        &'static self,
         topic: Topic,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
-        // convert the ENR to a node_contact.
-        let node_contact = NodeContact::from(enr);
-
-        let channel = self.clone_channel();
-
         async move {
-            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
-            let event = ServiceRequest::RegisterTopic(node_contact, topic);
-            // send the request
-            channel
-                .send(event)
+            // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
+            // and send the regtopic to these nodes
+            let enrs = self
+                .find_closest_nodes_to_topic(topic.hash())
                 .await
-                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+                .map_err(|e| RequestError::TopicMetrics(e.to_string()))?;
+
+            // convert the ENR to a node_contact.
+            for enr in enrs.into_iter() {
+                let node_contact = NodeContact::from(enr);
+
+                let channel = self.clone_channel();
+                let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+                let event = ServiceRequest::RegisterTopic(node_contact, topic.clone());
+                // send the request
+                channel
+                    .send(event)
+                    .await
+                    .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            }
             Ok(())
         }
     }

@@ -111,6 +111,8 @@ pub enum RequestError {
     InvalidMultiaddr(String),
     /// Failure generating random numbers during request.
     EntropyFailure(&'static str),
+    /// Finding nodes closest to a topic hash failed.
+    TopicMetrics(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
