@@ -387,7 +387,7 @@ impl Service {
                             let mut result = query.into_result();
                             // obtain the ENR's for the resulting nodes
                             let mut found_enrs = Vec::new();
-                            for node_id in result.closest_peers.into_iter() {
+                            for node_id in result.closest_peers {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
                                     let enr = result.target.untrusted_enrs.swap_remove(position);
                                     found_enrs.push(enr);
@@ -652,9 +652,9 @@ impl Service {
                                 active_request.contact
                             );
                         }
-                        let response = nodes.pop().ok_or_else(|| {
-                            RequestError::InvalidEnr("Peer did not return an ENR".into())
-                        });
+                        let response = nodes
+                            .pop()
+                            .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"));
                         if let Err(e) = callback.send(response) {
                             warn!("Failed to send response in callback {:?}", e)
                         }
