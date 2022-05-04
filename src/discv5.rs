@@ -537,7 +537,6 @@ impl Discv5 {
         &self,
         topic: Topic,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
-
         let find_future = self.find_closest_nodes_to_topic(topic.hash());
         let channel = self.clone_channel();
 
