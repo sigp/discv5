@@ -2,7 +2,6 @@ use crate::Enr;
 use std::net::SocketAddr;
 ///! A set of configuration parameters to tune the discovery protocol.
 
-// TODO: move to another file
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IpMode {
     Ip4,
