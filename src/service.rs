@@ -545,8 +545,8 @@ impl Service {
                 }
                 if let Some(enr) = to_request_enr {
                     // TODO: check this
-                    let contact = NodeContact::try_from_enr(enr)
-                        .expect("stored ENRs are contactable.");
+                    let contact =
+                        NodeContact::try_from_enr(enr).expect("stored ENRs are contactable.");
                     self.request_enr(contact, None);
                 }
 
