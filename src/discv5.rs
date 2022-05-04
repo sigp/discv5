@@ -315,7 +315,7 @@ impl Discv5 {
         PERMIT_BAN_LIST.write().ban_nodes.remove(node_id);
     }
 
-    /// Permits a node, allowing the node to bypass the packet filter.  
+    /// Permits a node, allowing the node to bypass the packet filter.
     pub fn permit_node(&self, node_id: &NodeId) {
         PERMIT_BAN_LIST.write().permit_nodes.insert(*node_id);
     }
@@ -336,7 +336,7 @@ impl Discv5 {
         PERMIT_BAN_LIST.write().ban_ips.remove(ip);
     }
 
-    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.  
+    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.
     pub fn permit_ip(&self, ip: std::net::IpAddr) {
         PERMIT_BAN_LIST.write().permit_ips.insert(ip);
     }
@@ -428,9 +428,9 @@ impl Discv5 {
             // The multiaddr must support the udp protocol and be of an appropriate key type.
             // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
             // `NodeContact`.
-            let multiaddr: Multiaddr = multiaddr.try_into().map_err(|_| {
-                RequestError::InvalidMultiaddr("Could not convert to multiaddr".into())
-            })?;
+            let multiaddr: Multiaddr = multiaddr
+                .try_into()
+                .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr"))?;
             let node_contact: NodeContact = NodeContact::try_from(multiaddr)
                 .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
 

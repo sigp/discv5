@@ -179,7 +179,7 @@ fn generate_signing_nonce(
     let mut data = ID_SIGNATURE_TEXT.as_bytes().to_vec();
     data.extend_from_slice(challenge_data.as_ref());
     data.extend_from_slice(ephem_pubkey);
-    data.extend_from_slice(&dst_id.raw().to_vec());
+    data.extend_from_slice(dst_id.raw().as_ref());
     data
 }
 

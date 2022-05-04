@@ -100,7 +100,7 @@ pub enum RequestError {
     /// The channel to the underlying threads failed.
     ChannelFailed(String),
     /// An invalid ENR was provided.
-    InvalidEnr(String),
+    InvalidEnr(&'static str),
     /// The remote's ENR is invalid.
     InvalidRemoteEnr,
     /// The remote returned and invalid packet.
@@ -108,7 +108,7 @@ pub enum RequestError {
     /// Failed attempting to encrypt the request.
     EncryptionFailed(String),
     /// The multiaddr provided is invalid.
-    InvalidMultiaddr(String),
+    InvalidMultiaddr(&'static str),
     /// Failure generating random numbers during request.
     EntropyFailure(&'static str),
 }

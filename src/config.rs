@@ -4,7 +4,7 @@ use crate::{
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
-/// Configuration parameters that define the performance of the gossipsub network.
+/// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
 pub struct Discv5Config {
     /// Whether to enable the incoming packet filter. Default: false.

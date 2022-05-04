@@ -452,9 +452,7 @@ impl Handler {
         contact: NodeContact,
         request: Request,
     ) -> Result<(), RequestError> {
-        let node_address = contact
-            .node_address()
-            .map_err(|e| RequestError::InvalidEnr(e.into()))?;
+        let node_address = contact.node_address().map_err(RequestError::InvalidEnr)?;
 
         if node_address.socket_addr == self.listen_socket {
             debug!("Filtered request to self");
@@ -1110,17 +1108,15 @@ impl Handler {
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
         }
-        for request in self
-            .pending_requests
-            .remove(node_address)
-            .unwrap_or_else(Vec::new)
-        {
-            if let Err(e) = self
-                .service_send
-                .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
-                .await
-            {
-                warn!("Failed to inform request failure {}", e)
+        if let Some(to_remove) = self.pending_requests.remove(node_address) {
+            for request in to_remove {
+                if let Err(e) = self
+                    .service_send
+                    .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
+                    .await
+                {
+                    warn!("Failed to inform request failure {}", e)
+                }
             }
         }
     }
