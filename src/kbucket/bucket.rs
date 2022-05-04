@@ -696,14 +696,14 @@ impl<TNodeId: std::fmt::Debug, TVal: Eq + std::fmt::Debug> std::fmt::Debug
     for KBucket<TNodeId, TVal>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut builder = f.debug_struct("KBucket");
-        let _ = builder.field("nodes", &self.nodes);
-        let _ = builder.field("first_connected_pos", &self.first_connected_pos);
-        let _ = builder.field("pending", &self.pending);
-        let _ = builder.field("pending_timeout", &self.pending_timeout);
-        let _ = builder.field("filter", &self.filter.is_some());
-        let _ = builder.field("max_incoming", &self.max_incoming);
-        builder.finish()
+        f.debug_struct("KBucket")
+            .field("nodes", &self.nodes)
+            .field("first_connected_pos", &self.first_connected_pos)
+            .field("pending", &self.pending)
+            .field("pending_timeout", &self.pending_timeout)
+            .field("filter", &self.filter.is_some())
+            .field("max_incoming", &self.max_incoming)
+            .finish()
     }
 }
 
@@ -923,6 +923,7 @@ pub mod tests {
         fn apply_action(&mut self, action: Action<V>) {
             match action {
                 Action::Insert(node) => {
+                    // TODO: action result ignored
                     let _ = self.insert(node);
                 }
                 Action::Remove(pos) => {
@@ -938,11 +939,13 @@ pub mod tests {
                 }
                 Action::UpdateStatus(pos, status) => {
                     if let Some(key) = self.key_of_pos(pos) {
+                        // TODO: action result ignored
                         let _ = self.update_status(&key, status.state, Some(status.direction));
                     }
                 }
                 Action::UpdateValue(pos, value) => {
                     if let Some(key) = self.key_of_pos(pos) {
+                        // TODO: action result ignored
                         let _ = self.update_value(&key, value);
                     }
                 }

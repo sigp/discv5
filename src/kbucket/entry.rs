@@ -130,6 +130,7 @@ where
 
     /// Sets the status of the entry.
     pub fn update(self, state: ConnectionState, direction: Option<ConnectionDirection>) -> Self {
+        // TODO: action result ignored
         let _ = self.0.bucket.update_status(self.0.key, state, direction);
         Self::new(self.0.bucket, self.0.key)
     }
