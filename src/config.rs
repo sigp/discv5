@@ -64,7 +64,8 @@ pub struct Discv5Config {
     /// seconds.
     pub ping_interval: Duration,
 
-    /// TODO: note everything this denotes.
+    /// Configures the type of socket to bind to. This also affects the selection of address to use
+    /// to contact an ENR.
     pub ip_mode: IpMode,
 
     /// Reports all discovered ENR's when traversing the DHT to the event stream. Default true.
@@ -306,6 +307,8 @@ impl Discv5ConfigBuilder {
         self
     }
 
+    /// Configures the type of socket to bind to. This also affects the selection of address to use
+    /// to contact an ENR.
     pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
         self.config.ip_mode = ip_mode;
         self
