@@ -54,7 +54,8 @@ impl NodeContact {
     pub fn udp_socket(&self) -> Result<SocketAddr, &'static str> {
         match self {
             NodeContact::Enr(enr) => enr
-                .udp_socket()
+                .udp4_socket()
+                .map(SocketAddr::V4)
                 .ok_or("ENR does not contain an IP and UDP port"),
             NodeContact::Raw { node_address, .. } => Ok(node_address.socket_addr),
         }
@@ -138,7 +139,7 @@ impl std::fmt::Display for NodeContact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NodeContact::Enr(enr) => {
-                write!(f, "Node: {}, addr: {:?}", enr.node_id(), enr.udp_socket())
+                write!(f, "Node: {}, addr: {:?}", enr.node_id(), enr.udp4_socket())
             }
             NodeContact::Raw { node_address, .. } => write!(f, "{}", node_address),
         }

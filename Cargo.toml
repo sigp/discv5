@@ -12,7 +12,7 @@ categories = ["network-programming", "asynchronous"]
 exclude = [".gitignore", ".github/*"]
 
 [dependencies]
-enr = { version = "0.5.1", features = ["k256", "ed25519"] }
+enr = { git = "https://github.com/divagant-martian/enr", rev = "721eb3ec4814222f1d42d5c8a199dc088312a694", features = ["k256", "ed25519"] }
 tokio = { version = "1.15.0", features = ["net", "sync", "macros", "rt"] }
 tokio-stream = "0.1.8"
 tokio-util = { version = "0.6.9", features = ["time"] }
@@ -28,6 +28,7 @@ fnv = "1.0.7"
 arrayvec = "0.7.2"
 digest = "0.10.1"
 rand = { version = "0.8.4", package = "rand" }
+socket2 = "0.4.4"
 smallvec = "1.7.0"
 parking_lot = "0.11.2"
 lazy_static = "1.4.0"
@@ -49,6 +50,7 @@ tokio-util = { version = "0.6.9", features = ["time"] }
 tokio = { version = "1.15.0", features = ["full"] }
 rand_xorshift = "0.3.0"
 rand_core = "0.6.3"
+clap = { version = "3.1", features = ["derive"] }
 
 [features]
 libp2p = ["libp2p-core"]

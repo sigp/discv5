@@ -805,13 +805,13 @@ mod tests {
     fn encode_decode_nodes_response() {
         let key = CombinedKey::generate_secp256k1();
         let enr1 = EnrBuilder::new("v4")
-            .ip("127.0.0.1".parse().unwrap())
-            .udp(500)
+            .ip4("127.0.0.1".parse().unwrap())
+            .udp4(500)
             .build(&key)
             .unwrap();
         let enr2 = EnrBuilder::new("v4")
-            .ip("10.0.0.1".parse().unwrap())
-            .tcp(8080)
+            .ip4("10.0.0.1".parse().unwrap())
+            .tcp4(8080)
             .build(&key)
             .unwrap();
         let enr3 = EnrBuilder::new("v4")

@@ -47,9 +47,9 @@ fn main() {
             Ok(enr) => {
                 println!(
                     "ENR Read. ip: {:?}, udp_port {:?}, tcp_port: {:?}",
-                    enr.ip(),
-                    enr.udp(),
-                    enr.tcp()
+                    enr.ip4(),
+                    enr.udp4(),
+                    enr.tcp4()
                 );
                 if let Err(e) = discv5.add_enr(enr) {
                     println!("ENR was not added: {}", e);

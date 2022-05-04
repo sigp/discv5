@@ -765,7 +765,7 @@ impl Service {
                     };
 
                     if should_count && socket.is_ipv4() {
-                        let local_socket = self.local_enr.read().udp_socket();
+                        let local_socket = self.local_enr.read().udp4_socket().map(SocketAddr::V4);
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
                             if let Some(majority_socket) = ip_votes.majority() {
@@ -1254,7 +1254,7 @@ impl Service {
     /// session key-pair has been negotiated.
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
-        if enr.udp_socket().is_none() {
+        if enr.udp4_socket().is_none() {
             return;
         }
 

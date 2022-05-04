@@ -7,7 +7,7 @@ use crate::{
 
 use active_requests::ActiveRequests;
 use enr::EnrBuilder;
-use std::{net::IpAddr, time::Duration};
+use std::time::Duration;
 use tokio::time::sleep;
 
 fn init() {
@@ -29,7 +29,7 @@ async fn simple_session_message() {
 
     let sender_port = 5000;
     let receiver_port = 5001;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip = "127.0.0.1".parse().unwrap();
 
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
@@ -37,20 +37,20 @@ async fn simple_session_message() {
     let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
 
     let sender_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(sender_port)
+        .ip4(ip)
+        .udp4(sender_port)
         .build(&key1)
         .unwrap();
     let receiver_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(receiver_port)
+        .ip4(ip)
+        .udp4(receiver_port)
         .build(&key2)
         .unwrap();
 
     let (_exit_send, sender_send, _sender_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
-        sender_enr.udp_socket().unwrap(),
+        sender_enr.udp4_socket().unwrap().into(),
         config.clone(),
     )
     .await
@@ -59,7 +59,7 @@ async fn simple_session_message() {
     let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
-        receiver_enr.udp_socket().unwrap(),
+        receiver_enr.udp4_socket().unwrap().into(),
         config,
     )
     .await
@@ -107,26 +107,26 @@ async fn multiple_messages() {
     init();
     let sender_port = 5002;
     let receiver_port = 5003;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip = "127.0.0.1".parse().unwrap();
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
     let config = Discv5ConfigBuilder::new().build();
     let sender_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(sender_port)
+        .ip4(ip)
+        .udp4(sender_port)
         .build(&key1)
         .unwrap();
     let receiver_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(receiver_port)
+        .ip4(ip)
+        .udp4(receiver_port)
         .build(&key2)
         .unwrap();
 
     let (_exit_send, sender_handler, mut sender_handler_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
-        sender_enr.udp_socket().unwrap(),
+        sender_enr.udp4_socket().unwrap().into(),
         config.clone(),
     )
     .await
@@ -135,7 +135,7 @@ async fn multiple_messages() {
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
-        receiver_enr.udp_socket().unwrap(),
+        receiver_enr.udp4_socket().unwrap().into(),
         config,
     )
     .await
@@ -156,7 +156,7 @@ async fn multiple_messages() {
         id: RequestId(vec![1]),
         body: ResponseBody::Pong {
             enr_seq: 1,
-            ip,
+            ip: ip.into(),
             port: sender_port,
         },
     };
@@ -224,14 +224,18 @@ async fn test_active_requests_insert() {
 
     // Create the test values needed
     let port = 5000;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip = "127.0.0.1".parse().unwrap();
 
     let key = CombinedKey::generate_secp256k1();
 
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(port)
+        .build(&key)
+        .unwrap();
     let node_id = enr.node_id();
 
-    let contact = NodeContact::Enr(Box::new(enr));
+    let contact: NodeContact = enr.into();
     let node_address = contact.node_address().unwrap();
 
     let packet = Packet::new_random(&node_id).unwrap();
