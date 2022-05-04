@@ -1,10 +1,13 @@
 use super::*;
-use crate::rpc::{RequestId, Ticket};
+use crate::{
+    rpc::{RequestId, Ticket},
+    service::ActiveRequest,
+};
 use delay_map::HashMapDelay;
 use enr::NodeId;
 use more_asserts::debug_unreachable;
 use node_info::NodeContact;
-use std::{cmp::Eq, collections::HashSet};
+use std::cmp::Eq;
 
 // Max tickets that are stored from one node for a topic (in the configured
 // time period)
@@ -13,6 +16,8 @@ const MAX_TICKETS_PER_NODE_TOPIC: u8 = 3;
 const REGISTRATION_WINDOW_IN_SECS: u64 = 10;
 // Max nodes that are considered in the selection process for an ad slot.
 const MAX_REGISTRANTS_PER_AD_SLOT: usize = 50;
+
+const MAX_CACHE_TIME_IN_SECS: u64 = 15;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ActiveTopic {
@@ -139,25 +144,29 @@ impl TicketHistory {
 
     fn remove_expired(&mut self) {
         let now = Instant::now();
-        let cached_tickets = self
+        let ticket_cache_duration = self.ticket_cache_duration;
+        let ticket_cache = &mut self.ticket_cache;
+        let total_to_remove = self
             .expirations
             .iter()
             .take_while(|pending_ticket| {
-                now.saturating_duration_since(pending_ticket.insert_time)
-                    >= self.ticket_cache_duration
+                now.saturating_duration_since(pending_ticket.insert_time) >= ticket_cache_duration
             })
-            .map(|pending_ticket| pending_ticket.active_topic.clone())
-            .collect::<Vec<ActiveTopic>>();
+            .map(|pending_ticket| {
+                let count = ticket_cache
+                    .entry(pending_ticket.active_topic.clone())
+                    .or_default();
+                if *count > 1 {
+                    *count -= 1;
+                } else {
+                    ticket_cache.remove(&pending_ticket.active_topic);
+                }
+            })
+            .count();
 
-        cached_tickets.into_iter().for_each(|active_topic| {
-            let count = self.ticket_cache.entry(active_topic.clone()).or_default();
-            if *count > 1 {
-                *count -= 1;
-            } else {
-                self.ticket_cache.remove(&active_topic);
-            }
+        for _ in 0..total_to_remove {
             self.expirations.pop_front();
-        });
+        }
     }
 }
 
@@ -227,75 +236,77 @@ impl Stream for TicketPools {
 
 #[derive(Clone)]
 pub struct ActiveRegtopicRequest {
-    active_topic: ActiveTopic,
+    req_id: RequestId,
     insert_time: Instant,
 }
 
 impl ActiveRegtopicRequest {
-    fn new(active_topic: ActiveTopic, insert_time: Instant) -> Self {
+    fn new(req_id: RequestId, insert_time: Instant) -> Self {
         ActiveRegtopicRequest {
-            active_topic,
             insert_time,
+            req_id,
         }
     }
 }
 
 #[derive(Default)]
 pub struct ActiveRegtopicRequests {
-    requests: HashMap<ActiveTopic, HashSet<RequestId>>,
+    requests: HashMap<RequestId, ActiveRequest>,
+    request_history: HashMap<RequestId, u8>,
     expirations: VecDeque<ActiveRegtopicRequest>,
 }
 
 impl ActiveRegtopicRequests {
-    pub fn is_active_req(
-        &mut self,
-        req_id: RequestId,
-        node_id: NodeId,
-        topic: TopicHash,
-    ) -> Option<bool> {
-        self.remove_expired();
-        self.requests
-            .get(&ActiveTopic::new(node_id, topic))
-            .map(|ids| ids.contains(&req_id))
+    pub fn remove(&mut self, req_id: &RequestId) -> Option<ActiveRequest> {
+        if let Some(seen_count) = self.request_history.get_mut(req_id) {
+            *seen_count += 1;
+            if *seen_count < 1 {
+                self.request_history.remove(req_id);
+                self.requests.remove(req_id).map(|req| ActiveRequest {
+                    contact: req.contact.clone(),
+                    request_body: req.request_body.clone(),
+                    query_id: req.query_id,
+                    callback: None,
+                })
+            } else {
+                self.requests.get(req_id).map(|req| ActiveRequest {
+                    contact: req.contact.clone(),
+                    request_body: req.request_body.clone(),
+                    query_id: req.query_id,
+                    callback: None,
+                })
+            }
+        } else {
+            None
+        }
     }
 
-    pub fn insert(&mut self, node_id: NodeId, topic: TopicHash, req_id: RequestId) {
+    pub fn insert(&mut self, req_id: RequestId, req: ActiveRequest) {
         self.remove_expired();
         let now = Instant::now();
-        let active_topic = ActiveTopic::new(node_id, topic);
 
-        // Since a REGTOPIC request always receives a TICKET response, when we come to register with a ticket which
-        // wait-time is up we get a TICKET response with wait-time 0, hence we initiate a new REGTOPIC request.
-        // Since the registration window is 10 seconds, incase we would receive a RECONGIRMATION for that first
-        // REGTOPIC, that req-id would have been replaced, so we use a set. We extend the req-id set life-time upon
-        // each insert incase a REGCONFIRMATION comes to a later req-id. Max req-ids in a set is limited by our
-        // implementation accepting max 3 tickets for a (NodeId, Topic) within 15 minutes.
-        self.requests
-            .entry(active_topic.clone())
-            .or_default()
-            .insert(req_id);
+        self.requests.insert(req_id.clone(), req);
+        // Each request id can be used twice, once for a TICKET response and
+        // once for a REGCONFIRMATION response
+        self.request_history.insert(req_id.clone(), 2);
         self.expirations
-            .iter()
-            .enumerate()
-            .find(|(_, req)| req.active_topic == active_topic)
-            .map(|(index, _)| index)
-            .map(|index| self.expirations.remove(index));
-        self.expirations
-            .push_back(ActiveRegtopicRequest::new(active_topic, now));
+            .push_back(ActiveRegtopicRequest::new(req_id, now));
     }
 
     fn remove_expired(&mut self) {
         let mut expired = Vec::new();
-
         self.expirations
             .iter()
-            .take_while(|req| req.insert_time.elapsed() >= Duration::from_secs(15))
+            .take_while(|req| {
+                req.insert_time.elapsed() >= Duration::from_secs(MAX_CACHE_TIME_IN_SECS)
+            })
             .for_each(|req| {
                 expired.push(req.clone());
             });
 
         expired.into_iter().for_each(|req| {
-            self.requests.remove(&req.active_topic);
+            self.requests.remove(&req.req_id);
+            self.request_history.remove(&req.req_id);
             self.expirations.pop_front();
         });
     }

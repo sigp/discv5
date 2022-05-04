@@ -239,7 +239,7 @@ pub struct Service {
 }
 
 /// Active RPC request awaiting a response from the handler.
-struct ActiveRequest {
+pub struct ActiveRequest {
     /// The address the request was sent to.
     pub contact: NodeContact,
     /// The request that was sent.
@@ -794,7 +794,13 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        if let Some(mut active_request) = self.active_requests.remove(&id) {
+        let active_request = if let Some(active_request) = self.active_requests.remove(&id) {
+            Some(active_request)
+        } else {
+            self.active_regtopic_requests.remove(&id)
+        };
+
+        if let Some(mut active_request) = active_request {
             debug!(
                 "Received RPC response: {} to request: {} from: {}",
                 response.body, active_request.request_body, active_request.contact
@@ -1038,14 +1044,8 @@ impl Service {
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
-                    if self
-                        .active_regtopic_requests
-                        .is_active_req(id, node_id, topic)
-                        .is_some()
-                    {
-                        if let NodeContact::Enr(enr) = active_request.contact {
-                            self.active_topics.insert(*enr, topic).ok();
-                        }
+                    if let NodeContact::Enr(enr) = active_request.contact {
+                        self.active_topics.insert(*enr, topic).ok();
                     }
                 }
             }
@@ -1142,7 +1142,6 @@ impl Service {
         } else {
             Vec::new()
         };
-        let node_id = enr.node_id();
         let request_body = RequestBody::RegisterTopic {
             topic,
             enr,
@@ -1150,13 +1149,18 @@ impl Service {
         };
 
         let active_request = ActiveRequest {
+            contact: contact.clone(),
+            request_body: request_body.clone(),
+            query_id: None,
+            callback: None,
+        };
+        let req_id = self.send_rpc_request(ActiveRequest {
             contact,
             request_body,
             query_id: None,
             callback: None,
-        };
-        let req_id = self.send_rpc_request(active_request);
-        self.active_regtopic_requests.insert(node_id, topic, req_id);
+        });
+        self.active_regtopic_requests.insert(req_id, active_request);
     }
 
     fn topic_query_request(
