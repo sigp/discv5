@@ -534,7 +534,7 @@ impl Discv5 {
     }
 
     pub fn reg_topic_req(
-        &'static self,
+        &self,
         topic: Topic,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
 
