@@ -1065,7 +1065,7 @@ impl Service {
             body: active_request.request_body.clone(),
         };
         let contact = active_request.contact.clone();
-        self.active_requests.insert(id, active_request);
+
         debug!("Sending RPC {} to node: {}", request, contact);
         if self
             .handler_send
