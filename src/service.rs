@@ -849,17 +849,20 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr) {
-        if let Ok(contact) = NodeContact::try_from_enr(enr) {
-            let request_body = RequestBody::Ping {
-                enr_seq: self.local_enr.read().seq(),
-            };
-            let active_request = ActiveRequest {
-                contact,
-                request_body,
-                query_id: None,
-                callback: None,
-            };
-            self.send_rpc_request(active_request);
+        match NodeContact::try_from_enr(enr) {
+            Ok(contact) => {
+                let request_body = RequestBody::Ping {
+                    enr_seq: self.local_enr.read().seq(),
+                };
+                let active_request = ActiveRequest {
+                    contact,
+                    request_body,
+                    query_id: None,
+                    callback: None,
+                };
+                self.send_rpc_request(active_request);
+            }
+            Err(NonContactable { enr }) => error!("Trying to ping a non-contactable peer {}", enr),
         }
     }
 
