@@ -514,7 +514,7 @@ impl std::fmt::Display for Packet {
             f,
             "Packet {{ iv: {}, header: {}, message {} }}",
             hex::encode(self.iv.to_be_bytes()),
-            self.header.to_string(),
+            self.header,
             hex::encode(&self.message)
         )
     }
@@ -526,7 +526,7 @@ impl std::fmt::Display for PacketHeader {
             f,
             "PacketHeader {{ message_nonce: {}, kind: {} }}",
             hex::encode(self.message_nonce),
-            self.kind.to_string()
+            self.kind
         )
     }
 }

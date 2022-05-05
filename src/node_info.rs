@@ -114,7 +114,6 @@ impl std::convert::TryFrom<Multiaddr> for NodeContact {
                 .map_err(|_| "Invalid public key")?
             {
                 PublicKey::Secp256k1(pk) => {
-                    // TODO: Remove libp2p dep to avoid conversion here
                     enr::k256::ecdsa::VerifyingKey::from_sec1_bytes(&pk.encode_uncompressed())
                         .expect("Libp2p key conversion, always valid")
                         .into()

@@ -323,7 +323,9 @@ impl Handler {
                            let id = request.id.clone();
                            if let Err(request_error) =  self.send_request(contact, *request).await {
                                // If the sending failed report to the application
-                               let _ = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await;
+                               if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
+                                   warn!("Failed to inform that request failed {}", e)
+                               }
                            }
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
@@ -450,9 +452,7 @@ impl Handler {
         contact: NodeContact,
         request: Request,
     ) -> Result<(), RequestError> {
-        let node_address = contact
-            .node_address()
-            .map_err(|e| RequestError::InvalidEnr(e.into()))?;
+        let node_address = contact.node_address().map_err(RequestError::InvalidEnr)?;
 
         if node_address.socket_addr == self.listen_socket {
             debug!("Filtered request to self");
@@ -718,7 +718,9 @@ impl Handler {
                 };
 
                 session.awaiting_enr = Some(id);
-                let _ = self.send_request(contact, request).await;
+                if let Err(e) = self.send_request(contact, request).await {
+                    warn!("Failed to send Enr request {}", e)
+                }
             }
         }
         self.new_session(node_address, session);
@@ -772,10 +774,13 @@ impl Handler {
                         // Notify the application
                         // The session established here are from WHOAREYOU packets that we sent.
                         // This occurs when a node established a connection with us.
-                        let _ = self
+                        if let Err(e) = self
                             .service_send
                             .send(HandlerOut::Established(enr, ConnectionDirection::Incoming))
-                            .await;
+                            .await
+                        {
+                            warn!("Failed to inform of established session {}", e)
+                        }
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
                             node_address,
@@ -834,7 +839,9 @@ impl Handler {
                     entry.remove();
                 }
                 trace!("Sending next awaiting message. Node: {}", request.0);
-                let _ = self.send_request(request.0, request.1).await;
+                if let Err(e) = self.send_request(request.0, request.1).await {
+                    warn!("Failed to send next awaiting request {}", e)
+                }
             }
         }
     }
@@ -877,10 +884,13 @@ impl Handler {
                     // Update the cache time and remove expired entries.
                     if self.active_challenges.peek(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-                        let _ = self
+                        if let Err(e) = self
                             .service_send
                             .send(HandlerOut::WhoAreYou(whoareyou_ref))
-                            .await;
+                            .await
+                        {
+                            warn!("Failed to send WhoAreYou to the service {}", e)
+                        }
                     } else {
                         trace!("WHOAREYOU packet already sent: {}", node_address);
                     }
@@ -894,10 +904,13 @@ impl Handler {
             match message {
                 Message::Request(request) => {
                     // report the request to the application
-                    let _ = self
+                    if let Err(e) = self
                         .service_send
                         .send(HandlerOut::Request(node_address, Box::new(request)))
-                        .await;
+                        .await
+                    {
+                        warn!("Failed to report request to application {}", e)
+                    }
                 }
                 Message::Response(response) => {
                     // Sessions could be awaiting an ENR response. Check if this response matches
@@ -914,13 +927,16 @@ impl Handler {
                                             // This can occur when we try to dial a node without an
                                             // ENR. In this case we have attempted to establish the
                                             // connection, so this is an outgoing connection.
-                                            let _ = self
+                                            if let Err(e) = self
                                                 .service_send
                                                 .send(HandlerOut::Established(
                                                     enr,
                                                     ConnectionDirection::Outgoing,
                                                 ))
-                                                .await;
+                                                .await
+                                            {
+                                                warn!("Failed to inform established outgoing connection {}", e)
+                                            }
                                             return;
                                         }
                                     }
@@ -943,10 +959,16 @@ impl Handler {
             trace!("Requesting a WHOAREYOU packet to be sent.");
             // spawn a WHOAREYOU event to check for highest known ENR
             let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-            let _ = self
+            if let Err(e) = self
                 .service_send
                 .send(HandlerOut::WhoAreYou(whoareyou_ref))
-                .await;
+                .await
+            {
+                warn!(
+                    "Spawn a WHOAREYOU event to check for highest known ENR failed {}",
+                    e
+                )
+            }
         }
     }
 
@@ -979,10 +1001,13 @@ impl Handler {
                             // add back the request and send the response
                             self.active_requests
                                 .insert(node_address.clone(), request_call);
-                            let _ = self
+                            if let Err(e) = self
                                 .service_send
                                 .send(HandlerOut::Response(node_address, Box::new(response)))
-                                .await;
+                                .await
+                            {
+                                warn!("Failed to inform of response {}", e)
+                            }
                             return;
                         }
                     } else {
@@ -991,10 +1016,13 @@ impl Handler {
                         // add back the request and send the response
                         self.active_requests
                             .insert(node_address.clone(), request_call);
-                        let _ = self
+                        if let Err(e) = self
                             .service_send
                             .send(HandlerOut::Response(node_address, Box::new(response)))
-                            .await;
+                            .await
+                        {
+                            warn!("Failed to inform of response {}", e)
+                        }
                         return;
                     }
                 }
@@ -1004,13 +1032,16 @@ impl Handler {
             self.remove_expected_response(node_address.socket_addr);
 
             // The request matches report the response
-            let _ = self
+            if let Err(e) = self
                 .service_send
                 .send(HandlerOut::Response(
                     node_address.clone(),
                     Box::new(response),
                 ))
-                .await;
+                .await
+            {
+                warn!("Failed to inform of response {}", e)
+            }
             self.send_next_request(node_address).await;
         } else {
             // This is likely a late response and we have already failed the request. These get
@@ -1050,10 +1081,13 @@ impl Handler {
         // The Request has expired, remove the session.
         // Fail the current request
         let request_id = request_call.request.id;
-        let _ = self
+        if let Err(e) = self
             .service_send
             .send(HandlerOut::RequestFailed(request_id, error.clone()))
-            .await;
+            .await
+        {
+            warn!("Failed to inform request failure {}", e)
+        }
 
         let node_address = request_call
             .contact
@@ -1076,15 +1110,16 @@ impl Handler {
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
         }
-        for request in self
-            .pending_requests
-            .remove(node_address)
-            .unwrap_or_else(Vec::new)
-        {
-            let _ = self
-                .service_send
-                .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
-                .await;
+        if let Some(to_remove) = self.pending_requests.remove(node_address) {
+            for request in to_remove {
+                if let Err(e) = self
+                    .service_send
+                    .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
+                    .await
+                {
+                    warn!("Failed to inform request failure {}", e)
+                }
+            }
         }
     }
 
@@ -1094,7 +1129,9 @@ impl Handler {
             node_address,
             packet,
         };
-        let _ = self.socket.send.send(outbound_packet).await;
+        if let Err(e) = self.socket.send.send(outbound_packet).await {
+            warn!("Failed to send outbound packet {}", e)
+        }
     }
 
     /// Check if any banned nodes have served their time and unban them.
