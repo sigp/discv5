@@ -550,10 +550,19 @@ impl Service {
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    // TODO: check this
-                    let contact =
-                        NodeContact::try_from_enr(enr).expect("stored ENRs are contactable.");
-                    self.request_enr(contact, None);
+                    match NodeContact::try_from_enr(enr) {
+                        Ok(contact) => {
+                            self.request_enr(contact, None);
+                        }
+                        Err(NonContactable { enr }) => {
+                            error!(
+                                "Stored ENR is not contactable! This should never happen {}",
+                                enr
+                            );
+                            #[cfg(debug_assertions)]
+                            panic!("Stored ENR is not contactable. {}", enr);
+                        }
+                    }
                 }
 
                 // build the PONG response
@@ -1042,8 +1051,8 @@ impl Service {
         if let Some(enr) = self.find_enr(&return_peer) {
             let contact = match NodeContact::try_from_enr(enr) {
                 Ok(contact) => contact,
-                Err(NonContactable) => {
-                    return error!("Query {} has a non contactable enr", *query_id)
+                Err(NonContactable { enr }) => {
+                    return error!("Query {} has a non contactable enr: {}", *query_id, enr)
                 }
             };
             let active_request = ActiveRequest {

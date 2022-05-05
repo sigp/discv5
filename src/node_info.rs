@@ -18,8 +18,10 @@ pub struct NodeContact {
     enr: Option<Enr>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct NonContactable;
+#[derive(Debug, Clone)]
+pub struct NonContactable {
+    pub enr: Enr,
+}
 
 impl NodeContact {
     pub fn node_id(&self) -> NodeId {
@@ -65,9 +67,13 @@ impl NodeContact {
     }
 
     pub fn try_from_enr(enr: Enr) -> Result<Self, NonContactable> {
+        let socket_addr = match enr.udp4_socket() {
+            Some(socket_addr) => socket_addr.into(),
+            None => return Err(NonContactable { enr }),
+        };
         Ok(NodeContact {
             public_key: enr.public_key(),
-            socket_addr: enr.udp4_socket().map(|v| v.into()).ok_or(NonContactable)?,
+            socket_addr,
             enr: Some(enr),
         })
     }
