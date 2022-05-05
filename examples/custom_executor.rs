@@ -1,6 +1,6 @@
 //! Demonstrates how to run a basic Discovery v5 Service with a custom tokio executor.
 //!
-//! Discv5 requires a Tokio executor with all features. A custom exuector can be passed via the
+//! Discv5 requires a Tokio executor with all features. A custom executor can be passed via the
 //! configuration parameters. If none is passed, it will use the current runtime that build the
 //! `Discv5` struct.
 //!
@@ -47,9 +47,9 @@ fn main() {
             Ok(enr) => {
                 println!(
                     "ENR Read. ip: {:?}, udp_port {:?}, tcp_port: {:?}",
-                    enr.ip(),
-                    enr.udp(),
-                    enr.tcp()
+                    enr.ip4(),
+                    enr.udp4(),
+                    enr.tcp4()
                 );
                 if let Err(e) = discv5.add_enr(enr) {
                     println!("ENR was not added: {}", e);

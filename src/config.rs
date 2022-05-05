@@ -4,7 +4,7 @@ use crate::{
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
-/// Configuration parameters that define the performance of the gossipsub network.
+/// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
 pub struct Discv5Config {
     /// Whether to enable the incoming packet filter. Default: false.
@@ -315,25 +315,25 @@ impl Discv5ConfigBuilder {
 
 impl std::fmt::Debug for Discv5Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut builder = f.debug_struct("Discv5Config");
-        let _ = builder.field("filter_enabled", &self.enable_packet_filter);
-        let _ = builder.field("request_timeout", &self.request_timeout);
-        let _ = builder.field("vote_duration", &self.vote_duration);
-        let _ = builder.field("query_timeout", &self.query_timeout);
-        let _ = builder.field("query_peer_timeout", &self.query_peer_timeout);
-        let _ = builder.field("request_retries", &self.request_retries);
-        let _ = builder.field("session_timeout", &self.session_timeout);
-        let _ = builder.field("session_cache_capacity", &self.session_cache_capacity);
-        let _ = builder.field("enr_update", &self.enr_update);
-        let _ = builder.field("query_parallelism", &self.query_parallelism);
-        let _ = builder.field("report_discovered_peers", &self.report_discovered_peers);
-        let _ = builder.field("ip_limit", &self.ip_limit);
-        let _ = builder.field("filter_max_nodes_per_ip", &self.filter_max_nodes_per_ip);
-        let _ = builder.field("filter_max_bans_per_ip", &self.filter_max_bans_per_ip);
-        let _ = builder.field("ip_limit", &self.ip_limit);
-        let _ = builder.field("incoming_bucket_limit", &self.incoming_bucket_limit);
-        let _ = builder.field("ping_interval", &self.ping_interval);
-        let _ = builder.field("ban_duration", &self.ban_duration);
-        builder.finish()
+        f.debug_struct("Discv5Config")
+            .field("filter_enabled", &self.enable_packet_filter)
+            .field("request_timeout", &self.request_timeout)
+            .field("vote_duration", &self.vote_duration)
+            .field("query_timeout", &self.query_timeout)
+            .field("query_peer_timeout", &self.query_peer_timeout)
+            .field("request_retries", &self.request_retries)
+            .field("session_timeout", &self.session_timeout)
+            .field("session_cache_capacity", &self.session_cache_capacity)
+            .field("enr_update", &self.enr_update)
+            .field("query_parallelism", &self.query_parallelism)
+            .field("report_discovered_peers", &self.report_discovered_peers)
+            .field("ip_limit", &self.ip_limit)
+            .field("filter_max_nodes_per_ip", &self.filter_max_nodes_per_ip)
+            .field("filter_max_bans_per_ip", &self.filter_max_bans_per_ip)
+            .field("ip_limit", &self.ip_limit)
+            .field("incoming_bucket_limit", &self.incoming_bucket_limit)
+            .field("ping_interval", &self.ping_interval)
+            .field("ban_duration", &self.ban_duration)
+            .finish()
     }
 }

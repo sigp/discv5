@@ -71,10 +71,12 @@ impl Drop for TalkRequest {
         };
 
         debug!("Sending empty TALK response to {}", self.node_address);
-        let _ = sender.send(HandlerIn::Response(
+        if let Err(e) = sender.send(HandlerIn::Response(
             self.node_address.clone(),
             Box::new(response),
-        ));
+        )) {
+            warn!("Failed to send empty talk response {}", e)
+        }
     }
 }
 
@@ -349,11 +351,15 @@ impl Service {
                         HandlerOut::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr)));
+                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
+                                    warn!("Failed to send whoareyou {}", e);
+                                };
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None));
+                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
+                                    warn!("Failed to send who are you to unknonw enr peer {}", e);
+                                }
                             }
                         }
                         HandlerOut::RequestFailed(request_id, error) => {
@@ -381,7 +387,7 @@ impl Service {
                             let mut result = query.into_result();
                             // obtain the ENR's for the resulting nodes
                             let mut found_enrs = Vec::new();
-                            for node_id in result.closest_peers.into_iter() {
+                            for node_id in result.closest_peers {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
                                     let enr = result.target.untrusted_enrs.swap_remove(position);
                                     found_enrs.push(enr);
@@ -561,9 +567,12 @@ impl Service {
                     },
                 };
                 debug!("Sending PONG response to {}", node_address);
-                let _ = self
+                if let Err(e) = self
                     .handler_send
-                    .send(HandlerIn::Response(node_address, Box::new(response)));
+                    .send(HandlerIn::Response(node_address, Box::new(response)))
+                {
+                    warn!("Failed to send response {}", e)
+                }
             }
             RequestBody::Talk { protocol, request } => {
                 let req = TalkRequest {
@@ -649,10 +658,12 @@ impl Service {
                                 active_request.contact
                             );
                         }
-                        let response = nodes.pop().ok_or_else(|| {
-                            RequestError::InvalidEnr("Peer did not return an ENR".into())
-                        });
-                        let _ = callback.send(response);
+                        let response = nodes
+                            .pop()
+                            .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"));
+                        if let Err(e) = callback.send(response) {
+                            warn!("Failed to send response in callback {:?}", e)
+                        }
                         return;
                     }
 
@@ -759,7 +770,7 @@ impl Service {
                     };
 
                     if should_count && socket.is_ipv4() {
-                        let local_socket = self.local_enr.read().udp_socket();
+                        let local_socket = self.local_enr.read().udp4_socket().map(SocketAddr::V4);
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
                             if let Some(majority_socket) = ip_votes.majority() {
@@ -801,7 +812,9 @@ impl Service {
                     // Send the response to the user
                     match active_request.callback {
                         Some(CallbackResponse::Talk(callback)) => {
-                            let _ = callback.send(Ok(response));
+                            if let Err(e) = callback.send(Ok(response)) {
+                                warn!("Failed to send callback response {:?}", e)
+                            };
                         }
                         _ => error!("Invalid callback for response"),
                     }
@@ -948,9 +961,12 @@ impl Service {
                 "Sending empty FINDNODES response to: {}",
                 node_address.node_id
             );
-            let _ = self
+            if let Err(e) = self
                 .handler_send
-                .send(HandlerIn::Response(node_address, Box::new(response)));
+                .send(HandlerIn::Response(node_address, Box::new(response)))
+            {
+                warn!("Failed to send empty FINDNODES response {}", e)
+            }
         } else {
             // build the NODES response
             let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
@@ -1005,10 +1021,12 @@ impl Service {
                     node_address,
                     response
                 );
-                let _ = self.handler_send.send(HandlerIn::Response(
+                if let Err(e) = self.handler_send.send(HandlerIn::Response(
                     node_address.clone(),
                     Box::new(response),
-                ));
+                )) {
+                    warn!("Failed to send FINDNODES response {}", e)
+                }
             }
         }
     }
@@ -1049,12 +1067,15 @@ impl Service {
             body: active_request.request_body.clone(),
         };
         let contact = active_request.contact.clone();
-        self.active_requests.insert(id, active_request);
-        debug!("Sending RPC {} to node: {}", request, contact);
 
-        let _ = self
+        debug!("Sending RPC {} to node: {}", request, contact);
+        if self
             .handler_send
-            .send(HandlerIn::Request(contact, Box::new(request)));
+            .send(HandlerIn::Request(contact, Box::new(request)))
+            .is_ok()
+        {
+            self.active_requests.insert(id, active_request);
+        }
     }
 
     fn send_event(&mut self, event: Discv5Event) {
@@ -1256,7 +1277,7 @@ impl Service {
     /// session key-pair has been negotiated.
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
-        if enr.udp_socket().is_none() {
+        if enr.udp4_socket().is_none() {
             return;
         }
 

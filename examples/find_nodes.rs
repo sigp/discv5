@@ -90,16 +90,20 @@ async fn main() {
         }
         // if a port was specified, use it
         if std::env::args().nth(2).is_some() {
-            builder.udp(port);
+            builder.udp4(port);
         }
         builder.build(&enr_key).unwrap()
     };
 
     // if the ENR is useful print it
     println!("Node Id: {}", enr.node_id());
-    if enr.udp_socket().is_some() {
+    if enr.udp4_socket().is_some() {
         println!("Base64 ENR: {}", enr.to_base64());
-        println!("IP: {}, UDP_PORT:{}", enr.ip().unwrap(), enr.udp().unwrap());
+        println!(
+            "IP: {}, UDP_PORT:{}",
+            enr.ip4().unwrap(),
+            enr.udp4().unwrap()
+        );
     } else {
         println!("ENR is not printed as no IP:PORT was specified");
     }
@@ -121,9 +125,9 @@ async fn main() {
             Ok(enr) => {
                 println!(
                     "ENR Read. ip: {:?}, udp_port {:?}, tcp_port: {:?}",
-                    enr.ip(),
-                    enr.udp(),
-                    enr.tcp()
+                    enr.ip4(),
+                    enr.udp4(),
+                    enr.tcp4()
                 );
                 if let Err(e) = discv5.add_enr(enr) {
                     println!("ENR was not added: {}", e);

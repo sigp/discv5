@@ -67,7 +67,7 @@ impl NodeContact {
     pub fn try_from_enr(enr: Enr) -> Result<Self, NonContactable> {
         Ok(NodeContact {
             public_key: enr.public_key(),
-            socket_addr: enr.udp_socket().ok_or(NonContactable)?,
+            socket_addr: enr.udp4_socket().map(|v| v.into()).ok_or(NonContactable)?,
             enr: Some(enr),
         })
     }
@@ -106,7 +106,6 @@ impl NodeContact {
                 .map_err(|_| "Invalid public key")?
             {
                 PublicKey::Secp256k1(pk) => {
-                    // TODO: Remove libp2p dep to avoid conversion here
                     enr::k256::ecdsa::VerifyingKey::from_sec1_bytes(&pk.encode_uncompressed())
                         .expect("Libp2p key conversion, always valid")
                         .into()
