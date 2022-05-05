@@ -159,8 +159,8 @@ impl fmt::Display for Ads {
             .map(|ad| {
                 let ad_node_ids =
                     ad.1.iter()
-                        .map(|ad_node| ad_node.node_record.node_id())
-                        .collect::<Vec<NodeId>>();
+                        .map(|ad_node| base64::encode(ad_node.node_record.node_id().raw()))
+                        .collect::<Vec<String>>();
                 format!("Topic: {}, Advertised at: {:?}", ad.0, ad_node_ids)
             })
             .collect::<Vec<String>>();
