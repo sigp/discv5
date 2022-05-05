@@ -1,10 +1,11 @@
 use super::*;
-use crate::Enr;
+use crate::{enr::NodeId, Enr};
 use core::time::Duration;
 use futures::prelude::*;
 use more_asserts::debug_unreachable;
 use std::{
     collections::{HashMap, VecDeque},
+    fmt,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -147,5 +148,22 @@ impl Ads {
         nodes.push_back(ad_node);
         self.expirations.push_back(AdTopic::new(topic, now));
         Ok(())
+    }
+}
+
+impl fmt::Display for Ads {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ads = self
+            .ads
+            .iter()
+            .map(|ad| {
+                let ad_node_ids =
+                    ad.1.iter()
+                        .map(|ad_node| ad_node.node_record.node_id())
+                        .collect::<Vec<NodeId>>();
+                format!("Topic: {}, Advertised at: {:?}", ad.0, ad_node_ids)
+            })
+            .collect::<Vec<String>>();
+        write!(f, "{:?}", ads)
     }
 }
