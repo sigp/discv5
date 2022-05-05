@@ -920,33 +920,46 @@ pub mod tests {
     where
         V: Eq + std::fmt::Debug,
     {
-        fn apply_action(&mut self, action: Action<V>) {
+        fn apply_action(&mut self, action: Action<V>) -> Result<(), FailureReason> {
             match action {
-                Action::Insert(node) => {
-                    // TODO: action result ignored
-                    let _ = self.insert(node);
-                }
+                Action::Insert(node) => match self.insert(node) {
+                    InsertResult::FailedFilter => Err(FailureReason::BucketFilter),
+                    InsertResult::TooManyIncoming => Err(FailureReason::TooManyIncoming),
+                    InsertResult::Full => Err(FailureReason::BucketFull),
+                    _ => Ok(()),
+                },
                 Action::Remove(pos) => {
                     if let Some(key) = self.key_of_pos(pos) {
                         self.remove(&key);
                     }
+                    Ok(())
                 }
                 Action::UpdatePending(status) => {
                     self.update_pending(status);
+                    Ok(())
                 }
                 Action::ApplyPending => {
                     self.apply_pending();
+                    Ok(())
                 }
                 Action::UpdateStatus(pos, status) => {
                     if let Some(key) = self.key_of_pos(pos) {
-                        // TODO: action result ignored
-                        let _ = self.update_status(&key, status.state, Some(status.direction));
+                        match self.update_status(&key, status.state, Some(status.direction)) {
+                            UpdateResult::Failed(reason) => Err(reason),
+                            _ => Ok(()),
+                        }
+                    } else {
+                        Ok(())
                     }
                 }
                 Action::UpdateValue(pos, value) => {
                     if let Some(key) = self.key_of_pos(pos) {
-                        // TODO: action result ignored
-                        let _ = self.update_value(&key, value);
+                        match self.update_value(&key, value) {
+                            UpdateResult::Failed(reason) => Err(reason),
+                            _ => Ok(()),
+                        }
+                    } else {
+                        Ok(())
                     }
                 }
             }
@@ -1314,7 +1327,10 @@ pub mod tests {
             }
 
             for action in actions {
-                kbucket.apply_action(action);
+                // Throwing random nodes into a bucket will likely cause some actions to fail as
+                // they don't pass the filter. We ignore these errors and rely on the
+                // `check_invariants()` to ensure the insert/update action failed appropriately.
+                let _ = kbucket.apply_action(action);
                 kbucket.check_invariants();
             }
             true
