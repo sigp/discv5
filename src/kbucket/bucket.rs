@@ -818,7 +818,7 @@ pub mod tests {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             let key = Key::from(arbitrary_node_id(g));
             Node {
-                key: key.clone(),
+                key,
                 value: V::arbitrary(g),
                 status: NodeStatus::arbitrary(g),
             }
@@ -1184,7 +1184,7 @@ pub mod tests {
         // Add a connected pending node.
         let key = Key::from(NodeId::random());
         let node = Node {
-            key: key.clone(),
+            key,
             value: (),
             status: connected_state(),
         };
