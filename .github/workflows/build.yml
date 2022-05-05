@@ -17,7 +17,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Lint code for quality and style with Clippy
-      run: cargo clippy --workspace --tests -- -D warnings
+      run: cargo clippy --workspace --tests --all-features -- -D warnings
   release-tests-ubuntu:
     runs-on: ubuntu-latest
     needs: cargo-fmt
