@@ -123,7 +123,7 @@ impl NodeContact {
             };
 
         Ok(NodeContact {
-            public_key: public_key.clone(),
+            public_key,
             socket_addr: SocketAddr::new(ip_addr, udp_port),
             enr: None,
         })

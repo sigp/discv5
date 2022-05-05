@@ -444,11 +444,11 @@ impl Discv5 {
             // The multiaddr must support the udp protocol and be of an appropriate key type.
             // The conversion logic is contained in the `TryFrom<MultiAddr>` implementation of a
             // `NodeContact`.
-            let multiaddr: Multiaddr = multiaddr.try_into().map_err(|_| {
-                RequestError::InvalidMultiaddr("Could not convert to multiaddr".into())
-            })?;
+            let multiaddr: Multiaddr = multiaddr
+                .try_into()
+                .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr"))?;
             let node_contact: NodeContact = NodeContact::try_from_multiaddr(multiaddr)
-                .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
+                .map_err(RequestError::InvalidMultiaddr)?;
 
             let (callback_send, callback_recv) = oneshot::channel();
 
