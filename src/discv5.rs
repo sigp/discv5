@@ -176,7 +176,7 @@ impl Discv5 {
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
-        if enr.udp_socket().is_none() {
+        if enr.udp4_socket().is_none() {
             warn!("ENR attempted to be added without a UDP socket has been ignored");
             return Err("ENR has no UDP socket to connect to");
         }
@@ -315,7 +315,7 @@ impl Discv5 {
         PERMIT_BAN_LIST.write().ban_nodes.remove(node_id);
     }
 
-    /// Permits a node, allowing the node to bypass the packet filter.  
+    /// Permits a node, allowing the node to bypass the packet filter.
     pub fn permit_node(&self, node_id: &NodeId) {
         PERMIT_BAN_LIST.write().permit_nodes.insert(*node_id);
     }
@@ -336,7 +336,7 @@ impl Discv5 {
         PERMIT_BAN_LIST.write().ban_ips.remove(ip);
     }
 
-    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.  
+    /// Permits an IP, allowing the all packets from the IP to bypass the packet filter.
     pub fn permit_ip(&self, ip: std::net::IpAddr) {
         PERMIT_BAN_LIST.write().permit_ips.insert(ip);
     }
@@ -348,17 +348,33 @@ impl Discv5 {
 
     /// Updates the local ENR TCP/UDP socket.
     pub fn update_local_enr_socket(&self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
-        let local_socket = self.local_enr.read().udp_socket();
-        if local_socket != Some(socket_addr) {
+        let local_enr = self.local_enr.read();
+        let update_socket: Option<SocketAddr> = match socket_addr {
+            SocketAddr::V4(socket_addr) => {
+                if Some(socket_addr) != local_enr.udp4_socket() {
+                    Some(socket_addr.into())
+                } else {
+                    None
+                }
+            }
+            SocketAddr::V6(socket_addr) => {
+                if Some(socket_addr) != local_enr.udp6_socket() {
+                    Some(socket_addr.into())
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(new_socket_addr) = update_socket {
             if is_tcp {
                 self.local_enr
                     .write()
-                    .set_tcp_socket(socket_addr, &self.enr_key.read())
+                    .set_tcp_socket(new_socket_addr, &self.enr_key.read())
                     .is_ok()
             } else {
                 self.local_enr
                     .write()
-                    .set_udp_socket(socket_addr, &self.enr_key.read())
+                    .set_udp_socket(new_socket_addr, &self.enr_key.read())
                     .is_ok()
             }
         } else {

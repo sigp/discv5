@@ -730,7 +730,8 @@ impl Handler {
         // If the ENR does not match the observed IP addresses, we consider the Session
         // failed.
         enr.node_id() == node_address.node_id
-            && (enr.udp_socket().is_none() || enr.udp_socket() == Some(node_address.socket_addr))
+            && (enr.udp4_socket().is_none()
+                || enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr))
     }
 
     /// Handle a message that contains an authentication header.
@@ -786,8 +787,9 @@ impl Handler {
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
-                            "Session has invalid ENR. Enr socket: {:?}, {}",
-                            enr.udp_socket(),
+                            "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
+                            enr.udp4_socket(),
+                            enr.udp6_socket(),
                             node_address
                         );
                         self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
