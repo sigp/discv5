@@ -447,8 +447,8 @@ impl Discv5 {
             let multiaddr: Multiaddr = multiaddr
                 .try_into()
                 .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr"))?;
-            let node_contact: NodeContact = NodeContact::try_from(multiaddr)
-                .map_err(|e| RequestError::InvalidMultiaddr(e.into()))?;
+            let node_contact: NodeContact =
+                NodeContact::try_from(multiaddr).map_err(RequestError::InvalidMultiaddr)?;
 
             let (callback_send, callback_recv) = oneshot::channel();
 
