@@ -11,6 +11,13 @@ jobs:
       run: rustup update stable
     - name: Check formatting with cargofmt
       run: cargo fmt --all -- --check --config imports_granularity=Crate
+  clippy:
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+    - uses: actions/checkout@v2
+    - name: Lint code for quality and style with Clippy
+      run: cargo clippy --workspace --tests -- -D warnings
   release-tests-ubuntu:
     runs-on: ubuntu-latest
     needs: cargo-fmt
@@ -31,13 +38,6 @@ jobs:
         run: rustup update stable
       - name: Run tests in release
         run: cargo test --all --release --all-features --tests
-  clippy:
-    runs-on: ubuntu-latest
-    needs: cargo-fmt
-    steps:
-    - uses: actions/checkout@v2
-    - name: Lint code for quality and style with Clippy
-      run: cargo clippy
   check-rustdoc-links:
     name: Check rustdoc intra-doc links
     runs-on: ubuntu-latest
