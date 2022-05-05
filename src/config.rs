@@ -1,5 +1,6 @@
 use crate::{
-    kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
+    ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter,
+    RateLimiterBuilder,
 };
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
@@ -62,6 +63,10 @@ pub struct Discv5Config {
     /// The time between pings to ensure connectivity amongst connected nodes. Default: 300
     /// seconds.
     pub ping_interval: Duration,
+
+    /// Configures the type of socket to bind to. This also affects the selection of address to use
+    /// to contact an ENR.
+    pub ip_mode: IpMode,
 
     /// Reports all discovered ENR's when traversing the DHT to the event stream. Default true.
     pub report_discovered_peers: bool,
@@ -131,6 +136,7 @@ impl Default for Discv5Config {
             filter_max_bans_per_ip: Some(5),
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
+            ip_mode: IpMode::default(),
             executor: None,
         }
     }
@@ -298,6 +304,13 @@ impl Discv5ConfigBuilder {
     /// timing support.
     pub fn executor(&mut self, executor: Box<dyn Executor + Send + Sync>) -> &mut Self {
         self.config.executor = Some(executor);
+        self
+    }
+
+    /// Configures the type of socket to bind to. This also affects the selection of address to use
+    /// to contact an ENR.
+    pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
+        self.config.ip_mode = ip_mode;
         self
     }
 

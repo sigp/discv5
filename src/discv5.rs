@@ -34,7 +34,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 #[cfg(feature = "libp2p")]
-use {libp2p_core::Multiaddr, std::convert::TryFrom};
+use libp2p_core::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
 use crate::metrics::{Metrics, METRICS};
@@ -176,9 +176,9 @@ impl Discv5 {
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
-        if enr.udp4_socket().is_none() {
-            warn!("ENR attempted to be added without a UDP socket has been ignored");
-            return Err("ENR has no UDP socket to connect to");
+        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
+            warn!("ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored.");
+            return Err("ENR has no compatible UDP socket to connect to");
         }
 
         if !(self.config.table_filter)(&enr) {
@@ -447,8 +447,8 @@ impl Discv5 {
             let multiaddr: Multiaddr = multiaddr
                 .try_into()
                 .map_err(|_| RequestError::InvalidMultiaddr("Could not convert to multiaddr"))?;
-            let node_contact: NodeContact =
-                NodeContact::try_from(multiaddr).map_err(RequestError::InvalidMultiaddr)?;
+            let node_contact: NodeContact = NodeContact::try_from_multiaddr(multiaddr)
+                .map_err(RequestError::InvalidMultiaddr)?;
 
             let (callback_send, callback_recv) = oneshot::channel();
 
@@ -471,14 +471,13 @@ impl Discv5 {
         request: Vec<u8>,
     ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static {
         // convert the ENR to a node_contact.
-        let node_contact = NodeContact::from(enr);
 
-        // the service will verify if this node is contactable, we just send it and
-        // await a response.
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
+        let ip_mode = self.config.ip_mode;
 
         async move {
+            let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);

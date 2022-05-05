@@ -24,7 +24,7 @@ use crate::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
     },
-    node_info::{NodeAddress, NodeContact},
+    node_info::{NodeAddress, NodeContact, NonContactable},
     packet::MAX_PACKET_SIZE,
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
@@ -298,6 +298,7 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
+        tracing::info!("{:?}", self.config.ip_mode);
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -537,20 +538,32 @@ impl Service {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            to_request_enr = Some(enr.into());
+                            to_request_enr = Some(enr);
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            to_request_enr = Some(enr.into());
+                            to_request_enr = Some(enr);
                         }
                     }
                     // don't know of the ENR, request the update
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    self.request_enr(enr, None);
+                    match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+                        Ok(contact) => {
+                            self.request_enr(contact, None);
+                        }
+                        Err(NonContactable { enr }) => {
+                            error!(
+                                "Stored ENR is not contactable! This should never happen {}",
+                                enr
+                            );
+                            #[cfg(debug_assertions)]
+                            panic!("Stored ENR is not contactable. {}", enr);
+                        }
+                    }
                 }
 
                 // build the PONG response
@@ -603,21 +616,26 @@ impl Service {
             );
 
             // Check that the responder matches the expected request
-            if let Ok(request_node_address) = active_request.contact.node_address() {
-                if request_node_address != node_address {
-                    warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", request_node_address, node_address, id);
-                    return;
-                }
+
+            let expected_node_address = active_request.contact.node_address();
+            if expected_node_address != node_address {
+                error!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
+                #[cfg(debug_assertions)]
+                panic!("Handler returned a response not matching the used socket addr");
+                #[cfg(not(debug_assertions))]
+                return;
             }
 
-            let node_id = active_request.contact.node_id();
             if !response.match_request(&active_request.request_body) {
                 warn!(
                     "Node gave an incorrect response type. Ignoring response from: {}",
-                    active_request.contact
+                    node_address
                 );
                 return;
             }
+
+            let node_id = node_address.node_id;
+
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
                     // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can be returned. Datagrams have a max
@@ -671,17 +689,11 @@ impl Service {
                         if nodes.len() > 1 {
                             warn!(
                                 "Peer returned more than one ENR for itself. Blacklisting {}",
-                                active_request.contact
+                                node_address
                             );
                         }
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST.write().ban(
-                            active_request
-                                .contact
-                                .node_address()
-                                .expect("Sanitized request"),
-                            ban_timeout,
-                        );
+                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
                         let before_len = nodes.len();
@@ -699,13 +711,7 @@ impl Service {
                                 active_request.contact
                             );
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(
-                                active_request
-                                    .contact
-                                    .node_address()
-                                    .expect("Sanitized request"),
-                                ban_timeout,
-                            );
+                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         }
                     }
 
@@ -760,10 +766,7 @@ impl Service {
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
-                    //
-                    // only attempt the majority-update if the peer supplies an ipv4 address to
-                    // mitigate https://github.com/sigp/lighthouse/issues/2215
-                    //
+
                     // Only count votes that from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
                     let should_count = match self.kbuckets.write().entry(&key) {
@@ -775,23 +778,58 @@ impl Service {
                         _ => false,
                     };
 
-                    if should_count && socket.is_ipv4() {
-                        let local_socket = self.local_enr.read().udp4_socket().map(SocketAddr::V4);
+                    if should_count {
+                        // get the advertised local addresses
+                        let (local_ip4_socket, local_ip6_socket) = {
+                            let local_enr = self.local_enr.read();
+                            (local_enr.udp4_socket(), local_enr.udp6_socket())
+                        };
+
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
-                            if let Some(majority_socket) = ip_votes.majority() {
-                                if Some(majority_socket) != local_socket {
-                                    info!("Local UDP socket updated to: {}", majority_socket);
-                                    self.send_event(Discv5Event::SocketUpdated(majority_socket));
-                                    // Update the UDP socket
-                                    if self
+                            let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
+
+                            let new_ip4 = maybe_ip4_majority.and_then(|majority| {
+                                if Some(majority) != local_ip4_socket {
+                                    Some(majority)
+                                } else {
+                                    None
+                                }
+                            });
+                            let new_ip6 = maybe_ip6_majority.and_then(|majority| {
+                                if Some(majority) != local_ip6_socket {
+                                    Some(majority)
+                                } else {
+                                    None
+                                }
+                            });
+
+                            if new_ip4.is_some() || new_ip6.is_some() {
+                                let mut updated = false;
+
+                                // Check if our advertised IPV6 address needs to be updated.
+                                if let Some(new_ip6) = new_ip6 {
+                                    info!("Local UDP ip6 socket updated to: {}", new_ip6);
+                                    let new_ip6: SocketAddr = new_ip6.into();
+                                    self.send_event(Discv5Event::SocketUpdated(new_ip6));
+                                    updated |= self
                                         .local_enr
                                         .write()
-                                        .set_udp_socket(majority_socket, &self.enr_key.read())
-                                        .is_ok()
-                                    {
-                                        self.ping_connected_peers();
-                                    }
+                                        .set_udp_socket(new_ip6, &self.enr_key.read())
+                                        .is_ok();
+                                }
+                                if let Some(new_ip4) = new_ip4 {
+                                    info!("Local UDP socket updated to: {}", new_ip4);
+                                    let new_ip4: SocketAddr = new_ip4.into();
+                                    self.send_event(Discv5Event::SocketUpdated(new_ip4));
+                                    updated |= self
+                                        .local_enr
+                                        .write()
+                                        .set_udp_socket(new_ip4, &self.enr_key.read())
+                                        .is_ok();
+                                }
+                                if updated {
+                                    self.ping_connected_peers();
                                 }
                             }
                         }
@@ -844,16 +882,21 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr) {
-        let request_body = RequestBody::Ping {
-            enr_seq: self.local_enr.read().seq(),
-        };
-        let active_request = ActiveRequest {
-            contact: enr.into(),
-            request_body,
-            query_id: None,
-            callback: None,
-        };
-        self.send_rpc_request(active_request);
+        match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+            Ok(contact) => {
+                let request_body = RequestBody::Ping {
+                    enr_seq: self.local_enr.read().seq(),
+                };
+                let active_request = ActiveRequest {
+                    contact,
+                    request_body,
+                    query_id: None,
+                    callback: None,
+                };
+                self.send_rpc_request(active_request);
+            }
+            Err(NonContactable { enr }) => error!("Trying to ping a non-contactable peer {}", enr),
+        }
     }
 
     /// Ping all peers that are connected in the routing table.
@@ -1044,8 +1087,14 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
+            let contact = match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+                Ok(contact) => contact,
+                Err(NonContactable { enr }) => {
+                    return error!("Query {} has a non contactable enr: {}", *query_id, enr)
+                }
+            };
             let active_request = ActiveRequest {
-                contact: enr.into(),
+                contact,
                 request_body,
                 query_id: Some(query_id),
                 callback: None,
@@ -1275,7 +1324,7 @@ impl Service {
     /// session key-pair has been negotiated.
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
-        if enr.udp4_socket().is_none() {
+        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
         }
 
