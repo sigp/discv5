@@ -1,6 +1,6 @@
 //! Demonstrates how to run a basic Discovery v5 Service.
 //!
-//! This example creates a discv5 service which searches for peers every 60 seconds. On creation,
+//! This example creates a discv5 service which searches for peers every 30 seconds. On creation,
 //! the local ENR created for this service is displayed in base64. This can be used to allow other
 //! instances to connect and join the network. The service can be stopped by pressing Ctrl-C.
 //!
@@ -13,7 +13,7 @@
 //! sh cargo run --example find_nodes -- --help
 //! ```
 //!
-//!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
+//! For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
 use clap::Parser;
 use discv5::{
@@ -30,16 +30,17 @@ use tracing::{info, warn};
 #[derive(Parser)]
 struct FindNodesArgs {
     /// Type of socket to bind ['ds', 'ip4', 'ip6']. The dual stack option will enable mapped
-    /// addresses.
+    /// addresses over an IpV6 socket.
     #[clap(long, default_value_t = SocketKind::Ds)]
     socket_kind: SocketKind,
-    /// IpV4 to advertise en the ENR. This is needed so that other IpV4 nodes can connect to us.
+    /// IpV4 to advertise in the ENR. This is needed so that other IpV4 nodes can connect to us.
     #[clap(long)]
     enr_ip4: Option<Ipv4Addr>,
-    /// IpV6 to advertise en the ENR. This is needed so that other IpV6 nodes can connect to us.
+    /// IpV6 to advertise in the ENR. This is needed so that other IpV6 nodes can connect to us.
     #[clap(long)]
     enr_ip6: Option<Ipv6Addr>,
-    /// Port to bind
+    /// Port to bind. If none is provided, a random one in the 9000 - 9999 range will be picked
+    /// randomly.
     #[clap(long)]
     port: Option<u16>,
     /// Use a default test key.
@@ -48,6 +49,7 @@ struct FindNodesArgs {
     /// A remote peer to try to connect to. Several peers can be added repeating this option.
     #[clap(long)]
     remote_peer: Vec<discv5::Enr>,
+    /// Use this option to turn on printing events received from discovery.
     #[clap(long)]
     events: bool,
 }

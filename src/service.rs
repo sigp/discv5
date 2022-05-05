@@ -303,7 +303,7 @@ impl Service {
             tokio::select! {
                 _ = &mut self.exit => {
                     if let Some(exit) = self.handler_exit.take() {
-                        exit.send(()).unwrap();
+                        let _ = exit.send(());
                         info!("Discv5 Service shutdown");
                     }
                     return;

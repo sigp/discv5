@@ -115,15 +115,11 @@ impl Socket {
 impl std::ops::Drop for Socket {
     // close the send/recv handlers
     fn drop(&mut self) {
-        self.sender_exit
+        let _ = self
+            .sender_exit
             .take()
             .expect("Exit always exists")
-            .send(())
-            .unwrap();
-        self.recv_exit
-            .take()
-            .expect("Exit always exists")
-            .send(())
-            .unwrap();
+            .send(());
+        let _ = self.recv_exit.take().expect("Exit always exists").send(());
     }
 }
