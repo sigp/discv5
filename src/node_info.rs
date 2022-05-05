@@ -18,8 +18,10 @@ pub struct NodeContact {
     enr: Option<Enr>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct NonContactable;
+#[derive(Debug, Clone)]
+pub struct NonContactable {
+    pub enr: Enr,
+}
 
 impl NodeContact {
     pub fn node_id(&self) -> NodeId {
@@ -65,9 +67,14 @@ impl NodeContact {
     }
 
     pub fn try_from_enr(enr: Enr, ip_mode: IpMode) -> Result<Self, NonContactable> {
+        let socket_addr = match ip_mode.get_contactable_addr(&enr) {
+            Some(socket_addr) => socket_addr,
+            None => return Err(NonContactable { enr }),
+        };
+
         Ok(NodeContact {
             public_key: enr.public_key(),
-            socket_addr: ip_mode.get_contactable_addr(&enr).ok_or(NonContactable)?,
+            socket_addr,
             enr: Some(enr),
         })
     }
@@ -106,7 +113,6 @@ impl NodeContact {
                 .map_err(|_| "Invalid public key")?
             {
                 PublicKey::Secp256k1(pk) => {
-                    // TODO: Remove libp2p dep to avoid conversion here
                     enr::k256::ecdsa::VerifyingKey::from_sec1_bytes(&pk.encode_uncompressed())
                         .expect("Libp2p key conversion, always valid")
                         .into()
@@ -118,7 +124,7 @@ impl NodeContact {
             };
 
         Ok(NodeContact {
-            public_key: public_key.clone(),
+            public_key,
             socket_addr: SocketAddr::new(ip_addr, udp_port),
             enr: None,
         })

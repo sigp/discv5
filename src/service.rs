@@ -388,7 +388,7 @@ impl Service {
                             let mut result = query.into_result();
                             // obtain the ENR's for the resulting nodes
                             let mut found_enrs = Vec::new();
-                            for node_id in result.closest_peers.into_iter() {
+                            for node_id in result.closest_peers {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
                                     let enr = result.target.untrusted_enrs.swap_remove(position);
                                     found_enrs.push(enr);
@@ -551,10 +551,19 @@ impl Service {
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    // TODO: check this
-                    let contact = NodeContact::try_from_enr(enr, self.config.ip_mode)
-                        .expect("stored ENRs are contactable.");
-                    self.request_enr(contact, None);
+                    match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+                        Ok(contact) => {
+                            self.request_enr(contact, None);
+                        }
+                        Err(NonContactable { enr }) => {
+                            error!(
+                                "Stored ENR is not contactable! This should never happen {}",
+                                enr
+                            );
+                            #[cfg(debug_assertions)]
+                            panic!("Stored ENR is not contactable. {}", enr);
+                        }
+                    }
                 }
 
                 // build the PONG response
@@ -610,8 +619,10 @@ impl Service {
 
             let expected_node_address = active_request.contact.node_address();
             if expected_node_address != node_address {
-                warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
-                // TODO: here we removed the request. Check it
+                error!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
+                #[cfg(debug_assertions)]
+                panic!("Handler returned a response not matching the used socket addr");
+                #[cfg(not(debug_assertions))]
                 return;
             }
 
@@ -661,7 +672,7 @@ impl Service {
                         }
                         let response = nodes
                             .pop()
-                            .ok_or_else(|| RequestError::InvalidEnr("Peer did not return an ENR"));
+                            .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"));
                         if let Err(e) = callback.send(response) {
                             warn!("Failed to send response in callback {:?}", e)
                         }
@@ -871,17 +882,20 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr) {
-        if let Ok(contact) = NodeContact::try_from_enr(enr, self.config.ip_mode) {
-            let request_body = RequestBody::Ping {
-                enr_seq: self.local_enr.read().seq(),
-            };
-            let active_request = ActiveRequest {
-                contact,
-                request_body,
-                query_id: None,
-                callback: None,
-            };
-            self.send_rpc_request(active_request);
+        match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+            Ok(contact) => {
+                let request_body = RequestBody::Ping {
+                    enr_seq: self.local_enr.read().seq(),
+                };
+                let active_request = ActiveRequest {
+                    contact,
+                    request_body,
+                    query_id: None,
+                    callback: None,
+                };
+                self.send_rpc_request(active_request);
+            }
+            Err(NonContactable { enr }) => error!("Trying to ping a non-contactable peer {}", enr),
         }
     }
 
@@ -1075,8 +1089,8 @@ impl Service {
         if let Some(enr) = self.find_enr(&return_peer) {
             let contact = match NodeContact::try_from_enr(enr, self.config.ip_mode) {
                 Ok(contact) => contact,
-                Err(NonContactable) => {
-                    return error!("Query {} has a non contactable enr", *query_id)
+                Err(NonContactable { enr }) => {
+                    return error!("Query {} has a non contactable enr: {}", *query_id, enr)
                 }
             };
             let active_request = ActiveRequest {

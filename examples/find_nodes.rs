@@ -101,6 +101,7 @@ async fn main() {
 
     // default configuration with packet filtering
     // let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
+
     // default configuration without packet filtering
     let config = Discv5ConfigBuilder::new()
         .ip_mode(match args.socket_kind {

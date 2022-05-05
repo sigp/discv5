@@ -1101,17 +1101,15 @@ impl Handler {
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
         }
-        for request in self
-            .pending_requests
-            .remove(node_address)
-            .unwrap_or_else(Vec::new)
-        {
-            if let Err(e) = self
-                .service_send
-                .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
-                .await
-            {
-                warn!("Failed to inform request failure {}", e)
+        if let Some(to_remove) = self.pending_requests.remove(node_address) {
+            for request in to_remove {
+                if let Err(e) = self
+                    .service_send
+                    .send(HandlerOut::RequestFailed(request.1.id, error.clone()))
+                    .await
+                {
+                    warn!("Failed to inform request failure {}", e)
+                }
             }
         }
     }

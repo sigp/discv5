@@ -69,7 +69,7 @@ impl Socket {
                         ErrorKind::InvalidInput,
                         "Cannot create an ipv6 socket from an ipv4 address",
                     )),
-                    SocketAddr::V6(ip6) => Ok(ip6.clone().into()),
+                    SocketAddr::V6(ip6) => Ok((*ip6).into()),
                 }?;
                 let socket = Socket2::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
                 let only_v6 = !enable_mapped_addresses;
