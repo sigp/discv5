@@ -618,8 +618,10 @@ impl Service {
 
             let expected_node_address = active_request.contact.node_address();
             if expected_node_address != node_address {
-                warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
-                // TODO: here we removed the request. Check it
+                error!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
+                #[cfg(debug_assertions)]
+                panic!("Handler returned a response not matching the used socket addr");
+                #[cfg(not(debug_assertions))]
                 return;
             }
 
