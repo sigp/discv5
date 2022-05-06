@@ -321,6 +321,48 @@ async fn test_findnode_query() {
     assert!(found_nodes.len() <= expected_node_ids.len());
 }
 
+/// Run a query where the target is one of the nodes. We expect to result to return the target.
+#[tokio::test]
+async fn test_findnode_query_with_target() {
+    init();
+    // build a collection of 8 nodes
+    let total_nodes = 8;
+    let mut nodes = build_nodes(total_nodes, 30100).await;
+    let node_enrs: Vec<Enr<CombinedKey>> = nodes.iter().map(|n| n.local_enr()).collect();
+
+    // link the nodes together
+    for (node, previous_node_enr) in nodes.iter_mut().skip(1).zip(node_enrs.clone()) {
+        let key: kbucket::Key<NodeId> = node.local_enr().node_id().into();
+        let distance = key
+            .log2_distance(&previous_node_enr.node_id().into())
+            .unwrap();
+        println!("Distance of node relative to next: {}", distance);
+        node.add_enr(previous_node_enr).unwrap();
+    }
+
+    // let the first node be the target
+    let target_node_id = node_enrs[0].node_id();
+
+    // start a query on the last node
+    let found_nodes = nodes
+        .last_mut()
+        .unwrap()
+        .find_node(target_node_id)
+        .await
+        .unwrap();
+
+    println!(
+        "Query found {} peers. Total peers were: {}",
+        found_nodes.len(),
+        nodes.iter().count() - 1
+    );
+
+    assert!(found_nodes
+        .iter()
+        .find(|enr| enr.node_id() == target_node_id)
+        .is_some())
+}
+
 #[tokio::test]
 async fn test_predicate_search() {
     init();
@@ -348,7 +390,7 @@ async fn test_predicate_search() {
             .log2_distance(&bootstrap_node.local_enr().node_id().into())
             .unwrap();
         println!(
-            "Distance of node {} relative to node {}: {}",
+            "Distance of local node {} relative to node {}: {}",
             swarm.local_enr().node_id(),
             bootstrap_node.local_enr().node_id(),
             distance

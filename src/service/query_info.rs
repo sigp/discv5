@@ -34,7 +34,7 @@ impl QueryInfo {
         match self.query_type {
             QueryType::FindNode(node_id) => {
                 let distances = findnode_log2distance(node_id, peer, self.distances_to_request)
-                    .unwrap_or(vec![0]);
+                    .unwrap_or_else(|| vec![0]);
                 RequestBody::FindNode { distances }
             }
         }

@@ -1161,11 +1161,7 @@ impl Service {
             // requesting the target of the query, this ENR could be the result of requesting the
             // target-nodes own id. We don't want to add this as a "new" discovered peer in the
             // query, so we remove it from the discovered list here.
-            if source == &enr.node_id() {
-                false // remove from the list
-            } else {
-                true
-            }
+            source != &enr.node_id()
         });
 
         // if this is part of a query, update the query
