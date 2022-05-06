@@ -327,7 +327,7 @@ async fn test_findnode_query_with_target() {
     init();
     // build a collection of 8 nodes
     let total_nodes = 8;
-    let mut nodes = build_nodes(total_nodes, 30100).await;
+    let mut nodes = build_nodes(total_nodes, 40100).await;
     let node_enrs: Vec<Enr<CombinedKey>> = nodes.iter().map(|n| n.local_enr()).collect();
 
     // link the nodes together
@@ -336,7 +336,12 @@ async fn test_findnode_query_with_target() {
         let distance = key
             .log2_distance(&previous_node_enr.node_id().into())
             .unwrap();
-        println!("Distance of node relative to next: {}", distance);
+        println!(
+            "Distance of node: {} relative to next node:{} is:{}",
+            previous_node_enr.node_id(),
+            node.local_enr().node_id(),
+            distance
+        );
         node.add_enr(previous_node_enr).unwrap();
     }
 
