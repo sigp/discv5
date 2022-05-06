@@ -195,7 +195,8 @@ pub struct Service {
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
-    /// Keeps track of expected REGCONFIRMATION responses that may be received from a REGTOPIC request.
+    /// Keeps track of expected REGCONFIRMATION responses that may be received from a REGTOPIC 
+    /// request.
     active_regtopic_requests: ActiveRegtopicRequests,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
@@ -222,7 +223,7 @@ pub struct Service {
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 
-    /// Ads advertised for other nodes.
+    /// Ads advertised locally for other nodes.
     ads: Ads,
 
     /// Tickets received by other nodes.
@@ -234,7 +235,7 @@ pub struct Service {
     /// Ads currently advertised on other nodes.
     active_topics: Ads,
 
-    /// Tickets pending registration
+    /// Locally issued tickets returned by nodes pending registration for free local ad slots.
     ticket_pools: TicketPools,
 }
 

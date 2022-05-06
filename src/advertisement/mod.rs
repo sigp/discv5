@@ -1,5 +1,5 @@
 use super::*;
-use crate::{enr::NodeId, Enr};
+use crate::Enr;
 use core::time::Duration;
 use futures::prelude::*;
 use more_asserts::debug_unreachable;
@@ -17,9 +17,13 @@ mod test;
 pub mod ticket;
 pub mod topic;
 
+/// An AdNode is a node that occupies an ad slot on another node.
 #[derive(Debug, Clone)]
 pub struct AdNode {
+    /// The node being advertised.
     node_record: Enr,
+    /// The insert_time is used to retrieve the ticket_wait time for a given 
+    /// topic.
     insert_time: Instant,
 }
 
@@ -42,9 +46,13 @@ impl PartialEq for AdNode {
     }
 }
 
+/// An AdTopic keeps track of when an AdNode is created.
 #[derive(Clone, Debug)]
 struct AdTopic {
+    /// The topic maps to the topic of an AdNode in Ads's ads.
     topic: TopicHash,
+    /// The insert_time is used to make sure and AdNode persists in Ads 
+    /// only the ad_lifetime duration.
     insert_time: Instant,
 }
 
@@ -54,12 +62,22 @@ impl AdTopic {
     }
 }
 
+/// The Ads struct contains the locally adveritsed AdNodes.
 #[derive(Clone, Debug)]
 pub struct Ads {
+    /// The expirations makes sure that AdNodes are advertised only for the 
+    /// ad_lifetime duration.
     expirations: VecDeque<AdTopic>,
+    /// The ads store the AdNodes per TopicHash in FIFO order of expiration.
     ads: HashMap<TopicHash, VecDeque<AdNode>>,
+    /// The ad_lifetime is specified by the spec but can be modified for
+    /// testing purposes.
     ad_lifetime: Duration,
+    /// The max_ads_per_topic limit is up to the user although recommnedations 
+    /// are given in the specs.
     max_ads_per_topic: usize,
+    /// The max_ads limit is up to the user although recommnedations are
+    /// given in the specs.
     max_ads: usize,
 }
 

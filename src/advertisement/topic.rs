@@ -61,17 +61,17 @@ impl Hasher for Sha256Hash {
     }
 }
 
+/// A topic hashed by the hash algorithm implemented by the sending node.
+/// TopicHash is used in place of a Vec<u8> in requests and responses. This
+/// deviates from the wire protocol, it was necessary that the sender hashes
+/// the topic as the hash is used to deteremine by XOR distance which nodes 
+/// to send the REGTOPIC request to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TopicHash {
     /// The topic hash. Stored as a fixed length byte array.
     hash: [u8; 32],
 }
 
-// Topic Hash decoded into bytes needs to have length 32 bytes to encode it into a
-// NodeId, which is necessary to make use of the XOR distance look-up of a topic. It
-// makes sense to use a hashing algorithm which produces 32 bytes since the hash of
-// any given topic string can then be reproduced by any client when making a topic
-// query or publishing the same topic in proximity to others of its kind.
 impl TopicHash {
     pub fn from_raw(hash: [u8; 32]) -> TopicHash {
         TopicHash { hash }
@@ -145,7 +145,7 @@ impl<H: Hasher> Topic<H> {
 }
 
 // Each hash algortihm chosen to publish a topic with (as XOR
-// metric key) is its own Topic
+// metric key) is its own Topic.
 impl<H: Hasher> PartialEq for Topic<H> {
     fn eq(&self, other: &Topic<H>) -> bool {
         self.hash() == other.hash()

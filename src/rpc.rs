@@ -132,7 +132,7 @@ pub enum ResponseBody {
         ticket: Vec<u8>,
         /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
-        /// The topic hash for which the opaque ticket is issued
+        /// The topic hash for which the opaque ticket is issued.
         topic: TopicHash,
     },
     /// The REGCONFIRMATION response.
@@ -686,9 +686,9 @@ impl Message {
     }
 }
 
+/// A ticket object, outlined in the spec.
 #[derive(Debug, Clone)]
 pub struct Ticket {
-    //nonce: u64,
     src_node_id: NodeId,
     src_ip: IpAddr,
     topic: TopicHash,
@@ -810,6 +810,8 @@ impl rlp::Decodable for Ticket {
     }
 }
 
+/// Per topic, one registration attempt per node is stored at once.
+/// Tickets that overlap based on these fields are considered equal.
 impl PartialEq for Ticket {
     fn eq(&self, other: &Self) -> bool {
         self.src_node_id == other.src_node_id
@@ -820,7 +822,6 @@ impl PartialEq for Ticket {
 
 impl Ticket {
     pub fn new(
-        //nonce: u64,
         src_node_id: NodeId,
         src_ip: IpAddr,
         topic: TopicHash,
