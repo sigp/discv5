@@ -45,6 +45,10 @@ mod ip_vote;
 mod query_info;
 mod test;
 
+/// The number of distances (buckets) we simultaneously request from each peer.
+/// NOTE: This must not be larger than 127.
+pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
+
 /// Request type for Protocols using `TalkReq` message.
 ///
 /// Automatically responds with an empty body on drop if
@@ -117,9 +121,6 @@ impl TalkRequest {
         Ok(())
     }
 }
-
-/// The number of distances (buckets) we simultaneously request from each peer.
-pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
@@ -1149,15 +1150,21 @@ impl Service {
                             source, reason
                         );
 
-                        false // Remove this peer from the discovered list
-                    } else {
-                        true // Keep this peer in the list
+                        return false; // Remove this peer from the discovered list if the update failed
                     }
-                } else {
-                    true // We don't need to update ENR
                 }
             } else {
-                false // Didn't pass the table filter
+                return false; // Didn't pass the table filter remove the peer
+            }
+
+            // The remaining ENRs are used if this request was part of a query. If we are
+            // requesting the target of the query, this ENR could be the result of requesting the
+            // target-nodes own id. We don't want to add this as a "new" discovered peer in the
+            // query, so we remove it from the discovered list here.
+            if source == &enr.node_id() {
+                false // remove from the list
+            } else {
+                true
             }
         });
 
@@ -1423,17 +1430,7 @@ impl Service {
             QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(Box::new(query))),
             QueryPoolState::Waiting(Some((query, return_peer))) => {
                 let node_id = return_peer;
-
-                let request_body = match query.target().rpc_request(return_peer) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        // dst node is local_key, report failure
-                        error!("Send RPC failed: {}", e);
-                        query.on_failure(&node_id);
-                        return Poll::Pending;
-                    }
-                };
-
+                let request_body = query.target().rpc_request(return_peer);
                 Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
             }
             QueryPoolState::Timeout(query) => {
