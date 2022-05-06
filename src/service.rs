@@ -1054,21 +1054,32 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
-            let contact = match NodeContact::try_from_enr(enr) {
-                Ok(contact) => contact,
-                Err(NonContactable { enr }) => {
-                    return error!("Query {} has a non contactable enr: {}", *query_id, enr)
+            match NodeContact::try_from_enr(enr) {
+                Ok(contact) => {
+                    let active_request = ActiveRequest {
+                        contact,
+                        request_body,
+                        query_id: Some(query_id),
+                        callback: None,
+                    };
+                    self.send_rpc_request(active_request);
+                    // Request successfully sent
+                    return;
                 }
-            };
-            let active_request = ActiveRequest {
-                contact,
-                request_body,
-                query_id: Some(query_id),
-                callback: None,
-            };
-            self.send_rpc_request(active_request);
+                Err(NonContactable { enr }) => {
+                    error!("Query {} has a non contactable enr: {}", *query_id, enr);
+                }
+            }
         } else {
             error!("Query {} requested an unknown ENR", *query_id);
+        }
+
+        // This query request has failed and we must inform the
+        // query of the failed request.
+        // TODO: Come up with a better design to ensure that all query RPC requests
+        // are forced to be responded to.
+        if let Some(query) = self.queries.get_mut(query_id) {
+            query.on_failure(&return_peer);
         }
     }
 
