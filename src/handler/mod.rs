@@ -452,7 +452,7 @@ impl Handler {
         contact: NodeContact,
         request: Request,
     ) -> Result<(), RequestError> {
-        let node_address = contact.node_address().map_err(RequestError::InvalidEnr)?;
+        let node_address = contact.node_address();
 
         if node_address.socket_addr == self.listen_socket {
             debug!("Filtered request to self");
@@ -646,9 +646,8 @@ impl Handler {
         };
 
         // There are two quirks with an established session at this point.
-        // 1. We may not know the ENR if we dialed this node with a NodeContact::Raw. In this case
-        //    we need to set up a request to find the ENR and wait for a response before we
-        //    officially call this node established.
+        // 1. We may not know the ENR. In this case we need to set up a request to find the ENR and
+        //    wait for a response before we officially call this node established.
         // 2. The challenge here could be to an already established session. If so, we need to
         //    update the existing session to attempt to decrypt future messages with the new keys
         //    and update the keys internally upon successful decryption.
@@ -659,12 +658,9 @@ impl Handler {
         //
         // All sent requests must have an associated node_id. Therefore the following
         // must not panic.
-        let node_address = request_call
-            .contact
-            .node_address()
-            .expect("All sent requests must have a node address");
-        match request_call.contact.clone() {
-            NodeContact::Enr(enr) => {
+        let node_address = request_call.contact.node_address();
+        match request_call.contact.enr() {
+            Some(enr) => {
                 // NOTE: Here we decide if the session is outgoing or ingoing. The condition for an
                 // outgoing session is that we originally sent a RANDOM packet (signifying we did
                 // not have a session for a request) and the packet is not a PING (we are not
@@ -689,22 +685,16 @@ impl Handler {
 
                 // Notify the application that the session has been established
                 self.service_send
-                    .send(HandlerOut::Established(*enr, connection_direction))
+                    .send(HandlerOut::Established(enr, connection_direction))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
-            NodeContact::Raw { .. } => {
+            None => {
                 // Don't know the ENR. Establish the session, but request an ENR also
 
                 // Send the Auth response
                 let contact = request_call.contact.clone();
-                trace!(
-                    "Sending Authentication response to node: {}",
-                    request_call
-                        .contact
-                        .node_address()
-                        .expect("Sanitized contact")
-                );
+                trace!("Sending Authentication response to node: {}", node_address);
                 request_call.packet = auth_packet.clone();
                 request_call.handshake_sent = true;
                 // Reinsert the request_call
@@ -1052,10 +1042,8 @@ impl Handler {
 
     /// Inserts a request and associated auth_tag mapping.
     fn insert_active_request(&mut self, request_call: RequestCall) {
-        let node_address = request_call
-            .contact
-            .node_address()
-            .expect("Can only add requests with a valid destination");
+        let node_address = request_call.contact.node_address();
+
         // adds the mapping of message nonce to node address
         self.active_requests.insert(node_address, request_call);
     }
@@ -1089,10 +1077,7 @@ impl Handler {
             warn!("Failed to inform request failure {}", e)
         }
 
-        let node_address = request_call
-            .contact
-            .node_address()
-            .expect("All Request calls have been sanitized");
+        let node_address = request_call.contact.node_address();
         self.fail_session(&node_address, error, remove_session)
             .await;
     }

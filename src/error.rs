@@ -1,4 +1,4 @@
-use crate::handler::Challenge;
+use crate::{handler::Challenge, node_info::NonContactable};
 use rlp::DecoderError;
 use std::fmt;
 
@@ -142,5 +142,11 @@ impl fmt::Display for RequestError {
 impl fmt::Display for QueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+impl From<NonContactable> for RequestError {
+    fn from(_: NonContactable) -> Self {
+        RequestError::InvalidEnr("ENR is not contactable")
     }
 }
