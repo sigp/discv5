@@ -112,7 +112,7 @@ pub enum RequestError {
     /// Failure generating random numbers during request.
     EntropyFailure(&'static str),
     /// Finding nodes closest to a topic hash failed.
-    TopicMetrics(String),
+    TopicDistance(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
