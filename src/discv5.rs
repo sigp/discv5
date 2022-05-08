@@ -533,6 +533,8 @@ impl Discv5 {
         }
     }
 
+    /// Removes a topic we do not wish to keep advertising on other nodes, effective
+    /// from the next interval on.
     pub fn remove_topic(
         &self,
         topic: String,
@@ -554,6 +556,7 @@ impl Discv5 {
         }
     }
 
+    /// Registers a topic for the first time.
     pub fn reg_topic_req(
         &self,
         topic: String,
@@ -586,6 +589,7 @@ impl Discv5 {
         }
     }
 
+    /// Retrieves the topics that we have published on other nodes.
     pub fn active_topics(&self) -> impl Future<Output = Result<Ads, RequestError>> + 'static {
         // the service will verify if this node is contactable, we just send it and
         // await a response.
@@ -609,6 +613,8 @@ impl Discv5 {
         }
     }
 
+    /// Finds the relevant nodes to publish the topics on, as far away from the topic as
+    /// the bits configured by the Discv5 topic_radius distance in the Discv5 config.
     pub fn find_closest_nodes_to_topic(
         &self,
         topic_hash: TopicHash,

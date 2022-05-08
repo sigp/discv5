@@ -437,11 +437,8 @@ impl Service {
                             }
                         }
                         ServiceRequest::RemoveTopic(topic_hash, callback) => {
-                            let topic = if let Some(topic) = self.topics.remove(&topic_hash) {
-                                Some(topic.topic())
-                            } else {
-                                None
-                            };
+                            let topic = self.topics.remove(&topic_hash).map(|topic| topic.topic());
+                            METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
                             if callback.send(Ok(topic)).is_err() {
                                 error!("Failed to return the removed topic");
                             }
@@ -558,6 +555,7 @@ impl Service {
                         NodeContact::from(node_record).node_address().map(|node_address| {
                             self.send_regconfirmation_response(node_address, req_id, topic);
                         }).ok();
+                        METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
                     }
                 }
             }
@@ -1063,6 +1061,9 @@ impl Service {
                 ResponseBody::RegisterConfirmation { topic } => {
                     if let NodeContact::Enr(enr) = active_request.contact {
                         self.active_topics.insert(*enr, topic).ok();
+                        METRICS
+                            .active_ads
+                            .store(self.active_topics.len(), Ordering::Relaxed);
                     }
                 }
             }

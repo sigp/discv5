@@ -100,6 +100,14 @@ impl Ads {
         })
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.expirations.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.expirations.len()
+    }
+
     pub fn get_ad_nodes(&self, topic: TopicHash) -> impl Iterator<Item = &AdNode> + '_ {
         self.ads.get(&topic).into_iter().flatten()
     }

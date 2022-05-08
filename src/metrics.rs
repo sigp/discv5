@@ -18,6 +18,10 @@ pub struct InternalMetrics {
     pub bytes_recv: AtomicUsize,
     /// The number of topics to attempt advertising on other nodes.
     pub topics_to_publish: AtomicUsize,
+    /// The number of ads currently advertised on other nodes.
+    pub active_ads: AtomicUsize,
+    /// The number of ads currently advertised locally for other nodes.
+    pub hosted_ads: AtomicUsize,
 }
 
 impl Default for InternalMetrics {
@@ -29,6 +33,8 @@ impl Default for InternalMetrics {
             bytes_sent: AtomicUsize::new(0),
             bytes_recv: AtomicUsize::new(0),
             topics_to_publish: AtomicUsize::new(0),
+            active_ads: AtomicUsize::new(0),
+            hosted_ads: AtomicUsize::new(0),
         }
     }
 }
@@ -60,6 +66,10 @@ pub struct Metrics {
     pub bytes_recv: usize,
     /// The number of topics to attempt advertising on other nodes.
     pub topics_to_publish: usize,
+    /// The number of ads currently advertised on other nodes.
+    pub active_ads: usize,
+    /// The number of ads currently advertised locally for other nodes.
+    pub hosted_ads: usize,
 }
 
 impl From<&METRICS> for Metrics {
@@ -73,6 +83,8 @@ impl From<&METRICS> for Metrics {
             bytes_sent: internal_metrics.bytes_sent.load(Ordering::Relaxed),
             bytes_recv: internal_metrics.bytes_recv.load(Ordering::Relaxed),
             topics_to_publish: internal_metrics.topics_to_publish.load(Ordering::Relaxed),
+            active_ads: internal_metrics.active_ads.load(Ordering::Relaxed),
+            hosted_ads: internal_metrics.hosted_ads.load(Ordering::Relaxed),
         }
     }
 }
