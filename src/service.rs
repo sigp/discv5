@@ -546,8 +546,8 @@ impl Service {
                         self.topics.clone().into_iter().for_each(|(topic_hash, _)| self.start_findnode_query(NodeId::new(&topic_hash.as_bytes()), None));
                 }
                 Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
-                    // No particular selection is carried out, the choice of node to give the free ad
-                    // slot to is random.
+                    // No particular selection is carried out at this stage of implementation, the choice of node to give
+                    // the free ad slot to is random.
                     let random_index = rand::thread_rng().gen_range(0..ticket_pool.len());
                     let ticket_pool = ticket_pool.values().step_by(random_index).next();
                     if let Some((node_record, req_id, _ticket)) = ticket_pool.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
@@ -730,50 +730,62 @@ impl Service {
                 if enr.node_id() == node_address.node_id
                     && enr.udp_socket() == Some(node_address.socket_addr)
                 {
-                    let wait_time = self.ads.ticket_wait_time(topic);
+                    let wait_time = self
+                        .ads
+                        .ticket_wait_time(topic)
+                        .unwrap_or(Duration::from_secs(0));
 
                     let new_ticket = Ticket::new(
                         node_address.node_id,
                         node_address.socket_addr.ip(),
                         topic,
                         tokio::time::Instant::now(),
-                        wait_time.unwrap_or(Duration::from_secs(0)),
+                        wait_time,
                     );
 
+                    // According to spec, a ticket should always be issued upon receiving a REGTOPIC request.
                     self.send_ticket_response(
                         node_address,
                         id.clone(),
                         new_ticket.clone(),
-                        wait_time.unwrap_or(Duration::from_secs(0)),
+                        wait_time,
                     );
 
-                    if !ticket.is_empty() {
-                        let decoded_enr = self
-                            .local_enr
-                            .write()
-                            .to_base64()
-                            .parse::<Enr>()
-                            .map_err(|e| {
-                                error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
-                            });
-                        if let Ok(decoded_enr) = decoded_enr {
-                            if let Some(ticket_key) = decoded_enr.get("ticket_key") {
-                                let decrypted_ticket = {
-                                    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
-                                    let payload = Payload {
-                                        msg: &ticket,
-                                        aad: b"",
-                                    };
-                                    aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                    // If the wait time has expired, the TICKET is added to the matching ticket pool. If this is
+                    // the first REGTOPIC request from a given node for a given topic, the newly created ticket
+                    // is used to add the registration attempt to to the ticket pool.
+                    if wait_time <= Duration::from_secs(0) {
+                        if !ticket.is_empty() {
+                            let decoded_enr = self
+                                .local_enr
+                                .write()
+                                .to_base64()
+                                .parse::<Enr>()
+                                .map_err(|e| {
+                                    error!(
+                                        "Failed to decrypt ticket in REGTOPIC request. Error: {}",
+                                        e
+                                    )
+                                });
+                            if let Ok(decoded_enr) = decoded_enr {
+                                if let Some(ticket_key) = decoded_enr.get("ticket_key") {
+                                    let decrypted_ticket = {
+                                        let aead =
+                                            Aes128Gcm::new(GenericArray::from_slice(ticket_key));
+                                        let payload = Payload {
+                                            msg: &ticket,
+                                            aad: b"",
+                                        };
+                                        aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
                                         .map_err(|e| {
                                             error!(
                                                 "Failed to decrypt ticket in REGTOPIC request. Error: {}",
                                                 e
                                             )
                                         })
-                                };
-                                if let Ok(decrypted_ticket) = decrypted_ticket {
-                                    Ticket::decode(&decrypted_ticket)
+                                    };
+                                    if let Ok(decrypted_ticket) = decrypted_ticket {
+                                        Ticket::decode(&decrypted_ticket)
                                         .map_err(|e| {
                                             error!(
                                                 "Failed to decode ticket in REGTOPIC request. Error: {}",
@@ -790,11 +802,12 @@ impl Service {
                                             }
                                         })
                                         .ok();
+                                    }
                                 }
                             }
+                        } else {
+                            self.ticket_pools.insert(enr, id, new_ticket);
                         }
-                    } else {
-                        self.ticket_pools.insert(enr, id, new_ticket);
                     }
                 }
             }
