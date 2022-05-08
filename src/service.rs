@@ -169,6 +169,10 @@ pub enum ServiceRequest {
     /// RegisterTopic publishes this node as an advertiser for a topic at given node
     RegisterTopic(NodeContact, Topic),
     ActiveTopics(oneshot::Sender<Result<Ads, RequestError>>),
+    RemoveTopic(
+        TopicHash,
+        oneshot::Sender<Result<Option<String>, RequestError>>,
+    ),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
@@ -430,6 +434,16 @@ impl Service {
                         ServiceRequest::ActiveTopics(callback) => {
                             if callback.send(Ok(self.active_topics.clone())).is_err() {
                                 error!("Failed to return active topics");
+                            }
+                        }
+                        ServiceRequest::RemoveTopic(topic_hash, callback) => {
+                            let topic = if let Some(topic) = self.topics.remove(&topic_hash) {
+                                Some(topic.topic())
+                            } else {
+                                None
+                            };
+                            if callback.send(Ok(topic)).is_err() {
+                                error!("Failed to return the removed topic");
                             }
                         }
                     }

@@ -411,7 +411,7 @@ impl Discv5 {
             .collect()
     }
 
-    pub fn hashes(&self, topic: String) -> Vec<(TopicHash, String)> {
+    pub fn hashes(topic: String) -> Vec<(TopicHash, String)> {
         let sha256_topic = Topic::new(topic);
         vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
     }
@@ -533,10 +533,32 @@ impl Discv5 {
         }
     }
 
+    pub fn remove_topic(
+        &self,
+        topic: String,
+    ) -> impl Future<Output = Result<Option<String>, RequestError>> + 'static {
+        let topic = Topic::new(topic);
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+            let (callback_send, callback_recv) = oneshot::channel();
+            let event = ServiceRequest::RemoveTopic(topic.hash(), callback_send);
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
+    }
+
     pub fn reg_topic_req(
         &self,
-        topic: Topic,
+        topic: String,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
+        let topic = Topic::new(topic);
         let find_future = self.find_closest_nodes_to_topic(topic.hash());
         let channel = self.clone_channel();
 
