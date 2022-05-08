@@ -45,9 +45,10 @@ use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
 use parking_lot::RwLock;
+use rand::Rng;
 use rpc::*;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::{Error, ErrorKind},
     net::SocketAddr,
     sync::{atomic::Ordering, Arc},
@@ -536,22 +537,21 @@ impl Service {
                 }
                 Some(Ok((active_topic, active_ticket))) = self.tickets.next() => {
                     let enr = self.local_enr.read().clone();
+                    // When the ticket time expires a new regtopic requet is automatically sent
+                    // to the ticket issuer.
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
                 }
                 _ = publish_topics.tick() => {
+                        // Topics are republished at regular intervals.
                         self.topics.clone().into_iter().for_each(|(topic_hash, _)| self.start_findnode_query(NodeId::new(&topic_hash.as_bytes()), None));
                 }
                 Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
-                    // Selection of node for free ad slot
-                    let kbucket_keys = self.kbuckets.write().iter().map(|entry| *entry.node.key.preimage()).collect::<HashSet<NodeId>>();
-                    let selection = ticket_pool.keys().filter(|node_id| !kbucket_keys.contains(node_id)).collect::<HashSet<&NodeId>>();
-                    let new_ad: Option<&(Enr, RequestId, Ticket)> = if selection.is_empty() {
-                        ticket_pool.values().next()
-                    } else {
-                        selection.into_iter().next().map(|node_id| ticket_pool.get(node_id)).unwrap_or(None)
-                    };
-                    if let Some((node_record, req_id, _ticket)) = new_ad.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
-                        self.ads.insert(node_record.clone(), topic).ok();
+                    // No particular selection is carried out, the choice of node to give the free ad
+                    // slot to is random.
+                    let random_index = rand::thread_rng().gen_range(0..ticket_pool.len());
+                    let ticket_pool = ticket_pool.values().step_by(random_index).next();
+                    if let Some((node_record, req_id, _ticket)) = ticket_pool.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
+                    self.ads.insert(node_record.clone(), topic).ok();
                         NodeContact::from(node_record).node_address().map(|node_address| {
                             self.send_regconfirmation_response(node_address, req_id, topic);
                         }).ok();
