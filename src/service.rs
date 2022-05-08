@@ -195,7 +195,7 @@ pub struct Service {
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
-    /// Keeps track of expected REGCONFIRMATION responses that may be received from a REGTOPIC 
+    /// Keeps track of expected REGCONFIRMATION responses that may be received from a REGTOPIC
     /// request.
     active_regtopic_requests: ActiveRegtopicRequests,
 

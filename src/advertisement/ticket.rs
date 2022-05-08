@@ -18,7 +18,7 @@ const REGISTRATION_WINDOW_IN_SECS: u64 = 10;
 const MAX_REGISTRANTS_PER_AD_SLOT: usize = 50;
 /// The duration for which requests are stored.
 const REQUEST_TIMEOUT_IN_SECS: u64 = 15;
-/// Each REGTOPIC request can get both a TICKET response and REGCONFIRMATION 
+/// Each REGTOPIC request can get both a TICKET response and REGCONFIRMATION
 /// response.
 const MAX_RESPONSES_PER_REGTOPIC: u8 = 2;
 
@@ -31,7 +31,6 @@ pub struct ActiveTopic {
     /// The topic hash as it is sent in the TICKET response
     topic: TopicHash,
 }
-
 
 impl ActiveTopic {
     pub fn new(node_id: NodeId, topic: TopicHash) -> Self {
@@ -71,7 +70,7 @@ impl ActiveTicket {
 pub struct Tickets {
     /// Tickets maps one ActiveTicket per ActiveTopic.
     tickets: HashMapDelay<ActiveTopic, ActiveTicket>,
-    /// TicketHistory sets a time limit to how many times the ActiveTicket 
+    /// TicketHistory sets a time limit to how many times the ActiveTicket
     /// value in tickets can be updated within a given ticket_limiter_duration.
     ticket_history: TicketHistory,
 }
@@ -130,7 +129,7 @@ struct PendingTicket {
     insert_time: Instant,
 }
 
-/// TicketHistory keeps track of how many times a ticket was replaced for 
+/// TicketHistory keeps track of how many times a ticket was replaced for
 /// an ActiveTopic within the time limit given by ticket_limiter_duration
 /// and limits it to MAX_TICKETS_PER_NODE_TOPIC times.
 #[derive(Default)]
@@ -138,7 +137,7 @@ struct TicketHistory {
     /// The ticket_count keeps track of how many tickets are stored for the
     /// ActiveTopic.
     ticket_count: HashMap<ActiveTopic, u8>,
-    /// Up to MAX_TICKETS_PER_NODE_TOPIC PendingTickets in expirations maps 
+    /// Up to MAX_TICKETS_PER_NODE_TOPIC PendingTickets in expirations maps
     /// to an ActiveTopic in ticket_count.
     expirations: VecDeque<PendingTicket>,
     /// The time a PendingTicket remains in expirations.
@@ -213,7 +212,7 @@ struct RegistrationWindow {
 /// The TicketPools collects all the registration attempts for a free ad slot.
 #[derive(Default)]
 pub struct TicketPools {
-    /// The ticket_pools keeps track of all the registrants and their Tickets. One 
+    /// The ticket_pools keeps track of all the registrants and their Tickets. One
     /// ticket_pool per TopicHash can be open at a time.
     ticket_pools: HashMap<TopicHash, HashMap<NodeId, (Enr, RequestId, Ticket)>>,
     /// The expirations keeps track of when to close a ticket pool so the next one
@@ -273,15 +272,15 @@ impl Stream for TicketPools {
     }
 }
 
-/// Since according to spec, a REGTOPIC request can receive both a TICKET and 
-/// then REGISTRATION_WINDOW_IN_SECS seconds later optionally also a 
-/// REGCONFIRMATION response, ActiveRegtopicRequests need to be handled separate 
+/// Since according to spec, a REGTOPIC request can receive both a TICKET and
+/// then REGISTRATION_WINDOW_IN_SECS seconds later optionally also a
+/// REGCONFIRMATION response, ActiveRegtopicRequests need to be handled separate
 /// from ActiveRequests in Service.
 #[derive(Clone)]
 pub struct ActiveRegtopicRequest {
     /// The RequestId identifies an ActiveRequest.
     req_id: RequestId,
-    /// The insert_time is used to make sure an ActiveRegtopicRequest persists 
+    /// The insert_time is used to make sure an ActiveRegtopicRequest persists
     /// no longer than REQUEST_TIMEOUT_IN_SECS.
     insert_time: Instant,
 }
@@ -334,7 +333,8 @@ impl ActiveRegtopicRequests {
         let now = Instant::now();
 
         self.requests.insert(req_id.clone(), req);
-        self.request_history.insert(req_id.clone(), MAX_RESPONSES_PER_REGTOPIC);
+        self.request_history
+            .insert(req_id.clone(), MAX_RESPONSES_PER_REGTOPIC);
         self.expirations
             .push_back(ActiveRegtopicRequest::new(req_id, now));
     }

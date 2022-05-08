@@ -64,7 +64,7 @@ impl Hasher for Sha256Hash {
 /// A topic hashed by the hash algorithm implemented by the sending node.
 /// TopicHash is used in place of a Vec<u8> in requests and responses. This
 /// deviates from the wire protocol, it was necessary that the sender hashes
-/// the topic as the hash is used to deteremine by XOR distance which nodes 
+/// the topic as the hash is used to deteremine by XOR distance which nodes
 /// to send the REGTOPIC request to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TopicHash {
