@@ -16,6 +16,8 @@ pub struct InternalMetrics {
     pub bytes_sent: AtomicUsize,
     /// The number of bytes received.
     pub bytes_recv: AtomicUsize,
+    /// The number of topics to attempt advertising on other nodes.
+    pub topics_to_publish: AtomicUsize,
 }
 
 impl Default for InternalMetrics {
@@ -26,6 +28,7 @@ impl Default for InternalMetrics {
             unsolicited_requests_per_window: AtomicUsize::new(0),
             bytes_sent: AtomicUsize::new(0),
             bytes_recv: AtomicUsize::new(0),
+            topics_to_publish: AtomicUsize::new(0),
         }
     }
 }
@@ -55,6 +58,8 @@ pub struct Metrics {
     pub bytes_sent: usize,
     /// The number of bytes received.
     pub bytes_recv: usize,
+    /// The number of topics to attempt advertising on other nodes.
+    pub topics_to_publish: usize,
 }
 
 impl From<&METRICS> for Metrics {
@@ -67,6 +72,7 @@ impl From<&METRICS> for Metrics {
                 / internal_metrics.moving_window as f64,
             bytes_sent: internal_metrics.bytes_sent.load(Ordering::Relaxed),
             bytes_recv: internal_metrics.bytes_recv.load(Ordering::Relaxed),
+            topics_to_publish: internal_metrics.topics_to_publish.load(Ordering::Relaxed),
         }
     }
 }

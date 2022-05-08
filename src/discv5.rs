@@ -501,7 +501,7 @@ impl Discv5 {
             // and send the topic query to these nodes
             let enrs = find_future
                 .await
-                .map_err(|e| RequestError::TopicMetrics(e.to_string()))?;
+                .map_err(|e| RequestError::TopicDistance(e.to_string()))?;
 
             for enr in enrs.into_iter() {
                 // convert the ENR to a node_contact.
@@ -545,7 +545,7 @@ impl Discv5 {
             // and send the regtopic to these nodes
             let enrs = find_future
                 .await
-                .map_err(|e| RequestError::TopicMetrics(e.to_string()))?;
+                .map_err(|e| RequestError::TopicDistance(e.to_string()))?;
 
             // convert the ENR to a node_contact.
             for enr in enrs.into_iter() {

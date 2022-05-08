@@ -28,6 +28,7 @@ use crate::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
     },
+    metrics::METRICS,
     node_info::{NodeAddress, NodeContact},
     packet::MAX_PACKET_SIZE,
     query_pool::{
@@ -49,7 +50,7 @@ use std::{
     collections::{HashMap, HashSet},
     io::{Error, ErrorKind},
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     task::Poll,
     time::{Duration, Instant},
 };
@@ -422,6 +423,7 @@ impl Service {
                         ServiceRequest::RegisterTopic(node_contact, topic) => {
                             let topic_hash = topic.hash();
                             self.topics.insert(topic_hash, topic);
+                            METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
                             let local_enr = self.local_enr.read().clone();
                             self.reg_topic_request(node_contact, topic_hash, local_enr, None)
                         }
