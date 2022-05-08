@@ -822,7 +822,7 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        // A REGTOPIC request can receive both a TICKET and then also possibly a REGCONFIRMATION 
+        // A REGTOPIC request can receive both a TICKET and then also possibly a REGCONFIRMATION
         // response. If no active request exists in active_requests, the response may still be a
         // REGCONFIRMATION response.
         let active_request = if let Some(active_request) = self.active_requests.remove(&id) {
@@ -1268,7 +1268,7 @@ impl Service {
             .ok();
     }
 
-    /// The response sent to a node which is selected out of a ticket pool of registrants 
+    /// The response sent to a node which is selected out of a ticket pool of registrants
     /// for a free ad slot.
     fn send_regconfirmation_response(
         &mut self,

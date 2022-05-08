@@ -91,8 +91,8 @@ pub struct Discv5Config {
     /// will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
-    /// The max length in bits that the suffix of the topic hash is allowed to vary from the node ids that 
-    /// REGTOPIC and TOPICQUERY requests are sent to. Setting it to 256 means that the requests are sent to 
+    /// The max length in bits that the suffix of the topic hash is allowed to vary from the node ids that
+    /// REGTOPIC and TOPICQUERY requests are sent to. Setting it to 256 means that the requests are sent to
     /// all of the nodes in the kbuckets.
     pub topic_radius: u64,
 
