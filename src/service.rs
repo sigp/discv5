@@ -50,7 +50,7 @@ use std::{
     collections::{HashMap, HashSet},
     io::{Error, ErrorKind},
     net::SocketAddr,
-    sync::{Arc, atomic::Ordering},
+    sync::{atomic::Ordering, Arc},
     task::Poll,
     time::{Duration, Instant},
 };
