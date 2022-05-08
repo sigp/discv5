@@ -304,6 +304,14 @@ pub struct ActiveRegtopicRequests {
 }
 
 impl ActiveRegtopicRequests {
+    pub fn is_empty(&self) -> bool {
+        self.expirations.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.expirations.len()
+    }
+
     pub fn remove(&mut self, req_id: &RequestId) -> Option<ActiveRequest> {
         if let Some(seen_count) = self.request_history.get_mut(req_id) {
             *seen_count += 1;

@@ -22,6 +22,8 @@ pub struct InternalMetrics {
     pub active_ads: AtomicUsize,
     /// The number of ads currently advertised locally for other nodes.
     pub hosted_ads: AtomicUsize,
+    /// The number of active regtopic requests awaiting a REGCONFIRMATION response.
+    pub active_regtopic_req: AtomicUsize,
 }
 
 impl Default for InternalMetrics {
@@ -35,6 +37,7 @@ impl Default for InternalMetrics {
             topics_to_publish: AtomicUsize::new(0),
             active_ads: AtomicUsize::new(0),
             hosted_ads: AtomicUsize::new(0),
+            active_regtopic_req: AtomicUsize::new(0),
         }
     }
 }
@@ -70,6 +73,8 @@ pub struct Metrics {
     pub active_ads: usize,
     /// The number of ads currently advertised locally for other nodes.
     pub hosted_ads: usize,
+    /// The number of active regtopic requests.
+    pub active_regtopic_req: usize,
 }
 
 impl From<&METRICS> for Metrics {
@@ -85,6 +90,7 @@ impl From<&METRICS> for Metrics {
             topics_to_publish: internal_metrics.topics_to_publish.load(Ordering::Relaxed),
             active_ads: internal_metrics.active_ads.load(Ordering::Relaxed),
             hosted_ads: internal_metrics.hosted_ads.load(Ordering::Relaxed),
+            active_regtopic_req: internal_metrics.active_regtopic_req.load(Ordering::Relaxed),
         }
     }
 }

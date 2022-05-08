@@ -1064,6 +1064,9 @@ impl Service {
                         METRICS
                             .active_ads
                             .store(self.active_topics.len(), Ordering::Relaxed);
+                        METRICS
+                            .active_regtopic_req
+                            .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
                     }
                 }
             }
@@ -1179,6 +1182,9 @@ impl Service {
             callback: None,
         });
         self.active_regtopic_requests.insert(req_id, active_request);
+        METRICS
+            .active_regtopic_req
+            .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
     }
 
     fn topic_query_request(
