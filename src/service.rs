@@ -822,6 +822,9 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
+        // A REGTOPIC request can receive both a TICKET and then also possibly a REGCONFIRMATION 
+        // response. If no active request exists in active_requests, the response may still be a
+        // REGCONFIRMATION response.
         let active_request = if let Some(active_request) = self.active_requests.remove(&id) {
             Some(active_request)
         } else {
@@ -1164,6 +1167,7 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
+    /// Requests a node to advertise the sending node for a given topic hash.
     fn reg_topic_request(
         &mut self,
         contact: NodeContact,
@@ -1200,6 +1204,7 @@ impl Service {
             .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
     }
 
+    /// Queries a node for the ads that node currently advertises for a given topic.
     fn topic_query_request(
         &mut self,
         contact: NodeContact,
@@ -1217,6 +1222,7 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
+    /// The response sent to every REGTOPIC request, as according to spec.
     fn send_ticket_response(
         &mut self,
         node_address: NodeAddress,
@@ -1262,6 +1268,8 @@ impl Service {
             .ok();
     }
 
+    /// The response sent to a node which is selected out of a ticket pool of registrants 
+    /// for a free ad slot.
     fn send_regconfirmation_response(
         &mut self,
         node_address: NodeAddress,
@@ -1282,6 +1290,8 @@ impl Service {
             .send(HandlerIn::Response(node_address, Box::new(response)));
     }
 
+    /// Answer to a topic query containing the nodes currently advertised for the
+    /// requested topic if any.
     fn send_topic_query_response(
         &mut self,
         node_address: NodeAddress,
