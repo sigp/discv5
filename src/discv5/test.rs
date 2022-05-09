@@ -359,13 +359,12 @@ async fn test_findnode_query_with_target() {
     println!(
         "Query found {} peers. Total peers were: {}",
         found_nodes.len(),
-        nodes.iter().count() - 1
+        nodes.len() - 1
     );
 
     assert!(found_nodes
         .iter()
-        .find(|enr| enr.node_id() == target_node_id)
-        .is_some())
+        .any(|enr| enr.node_id() == target_node_id));
 }
 
 #[tokio::test]
