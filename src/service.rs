@@ -693,7 +693,9 @@ impl Service {
                             );
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                            nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
+                            nodes.retain(|enr| {
+                                peer_key.log2_distance(&enr.node_id().into()).is_none()
+                            });
                         }
                     } else {
                         let before_len = nodes.len();

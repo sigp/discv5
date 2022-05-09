@@ -182,7 +182,6 @@ fn find_seed_linear_topology() {
             .map(|k| NodeId::from(k.public()))
             .collect::<Vec<_>>();
 
-
         let mut node_ids = orig_node_ids.clone();
 
         let target = node_ids.remove(0);
@@ -192,10 +191,10 @@ fn find_seed_linear_topology() {
         // Can we arrange the rest of the nodes in some linear way.
         while !node_ids.is_empty() {
             let id = node_ids.remove(0);
-            
+
             let distance = get_distance(target, id).unwrap_or(0);
             // The target must be in the first bucket_tolerance buckets.
-            if distance <= 256- bucket_tolerance {
+            if distance <= 256 - bucket_tolerance {
                 continue 'main;
             }
 
@@ -204,10 +203,13 @@ fn find_seed_linear_topology() {
                 result.push(id);
             } else if !node_ids.is_empty() {
                 // try and find a linear match
-                match node_ids.iter().position(|id| get_distance(target,*id).unwrap_or(0) >= 256-bucket_tolerance) {
+                match node_ids
+                    .iter()
+                    .position(|id| get_distance(target, *id).unwrap_or(0) >= 256 - bucket_tolerance)
+                {
                     Some(pos) => {
                         let matching_id = node_ids.remove(pos);
-                        if get_distance(target,matching_id).unwrap_or(0) < 256 - bucket_tolerance {
+                        if get_distance(target, matching_id).unwrap_or(0) < 256 - bucket_tolerance {
                             continue 'main; // all nodes need to be in this distance
                         }
                         result.push(id);
@@ -217,14 +219,17 @@ fn find_seed_linear_topology() {
                         continue 'main;
                     }
                 }
-            } else { 
+            } else {
                 result.push(id);
             }
         }
         main_result = result;
         // Target sits at the start
-        main_result.insert(0,target);
-        ordering = main_result.iter().map(|id| orig_node_ids.iter().position(|x| x == id).unwrap()).collect::<Vec<_>>();
+        main_result.insert(0, target);
+        ordering = main_result
+            .iter()
+            .map(|id| orig_node_ids.iter().position(|x| x == id).unwrap())
+            .collect::<Vec<_>>();
         break;
     }
     // We've found a solution. Check it.
@@ -233,19 +238,18 @@ fn find_seed_linear_topology() {
     let target = main_result.remove(0);
     // remove the target
     println!("Target: {}", target);
-    for (x,id) in main_result.iter().enumerate() {
+    for (x, id) in main_result.iter().enumerate() {
         println!("Node{}: {}", x, id);
     }
 
     for (node, previous_node) in main_result.iter().skip(1).zip(main_result.clone()) {
         let key: kbucket::Key<NodeId> = node.clone().into();
-        let distance = key
-            .log2_distance(&previous_node.into())
-            .unwrap();
-        let target_distance = key
-            .log2_distance(&target.into())
-            .unwrap();
-        println!("Distance of node {} relative to next node: {} is: {},  relative to target {}", previous_node, node, distance, target_distance);
+        let distance = key.log2_distance(&previous_node.into()).unwrap();
+        let target_distance = key.log2_distance(&target.into()).unwrap();
+        println!(
+            "Distance of node {} relative to next node: {} is: {},  relative to target {}",
+            previous_node, node, distance, target_distance
+        );
     }
 }
 
@@ -391,7 +395,6 @@ async fn test_findnode_query() {
         node.add_enr(previous_node_enr).unwrap();
     }
 
-
     // start a query on the last node
     let found_nodes = nodes
         .last_mut()
@@ -415,7 +418,7 @@ async fn test_findnode_query() {
         found_nodes.len(),
         expected_node_ids.len()
     );
-    assert_eq!(found_nodes.len(),expected_node_ids.len());
+    assert_eq!(found_nodes.len(), expected_node_ids.len());
 }
 
 /// Run a query where the target is one of the nodes. We expect to result to return the target.
