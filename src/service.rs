@@ -691,10 +691,10 @@ impl Service {
                                 "Peer returned more than one ENR for itself. Blacklisting {}",
                                 node_address
                             );
+                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                            nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                         }
-                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                        nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
                         let before_len = nodes.len();
                         nodes.retain(|enr| {
