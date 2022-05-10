@@ -439,9 +439,25 @@ impl Handler {
                 request_call.request,
                 node_address
             );
+            let packet = if let Some(session) = self.sessions.get_mut(&node_address) {
+                // Since sessions may re-established, encrypt the message with the session key.
+                session
+                    .encrypt_message(self.node_id, &request_call.request.clone().encode())
+                    .unwrap() // TODO: error handling
+            } else {
+                // No session exists, start a new handshake
+                trace!(
+                    "Resending message but no session exists. Sending random packet to: {}",
+                    node_address
+                );
+                request_call.handshake_sent = false;
+                request_call.initiating_session = true;
+                Packet::new_random(&self.node_id).unwrap() // TODO: error handling
+            };
+            request_call.packet = packet;
+            request_call.retries += 1;
             self.send(node_address.clone(), request_call.packet.clone())
                 .await;
-            request_call.retries += 1;
             self.active_requests.insert(node_address, request_call);
         }
     }
