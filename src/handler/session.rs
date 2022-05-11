@@ -57,7 +57,7 @@ impl Session {
         src_id: NodeId,
         message: &[u8],
     ) -> Result<Packet, Discv5Error> {
-        self.counter += 1;
+        self.counter = self.counter.wrapping_add(1);
 
         // If the message nonce length is ever set below 4 bytes this will explode. The packet
         // size constants shouldn't be modified.
