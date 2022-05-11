@@ -251,3 +251,44 @@ impl Session {
         Ok((packet, session))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::handler::session::{Keys, Session};
+    use crate::handler::{crypto, NodeContact};
+    use crate::packet::ChallengeData;
+    use enr::{CombinedKey, EnrBuilder, NodeId};
+    use std::convert::TryFrom;
+
+    #[test]
+    fn counter_overflow() {
+        let remote_key = CombinedKey::generate_secp256k1();
+        let remote_enr = EnrBuilder::new("v4")
+            .ip4("127.0.0.1".parse().unwrap())
+            .udp4(5002)
+            .build(&remote_key)
+            .unwrap();
+        let (encryption_key, decryption_key, _) = crypto::generate_session_keys(
+            &NodeId::random(),
+            &NodeContact::try_from_enr(remote_enr).unwrap(),
+            &ChallengeData::try_from([0u8; 63].as_slice()).unwrap(),
+        )
+        .unwrap();
+
+        let mut session = Session {
+            keys: Keys {
+                encryption_key,
+                decryption_key,
+            },
+            awaiting_keys: None,
+            awaiting_enr: None,
+            counter: u32::MAX, // Set the max value.
+        };
+        session
+            .encrypt_message(NodeId::random(), [].as_slice())
+            .unwrap();
+
+        // Ensure overflow of the counter is handled as expected.
+        assert_eq!(0, session.counter);
+    }
+}
