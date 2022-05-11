@@ -254,9 +254,14 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use crate::handler::session::{Keys, Session};
-    use crate::handler::{crypto, NodeContact};
-    use crate::packet::ChallengeData;
+    use crate::{
+        handler::{
+            crypto,
+            session::{Keys, Session},
+            NodeContact,
+        },
+        packet::ChallengeData,
+    };
     use enr::{CombinedKey, EnrBuilder, NodeId};
     use std::convert::TryFrom;
 
