@@ -243,7 +243,7 @@ fn find_seed_linear_topology() {
     }
 
     for (node, previous_node) in main_result.iter().skip(1).zip(main_result.clone()) {
-        let key: kbucket::Key<NodeId> = node.clone().into();
+        let key: kbucket::Key<NodeId> = (*node).into();
         let distance = key.log2_distance(&previous_node.into()).unwrap();
         let target_distance = key.log2_distance(&target.into()).unwrap();
         println!(
@@ -460,13 +460,12 @@ async fn test_findnode_query_with_target() {
     println!(
         "Query found {} peers. Total peers were: {}",
         found_nodes.len(),
-        nodes.iter().count() - 1
+        nodes.len() - 1
     );
 
     assert!(found_nodes
         .iter()
-        .find(|enr| enr.node_id() == target_node_id)
-        .is_some());
+        .any(|enr| enr.node_id() == target_node_id));
 }
 
 #[tokio::test]
