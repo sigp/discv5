@@ -51,6 +51,7 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
+use delay_map::HashMapDelay;
 
 mod active_requests;
 mod crypto;
@@ -209,8 +210,8 @@ pub struct Handler {
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
-    /// Currently in-progress handshakes with peers.
-    active_challenges: LruTimeCache<NodeAddress, Challenge>,
+    /// Currently in-progress outbound handshakes (WHOAREYOU packets) with peers.
+    active_challenges: HashMapDelay<NodeAddress, Challenge>,
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
     /// The channel to receive messages from the application layer.
@@ -297,7 +298,7 @@ impl Handler {
                         config.session_timeout,
                         Some(config.session_cache_capacity),
                     ),
-                    active_challenges: LruTimeCache::new(config.request_timeout * 2, None),
+                    active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
                     service_send,
                     listen_socket,
@@ -337,6 +338,11 @@ impl Handler {
                 }
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, pending_request).await;
+                }
+                Some(Ok((node_address, _challenge))) = self.active_challenges.next() => {
+                    // A challenge has expired. There could be pending requests awaiting this
+                    // challenge. We process them here
+                    self.send_next_request(node_address).await;
                 }
                 _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
@@ -459,8 +465,8 @@ impl Handler {
             return Err(RequestError::SelfRequest);
         }
 
-        // If there is already an active request for this node, add to pending requests
-        if self.active_requests.get(&node_address).is_some() {
+        // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
+        if self.active_requests.get(&node_address).is_some() | self.active_challenges.get(&node_address).is_some() {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
@@ -527,7 +533,7 @@ impl Handler {
         let node_address = wru_ref.0;
         let message_nonce = wru_ref.1;
 
-        if self.active_challenges.peek(&node_address).is_some() {
+        if self.active_challenges.get(&node_address).is_some() {
             warn!("WHOAREYOU already sent. {}", node_address);
             return;
         }
@@ -552,6 +558,7 @@ impl Handler {
         let challenge_data = ChallengeData::try_from(packet.authenticated_data().as_slice())
             .expect("Must be the correct challenge size");
         debug!("Sending WHOAREYOU to {}", node_address);
+        self.add_expected_response(node_address.socket_addr);
         self.send(node_address.clone(), packet).await;
         self.active_challenges.insert(
             node_address,
@@ -818,19 +825,23 @@ impl Handler {
 
     async fn send_next_request(&mut self, node_address: NodeAddress) {
         // ensure we are not over writing any existing requests
-
         if self.active_requests.get(&node_address).is_none() {
             if let std::collections::hash_map::Entry::Occupied(mut entry) =
                 self.pending_requests.entry(node_address)
             {
                 // If it exists, there must be a request here
-                let request = entry.get_mut().remove(0);
+                let (contact, request) = entry.get_mut().remove(0);
                 if entry.get().is_empty() {
                     entry.remove();
                 }
-                trace!("Sending next awaiting message. Node: {}", request.0);
-                if let Err(e) = self.send_request(request.0, request.1).await {
-                    warn!("Failed to send next awaiting request {}", e)
+                let id = request.id.clone();
+                trace!("Sending next awaiting message. Node: {}", contact);
+                if let Err(request_error) = self.send_request(contact, request).await {
+                    warn!("Failed to send next awaiting request {}", request_error);
+                    // Inform the service that the request failed
+                    if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
+                         warn!("Failed to inform that request failed {}", e);
+                    }
                 }
             }
         }
@@ -871,8 +882,7 @@ impl Handler {
                         .await;
                     // If we haven't already sent a WhoAreYou,
                     // spawn a WHOAREYOU event to check for highest known ENR
-                    // Update the cache time and remove expired entries.
-                    if self.active_challenges.peek(&node_address).is_none() {
+                    if self.active_challenges.get(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
                         if let Err(e) = self
                             .service_send
