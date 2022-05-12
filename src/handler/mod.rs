@@ -782,12 +782,15 @@ impl Handler {
                         }
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
-                            node_address,
+                            node_address.clone(),
                             message_nonce,
                             message,
                             authenticated_data,
                         )
                         .await;
+                        // We could have pending messages that were awaiting this session to be
+                        // established. If so process them.
+                        self.send_next_request(node_address).await;
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
