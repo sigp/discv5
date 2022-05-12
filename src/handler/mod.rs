@@ -36,6 +36,7 @@ use crate::{
     socket::{FilterConfig, Socket},
     Enr,
 };
+use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
@@ -51,7 +52,6 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
-use delay_map::HashMapDelay;
 
 mod active_requests;
 mod crypto;
@@ -466,7 +466,9 @@ impl Handler {
         }
 
         // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
-        if self.active_requests.get(&node_address).is_some() | self.active_challenges.get(&node_address).is_some() {
+        if self.active_requests.get(&node_address).is_some()
+            | self.active_challenges.get(&node_address).is_some()
+        {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
@@ -839,8 +841,12 @@ impl Handler {
                 if let Err(request_error) = self.send_request(contact, request).await {
                     warn!("Failed to send next awaiting request {}", request_error);
                     // Inform the service that the request failed
-                    if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
-                         warn!("Failed to inform that request failed {}", e);
+                    if let Err(e) = self
+                        .service_send
+                        .send(HandlerOut::RequestFailed(id, request_error))
+                        .await
+                    {
+                        warn!("Failed to inform that request failed {}", e);
                     }
                 }
             }
