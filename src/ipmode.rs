@@ -2,9 +2,18 @@ use crate::Enr;
 use std::net::SocketAddr;
 ///! A set of configuration parameters to tune the discovery protocol.
 
+/// Sets the socket type to be established and also determines the type of ENRs that we will store
+/// in our routing table.
+/// We store ENR's that have a `get_contractable_addr()` based on the `IpMode` set.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IpMode {
+    /// IPv4 only. This creates an IPv4 only UDP socket and will only store ENRs in the local
+    /// routing table if they contain a contactable IPv4 address.
     Ip4,
+    /// This enables IPv6 support. This creates an IPv6 socket. If `enable_mapped_addresses` is set
+    /// to true, this creates a dual-stack socket capable of sending/receiving IPv4 and IPv6
+    /// packets. If `enabled_mapped_addresses` is set to false, this is equivalent to running an
+    /// IPv6-only node.
     Ip6 { enable_mapped_addresses: bool },
 }
 
