@@ -270,7 +270,7 @@ impl Handler {
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
-        let socket = socket::Socket::new_socket(&socket_config.socket_addr).await?;
+        let socket = socket::Socket::new_socket(&socket_config.socket_addr, config.ip_mode).await?;
 
         config
             .executor
@@ -722,8 +722,14 @@ impl Handler {
         // If the ENR does not match the observed IP addresses, we consider the Session
         // failed.
         enr.node_id() == node_address.node_id
-            && (enr.udp4_socket().is_none()
-                || enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr))
+            && match node_address.socket_addr {
+                SocketAddr::V4(socket_addr) => enr
+                    .udp4_socket()
+                    .map_or(true, |advertized_addr| socket_addr == advertized_addr),
+                SocketAddr::V6(socket_addr) => enr
+                    .udp6_socket()
+                    .map_or(true, |advertized_addr| socket_addr == advertized_addr),
+            }
     }
 
     /// Handle a message that contains an authentication header.

@@ -176,9 +176,9 @@ impl Discv5 {
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
-        if enr.udp4_socket().is_none() {
-            warn!("ENR attempted to be added without a UDP socket has been ignored");
-            return Err("ENR has no UDP socket to connect to");
+        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
+            warn!("ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored.");
+            return Err("ENR has no compatible UDP socket to connect to");
         }
 
         if !(self.config.table_filter)(&enr) {
@@ -472,13 +472,12 @@ impl Discv5 {
     ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static {
         // convert the ENR to a node_contact.
 
-        // the service will verify if this node is contactable, we just send it and
-        // await a response.
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
+        let ip_mode = self.config.ip_mode;
 
         async move {
-            let node_contact = NodeContact::try_from_enr(enr)?;
+            let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);

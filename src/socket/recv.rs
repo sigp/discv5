@@ -3,9 +3,16 @@
 //! Every UDP packet passes a filter before being processed.
 
 use super::filter::{Filter, FilterConfig};
-use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
+use crate::{
+    ipmode::to_ipv4_mapped, metrics::METRICS, node_info::NodeAddress, packet::*, Executor,
+};
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
@@ -109,7 +116,19 @@ impl RecvHandler {
 
     /// Handles in incoming packet. Passes through the filter, decodes and sends to the packet
     /// handler.
-    async fn handle_inbound(&mut self, src_address: SocketAddr, length: usize) {
+    async fn handle_inbound(&mut self, mut src_address: SocketAddr, length: usize) {
+        // Make sure ip4 addresses in dual stack nodes are reported correctly
+        if let IpAddr::V6(ip6) = src_address.ip() {
+            // NOTE: here we don't want to use the `to_ipv4` method, since it also includes compat
+            // addresses, which are deprecated. Dual stack nodes will report ipv4 addresses as
+            // mapped addresses and not compat, so this is not needed. This also messes with some
+            // valid ipv6 local addresses (for example, the ipv6 loopback address). Ideally what we
+            // want is `to_canonical`.
+            if let Some(ip4) = to_ipv4_mapped(&ip6) {
+                trace!("Mapping inbound packet addr from {} to {}", ip6, ip4);
+                src_address.set_ip(ip4.into())
+            }
+        }
         // Permit all expected responses
         let permitted = self.expected_responses.read().get(&src_address).is_some();
 

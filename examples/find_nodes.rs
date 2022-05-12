@@ -1,50 +1,58 @@
 //! Demonstrates how to run a basic Discovery v5 Service.
 //!
-//! This example creates a discv5 service which searches for peers every 60 seconds. On
-//! creation, the local ENR created for this service is displayed in base64. This can be used to
-//! allow other instances to connect and join the network. The service can be stopped by pressing
-//! Ctrl-C.
+//! This example creates a discv5 service which searches for peers every 30 seconds. On creation,
+//! the local ENR created for this service is displayed in base64. This can be used to allow other
+//! instances to connect and join the network. The service can be stopped by pressing Ctrl-C.
 //!
 //! To add peers to the network, create multiple instances of this service adding the ENR of a
 //! participating node in the command line. The nodes should discover each other over a period of
 //! time. (It is probabilistic that nodes to find each other on any given query).
 //!
-//! A single instance listening on a UDP socket `0.0.0.0:9000` (with an ENR that has an empty IP
-//! and UDP port) can be created via:
-//!
+//! See the example's help with
 //! ```
-//! sh cargo run --example find_nodes
+//! sh cargo run --example find_nodes -- --help
 //! ```
 //!
-//! As the associated ENR has no IP/Port it is not displayed, as it cannot be used to connect to.
-//!
-//! An ENR IP address (to allow another nodes to dial this service), port and ENR node can also be
-//! passed as command line options. Therefore, a second instance, in a new terminal, can be run on
-//! port 9001 and connected to another node with a valid ENR:
-//!
-//! ```
-//! sh cargo run --example find_nodes -- 127.0.0.1 9001 <GENERATE_KEY> <BASE64_ENR>
-//! ```
-//! Here `127.0.0.1` represents the external IP address that others may connect to this node on. The
-//! `9001` represents the external port and the port to listen on. The `<BASE64_ENR>` is the base64
-//! ENR given from executing the first node with an IP and port
-//! given in the CLI.
-//! `<GENERATE_KEY>` is a boolean (`true` or `false`) specifying if a new key should be generated.
-//! These steps can be repeated to add further nodes to the test network.
-//!
-//! The parameters are optional.
-//!
-//!  For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
+//! For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
+use clap::Parser;
 use discv5::{
     enr,
     enr::{k256, CombinedKey},
-    Discv5, Discv5ConfigBuilder,
+    Discv5, Discv5ConfigBuilder, Discv5Event,
 };
 use std::{
-    net::{Ipv4Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     time::Duration,
 };
+use tracing::{info, warn};
+
+#[derive(Parser)]
+struct FindNodesArgs {
+    /// Type of socket to bind ['ds', 'ip4', 'ip6']. The dual stack option will enable mapped
+    /// addresses over an IpV6 socket.
+    #[clap(long, default_value_t = SocketKind::Ds)]
+    socket_kind: SocketKind,
+    /// IpV4 to advertise in the ENR. This is needed so that other IpV4 nodes can connect to us.
+    #[clap(long)]
+    enr_ip4: Option<Ipv4Addr>,
+    /// IpV6 to advertise in the ENR. This is needed so that other IpV6 nodes can connect to us.
+    #[clap(long)]
+    enr_ip6: Option<Ipv6Addr>,
+    /// Port to bind. If none is provided, a random one in the 9000 - 9999 range will be picked
+    /// randomly.
+    #[clap(long)]
+    port: Option<u16>,
+    /// Use a default test key.
+    #[clap(long)]
+    use_test_key: bool,
+    /// A remote peer to try to connect to. Several peers can be added repeating this option.
+    #[clap(long)]
+    remote_peer: Vec<discv5::Enr>,
+    /// Use this option to turn on printing events received from discovery.
+    #[clap(long)]
+    events: bool,
+}
 
 #[tokio::main]
 async fn main() {
@@ -55,93 +63,103 @@ async fn main() {
         .with_env_filter(filter_layer)
         .try_init();
 
-    // if there is an address specified use it
-    let address = std::env::args()
-        .nth(1)
-        .map(|addr| addr.parse::<Ipv4Addr>().unwrap());
+    let args = FindNodesArgs::parse();
+    let port = args
+        .port
+        .unwrap_or_else(|| (rand::random::<u16>() % 1000) + 9000);
 
-    let port = {
-        if let Some(udp_port) = std::env::args().nth(2) {
-            udp_port.parse().unwrap()
-        } else {
-            9000
-        }
+    let enr_key = if args.use_test_key {
+        // A fixed key for testing
+        let raw_key =
+            hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+                .unwrap();
+        let secret_key = k256::ecdsa::SigningKey::from_bytes(&raw_key).unwrap();
+        CombinedKey::from(secret_key)
+    } else {
+        // use a new key if specified
+        CombinedKey::generate_secp256k1()
     };
 
-    // A fixed key for testing
-    let raw_key =
-        hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291").unwrap();
-    let secret_key = k256::ecdsa::SigningKey::from_bytes(&raw_key).unwrap();
-    let mut enr_key = CombinedKey::from(secret_key);
-
-    // use a random key if specified
-    if let Some(generate_key) = std::env::args().nth(3) {
-        if generate_key.parse::<bool>().unwrap() {
-            enr_key = CombinedKey::generate_secp256k1();
-        }
-    }
-
-    // construct a local ENR
     let enr = {
         let mut builder = enr::EnrBuilder::new("v4");
-        // if an IP was specified, use it
-        if let Some(external_address) = address {
-            builder.ip(external_address.into());
+        if let Some(ip4) = args.enr_ip4 {
+            // if the given address is the UNSPECIFIED address we want to advertise localhost
+            if ip4.is_unspecified() {
+                builder.ip4(Ipv4Addr::LOCALHOST).udp4(port);
+            } else {
+                builder.ip4(ip4).udp4(port);
+            }
         }
-        // if a port was specified, use it
-        if std::env::args().nth(2).is_some() {
-            builder.udp4(port);
+        if let Some(ip6) = args.enr_ip6 {
+            // if the given address is the UNSPECIFIED address we want to advertise localhost
+            if ip6.is_unspecified() {
+                builder.ip6(Ipv6Addr::LOCALHOST).udp6(port);
+            } else {
+                builder.ip6(ip6).udp6(port);
+            }
         }
         builder.build(&enr_key).unwrap()
     };
 
-    // if the ENR is useful print it
-    println!("Node Id: {}", enr.node_id());
-    if enr.udp4_socket().is_some() {
-        println!("Base64 ENR: {}", enr.to_base64());
-        println!(
-            "IP: {}, UDP_PORT:{}",
-            enr.ip4().unwrap(),
-            enr.udp4().unwrap()
-        );
-    } else {
-        println!("ENR is not printed as no IP:PORT was specified");
-    }
-
     // default configuration with packet filtering
     // let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
-    // default configuration without packet filtering
-    let config = Discv5ConfigBuilder::new().build();
 
-    // the address to listen on
-    let socket_addr = SocketAddr::new("0.0.0.0".parse().expect("valid ip"), port);
+    // default configuration without packet filtering
+    let config = Discv5ConfigBuilder::new()
+        .ip_mode(match args.socket_kind {
+            SocketKind::Ip4 => discv5::IpMode::Ip4,
+            SocketKind::Ip6 => discv5::IpMode::Ip6 {
+                enable_mapped_addresses: false,
+            },
+            SocketKind::Ds => discv5::IpMode::Ip6 {
+                enable_mapped_addresses: true,
+            },
+        })
+        .build();
+
+    info!("Node Id: {}", enr.node_id());
+    if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
+        // if the ENR is useful print it
+        info!("Base64 ENR: {}", enr.to_base64());
+        info!(
+            "Local ENR IpV6 socket: {:?}. Local ENR IpV4 socket: {:?}",
+            enr.udp6_socket(),
+            enr.udp4_socket()
+        );
+    }
+    // the address to listen on.
+    let bind_addr = match args.socket_kind {
+        SocketKind::Ip4 => Ipv4Addr::UNSPECIFIED.into(),
+        SocketKind::Ip6 | SocketKind::Ds => Ipv6Addr::UNSPECIFIED.into(),
+    };
+    let socket_addr = SocketAddr::new(bind_addr, port);
 
     // construct the discv5 server
     let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
-    if let Some(base64_enr) = std::env::args().nth(4) {
-        match base64_enr.parse::<enr::Enr<enr::CombinedKey>>() {
-            Ok(enr) => {
-                println!(
-                    "ENR Read. ip: {:?}, udp_port {:?}, tcp_port: {:?}",
-                    enr.ip4(),
-                    enr.udp4(),
-                    enr.tcp4()
-                );
-                if let Err(e) = discv5.add_enr(enr) {
-                    println!("ENR was not added: {}", e);
-                }
-            }
-            Err(e) => panic!("Decoding ENR failed: {}", e),
-        }
+    for enr in args.remote_peer {
+        info!(
+            "Remote ENR read. udp4 socket: {:?}, udp6 socket: {:?}, tcp4_port {:?}, tcp6_port: {:?}",
+            enr.udp4_socket(),
+            enr.udp6_socket(),
+            enr.tcp4(),
+            enr.tcp6()
+        );
+        if let Err(e) = discv5.add_enr(enr) {
+            warn!("Failed to add remote ENR {}", e);
+            // It's unlikely we want to continue in this example after this
+            return;
+        };
     }
 
     // start the discv5 service
     discv5.start(socket_addr).await.unwrap();
+    let mut event_stream = discv5.event_stream().await.unwrap();
+    let check_evs = args.events;
 
     // construct a 30 second interval to search for new peers.
-    let mut query_interval = tokio::time::interval(Duration::from_secs(60));
+    let mut query_interval = tokio::time::interval(Duration::from_secs(30));
 
     loop {
         tokio::select! {
@@ -151,21 +169,63 @@ async fn main() {
                 // get metrics
                 let metrics = discv5.metrics();
                 let connected_peers = discv5.connected_peers();
-                println!("Connected peers: {}, Active sessions: {}, Unsolicited requests/s: {:.2}", connected_peers, metrics.active_sessions, metrics.unsolicited_requests_per_second);
-                println!("Searching for peers...");
+                info!("Connected peers: {}, Active sessions: {}, Unsolicited requests/s: {:.2}", connected_peers, metrics.active_sessions, metrics.unsolicited_requests_per_second);
+                info!("Searching for peers...");
                 // execute a FINDNODE query
                 match discv5.find_node(target_random_node_id).await {
-                    Err(e) => println!("Find Node result failed: {:?}", e),
+                    Err(e) => warn!("Find Node result failed: {:?}", e),
                     Ok(v) => {
                         // found a list of ENR's print their NodeIds
                         let node_ids = v.iter().map(|enr| enr.node_id()).collect::<Vec<_>>();
-                        println!("Nodes found: {}", node_ids.len());
+                        info!("Nodes found: {}", node_ids.len());
                         for node_id in node_ids {
-                            println!("Node: {}", node_id);
+                            info!("Node: {}", node_id);
                         }
                     }
                 }
             }
+            Some(discv5_ev) = event_stream.recv() => {
+                // consume the events even if not printed
+                if !check_evs {
+                    continue;
+                }
+                match discv5_ev {
+                    Discv5Event::Discovered(enr) => info!("Enr discovered {}", enr),
+                    Discv5Event::EnrAdded { enr, replaced: _ } => info!("Enr added {}", enr),
+                    Discv5Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
+                    Discv5Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
+                    Discv5Event::TalkRequest(_) => info!("Talk request received"),
+                };
+            }
+        }
+    }
+}
+
+pub enum SocketKind {
+    Ip4,
+    Ip6,
+    Ds,
+}
+
+impl std::fmt::Display for SocketKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SocketKind::Ip4 => f.write_str("ip4"),
+            SocketKind::Ip6 => f.write_str("ip6"),
+            SocketKind::Ds => f.write_str("ds"),
+        }
+    }
+}
+
+impl std::str::FromStr for SocketKind {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ip4" => Ok(SocketKind::Ip4),
+            "ip6" => Ok(SocketKind::Ip6),
+            "ds" => Ok(SocketKind::Ds),
+            _ => Err("bad kind"),
         }
     }
 }
