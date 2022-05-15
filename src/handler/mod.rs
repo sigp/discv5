@@ -467,7 +467,7 @@ impl Handler {
 
         // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
         if self.active_requests.get(&node_address).is_some()
-            | self.active_challenges.get(&node_address).is_some()
+            || self.active_challenges.get(&node_address).is_some()
         {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
