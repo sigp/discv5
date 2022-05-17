@@ -24,7 +24,7 @@
 //!
 //! Requests from the application layer can be made via the receive channel using a [`HandlerIn`].
 //! Responses from the application layer can be made via the receive channel using a [`HandlerIn`].
-//! Messages from the a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
+//! Messages from a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
     config::Discv5Config,
@@ -540,14 +540,11 @@ impl Handler {
             return;
         }
 
-        // Ignore this request if the session is already established
-        if self.sessions.get(&node_address).is_some() {
-            trace!(
-                "Session already established. WHOAREYOU not sent to {}",
-                node_address
-            );
-            return;
-        }
+        // NOTE: We do not check if we have an active session here. This was checked before
+        // requesting the ENR from the service. It could be the case we have established a session
+        // in the meantime, we allow this challenge to establish a second session in the event this
+        // race occurs. The nodes will decide amongst themselves which session keys to use (the
+        // most recent).
 
         // It could be the case we have sent an ENR with an active request, however we consider
         // these independent as this is in response to an unknown packet. If the ENR it not in our
