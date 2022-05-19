@@ -38,6 +38,7 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
 
     /// Retrieves a reference to the value stored under `key`, or `None` if the key doesn't exist.
     /// Also removes expired elements and updates the time.
+    #[allow(dead_code)]
     pub fn get(&mut self, key: &K) -> Option<&V> {
         self.get_mut(key).map(|value| &*value)
     }
@@ -60,6 +61,7 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
 
     /// Returns a reference to the value with the given `key`, if present and not expired, without
     /// updating the timestamp.
+    #[allow(dead_code)]
     pub fn peek(&self, key: &K) -> Option<&V> {
         if let Some((value, time)) = self.map.get(key) {
             return if *time + self.ttl >= Instant::now() {
