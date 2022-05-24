@@ -193,6 +193,7 @@ async fn main() {
                     Discv5Event::Discovered(enr) => info!("Enr discovered {}", enr),
                     Discv5Event::EnrAdded { enr, replaced: _ } => info!("Enr added {}", enr),
                     Discv5Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
+                    Discv5Event::SessionEstablished(enr) => info!("Session established {}", enr),
                     Discv5Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
                     Discv5Event::TalkRequest(_) => info!("Talk request received"),
                 };

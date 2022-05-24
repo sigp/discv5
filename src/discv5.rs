@@ -61,6 +61,8 @@ pub enum Discv5Event {
         node_id: NodeId,
         replaced: Option<NodeId>,
     },
+    /// A new session has been established with a node.
+    SessionEstablished(Enr),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
     /// A node has initiated a talk request.
