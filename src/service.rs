@@ -341,8 +341,12 @@ impl Service {
                 }
                 Some(event) = self.handler_recv.recv() => {
                     match event {
-                        HandlerOut::Established(enr, direction) => {
-                            self.send_event(Discv5Event::SessionEstablished(enr.clone()));
+                        HandlerOut::Established(enr, socket_addr, direction) => {
+                            let node_contact = match NodeContact::try_from_enr(enr.clone(), self.config.ip_mode) {
+                               Ok(contact) => contact,
+                               Err(non_contactable) => NodeContact::from_non_contactable_and_socket_addr(non_contactable, socket_addr),
+                            };
+                            self.send_event(Discv5Event::SessionEstablished(node_contact));
                             self.inject_session_established(enr, direction);
                         }
                         HandlerOut::Request(node_address, request) => {
