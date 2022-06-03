@@ -66,17 +66,6 @@ impl NodeContact {
         )
     }
 
-    pub fn from_non_contactable_and_socket_addr(
-        non_contactable: NonContactable,
-        socket_addr: SocketAddr,
-    ) -> Self {
-        NodeContact {
-            public_key: non_contactable.enr.public_key(),
-            socket_addr,
-            enr: Some(non_contactable.enr),
-        }
-    }
-
     pub fn try_from_enr(enr: Enr, ip_mode: IpMode) -> Result<Self, NonContactable> {
         let socket_addr = match ip_mode.get_contactable_addr(&enr) {
             Some(socket_addr) => socket_addr,
