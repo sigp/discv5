@@ -562,29 +562,18 @@ impl Discv5 {
         topic: String,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
         let topic = Topic::new(topic);
-        let find_future = self.find_closest_nodes_to_topic(topic.hash());
         let channel = self.clone_channel();
 
         async move {
-            // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
-            // and send the regtopic to these nodes
-            let enrs = find_future
+            let channel = channel
+                .as_ref()
+                .map_err(|_| RequestError::ServiceNotStarted)?;
+            let event = ServiceRequest::RegisterTopic(topic.clone());
+            // send the request
+            channel
+                .send(event)
                 .await
-                .map_err(|e| RequestError::TopicDistance(e.to_string()))?;
-
-            // convert the ENR to a node_contact.
-            for enr in enrs.into_iter() {
-                let node_contact = NodeContact::from(enr);
-                let channel = channel
-                    .as_ref()
-                    .map_err(|_| RequestError::ServiceNotStarted)?;
-                let event = ServiceRequest::RegisterTopic(node_contact, topic.clone());
-                // send the request
-                channel
-                    .send(event)
-                    .await
-                    .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
-            }
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             Ok(())
         }
     }

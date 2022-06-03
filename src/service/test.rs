@@ -101,6 +101,7 @@ async fn build_service(
         ads: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
         tickets: Tickets::new(Duration::from_secs(60 * 15)),
         topics: HashMap::new(),
+        topics_kbuckets: HashMap::new(),
         active_topics: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
         ticket_pools: TicketPools::default(),
         exit,

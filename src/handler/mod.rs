@@ -27,6 +27,7 @@
 //! Messages from the a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
+    advertisement::topic::TopicHash,
     config::Discv5Config,
     discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
@@ -109,6 +110,9 @@ pub enum HandlerOut {
     /// A session is only considered established once we have received a signed ENR from the
     /// node and received messages from it's `SocketAddr` matching it's ENR fields.
     Established(Enr, ConnectionDirection),
+
+    /// A session has been established for the purpose of publishing advertisements.
+    EstablishedTopic(Enr, ConnectionDirection, TopicHash),
 
     /// A Request has been received from a node on the network.
     Request(NodeAddress, Box<Request>),
