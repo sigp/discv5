@@ -238,6 +238,9 @@ pub struct Service {
     /// Topics to advertise on other nodes.
     topics: HashMap<TopicHash, Topic>,
 
+    /// KBuckets per topic hash.
+    topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
+
     /// Ads currently advertised on other nodes.
     active_topics: Ads,
 
@@ -368,6 +371,7 @@ impl Service {
                     ads,
                     tickets: Tickets::new(Duration::from_secs(60 * 15)),
                     topics: HashMap::new(),
+                    topics_kbuckets: HashMap::new(),
                     active_topics,
                     ticket_pools: TicketPools::default(),
                     exit,
@@ -387,178 +391,202 @@ impl Service {
 
         loop {
             tokio::select! {
-                _ = &mut self.exit => {
-                    if let Some(exit) = self.handler_exit.take() {
-                        let _ = exit.send(());
-                        info!("Discv5 Service shutdown");
+                    _ = &mut self.exit => {
+                        if let Some(exit) = self.handler_exit.take() {
+                            let _ = exit.send(());
+                            info!("Discv5 Service shutdown");
+                        }
+                        return;
                     }
-                    return;
-                }
-                Some(service_request) = self.discv5_recv.recv() => {
-                    match service_request {
-                        ServiceRequest::StartQuery(query, callback) => {
-                            match query {
-                                QueryKind::FindNode { target_node } => {
-                                    self.start_findnode_query(target_node, Some(callback));
-                                }
-                                QueryKind::Predicate { target_node, target_peer_no, predicate } => {
-                                    self.start_predicate_query(target_node, target_peer_no, predicate, Some(callback));
-                                }
-                            }
-                        }
-                        ServiceRequest::FindEnr(node_contact, callback) => {
-                            self.request_enr(node_contact, Some(callback));
-                        }
-                        ServiceRequest::Talk(node_contact, protocol, request, callback) => {
-                            self.talk_request(node_contact, protocol, request, callback);
-                        }
-                        ServiceRequest::RequestEventStream(callback) => {
-                            // the channel size needs to be large to handle many discovered peers
-                            // if we are reporting them on the event stream.
-                            let channel_size = if self.config.report_discovered_peers { 100 } else { 30 };
-                            let (event_stream, event_stream_recv) = mpsc::channel(channel_size);
-                            self.event_stream = Some(event_stream);
-                            if callback.send(event_stream_recv).is_err() {
-                                error!("Failed to return the event stream channel");
-                            }
-                        }
-                        ServiceRequest::TopicQuery(node_contact, topic_hash, callback) => {
-                            self.topic_query_request(node_contact, topic_hash, callback);
-                        }
-                        ServiceRequest::RegisterTopic(node_contact, topic) => {
-                            let topic_hash = topic.hash();
-                            self.topics.insert(topic_hash, topic);
-                            METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
-                            let local_enr = self.local_enr.read().clone();
-                            self.reg_topic_request(node_contact, topic_hash, local_enr, None)
-                        }
-                        ServiceRequest::ActiveTopics(callback) => {
-                            if callback.send(Ok(self.active_topics.clone())).is_err() {
-                                error!("Failed to return active topics");
-                            }
-                        }
-                        ServiceRequest::RemoveTopic(topic_hash, callback) => {
-                            let topic = self.topics.remove(&topic_hash).map(|topic| topic.topic());
-                            METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
-                            if callback.send(Ok(topic)).is_err() {
-                                error!("Failed to return the removed topic");
-                            }
-                        }
-                    }
-                }
-                Some(event) = self.handler_recv.recv() => {
-                    match event {
-                        HandlerOut::Established(enr, direction) => {
-                            self.inject_session_established(enr,direction);
-                        }
-                        HandlerOut::Request(node_address, request) => {
-                                self.handle_rpc_request(node_address, *request);
-                            }
-                        HandlerOut::Response(node_address, response) => {
-                                self.handle_rpc_response(node_address, *response);
-                            }
-                        HandlerOut::WhoAreYou(whoareyou_ref) => {
-                            // check what our latest known ENR is for this node.
-                            if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr)));
-                            } else {
-                                // do not know of this peer
-                                debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None));
-                            }
-                        }
-                        HandlerOut::RequestFailed(request_id, error) => {
-                            if let RequestError::Timeout = error {
-                                debug!("RPC Request timed out. id: {}", request_id);
-                            } else {
-                                warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
-                            }
-                            self.rpc_failure(request_id, error);
-                        }
-                    }
-                }
-                event = Service::bucket_maintenance_poll(&self.kbuckets) => {
-                    self.send_event(event);
-                }
-                query_event = Service::query_event_poll(&mut self.queries) => {
-                    match query_event {
-                        QueryEvent::Waiting(query_id, node_id, request_body) => {
-                            self.send_rpc_query(query_id, node_id, *request_body);
-                        }
-                        // Note: Currently the distinction between a timed-out query and a finished
-                        // query is superfluous, however it may be useful in future versions.
-                        QueryEvent::Finished(query) | QueryEvent::TimedOut(query) => {
-                            let id = query.id();
-                            let mut result = query.into_result();
-                            // obtain the ENR's for the resulting nodes
-                            let mut found_enrs = Vec::new();
-                            for node_id in result.closest_peers {
-                                if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
-                                    let enr = result.target.untrusted_enrs.swap_remove(position);
-                                    found_enrs.push(enr);
-                                } else if let Some(enr) = self.find_enr(&node_id) {
-                                    // look up from the routing table
-                                    found_enrs.push(enr);
-                                }
-                                else {
-                                    warn!("ENR not present in queries results");
+                    Some(service_request) = self.discv5_recv.recv() => {
+                        match service_request {
+                            ServiceRequest::StartQuery(query, callback) => {
+                                match query {
+                                    QueryKind::FindNode { target_node } => {
+                                        self.start_findnode_query(target_node, Some(callback));
+                                    }
+                                    QueryKind::Predicate { target_node, target_peer_no, predicate } => {
+                                        self.start_predicate_query(target_node, target_peer_no, predicate, Some(callback));
+                                    }
                                 }
                             }
+                            ServiceRequest::FindEnr(node_contact, callback) => {
+                                self.request_enr(node_contact, Some(callback));
+                            }
+                            ServiceRequest::Talk(node_contact, protocol, request, callback) => {
+                                self.talk_request(node_contact, protocol, request, callback);
+                            }
+                            ServiceRequest::RequestEventStream(callback) => {
+                                // the channel size needs to be large to handle many discovered peers
+                                // if we are reporting them on the event stream.
+                                let channel_size = if self.config.report_discovered_peers { 100 } else { 30 };
+                                let (event_stream, event_stream_recv) = mpsc::channel(channel_size);
+                                self.event_stream = Some(event_stream);
+                                if callback.send(event_stream_recv).is_err() {
+                                    error!("Failed to return the event stream channel");
+                                }
+                            }
+                            ServiceRequest::TopicQuery(node_contact, topic_hash, callback) => {
+                                self.topic_query_request(node_contact, topic_hash, callback);
+                            }
+                            ServiceRequest::RegisterTopic(node_contact, topic) => {
+                                let topic_hash = topic.hash();
+                                if self.topics.insert(topic_hash, topic).is_some() {
+                                    warn!("This topic is already being advertised");
+                                } else {
+                                    // NOTE: Currently we don't expose custom filter support in the configuration. Users can
+                                    // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
+                                    // may expose this functionality to the users if there is demand for it.
+                                    let (table_filter, bucket_filter) = if self.config.ip_limit {
+                                        (
+                                            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+                                            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+                                        )
+                                    } else {
+                                        (None, None)
+                                    };
 
-                            if let Some(callback) = result.target.callback {
-                                if callback.send(found_enrs).is_err() {
-                                    warn!("Callback dropped for query {}. Results dropped", *id);
+                                    let kbuckets = KBucketsTable::new(
+                                        self.local_enr.read().node_id().into(),
+                                        Duration::from_secs(60),
+                                        self.config.incoming_bucket_limit,
+                                        table_filter,
+                                        bucket_filter,
+                                    );
+                                    self.topics_kbuckets.insert(topic_hash, kbuckets);
                                 }
-                            } else {
-                                let QueryType::FindNode(node_id) = result.target.query_type;
-                                let topic = TopicHash::from_raw(node_id.raw());
-                                    if self.topics.contains_key(&topic){
-                                                let local_enr = self.local_enr.read().clone();
-                                                found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, local_enr.clone(), None));
-                                        }
+
+                                METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
+                                //let local_enr = self.local_enr.read().clone();
+                                //self.reg_topic_request(node_contact, topic_hash, local_enr, None)
+                            }
+                            ServiceRequest::ActiveTopics(callback) => {
+                                if callback.send(Ok(self.active_topics.clone())).is_err() {
+                                    error!("Failed to return active topics");
+                                }
+                            }
+                            ServiceRequest::RemoveTopic(topic_hash, callback) => {
+                                let topic = self.topics.remove(&topic_hash).map(|topic| topic.topic());
+                                METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
+                                if callback.send(Ok(topic)).is_err() {
+                                    error!("Failed to return the removed topic");
+                                }
                             }
                         }
                     }
-                }
-                Some(Ok(node_id)) = self.peers_to_ping.next() => {
-                    // If the node is in the routing table, Ping it and re-queue the node.
-                    let key = kbucket::Key::from(node_id);
-                    let enr =  {
-                        if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
-                        // The peer is in the routing table, ping it and re-queue the ping
-                        self.peers_to_ping.insert(node_id);
-                        Some(entry.value().clone())
-                        } else { None }
-                    };
+                    Some(event) = self.handler_recv.recv() => {
+                        match event {
+                            HandlerOut::Established(enr, direction) => {
+                                self.inject_session_established(enr,direction);
+                            }
+                            HandlerOut::Request(node_address, request) => {
+                                    self.handle_rpc_request(node_address, *request);
+                                }
+                            HandlerOut::Response(node_address, response) => {
+                                    self.handle_rpc_response(node_address, *response);
+                                }
+                            HandlerOut::WhoAreYou(whoareyou_ref) => {
+                                // check what our latest known ENR is for this node.
+                                if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
+                                    let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr)));
+                                } else {
+                                    // do not know of this peer
+                                    debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
+                                    let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None));
+                                }
+                            }
+                            HandlerOut::RequestFailed(request_id, error) => {
+                                if let RequestError::Timeout = error {
+                                    debug!("RPC Request timed out. id: {}", request_id);
+                                } else {
+                                    warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
+                                }
+                                self.rpc_failure(request_id, error);
+                            }
+                        }
+                    }
+                    event = Service::bucket_maintenance_poll(&self.kbuckets) => {
+                        self.send_event(event);
+                    }
+                    query_event = Service::query_event_poll(&mut self.queries) => {
+                        match query_event {
+                            QueryEvent::Waiting(query_id, node_id, request_body) => {
+                                self.send_rpc_query(query_id, node_id, *request_body);
+                            }
+                            // Note: Currently the distinction between a timed-out query and a finished
+                            // query is superfluous, however it may be useful in future versions.
+                            QueryEvent::Finished(query) | QueryEvent::TimedOut(query) => {
+                                let id = query.id();
+                                let mut result = query.into_result();
+                                // obtain the ENR's for the resulting nodes
+                                let mut found_enrs = Vec::new();
+                                for node_id in result.closest_peers {
+                                    if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
+                                        let enr = result.target.untrusted_enrs.swap_remove(position);
+                                        found_enrs.push(enr);
+                                    } else if let Some(enr) = self.find_enr(&node_id) {
+                                        // look up from the routing table
+                                        found_enrs.push(enr);
+                                    }
+                                    else {
+                                        warn!("ENR not present in queries results");
+                                    }
+                                }
 
-                    if let Some(enr) = enr {
-                        self.send_ping(enr);
+                                if let Some(callback) = result.target.callback {
+                                    if callback.send(found_enrs).is_err() {
+                                        warn!("Callback dropped for query {}. Results dropped", *id);
+                                    }
+                                } else {
+                                    let QueryType::FindNode(node_id) = result.target.query_type;
+                                    let topic = TopicHash::from_raw(node_id.raw());
+                                        if self.topics.contains_key(&topic){
+                                                    let local_enr = self.local_enr.read().clone();
+                                                    found_enrs.into_iter().for_each(|enr| self.reg_topic_request(NodeContact::from(enr), topic, local_enr.clone(), None));
+                                            }
+                                }
+                            }
+                        }
+                    }
+                    Some(Ok(node_id)) = self.peers_to_ping.next() => {
+                        // If the node is in the routing table, Ping it and re-queue the node.
+                        let key = kbucket::Key::from(node_id);
+                        let enr =  {
+                            if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
+                            // The peer is in the routing table, ping it and re-queue the ping
+                            self.peers_to_ping.insert(node_id);
+                            Some(entry.value().clone())
+                            } else { None }
+                        };
+
+                        if let Some(enr) = enr {
+                            self.send_ping(enr);
+                        }
+                    }
+                    Some(Ok((active_topic, active_ticket))) = self.tickets.next() => {
+                        let enr = self.local_enr.read().clone();
+                        // When the ticket time expires a new regtopic requet is automatically sent
+                        // to the ticket issuer.
+                        self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
+                    }
+                    _ = publish_topics.tick() => {
+                            // Topics are republished at regular intervals.
+                            self.topics.clone().into_iter().for_each(|(topic_hash, _)| self.start_findnode_query(NodeId::new(&topic_hash.as_bytes()), None));
+                    }
+                    Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
+                        // No particular selection is carried out at this stage of implementation, the choice of node to give
+                        // the free ad slot to is random.
+                        let random_index = rand::thread_rng().gen_range(0..ticket_pool.len());
+                        let ticket_pool = ticket_pool.values().step_by(random_index).next();
+                        if let Some((node_record, req_id, _ticket)) = ticket_pool.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
+                        self.ads.insert(node_record.clone(), topic).ok();
+                            NodeContact::from(node_record).node_address().map(|node_address| {
+                                self.send_regconfirmation_response(node_address, req_id, topic);
+                            }).ok();
+                            METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
+                        }
                     }
                 }
-                Some(Ok((active_topic, active_ticket))) = self.tickets.next() => {
-                    let enr = self.local_enr.read().clone();
-                    // When the ticket time expires a new regtopic requet is automatically sent
-                    // to the ticket issuer.
-                    self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
-                }
-                _ = publish_topics.tick() => {
-                        // Topics are republished at regular intervals.
-                        self.topics.clone().into_iter().for_each(|(topic_hash, _)| self.start_findnode_query(NodeId::new(&topic_hash.as_bytes()), None));
-                }
-                Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
-                    // No particular selection is carried out at this stage of implementation, the choice of node to give
-                    // the free ad slot to is random.
-                    let random_index = rand::thread_rng().gen_range(0..ticket_pool.len());
-                    let ticket_pool = ticket_pool.values().step_by(random_index).next();
-                    if let Some((node_record, req_id, _ticket)) = ticket_pool.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
-                    self.ads.insert(node_record.clone(), topic).ok();
-                        NodeContact::from(node_record).node_address().map(|node_address| {
-                            self.send_regconfirmation_response(node_address, req_id, topic);
-                        }).ok();
-                        METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
-                    }
-                }
-            }
         }
     }
 
