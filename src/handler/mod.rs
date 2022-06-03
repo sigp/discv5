@@ -693,7 +693,11 @@ impl Handler {
 
                 // Notify the application that the session has been established
                 let kbucket_addition = match request_call.request.body {
-                    RequestBody::RegisterTopic{topic, enr: _, ticket: _} => HandlerOut::EstablishedTopic(*enr, connection_direction, topic),
+                    RequestBody::RegisterTopic {
+                        topic,
+                        enr: _,
+                        ticket: _,
+                    } => HandlerOut::EstablishedTopic(*enr, connection_direction, topic),
                     _ => HandlerOut::Established(*enr, connection_direction),
                 };
                 self.service_send

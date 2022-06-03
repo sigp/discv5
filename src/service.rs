@@ -455,9 +455,9 @@ impl Service {
                                     bucket_filter,
                                 );
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
+                                METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
+                                self.register_topic(topic_hash);
                             }
-
-                            METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
                         }
                         ServiceRequest::ActiveTopics(callback) => {
                             if callback.send(Ok(self.active_topics.clone())).is_err() {
@@ -572,8 +572,8 @@ impl Service {
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
                 }
                 _ = publish_topics.tick() => {
-                        // Topics are republished at regular intervals.
-                        self.topics.clone().into_iter().for_each(|(topic_hash, _)| self.start_findnode_query(NodeId::new(&topic_hash.as_bytes()), None));
+                    // Topics are republished at regular intervals.
+                    self.topics.clone().keys().for_each(|topic_hash| self.register_topic(*topic_hash));
                 }
                 Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
                     // No particular selection is carried out at this stage of implementation, the choice of node to give
@@ -589,6 +589,27 @@ impl Service {
                     }
                 }
             }
+        }
+    }
+
+    fn register_topic(&mut self, topic_hash: TopicHash) {
+        // Placeholder for ad distribution logic, X random nodes from bucket at furthest distance
+        // are sent REGTOPICs, then decreasing by half for each distance range approaching 0 (topic id).
+        if let Some(kbuckets) = self.topics_kbuckets.clone().get_mut(&topic_hash) {
+            kbuckets
+                .iter()
+                .map(|entry| entry.node.value.clone())
+                .for_each(|remote_enr| {
+                    let local_enr = self.local_enr.read().clone();
+                    self.reg_topic_request(
+                        NodeContact::from(remote_enr),
+                        topic_hash,
+                        local_enr,
+                        None,
+                    )
+                });
+        } else {
+            debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
         }
     }
 
