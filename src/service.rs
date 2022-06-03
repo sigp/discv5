@@ -341,8 +341,9 @@ impl Service {
                 }
                 Some(event) = self.handler_recv.recv() => {
                     match event {
-                        HandlerOut::Established(enr, direction) => {
-                            self.inject_session_established(enr,direction);
+                        HandlerOut::Established(enr, socket_addr, direction) => {
+                            self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
+                            self.inject_session_established(enr, direction);
                         }
                         HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);

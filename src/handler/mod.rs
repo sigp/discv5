@@ -108,8 +108,9 @@ pub enum HandlerOut {
     /// A session has been established with a node.
     ///
     /// A session is only considered established once we have received a signed ENR from the
-    /// node and received messages from it's `SocketAddr` matching it's ENR fields.
-    Established(Enr, ConnectionDirection),
+    /// node and either the observed `SocketAddr` matches the one declared in the ENR or the
+    /// ENR declares no `SocketAddr`.
+    Established(Enr, SocketAddr, ConnectionDirection),
 
     /// A Request has been received from a node on the network.
     Request(NodeAddress, Box<Request>),
@@ -691,7 +692,11 @@ impl Handler {
 
                 // Notify the application that the session has been established
                 self.service_send
-                    .send(HandlerOut::Established(enr, connection_direction))
+                    .send(HandlerOut::Established(
+                        enr,
+                        node_address.socket_addr,
+                        connection_direction,
+                    ))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
@@ -778,7 +783,11 @@ impl Handler {
                         // This occurs when a node established a connection with us.
                         if let Err(e) = self
                             .service_send
-                            .send(HandlerOut::Established(enr, ConnectionDirection::Incoming))
+                            .send(HandlerOut::Established(
+                                enr,
+                                node_address.socket_addr,
+                                ConnectionDirection::Incoming,
+                            ))
                             .await
                         {
                             warn!("Failed to inform of established session {}", e)
@@ -943,6 +952,7 @@ impl Handler {
                                                 .service_send
                                                 .send(HandlerOut::Established(
                                                     enr,
+                                                    node_address.socket_addr,
                                                     ConnectionDirection::Outgoing,
                                                 ))
                                                 .await
