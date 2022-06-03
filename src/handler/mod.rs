@@ -97,7 +97,7 @@ pub enum HandlerIn {
 
     /// A Random packet has been received and we have requested the application layer to inform
     /// us what the highest known ENR is for this node.
-    /// The `WhoAreYouRef` is sent out in the `HandlerResponse::WhoAreYou` event and should
+    /// The `WhoAreYouRef` is sent to handler via the `HandlerIn::WhoAreYou` event and should
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 }
@@ -121,7 +121,7 @@ pub enum HandlerOut {
     Response(NodeAddress, Box<Response>),
 
     /// An unknown source has requested information from us. Return the reference with the known
-    /// ENR of this node (if known). See the `HandlerRequest::WhoAreYou` variant.
+    /// ENR of this node (if known). See the `HandlerOut::WhoAreYou` variant.
     WhoAreYou(WhoAreYouRef),
 
     /// An RPC request failed.
@@ -154,7 +154,7 @@ pub struct Challenge {
 }
 
 /// A request to a node that we are waiting for a response.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct RequestCall {
     contact: NodeContact,
     /// The raw discv5 packet sent.
@@ -525,7 +525,7 @@ impl Handler {
         }
     }
 
-    /// This is called in response to a `HandlerResponse::WhoAreYou` event. The applications finds the
+    /// This is called in response to a `HandlerIn::WhoAreYou` event. The applications finds the
     /// highest known ENR for a node then we respond to the node with a WHOAREYOU packet.
     async fn send_challenge(&mut self, wru_ref: WhoAreYouRef, remote_enr: Option<Enr>) {
         let node_address = wru_ref.0;
@@ -687,13 +687,17 @@ impl Handler {
                 request_call.handshake_sent = true;
                 request_call.initiating_session = false;
                 // Reinsert the request_call
-                self.insert_active_request(request_call);
+                self.insert_active_request(request_call.clone());
                 // Send the actual packet to the send task.
                 self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
+                let kbucket_addition = match request_call.request.body {
+                    RequestBody::RegisterTopic{topic, enr: _, ticket: _} => HandlerOut::EstablishedTopic(*enr, connection_direction, topic),
+                    _ => HandlerOut::Established(*enr, connection_direction),
+                };
                 self.service_send
-                    .send(HandlerOut::Established(*enr, connection_direction))
+                    .send(kbucket_addition)
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
