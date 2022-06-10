@@ -497,37 +497,27 @@ impl Discv5 {
 
         async move {
             let mut all_found_ad_nodes = Vec::new();
-            // Use find_topic to find the Enrs the shortest XOR distance from the topic hash,
-            // and send the topic query to these nodes
-            let enrs = find_future
+
+            // the service will verify if this node is contactable, we just send it and
+            // await a response.
+            let (callback_send, callback_recv) = oneshot::channel();
+
+            let event = ServiceRequest::TopicQuery(topic_hash, callback_send);
+            let channel = channel
+                .as_ref()
+                .map_err(|_| RequestError::ServiceNotStarted)?;
+
+            // send the request
+            channel
+                .send(event)
                 .await
-                .map_err(|e| RequestError::TopicDistance(e.to_string()))?;
-
-            for enr in enrs.into_iter() {
-                // convert the ENR to a node_contact.
-                let node_contact = NodeContact::from(enr);
-
-                // the service will verify if this node is contactable, we just send it and
-                // await a response.
-                let (callback_send, callback_recv) = oneshot::channel();
-
-                let event = ServiceRequest::TopicQuery(node_contact, topic_hash, callback_send);
-                let channel = channel
-                    .as_ref()
-                    .map_err(|_| RequestError::ServiceNotStarted)?;
-
-                // send the request
-                channel
-                    .send(event)
-                    .await
-                    .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
-                // await the response
-                callback_recv
-                    .await
-                    .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
-                    .map(|ad_nodes| all_found_ad_nodes.push(ad_nodes))
-                    .ok();
-            }
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+                .map(|ad_nodes| all_found_ad_nodes.push(ad_nodes))
+                .ok();
             let all_found_ad_nodes = all_found_ad_nodes.into_iter().flatten().collect();
             Ok(all_found_ad_nodes)
         }

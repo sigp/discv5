@@ -115,6 +115,22 @@ where
         self.add(peer_iter, target)
     }
 
+    /// Adds a query to the pool that iterates towards the closest peers to the target.
+    pub fn add_topic_query<I>(
+        &mut self,
+        config: TopicQueryConfig,
+        target: TTarget,
+        peers: I,
+    ) -> QueryId
+    where
+        I: IntoIterator<Item = Key<TNodeId>>,
+    {
+        let target_key = target.key();
+        let topic_query = TopicQuery::with_config(config, target_key, peers);
+        let peer_iter = QueryPeerIter::Topic(topic_query);
+        self.add(peer_iter, target)
+    }
+
     fn add(&mut self, peer_iter: QueryPeerIter<TNodeId, TResult>, target: TTarget) -> QueryId {
         let id = QueryId(self.next_id);
         self.next_id = self.next_id.wrapping_add(1);
@@ -207,6 +223,7 @@ pub struct Query<TTarget, TNodeId, TResult> {
 enum QueryPeerIter<TNodeId, TResult> {
     FindNode(FindNodeQuery<TNodeId>),
     Predicate(PredicateQuery<TNodeId, TResult>),
+    Topic(TopicQuery<TNodeId>),
 }
 
 impl<TTarget, TNodeId, TResult> Query<TTarget, TNodeId, TResult>

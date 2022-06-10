@@ -163,11 +163,7 @@ pub enum ServiceRequest {
     /// discovered nodes as it traverses the DHT.
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
     /// Queries given node for nodes advertising a topic hash
-    TopicQuery(
-        NodeContact,
-        TopicHash,
-        oneshot::Sender<Result<Vec<Enr>, RequestError>>,
-    ),
+    TopicQuery(TopicHash, oneshot::Sender<Vec<Enr>>),
     /// RegisterTopic publishes this node as an advertiser for a topic at given node
     RegisterTopic(Topic),
     ActiveTopics(oneshot::Sender<Result<Ads, RequestError>>),
@@ -427,7 +423,7 @@ impl Service {
                                 error!("Failed to return the event stream channel");
                             }
                         }
-                        ServiceRequest::TopicQuery(node_contact, topic_hash, callback) => {
+                        ServiceRequest::TopicQuery(topic_hash, callback) => {
                             // If we look up the topic hash for the first time we initialise its kbuckets.
                             if !self.topics_kbuckets.contains_key(&topic_hash) {
                                 // NOTE: Currently we don't expose custom filter support in the configuration. Users can
@@ -468,7 +464,7 @@ impl Service {
                                 });
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
-                            self.topic_query(topic_hash, callback);
+                            self.start_topic_query(topic_hash, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic) => {
                             let topic_hash = topic.hash();
@@ -649,35 +645,63 @@ impl Service {
         }
     }
 
-    fn topic_query(&mut self, topic_hash: TopicHash, callback: oneshot::Sender<Result<Vec<Enr>, RequestError>>) {
+    fn register_topic(&mut self, topic_hash: TopicHash) {
+        // Placeholder for ad distribution logic, X random nodes from bucket at furthest distance
+        // are sent REGTOPICs, then decreasing by some number for each distance range approaching 0 (topic id).
         if let Some(kbuckets) = self.topics_kbuckets.clone().get_mut(&topic_hash) {
-            kbuckets
-                .iter()
-                .for_each(|entry| {
-                    self.topic_query_request(NodeContact::from(entry.node.value.clone()), topic_hash, callback);
-                });
+            kbuckets.iter().for_each(|entry| {
+                let local_enr = self.local_enr.read().clone();
+                self.reg_topic_request(
+                    NodeContact::from(entry.node.value.clone()),
+                    topic_hash,
+                    local_enr,
+                    None,
+                )
+            });
         } else {
             debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
         }
     }
 
-    fn register_topic(&mut self, topic_hash: TopicHash) {
+    /// Internal function that starts a query.
+    fn start_topic_query(
+        &mut self,
+        topic_hash: TopicHash,
+        callback: Option<oneshot::Sender<Vec<Enr>>>,
+    ) {
+        let mut target = QueryInfo {
+            query_type: QueryType::Topic(NodeId::new(&topic_hash.as_bytes())),
+            untrusted_enrs: Default::default(),
+            // Placeholder, how many ads to request per peer
+            distances_to_request: DISTANCES_TO_REQUEST_PER_PEER,
+            callback,
+        };
+
         // Placeholder for ad distribution logic, X random nodes from bucket at furthest distance
         // are sent REGTOPICs, then decreasing by some number for each distance range approaching 0 (topic id).
-        if let Some(kbuckets) = self.topics_kbuckets.clone().get_mut(&topic_hash) {
-            kbuckets
-                .iter()
-                .for_each(|entry| {
-                    let local_enr = self.local_enr.read().clone();
-                    self.reg_topic_request(
-                        NodeContact::from(entry.node.value.clone()),
-                        topic_hash,
-                        local_enr,
-                        None,
-                    )
-                });
+        let mut target_peers = Vec::new();
+        if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
+            for entry in kbuckets.iter() {
+                // Add the known ENR's to the untrusted list
+                target.untrusted_enrs.push(*entry.node.value);
+                // Add the key to the list for the query
+                target_peers.push(entry.node.key);
+            }
         } else {
             debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
+        }
+
+        if target_peers.is_empty() {
+            warn!("No known_closest_peers found. Return empty result without sending query.");
+            if let Some(callback) = target.callback {
+                if callback.send(vec![]).is_err() {
+                    warn!("Failed to callback");
+                }
+            }
+        } else {
+            let query_config = FindTopicQueryConfig::new_from_config(&self.config);
+            self.queries
+                .add_topic_query(query_config, target, target_peers);
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::{kbucket::Key, rpc::RequestBody, Enr};
+use crate::{advertisement::topic::TopicHash, kbucket::Key, rpc::RequestBody, Enr};
 use enr::NodeId;
 use sha2::digest::generic_array::GenericArray;
 use smallvec::SmallVec;
@@ -25,6 +25,7 @@ pub struct QueryInfo {
 pub enum QueryType {
     /// The user requested a `FIND_NODE` query to be performed. It should be reported when finished.
     FindNode(NodeId),
+    Topic(NodeId),
 }
 
 impl QueryInfo {
@@ -36,6 +37,9 @@ impl QueryInfo {
                     .ok_or("Requested a node find itself")?;
                 RequestBody::FindNode { distances }
             }
+            QueryType::Topic(key) => RequestBody::TopicQuery {
+                topic: TopicHash::from_raw(key.raw()),
+            },
         };
 
         Ok(request)
@@ -45,7 +49,7 @@ impl QueryInfo {
 impl crate::query_pool::TargetKey<NodeId> for QueryInfo {
     fn key(&self) -> Key<NodeId> {
         match self.query_type {
-            QueryType::FindNode(ref node_id) => {
+            QueryType::FindNode(ref node_id) | QueryType::Topic(ref node_id) => {
                 Key::new_raw(*node_id, *GenericArray::from_slice(&node_id.raw()))
             }
         }
