@@ -447,13 +447,30 @@ impl Service {
                                     (None, None)
                                 };
 
-                                let kbuckets = KBucketsTable::new(
+                                let mut kbuckets = KBucketsTable::new(
                                     NodeId::new(&topic_hash.as_bytes()).into(),
                                     Duration::from_secs(60),
                                     self.config.incoming_bucket_limit,
                                     table_filter,
                                     bucket_filter,
                                 );
+                                self.kbuckets.write().iter().for_each(|entry| {
+                                    match kbuckets.insert_or_update(
+                                        entry.node.key,
+                                        entry.node.value.clone(),
+                                        NodeStatus {
+                                            state: ConnectionState::Disconnected,
+                                            direction: ConnectionDirection::Incoming,
+                                        },
+                                    ) {
+                                        InsertResult::Failed(FailureReason::BucketFull) => error!("Table full"),
+                                        InsertResult::Failed(FailureReason::BucketFilter) => error!("Failed bucket filter"),
+                                        InsertResult::Failed(FailureReason::TableFilter) => error!("Failed table filter"),
+                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => error!("Invalid self update"),
+                                        InsertResult::Failed(_) => error!("Failed to insert ENR"),
+                                        _  => {},
+                                    }
+                                });
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                                 METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
                                 self.register_topic(topic_hash);
@@ -573,7 +590,7 @@ impl Service {
                 }
                 _ = publish_topics.tick() => {
                     // Topics are republished at regular intervals.
-                    self.topics.clone().keys().for_each(|topic_hash| self.register_topic(*topic_hash));
+                    //self.topics.clone().keys().for_each(|topic_hash| self.register_topic(*topic_hash));
                 }
                 Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
                     // No particular selection is carried out at this stage of implementation, the choice of node to give
