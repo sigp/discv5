@@ -448,7 +448,7 @@ impl Service {
                                 };
 
                                 let kbuckets = KBucketsTable::new(
-                                    self.local_enr.read().node_id().into(),
+                                    NodeId::new(&topic_hash.as_bytes()).into(),
                                     Duration::from_secs(60),
                                     self.config.incoming_bucket_limit,
                                     table_filter,
