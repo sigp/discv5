@@ -428,7 +428,47 @@ impl Service {
                             }
                         }
                         ServiceRequest::TopicQuery(node_contact, topic_hash, callback) => {
-                            self.topic_query_request(node_contact, topic_hash, callback);
+                            // If we look up the topic hash for the first time we initialise its kbuckets.
+                            if !self.topics_kbuckets.contains_key(&topic_hash) {
+                                // NOTE: Currently we don't expose custom filter support in the configuration. Users can
+                                // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
+                                // may expose this functionality to the users if there is demand for it.
+                                let (table_filter, bucket_filter) = if self.config.ip_limit {
+                                    (
+                                        Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+                                        Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+                                    )
+                                } else {
+                                    (None, None)
+                                };
+
+                                let mut kbuckets = KBucketsTable::new(
+                                    NodeId::new(&topic_hash.as_bytes()).into(),
+                                    Duration::from_secs(60),
+                                    self.config.incoming_bucket_limit,
+                                    table_filter,
+                                    bucket_filter,
+                                );
+                                self.kbuckets.write().iter().for_each(|entry| {
+                                    match kbuckets.insert_or_update(
+                                        entry.node.key,
+                                        entry.node.value.clone(),
+                                        NodeStatus {
+                                            state: ConnectionState::Disconnected,
+                                            direction: ConnectionDirection::Incoming,
+                                        },
+                                    ) {
+                                        InsertResult::Failed(FailureReason::BucketFull) => error!("Table full"),
+                                        InsertResult::Failed(FailureReason::BucketFilter) => error!("Failed bucket filter"),
+                                        InsertResult::Failed(FailureReason::TableFilter) => error!("Failed table filter"),
+                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => error!("Invalid self update"),
+                                        InsertResult::Failed(_) => error!("Failed to insert ENR"),
+                                        _  => {},
+                                    }
+                                });
+                                self.topics_kbuckets.insert(topic_hash, kbuckets);
+                            }
+                            self.topic_query(topic_hash, callback);
                         }
                         ServiceRequest::RegisterTopic(topic) => {
                             let topic_hash = topic.hash();
@@ -609,17 +649,28 @@ impl Service {
         }
     }
 
-    fn register_topic(&mut self, topic_hash: TopicHash) {
-        // Placeholder for ad distribution logic, X random nodes from bucket at furthest distance
-        // are sent REGTOPICs, then decreasing by half for each distance range approaching 0 (topic id).
+    fn topic_query(&mut self, topic_hash: TopicHash, callback: oneshot::Sender<Result<Vec<Enr>, RequestError>>) {
         if let Some(kbuckets) = self.topics_kbuckets.clone().get_mut(&topic_hash) {
             kbuckets
                 .iter()
-                .map(|entry| entry.node.value.clone())
-                .for_each(|remote_enr| {
+                .for_each(|entry| {
+                    self.topic_query_request(NodeContact::from(entry.node.value.clone()), topic_hash, callback);
+                });
+        } else {
+            debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
+        }
+    }
+
+    fn register_topic(&mut self, topic_hash: TopicHash) {
+        // Placeholder for ad distribution logic, X random nodes from bucket at furthest distance
+        // are sent REGTOPICs, then decreasing by some number for each distance range approaching 0 (topic id).
+        if let Some(kbuckets) = self.topics_kbuckets.clone().get_mut(&topic_hash) {
+            kbuckets
+                .iter()
+                .for_each(|entry| {
                     let local_enr = self.local_enr.read().clone();
                     self.reg_topic_request(
-                        NodeContact::from(remote_enr),
+                        NodeContact::from(entry.node.value.clone()),
                         topic_hash,
                         local_enr,
                         None,
