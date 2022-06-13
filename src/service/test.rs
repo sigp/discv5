@@ -104,6 +104,7 @@ async fn build_service(
         topics_kbuckets: HashMap::new(),
         active_topics: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
         ticket_pools: TicketPools::default(),
+        active_topic_queries: FuturesUnordered::new(),
         exit,
         config,
     }

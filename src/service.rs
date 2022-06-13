@@ -43,17 +43,18 @@ use aes_gcm::{
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
-use futures::prelude::*;
+use futures::{stream::futures_unordered::FuturesUnordered, prelude::*};
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rand::Rng;
 use rpc::*;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{Error, ErrorKind},
     net::SocketAddr,
+    pin::Pin,
     sync::{atomic::Ordering, Arc},
-    task::Poll,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -243,6 +244,39 @@ pub struct Service {
 
     /// Locally issued tickets returned by nodes pending registration for free local ad slots.
     ticket_pools: TicketPools,
+
+    ///
+    active_topic_queries: FuturesUnordered<ActiveTopicQuery>,
+}
+pub struct ActiveTopicQuery {
+    queried_peers: HashMap<NodeId, bool>,
+    num_results: usize,
+    // If the same ad enr is returned by two peers it is not counted.
+    results: HashSet<Enr>,
+    time_out: Duration,
+    start: Instant,
+    callback: oneshot::Sender<Vec<Enr>>,
+}
+
+pub enum TopicQueryState {
+    Finished(HashSet<Enr>),
+    Unsatisifed(Vec<NodeId>),
+}
+
+impl Future for ActiveTopicQuery {
+    type Output = TopicQueryState;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.results.len() >= self.num_results || self.start.elapsed() >= self.time_out {
+            Poll::Ready(TopicQueryState::Finished(self.results))
+        } else {
+            let peers = self.queried_peers.into_iter().filter(|(peer, return_status)| *return_status).map(|(peer, _)| peer).collect::<Vec<NodeId>>();
+            if peers.len() >= self.queried_peers.len() {
+                Poll::Ready(TopicQueryState::Unsatisifed(peers))
+            } else {
+                Poll::Pending
+            }
+        }
+    }
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -371,6 +405,7 @@ impl Service {
                     topics_kbuckets: HashMap::new(),
                     active_topics,
                     ticket_pools: TicketPools::default(),
+                    active_topic_queries: FuturesUnordered::new(),
                     exit,
                     config: config.clone(),
                 };
@@ -464,7 +499,7 @@ impl Service {
                                 });
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
-                            self.start_topic_query(topic_hash, Some(callback));
+                            self.send_topic_queries(topic_hash, callback);
                         }
                         ServiceRequest::RegisterTopic(topic) => {
                             let topic_hash = topic.hash();
@@ -509,7 +544,7 @@ impl Service {
                                 });
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                                 METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
-                                self.register_topic(topic_hash);
+                                self.send_register_topics(topic_hash);
                             }
                         }
                         ServiceRequest::ActiveTopics(callback) => {
@@ -645,7 +680,7 @@ impl Service {
         }
     }
 
-    fn register_topic(&mut self, topic_hash: TopicHash) {
+    fn send_register_topics(&mut self, topic_hash: TopicHash) {
         // Placeholder for ad distribution logic, X random nodes from bucket at furthest distance
         // are sent REGTOPICs, then decreasing by some number for each distance range approaching 0 (topic id).
         if let Some(kbuckets) = self.topics_kbuckets.clone().get_mut(&topic_hash) {
@@ -664,44 +699,23 @@ impl Service {
     }
 
     /// Internal function that starts a query.
-    fn start_topic_query(
+    fn send_topic_queries(
         &mut self,
         topic_hash: TopicHash,
-        callback: Option<oneshot::Sender<Vec<Enr>>>,
+        callback: oneshot::Sender<Vec<Enr>>,
     ) {
-        let mut target = QueryInfo {
-            query_type: QueryType::Topic(NodeId::new(&topic_hash.as_bytes())),
-            untrusted_enrs: Default::default(),
-            // Placeholder, how many ads to request per peer
-            distances_to_request: DISTANCES_TO_REQUEST_PER_PEER,
-            callback,
-        };
-
         // Placeholder for ad distribution logic, X random nodes from bucket at furthest distance
         // are sent REGTOPICs, then decreasing by some number for each distance range approaching 0 (topic id).
-        let mut target_peers = Vec::new();
-        if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
-            for entry in kbuckets.iter() {
-                // Add the known ENR's to the untrusted list
-                target.untrusted_enrs.push(*entry.node.value);
-                // Add the key to the list for the query
-                target_peers.push(entry.node.key);
-            }
+        if let Some(kbuckets) = self.topics_kbuckets.clone().get_mut(&topic_hash) {
+            let peers = kbuckets.iter().filter_map(|entry| !self.active_topic_query_peers.entry(&topic_hash).contains_entry.node.value.clone()).for_each(|entry| {
+                let local_enr = self.local_enr.read().clone();
+                self.topic_query_request(
+                    NodeContact::from(entry.node.value.clone()),
+                    topic_hash,
+                )
+            });
         } else {
             debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
-        }
-
-        if target_peers.is_empty() {
-            warn!("No known_closest_peers found. Return empty result without sending query.");
-            if let Some(callback) = target.callback {
-                if callback.send(vec![]).is_err() {
-                    warn!("Failed to callback");
-                }
-            }
-        } else {
-            let query_config = FindTopicQueryConfig::new_from_config(&self.config);
-            self.queries
-                .add_topic_query(query_config, target, target_peers);
         }
     }
 
@@ -1098,7 +1112,7 @@ impl Service {
                             "Nodes Response: {} of {} received",
                             current_response.count, total
                         );
-                        // if there are more requests coming, store the nodes and wait for
+                        // if there are more responses coming, store the nodes and wait for
                         // another response
                         // We allow for implementations to send at a minimum 3 nodes per response.
                         // We allow for the number of nodes to be returned as the maximum we emit.
@@ -1133,7 +1147,15 @@ impl Service {
                     // ensure any mapping is removed in this rare case
                     self.active_nodes_responses.remove(&node_id);
 
-                    self.discovered(&node_id, nodes, active_request.query_id);
+                    match active_request.request_body {
+                        RequestBody::TopicQuery{ topic } => {
+                            if let Some(results) = self.topic_queries_results.get_mut(topic_hash) {
+                                results.insert(nodes);
+                            }
+                        },
+                        RequestBody::FindNode{ .. } => self.discovered(&node_id, nodes, active_request.query_id),
+                        _ => debug_unreachable!("Only TOPICQUERY and FINDNODE requests expect NODES response")
+                    }
                 }
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
@@ -1352,7 +1374,6 @@ impl Service {
         &mut self,
         contact: NodeContact,
         topic: TopicHash,
-        callback: oneshot::Sender<Result<Vec<Enr>, RequestError>>,
     ) {
         let request_body = RequestBody::TopicQuery { topic };
 
@@ -1360,7 +1381,7 @@ impl Service {
             contact,
             request_body,
             query_id: None,
-            callback: Some(CallbackResponse::Topic(callback)),
+            callback: None,
         };
         self.send_rpc_request(active_request);
     }
