@@ -869,11 +869,11 @@ impl Ticket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use enr::EnrBuilder;
     use aes_gcm::{
         aead::{generic_array::GenericArray, Aead, NewAead, Payload},
         Aes128Gcm,
     };
+    use enr::EnrBuilder;
 
     #[test]
     fn ref_test_encode_request_ping() {
