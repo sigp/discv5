@@ -1,8 +1,4 @@
 use crate::advertisement::topic::TopicHash;
-use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
-    Aes128Gcm,
-};
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
@@ -874,6 +870,10 @@ impl Ticket {
 mod tests {
     use super::*;
     use enr::EnrBuilder;
+    use aes_gcm::{
+        aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+        Aes128Gcm,
+    };
 
     #[test]
     fn ref_test_encode_request_ping() {
