@@ -181,7 +181,7 @@ async fn encrypt_decrypt_ticket() {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
         .ip(ip)
-        .udp(10006)
+        .udp4(10006)
         .build(&enr_key)
         .unwrap();
 
@@ -211,7 +211,7 @@ async fn encrypt_decrypt_ticket() {
     let port = 6666;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
     let node_id = enr.node_id();
 
     let ticket = Ticket::new(
