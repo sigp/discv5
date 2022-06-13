@@ -341,8 +341,16 @@ mod tests {
         let node1_key = CombinedKey::generate_secp256k1();
         let node2_key = CombinedKey::generate_secp256k1();
 
-        let node1_enr = EnrBuilder::new("v4").build(&node1_key).unwrap();
-        let node2_enr = EnrBuilder::new("v4").build(&node2_key).unwrap();
+        let node1_enr = EnrBuilder::new("v4")
+            .ip("127.0.0.1".parse().unwrap())
+            .udp4(9000)
+            .build(&node1_key)
+            .unwrap();
+        let node2_enr = EnrBuilder::new("v4")
+            .ip("127.0.0.1".parse().unwrap())
+            .udp4(9000)
+            .build(&node2_key)
+            .unwrap();
 
         let challenge_data = vec![1; 63];
         let challenge_data = ChallengeData::try_from(challenge_data.as_slice()).unwrap();
