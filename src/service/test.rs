@@ -185,7 +185,7 @@ async fn encrypt_decrypt_ticket() {
         .build(&enr_key)
         .unwrap();
 
-    let socket_addr = enr.udp_socket().unwrap();
+    let socket_addr = enr.udp4_socket().unwrap();
 
     let service = build_service(
         Arc::new(RwLock::new(enr)),
