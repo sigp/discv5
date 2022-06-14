@@ -693,11 +693,11 @@ impl Handler {
                         topic,
                         enr: _,
                         ticket: _,
-                    } => HandlerOut::EstablishedTopic(*enr, connection_direction, topic),
-                    _ => HandlerOut::Established(*enr, connection_direction),
+                    } => HandlerOut::EstablishedTopic(enr, connection_direction, topic),
+                    _ => HandlerOut::Established(enr, connection_direction),
                 };
                 self.service_send
-                    .send(HandlerOut::Established(enr, connection_direction))
+                    .send(kbucket_addition)
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }

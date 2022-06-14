@@ -101,6 +101,9 @@ pub struct Discv5Config {
     /// all of the nodes in the kbuckets.
     pub topic_radius: u64,
 
+    pub topic_query_timeout: Duration,
+    pub topics_num_results: usize,
+
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
@@ -142,6 +145,8 @@ impl Default for Discv5Config {
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             topic_radius: 256,
+            topic_query_timeout: Duration::from_secs(60),
+            topics_num_results: 16,
             ip_mode: IpMode::default(),
             executor: None,
         }

@@ -507,8 +507,6 @@ impl Discv5 {
         &self,
         topic_hash: TopicHash,
     ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
-        let find_future = self.find_closest_nodes_to_topic(topic_hash);
-        let ip_mode = self.config.ip_mode;
         let channel = self.clone_channel();
 
         async move {
@@ -569,7 +567,6 @@ impl Discv5 {
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
         let topic = Topic::new(topic);
         let channel = self.clone_channel();
-        let ip_mode = self.config.ip_mode;
 
         async move {
             let channel = channel

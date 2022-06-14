@@ -100,7 +100,10 @@ async fn build_service(
         topics_kbuckets: HashMap::new(),
         active_topics: Ads::new(Duration::from_secs(60 * 15), 100, 50000).unwrap(),
         ticket_pools: TicketPools::default(),
-        active_topic_queries: FuturesUnordered::new(),
+        active_topic_queries: ActiveTopicQueries::new(
+            config.topic_query_timeout,
+            config.topics_num_results,
+        ),
         exit,
         config,
     }
@@ -192,7 +195,7 @@ async fn encrypt_decrypt_ticket() {
     let service = build_service(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key)),
-        socket_addr,
+        socket_addr.into(),
         false,
     )
     .await;
