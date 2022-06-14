@@ -12,7 +12,7 @@ async fn insert_same_node() {
     let port = 6666;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(2), 10, 50).unwrap();
 
@@ -36,12 +36,12 @@ async fn insert_ad_and_get_nodes() {
     let port = 6666;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
     let port = 5000;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr_2 = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(2), 10, 50).unwrap();
 
@@ -90,7 +90,7 @@ async fn ticket_wait_time_duration() {
     let port = 6666;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(3), 1, 3).unwrap();
 
@@ -112,12 +112,12 @@ async fn ticket_wait_time_full_table() {
     let port = 6666;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
     let port = 5000;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr_2 = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 3).unwrap();
 
@@ -150,12 +150,12 @@ async fn ticket_wait_time_full_topic() {
     let port = 6666;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
     let port = 5000;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr_2 = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr_2 = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 4).unwrap();
 

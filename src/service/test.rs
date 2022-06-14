@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use super::*;
+use std::net::IpAddr;
 
 use crate::{
     handler::Handler,
@@ -15,12 +16,7 @@ use crate::{
 };
 use enr::{CombinedKey, EnrBuilder};
 use parking_lot::RwLock;
-use std::{
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 fn _connected_state() -> NodeStatus {
@@ -114,26 +110,26 @@ async fn build_service(
 async fn test_updating_connection_on_ping() {
     init();
     let enr_key1 = CombinedKey::generate_secp256k1();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(10001)
+        .ip4(ip)
+        .udp4(10001)
         .build(&enr_key1)
         .unwrap();
-    let ip2: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip2 = "127.0.0.1".parse().unwrap();
     let enr_key2 = CombinedKey::generate_secp256k1();
     let enr2 = EnrBuilder::new("v4")
-        .ip(ip2)
-        .udp(10002)
+        .ip4(ip2)
+        .udp4(10002)
         .build(&enr_key2)
         .unwrap();
 
-    let socket_addr = enr.udp_socket().unwrap();
+    let socket_addr = enr.udp4_socket().unwrap();
 
     let mut service = build_service(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
-        socket_addr,
+        socket_addr.into(),
         false,
     )
     .await;
@@ -155,13 +151,13 @@ async fn test_updating_connection_on_ping() {
         id: RequestId(vec![1]),
         body: rpc::ResponseBody::Pong {
             enr_seq: 2,
-            ip: ip2,
+            ip: ip2.into(),
             port: 10002,
         },
     };
 
-    let node_contact = NodeContact::Enr(Box::new(enr2));
-    let expected_return_addr = node_contact.node_address().unwrap();
+    let node_contact: NodeContact = enr2.into();
+    let expected_return_addr = node_contact.node_address();
 
     service.active_requests.insert(
         RequestId(vec![1]),
@@ -187,11 +183,11 @@ async fn encrypt_decrypt_ticket() {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
         .ip(ip)
-        .udp(10006)
+        .udp4(10006)
         .build(&enr_key)
         .unwrap();
 
-    let socket_addr = enr.udp_socket().unwrap();
+    let socket_addr = enr.udp4_socket().unwrap();
 
     let service = build_service(
         Arc::new(RwLock::new(enr)),
@@ -217,7 +213,7 @@ async fn encrypt_decrypt_ticket() {
     let port = 6666;
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
     let node_id = enr.node_id();
 
     let ticket = Ticket::new(

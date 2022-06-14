@@ -1,8 +1,4 @@
 use crate::advertisement::topic::TopicHash;
-use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
-    Aes128Gcm,
-};
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
@@ -340,7 +336,7 @@ impl std::fmt::Display for ResponseBody {
                 enr_seq, ip, port
             ),
             ResponseBody::Nodes { total, nodes } => {
-                let _ = write!(f, "NODES: total: {}, Nodes: [", total);
+                write!(f, "NODES: total: {}, Nodes: [", total)?;
                 let mut first = true;
                 for id in nodes {
                     if !first {
@@ -873,6 +869,10 @@ impl Ticket {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aes_gcm::{
+        aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+        Aes128Gcm,
+    };
     use enr::EnrBuilder;
 
     #[test]
@@ -1065,13 +1065,13 @@ mod tests {
     fn encode_decode_nodes_response() {
         let key = CombinedKey::generate_secp256k1();
         let enr1 = EnrBuilder::new("v4")
-            .ip("127.0.0.1".parse().unwrap())
-            .udp(500)
+            .ip4("127.0.0.1".parse().unwrap())
+            .udp4(500)
             .build(&key)
             .unwrap();
         let enr2 = EnrBuilder::new("v4")
-            .ip("10.0.0.1".parse().unwrap())
-            .tcp(8080)
+            .ip4("10.0.0.1".parse().unwrap())
+            .tcp4(8080)
             .build(&key)
             .unwrap();
         let enr3 = EnrBuilder::new("v4")
@@ -1117,7 +1117,7 @@ mod tests {
         let port = 5000;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let key = CombinedKey::generate_secp256k1();
-        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
@@ -1139,7 +1139,7 @@ mod tests {
         let port = 5000;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let key = CombinedKey::generate_secp256k1();
-        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
         let node_id = enr.node_id();
         let ticket = Ticket::new(
@@ -1175,7 +1175,7 @@ mod tests {
 
         let key = CombinedKey::generate_secp256k1();
 
-        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
         let node_id = enr.node_id();
         let ticket = Ticket::new(
             node_id,
@@ -1199,7 +1199,7 @@ mod tests {
 
         let key = CombinedKey::generate_secp256k1();
 
-        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
         let node_id = enr.node_id();
         let ticket = Ticket::new(
             node_id,
@@ -1248,7 +1248,7 @@ mod tests {
 
         let key = CombinedKey::generate_secp256k1();
 
-        let enr = EnrBuilder::new("v4").ip(ip).udp(port).build(&key).unwrap();
+        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
         let node_id = enr.node_id();
         let ticket = Ticket::new(
             node_id,

@@ -29,7 +29,7 @@ use crate::{
         NodeStatus, UpdateResult,
     },
     metrics::METRICS,
-    node_info::{NodeAddress, NodeContact},
+    node_info::{NodeAddress, NodeContact, NonContactable},
     packet::MAX_PACKET_SIZE,
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
@@ -67,6 +67,10 @@ mod ip_vote;
 mod query_info;
 mod test;
 
+/// The number of distances (buckets) we simultaneously request from each peer.
+/// NOTE: This must not be larger than 127.
+pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
+
 /// Request type for Protocols using `TalkReq` message.
 ///
 /// Automatically responds with an empty body on drop if
@@ -93,10 +97,12 @@ impl Drop for TalkRequest {
         };
 
         debug!("Sending empty TALK response to {}", self.node_address);
-        let _ = sender.send(HandlerIn::Response(
+        if let Err(e) = sender.send(HandlerIn::Response(
             self.node_address.clone(),
             Box::new(response),
-        ));
+        )) {
+            warn!("Failed to send empty talk response {}", e)
+        }
     }
 }
 
@@ -137,9 +143,6 @@ impl TalkRequest {
         Ok(())
     }
 }
-
-/// The number of distances (buckets) we simultaneously request from each peer.
-pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
 /// The max wait time accpeted for tickets.
 const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
@@ -578,11 +581,15 @@ impl Service {
                         HandlerOut::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr)));
+                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
+                                    warn!("Failed to send whoareyou {}", e);
+                                };
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                let _ = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None));
+                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
+                                    warn!("Failed to send who are you to unknonw enr peer {}", e);
+                                }
                             }
                         }
                         HandlerOut::RequestFailed(request_id, error) => {
@@ -670,8 +677,8 @@ impl Service {
                     let ticket_pool = ticket_pool.values().step_by(random_index).next();
                     if let Some((node_record, req_id, _ticket)) = ticket_pool.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
                     self.ads.insert(node_record.clone(), topic).ok();
-                        NodeContact::from(node_record).node_address().map(|node_address| {
-                            self.send_regconfirmation_response(node_address, req_id, topic);
+                        NodeContact::try_from_enr(node_record, self.config.ip_mode).map(|contact| {
+                            self.send_regconfirmation_response(contact.node_address(), req_id, topic);
                         }).ok();
                         METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
                     }
@@ -840,20 +847,32 @@ impl Service {
                     kbucket::Entry::Present(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            to_request_enr = Some(enr.into());
+                            to_request_enr = Some(enr);
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {
                             let enr = entry.value().clone();
-                            to_request_enr = Some(enr.into());
+                            to_request_enr = Some(enr);
                         }
                     }
                     // don't know of the ENR, request the update
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    self.request_enr(enr, None);
+                    match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+                        Ok(contact) => {
+                            self.request_enr(contact, None);
+                        }
+                        Err(NonContactable { enr }) => {
+                            error!(
+                                "Stored ENR is not contactable! This should never happen {}",
+                                enr
+                            );
+                            #[cfg(debug_assertions)]
+                            panic!("Stored ENR is not contactable. {}", enr);
+                        }
+                    }
                 }
 
                 // build the PONG response
@@ -867,9 +886,12 @@ impl Service {
                     },
                 };
                 debug!("Sending PONG response to {}", node_address);
-                let _ = self
+                if let Err(e) = self
                     .handler_send
-                    .send(HandlerIn::Response(node_address, Box::new(response)));
+                    .send(HandlerIn::Response(node_address, Box::new(response)))
+                {
+                    warn!("Failed to send response {}", e)
+                }
             }
             RequestBody::Talk { protocol, request } => {
                 let req = TalkRequest {
@@ -885,7 +907,7 @@ impl Service {
             RequestBody::RegisterTopic { topic, enr, ticket } => {
                 // Drop if request tries to advertise another node than sender
                 if enr.node_id() == node_address.node_id
-                    && enr.udp_socket() == Some(node_address.socket_addr)
+                    && enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr)
                 {
                     let wait_time = self
                         .ads
@@ -995,21 +1017,26 @@ impl Service {
             );
 
             // Check that the responder matches the expected request
-            if let Ok(request_node_address) = active_request.contact.node_address() {
-                if request_node_address != node_address {
-                    warn!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", request_node_address, node_address, id);
-                    return;
-                }
+
+            let expected_node_address = active_request.contact.node_address();
+            if expected_node_address != node_address {
+                error!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
+                #[cfg(debug_assertions)]
+                panic!("Handler returned a response not matching the used socket addr");
+                #[cfg(not(debug_assertions))]
+                return;
             }
 
-            let node_id = active_request.contact.node_id();
             if !response.match_request(&active_request.request_body) {
                 warn!(
                     "Node gave an incorrect response type. Ignoring response from: {}",
-                    active_request.contact
+                    node_address
                 );
                 return;
             }
+
+            let node_id = node_address.node_id;
+
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
                     // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can be returned. Datagrams have a max
@@ -1046,10 +1073,12 @@ impl Service {
                                 active_request.contact
                             );
                         }
-                        let response = nodes.pop().ok_or_else(|| {
-                            RequestError::InvalidEnr("Peer did not return an ENR".into())
-                        });
-                        let _ = callback.send(response);
+                        let response = nodes
+                            .pop()
+                            .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"));
+                        if let Err(e) = callback.send(response) {
+                            warn!("Failed to send response in callback {:?}", e)
+                        }
                         return;
                     }
 
@@ -1063,18 +1092,14 @@ impl Service {
                         if nodes.len() > 1 {
                             warn!(
                                 "Peer returned more than one ENR for itself. Blacklisting {}",
-                                active_request.contact
+                                node_address
                             );
+                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                            nodes.retain(|enr| {
+                                peer_key.log2_distance(&enr.node_id().into()).is_none()
+                            });
                         }
-                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST.write().ban(
-                            active_request
-                                .contact
-                                .node_address()
-                                .expect("Sanitized request"),
-                            ban_timeout,
-                        );
-                        nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
                     } else {
                         let before_len = nodes.len();
                         nodes.retain(|enr| {
@@ -1091,13 +1116,7 @@ impl Service {
                                 active_request.contact
                             );
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(
-                                active_request
-                                    .contact
-                                    .node_address()
-                                    .expect("Sanitized request"),
-                                ban_timeout,
-                            );
+                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         }
                     }
 
@@ -1160,10 +1179,7 @@ impl Service {
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
-                    //
-                    // only attempt the majority-update if the peer supplies an ipv4 address to
-                    // mitigate https://github.com/sigp/lighthouse/issues/2215
-                    //
+
                     // Only count votes that from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
                     let should_count = match self.kbuckets.write().entry(&key) {
@@ -1175,23 +1191,58 @@ impl Service {
                         _ => false,
                     };
 
-                    if should_count && socket.is_ipv4() {
-                        let local_socket = self.local_enr.read().udp_socket();
+                    if should_count {
+                        // get the advertised local addresses
+                        let (local_ip4_socket, local_ip6_socket) = {
+                            let local_enr = self.local_enr.read();
+                            (local_enr.udp4_socket(), local_enr.udp6_socket())
+                        };
+
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
-                            if let Some(majority_socket) = ip_votes.majority() {
-                                if Some(majority_socket) != local_socket {
-                                    info!("Local UDP socket updated to: {}", majority_socket);
-                                    self.send_event(Discv5Event::SocketUpdated(majority_socket));
-                                    // Update the UDP socket
-                                    if self
+                            let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
+
+                            let new_ip4 = maybe_ip4_majority.and_then(|majority| {
+                                if Some(majority) != local_ip4_socket {
+                                    Some(majority)
+                                } else {
+                                    None
+                                }
+                            });
+                            let new_ip6 = maybe_ip6_majority.and_then(|majority| {
+                                if Some(majority) != local_ip6_socket {
+                                    Some(majority)
+                                } else {
+                                    None
+                                }
+                            });
+
+                            if new_ip4.is_some() || new_ip6.is_some() {
+                                let mut updated = false;
+
+                                // Check if our advertised IPV6 address needs to be updated.
+                                if let Some(new_ip6) = new_ip6 {
+                                    info!("Local UDP ip6 socket updated to: {}", new_ip6);
+                                    let new_ip6: SocketAddr = new_ip6.into();
+                                    self.send_event(Discv5Event::SocketUpdated(new_ip6));
+                                    updated |= self
                                         .local_enr
                                         .write()
-                                        .set_udp_socket(majority_socket, &self.enr_key.read())
-                                        .is_ok()
-                                    {
-                                        self.ping_connected_peers();
-                                    }
+                                        .set_udp_socket(new_ip6, &self.enr_key.read())
+                                        .is_ok();
+                                }
+                                if let Some(new_ip4) = new_ip4 {
+                                    info!("Local UDP socket updated to: {}", new_ip4);
+                                    let new_ip4: SocketAddr = new_ip4.into();
+                                    self.send_event(Discv5Event::SocketUpdated(new_ip4));
+                                    updated |= self
+                                        .local_enr
+                                        .write()
+                                        .set_udp_socket(new_ip4, &self.enr_key.read())
+                                        .is_ok();
+                                }
+                                if updated {
+                                    self.ping_connected_peers();
                                 }
                             }
                         }
@@ -1218,7 +1269,9 @@ impl Service {
                     // Send the response to the user
                     match active_request.callback {
                         Some(CallbackResponse::Talk(callback)) => {
-                            let _ = callback.send(Ok(response));
+                            if let Err(e) = callback.send(Ok(response)) {
+                                warn!("Failed to send callback response {:?}", e)
+                            };
                         }
                         _ => error!("Invalid callback for response"),
                     }
@@ -1240,8 +1293,8 @@ impl Service {
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
-                    if let NodeContact::Enr(enr) = active_request.contact {
-                        self.active_topics.insert(*enr, topic).ok();
+                    if let Some(enr) = active_request.contact.enr() {
+                        self.active_topics.insert(enr, topic).ok();
                         METRICS
                             .active_ads
                             .store(self.active_topics.len(), Ordering::Relaxed);
@@ -1263,16 +1316,21 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr) {
-        let request_body = RequestBody::Ping {
-            enr_seq: self.local_enr.read().seq(),
-        };
-        let active_request = ActiveRequest {
-            contact: enr.into(),
-            request_body,
-            query_id: None,
-            callback: None,
-        };
-        self.send_rpc_request(active_request);
+        match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+            Ok(contact) => {
+                let request_body = RequestBody::Ping {
+                    enr_seq: self.local_enr.read().seq(),
+                };
+                let active_request = ActiveRequest {
+                    contact,
+                    request_body,
+                    query_id: None,
+                    callback: None,
+                };
+                self.send_rpc_request(active_request);
+            }
+            Err(NonContactable { enr }) => error!("Trying to ping a non-contactable peer {}", enr),
+        }
     }
 
     /// Ping all peers that are connected in the routing table.
@@ -1532,9 +1590,12 @@ impl Service {
                 query,
                 node_address.node_id
             );
-            let _ = self
+            if let Err(e) = self
                 .handler_send
-                .send(HandlerIn::Response(node_address, Box::new(response)));
+                .send(HandlerIn::Response(node_address, Box::new(response)))
+            {
+                warn!("Failed to send empty FINDNODES response {}", e)
+            }
         } else {
             // build the NODES response
             let mut to_send_nodes: Vec<Vec<Enr>> = Vec::new();
@@ -1590,10 +1651,12 @@ impl Service {
                     node_address,
                     response
                 );
-                let _ = self.handler_send.send(HandlerIn::Response(
+                if let Err(e) = self.handler_send.send(HandlerIn::Response(
                     node_address.clone(),
                     Box::new(response),
-                ));
+                )) {
+                    warn!("Failed to send FINDNODES response {}", e)
+                }
             }
         }
     }
@@ -1607,15 +1670,32 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
-            let active_request = ActiveRequest {
-                contact: enr.into(),
-                request_body,
-                query_id: Some(query_id),
-                callback: None,
-            };
-            self.send_rpc_request(active_request);
+            match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+                Ok(contact) => {
+                    let active_request = ActiveRequest {
+                        contact,
+                        request_body,
+                        query_id: Some(query_id),
+                        callback: None,
+                    };
+                    self.send_rpc_request(active_request);
+                    // Request successfully sent
+                    return;
+                }
+                Err(NonContactable { enr }) => {
+                    error!("Query {} has a non contactable enr: {}", *query_id, enr);
+                }
+            }
         } else {
             error!("Query {} requested an unknown ENR", *query_id);
+        }
+
+        // This query request has failed and we must inform the
+        // query of the failed request.
+        // TODO: Come up with a better design to ensure that all query RPC requests
+        // are forced to be responded to.
+        if let Some(query) = self.queries.get_mut(query_id) {
+            query.on_failure(&return_peer);
         }
     }
 
@@ -1628,13 +1708,15 @@ impl Service {
             body: active_request.request_body.clone(),
         };
         let contact = active_request.contact.clone();
-        self.active_requests.insert(id.clone(), active_request);
+
         debug!("Sending RPC {} to node: {}", request, contact);
-
-        let _ = self
+        if self
             .handler_send
-            .send(HandlerIn::Request(contact, Box::new(request)));
-
+            .send(HandlerIn::Request(contact, Box::new(request)))
+            .is_ok()
+        {
+            self.active_requests.insert(id.clone(), active_request);
+        }
         id
     }
 
@@ -1684,16 +1766,18 @@ impl Service {
                             source, reason
                         );
 
-                        false // Remove this peer from the discovered list
-                    } else {
-                        true // Keep this peer in the list
+                        return false; // Remove this peer from the discovered list if the update failed
                     }
-                } else {
-                    true // We don't need to update ENR
                 }
             } else {
-                false // Didn't pass the table filter
+                return false; // Didn't pass the table filter remove the peer
             }
+
+            // The remaining ENRs are used if this request was part of a query. If we are
+            // requesting the target of the query, this ENR could be the result of requesting the
+            // target-nodes own id. We don't want to add this as a "new" discovered peer in the
+            // query, so we remove it from the discovered list here.
+            source != &enr.node_id()
         });
 
         // if this is part of a query, update the query
@@ -1868,7 +1952,7 @@ impl Service {
         topic_hash: Option<TopicHash>,
     ) {
         // Ignore sessions with non-contactable ENRs
-        if enr.udp_socket().is_none() {
+        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
         }
 
@@ -2006,17 +2090,7 @@ impl Service {
             QueryPoolState::Finished(query) => Poll::Ready(QueryEvent::Finished(Box::new(query))),
             QueryPoolState::Waiting(Some((query, return_peer))) => {
                 let node_id = return_peer;
-
-                let request_body = match query.target().rpc_request(return_peer) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        // dst node is local_key, report failure
-                        error!("Send RPC failed: {}", e);
-                        query.on_failure(&node_id);
-                        return Poll::Pending;
-                    }
-                };
-
+                let request_body = query.target().rpc_request(return_peer);
                 Poll::Ready(QueryEvent::Waiting(
                     query.id(),
                     node_id,
