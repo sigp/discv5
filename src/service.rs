@@ -45,7 +45,7 @@ use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
 use more_asserts::debug_unreachable;
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RawRwLock};
 use rand::Rng;
 use rpc::*;
 use std::{
@@ -348,6 +348,11 @@ impl Default for NodesResponse {
     }
 }
 
+pub enum KBuckets {
+    Primary(Arc<RwLock<KBucketsTable<NodeId, Enr>>>),
+    Topics(KBucketsTable<NodeId, Enr>),
+}
+
 impl Service {
     /// Builds the `Service` main struct.
     ///
@@ -631,8 +636,11 @@ impl Service {
                         }
                     }
                 }
-                event = Service::bucket_maintenance_poll(&self.kbuckets) => {
+                event = Service::bucket_maintenance_poll(KBuckets::Primary(self.kbuckets.clone())) => {
                     self.send_event(event);
+                }
+                event = Service::bucket_maintenance_poll(KBuckets::Topics(self.topics_kbuckets.clone().into_values().next().unwrap())) => {
+                    debug!("Topics KBuckets updated. Event {:?}", event);
                 }
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
@@ -2139,11 +2147,14 @@ impl Service {
     /// A future that maintains the routing table and inserts nodes when required. This returns the
     /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
     async fn bucket_maintenance_poll(
-        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+        mut kbuckets: KBuckets,
     ) -> Discv5Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.
-            if let Some(entry) = kbuckets.write().take_applied_pending() {
+            if let Some(entry) = match kbuckets {
+                KBuckets::Primary(ref kbuckets) => kbuckets.write().take_applied_pending(),
+                KBuckets::Topics(ref mut kbuckets) => kbuckets.take_applied_pending(),
+            } {
                 let event = Discv5Event::NodeInserted {
                     node_id: entry.inserted.into_preimage(),
                     replaced: entry.evicted.map(|n| n.key.into_preimage()),
