@@ -43,7 +43,7 @@ use aes_gcm::{
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
-use futures::prelude::*;
+use futures::{future::select_all, prelude::*};
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rand::Rng;
@@ -348,11 +348,6 @@ impl Default for NodesResponse {
     }
 }
 
-pub enum KBuckets {
-    Primary(Arc<RwLock<KBucketsTable<NodeId, Enr>>>),
-    Topics(KBucketsTable<NodeId, Enr>),
-}
-
 impl Service {
     /// Builds the `Service` main struct.
     ///
@@ -636,11 +631,11 @@ impl Service {
                         }
                     }
                 }
-                event = Service::bucket_maintenance_poll(KBuckets::Primary(self.kbuckets.clone())) => {
+                event = Service::bucket_maintenance_poll(&self.kbuckets) => {
                     self.send_event(event);
                 }
-                event = Service::bucket_maintenance_poll(KBuckets::Topics(self.topics_kbuckets.clone().into_values().next().unwrap())) => {
-                    debug!("Topics KBuckets updated. Event {:?}", event);
+                event = Service::bucket_maintenance_poll_topics(self.topics_kbuckets.iter_mut()) => {
+                    self.send_event(event);
                 }
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
@@ -2147,13 +2142,12 @@ impl Service {
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
     /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
-    async fn bucket_maintenance_poll(mut kbuckets: KBuckets) -> Discv5Event {
+    async fn bucket_maintenance_poll(
+        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+    ) -> Discv5Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.
-            if let Some(entry) = match kbuckets {
-                KBuckets::Primary(ref kbuckets) => kbuckets.write().take_applied_pending(),
-                KBuckets::Topics(ref mut kbuckets) => kbuckets.take_applied_pending(),
-            } {
+            if let Some(entry) = kbuckets.write().take_applied_pending() {
                 let event = Discv5Event::NodeInserted {
                     node_id: entry.inserted.into_preimage(),
                     replaced: entry.evicted.map(|n| n.key.into_preimage()),
@@ -2163,6 +2157,30 @@ impl Service {
             Poll::Pending
         })
         .await
+    }
+
+    /// A future that maintains the topic kbuckets and inserts nodes when required. This returns the
+    /// `Discv5Event::NodeInsertedTopics` variants.
+    async fn bucket_maintenance_poll_topics(
+        kbuckets: impl Iterator<Item = (&TopicHash, &mut KBucketsTable<NodeId, Enr>)>,
+    ) -> Discv5Event {
+        // Drain applied pending entries from the routing table.
+        let mut update_kbuckets_futures = Vec::new();
+        for (topic_hash, topic_kbuckets) in kbuckets {
+            update_kbuckets_futures.push(future::poll_fn(move |_cx| {
+                if let Some(entry) = (*topic_kbuckets).take_applied_pending() {
+                    let event = Discv5Event::NodeInsertedTopic {
+                        node_id: entry.inserted.into_preimage(),
+                        replaced: entry.evicted.map(|n| n.key.into_preimage()),
+                        topic_hash: *topic_hash,
+                    };
+                    return Poll::Ready(event);
+                }
+                Poll::Pending
+            }));
+        }
+        let (event, _, _) = select_all(update_kbuckets_futures).await;
+        event
     }
 
     /// A future the maintains active queries. This returns completed and timed out queries, as

@@ -65,6 +65,12 @@ pub enum Discv5Event {
         node_id: NodeId,
         replaced: Option<NodeId>,
     },
+    /// A new node has been added to a topic hash kbucket.
+    NodeInsertedTopic {
+        node_id: NodeId,
+        replaced: Option<NodeId>,
+        topic_hash: TopicHash,
+    },
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
     /// A node has initiated a talk request.
