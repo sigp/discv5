@@ -39,6 +39,7 @@ use crate::{
 };
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
+use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -1004,7 +1005,17 @@ impl Handler {
                     // This is a multi-response Nodes response
                     if let Some(remaining_responses) = request_call.remaining_responses.as_mut() {
                         *remaining_responses -= 1;
-                        if remaining_responses != &0 {
+                        let reinsert = match request_call.request.body {
+                            RequestBody::FindNode{ .. } | RequestBody::TopicQuery{ .. } => remaining_responses > &mut 0,
+                            // The request is reinserted for either another nodes response, a ticket or a 
+                            // register confirmation response that may come, otherwise the request times out.
+                            RequestBody::RegisterTopic{ .. } => remaining_responses >= &mut 0,
+                            _ => {
+                                debug_unreachable!("Only FINDNODE, TOPICQUERY and REGISTERTOPIC expect nodes response");
+                                false
+                            },
+                        };
+                        if reinsert {
                             // more responses remaining, add back the request and send the response
                             // add back the request and send the response
                             self.active_requests
@@ -1034,6 +1045,10 @@ impl Handler {
                         return;
                     }
                 }
+            } else if let ResponseBody::Ticket { .. } = response.body {
+                // The request is reinserted for either a nodes response or a register
+                // confirmation response that may come, otherwise the request times out.
+                self.active_requests.insert(node_address.clone(), request_call);
             }
 
             // Remove the expected response
@@ -1051,16 +1066,6 @@ impl Handler {
                 warn!("Failed to inform of response {}", e)
             }
             self.send_next_request(node_address).await;
-        } else if let ResponseBody::RegisterConfirmation { .. } = response.body {
-            let _ = self
-                .service_send
-                .send(HandlerOut::Response(
-                    node_address.clone(),
-                    Box::new(response),
-                ))
-                .await;
-            self.send_next_request(node_address.clone()).await;
-            trace!("REGCONFIRMATION response from node: {}", node_address);
         } else {
             // This is likely a late response and we have already failed the request. These get
             // dropped here.

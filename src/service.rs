@@ -45,7 +45,7 @@ use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
 use more_asserts::debug_unreachable;
-use parking_lot::{RwLock, RawRwLock};
+use parking_lot::RwLock;
 use rand::Rng;
 use rpc::*;
 use std::{
