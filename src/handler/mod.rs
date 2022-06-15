@@ -1006,14 +1006,16 @@ impl Handler {
                     if let Some(remaining_responses) = request_call.remaining_responses.as_mut() {
                         *remaining_responses -= 1;
                         let reinsert = match request_call.request.body {
-                            RequestBody::FindNode{ .. } | RequestBody::TopicQuery{ .. } => remaining_responses > &mut 0,
-                            // The request is reinserted for either another nodes response, a ticket or a 
+                            RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. } => {
+                                remaining_responses > &mut 0
+                            }
+                            // The request is reinserted for either another nodes response, a ticket or a
                             // register confirmation response that may come, otherwise the request times out.
-                            RequestBody::RegisterTopic{ .. } => remaining_responses >= &mut 0,
+                            RequestBody::RegisterTopic { .. } => remaining_responses >= &mut 0,
                             _ => {
                                 debug_unreachable!("Only FINDNODE, TOPICQUERY and REGISTERTOPIC expect nodes response");
                                 false
-                            },
+                            }
                         };
                         if reinsert {
                             // more responses remaining, add back the request and send the response
@@ -1048,7 +1050,8 @@ impl Handler {
             } else if let ResponseBody::Ticket { .. } = response.body {
                 // The request is reinserted for either a nodes response or a register
                 // confirmation response that may come, otherwise the request times out.
-                self.active_requests.insert(node_address.clone(), request_call);
+                self.active_requests
+                    .insert(node_address.clone(), request_call);
             }
 
             // Remove the expected response

@@ -777,14 +777,15 @@ impl Service {
             let mut peers = kbuckets.get().clone();
             let new_query_peers = peers
                 .iter()
-                .filter_map(|entry| (!queried_peers.contains_key(entry.node.key.preimage()))
-                .then(|| {
-                    query
-                        .queried_peers
-                        .entry(*entry.node.key.preimage())
-                        .or_default();
-                    entry.node.value
-                }))
+                .filter_map(|entry| {
+                    (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
+                        query
+                            .queried_peers
+                            .entry(*entry.node.key.preimage())
+                            .or_default();
+                        entry.node.value
+                    })
+                })
                 .collect::<Vec<_>>();
             for enr in new_query_peers {
                 if let Ok(node_contact) =
@@ -2146,9 +2147,7 @@ impl Service {
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
     /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
-    async fn bucket_maintenance_poll(
-        mut kbuckets: KBuckets,
-    ) -> Discv5Event {
+    async fn bucket_maintenance_poll(mut kbuckets: KBuckets) -> Discv5Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.
             if let Some(entry) = match kbuckets {
