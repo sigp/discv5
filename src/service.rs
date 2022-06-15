@@ -777,14 +777,14 @@ impl Service {
             let mut peers = kbuckets.get().clone();
             let new_query_peers = peers
                 .iter()
-                .filter(|entry| !queried_peers.contains_key(entry.node.key.preimage()))
-                .map(|entry| {
+                .filter_map(|entry| (!queried_peers.contains_key(entry.node.key.preimage()))
+                .then(|| {
                     query
                         .queried_peers
                         .entry(*entry.node.key.preimage())
                         .or_default();
                     entry.node.value
-                })
+                }))
                 .collect::<Vec<_>>();
             for enr in new_query_peers {
                 if let Ok(node_contact) =
