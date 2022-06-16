@@ -102,7 +102,7 @@ async fn build_service(
         ticket_pools: TicketPools::default(),
         active_topic_queries: ActiveTopicQueries::new(
             config.topic_query_timeout,
-            config.topics_num_results,
+            config.max_nodes_response,
         ),
         exit,
         config,

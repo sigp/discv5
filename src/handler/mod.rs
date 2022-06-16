@@ -39,7 +39,6 @@ use crate::{
 };
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
-use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -694,7 +693,10 @@ impl Handler {
                         topic,
                         enr: _,
                         ticket: _,
-                    } => HandlerOut::EstablishedTopic(enr, connection_direction, topic),
+                    }
+                    | RequestBody::TopicQuery { topic } => {
+                        HandlerOut::EstablishedTopic(enr, connection_direction, topic)
+                    }
                     _ => HandlerOut::Established(enr, connection_direction),
                 };
                 self.service_send
@@ -1006,16 +1008,14 @@ impl Handler {
                     if let Some(remaining_responses) = request_call.remaining_responses.as_mut() {
                         *remaining_responses -= 1;
                         let reinsert = match request_call.request.body {
-                            RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. } => {
-                                remaining_responses > &mut 0
-                            }
                             // The request is reinserted for either another nodes response, a ticket or a
                             // register confirmation response that may come, otherwise the request times out.
                             RequestBody::RegisterTopic { .. } => remaining_responses >= &mut 0,
-                            _ => {
-                                debug_unreachable!("Only FINDNODE, TOPICQUERY and REGISTERTOPIC expect nodes response");
-                                false
+                            RequestBody::TopicQuery { .. } => {
+                                // remove from some map of NODES and AD NODES
+                                remaining_responses >= &mut 0
                             }
+                            _ => remaining_responses > &mut 0,
                         };
                         if reinsert {
                             // more responses remaining, add back the request and send the response

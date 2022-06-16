@@ -436,7 +436,7 @@ impl Service {
                     ticket_pools: TicketPools::default(),
                     active_topic_queries: ActiveTopicQueries::new(
                         config.topic_query_timeout,
-                        config.topics_num_results,
+                        config.max_nodes_response,
                     ),
                     exit,
                     config: config.clone(),
@@ -666,12 +666,6 @@ impl Service {
                                 if callback.send(found_enrs).is_err() {
                                     warn!("Callback dropped for query {}. Results dropped", *id);
                                 }
-                            } else {
-                                let QueryType::FindNode(node_id) = result.target.query_type;
-                                let topic = TopicHash::from_raw(node_id.raw());
-                                    if self.topics.contains_key(&topic){
-                                        // add to topic kbuckets?
-                                    }
                             }
                         }
                     }
@@ -978,6 +972,13 @@ impl Service {
                 if enr.node_id() == node_address.node_id
                     && enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr)
                 {
+                    self.send_topic_nodes_response(
+                        topic,
+                        node_address.clone(),
+                        id.clone(),
+                        "REGTOPIC".into(),
+                    );
+
                     let wait_time = self
                         .ads
                         .ticket_wait_time(topic)
@@ -1060,6 +1061,12 @@ impl Service {
                 }
             }
             RequestBody::TopicQuery { topic } => {
+                self.send_topic_nodes_response(
+                    topic,
+                    node_address.clone(),
+                    id.clone(),
+                    "REGTOPIC".into(),
+                );
                 self.send_topic_query_response(node_address, id, topic);
             }
         }
@@ -1241,6 +1248,40 @@ impl Service {
                                 nodes.into_iter().for_each(|enr| {
                                     query.results.insert(enr.node_id(), enr);
                                 });
+                            }
+                        }
+                        RequestBody::RegisterTopic {
+                            topic,
+                            enr: _,
+                            ticket: _,
+                        } => {
+                            if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
+                                for enr in nodes {
+                                    let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
+                                    match kbuckets.insert_or_update(
+                                        &peer_key,
+                                        enr,
+                                        NodeStatus {
+                                            state: ConnectionState::Disconnected,
+                                            direction: ConnectionDirection::Incoming,
+                                        },
+                                    ) {
+                                        InsertResult::Failed(FailureReason::BucketFull) => {
+                                            error!("Table full")
+                                        }
+                                        InsertResult::Failed(FailureReason::BucketFilter) => {
+                                            error!("Failed bucket filter")
+                                        }
+                                        InsertResult::Failed(FailureReason::TableFilter) => {
+                                            error!("Failed table filter")
+                                        }
+                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
+                                            error!("Invalid self update")
+                                        }
+                                        InsertResult::Failed(_) => error!("Failed to insert ENR"),
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
                         RequestBody::FindNode { .. } => {
@@ -1599,6 +1640,46 @@ impl Service {
         self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY");
     }
 
+    fn send_topic_nodes_response(
+        &mut self,
+        topic: TopicHash,
+        node_address: NodeAddress,
+        id: RequestId,
+        req_type: String,
+    ) {
+        let local_key: kbucket::Key<NodeId> = self.local_enr.read().node_id().into();
+        let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+        let distance_to_topic = local_key.log2_distance(&topic_key);
+
+        let mut closest_peers: Vec<Enr> = Vec::new();
+        let closest_peers_length = closest_peers.len();
+        if let Some(distance) = distance_to_topic {
+            self.kbuckets
+                .write()
+                .nodes_by_distances(&[distance], self.config.max_nodes_response)
+                .iter()
+                .for_each(|entry| closest_peers.push(entry.node.value.clone()));
+
+            if closest_peers_length < self.config.max_nodes_response {
+                for entry in self
+                    .kbuckets
+                    .write()
+                    .nodes_by_distances(
+                        &[distance - 1, distance + 1],
+                        self.config.max_nodes_response - closest_peers_length,
+                    )
+                    .iter()
+                {
+                    if closest_peers_length > self.config.max_nodes_response {
+                        break;
+                    }
+                    closest_peers.push(entry.node.value.clone());
+                }
+            }
+        }
+        self.send_nodes_response(closest_peers, node_address, id, &req_type);
+    }
+
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
     /// into multiple responses to ensure the response stays below the maximum packet size.
     fn send_find_nodes_response(
@@ -1645,7 +1726,7 @@ impl Service {
         nodes_to_send: Vec<Enr>,
         node_address: NodeAddress,
         rpc_id: RequestId,
-        query: &str,
+        req_type: &str,
     ) {
         // if there are no nodes, send an empty response
         if nodes_to_send.is_empty() {
@@ -1658,7 +1739,7 @@ impl Service {
             };
             trace!(
                 "Sending empty {} response to: {}",
-                query,
+                req_type,
                 node_address.node_id
             );
             if let Err(e) = self
@@ -1718,7 +1799,7 @@ impl Service {
             for response in responses {
                 trace!(
                     "Sending {} response to: {}. Response: {} ",
-                    query,
+                    req_type,
                     node_address,
                     response
                 );

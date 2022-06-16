@@ -99,10 +99,7 @@ async fn ticket_wait_time_duration() {
     // Add an add for topic
     ads.insert(enr, topic).unwrap();
 
-    assert_gt!(
-        ads.ticket_wait_time(topic),
-        Some(Duration::from_secs(2))
-    );
+    assert_gt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(2)));
     assert_lt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(3)));
 }
 
