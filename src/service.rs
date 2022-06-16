@@ -634,7 +634,7 @@ impl Service {
                 event = Service::bucket_maintenance_poll(&self.kbuckets) => {
                     self.send_event(event);
                 }
-                event = Service::bucket_maintenance_poll_topics(self.topics_kbuckets.iter_mut()) => {
+                Some(event) = Service::bucket_maintenance_poll_topics(self.topics_kbuckets.iter_mut()) => {
                     self.send_event(event);
                 }
                 query_event = Service::query_event_poll(&mut self.queries) => {
@@ -2244,7 +2244,7 @@ impl Service {
     /// `Discv5Event::NodeInsertedTopics` variants.
     async fn bucket_maintenance_poll_topics(
         kbuckets: impl Iterator<Item = (&TopicHash, &mut KBucketsTable<NodeId, Enr>)>,
-    ) -> Discv5Event {
+    ) -> Option<Discv5Event> {
         // Drain applied pending entries from the routing table.
         let mut update_kbuckets_futures = Vec::new();
         for (topic_hash, topic_kbuckets) in kbuckets {
@@ -2260,8 +2260,12 @@ impl Service {
                 Poll::Pending
             }));
         }
-        let (event, _, _) = select_all(update_kbuckets_futures).await;
-        event
+        if update_kbuckets_futures.is_empty() {
+            return None;
+        } else {
+            let (event, _, _) = select_all(update_kbuckets_futures).await;
+            Some(event)
+        }
     }
 
     /// A future the maintains active queries. This returns completed and timed out queries, as
