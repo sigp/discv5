@@ -2261,7 +2261,7 @@ impl Service {
             }));
         }
         if update_kbuckets_futures.is_empty() {
-            return None;
+            None
         } else {
             let (event, _, _) = select_all(update_kbuckets_futures).await;
             Some(event)
