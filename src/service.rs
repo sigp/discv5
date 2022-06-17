@@ -800,7 +800,8 @@ impl Service {
         let queried_peers = query.queried_peers.clone();
         if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             let mut peers = kbuckets.get().clone();
-            let mut new_query_peers_iter = peers.iter().filter_map(|entry| {
+            // Start querying nodes further away, starting at distance 256
+            let mut new_query_peers_iter = peers.iter().rev().filter_map(|entry| {
                 (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
                     query
                         .queried_peers
@@ -811,11 +812,11 @@ impl Service {
             });
             let mut new_query_peers = Vec::new();
             while new_query_peers.len() < num_query_peers {
-                // Start querying nodes further away, starting at distance 256
                 if let Some(enr) = new_query_peers_iter.next() {
                     new_query_peers.push(enr);
                 }
             }
+            let _ = new_query_peers.iter().rev().count();
 
             for enr in new_query_peers {
                 if let Ok(node_contact) =
