@@ -273,7 +273,7 @@ where
     }
 
     /// Returns an iterator over the nodes in the bucket, together with their status.
-    pub fn iter(&self) -> impl Iterator<Item = &Node<TNodeId, TVal>> {
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Node<TNodeId, TVal>> {
         self.nodes.iter()
     }
 

@@ -500,7 +500,7 @@ where
     }
 
     /// Returns an iterator over all the entries in the routing table.
-    pub fn iter(&mut self) -> impl Iterator<Item = EntryRefView<'_, TNodeId, TVal>> {
+    pub fn iter(&mut self) -> impl DoubleEndedIterator<Item = EntryRefView<'_, TNodeId, TVal>> {
         let applied_pending = &mut self.applied_pending;
         self.buckets.iter_mut().flat_map(move |table| {
             if let Some(applied) = table.apply_pending() {
