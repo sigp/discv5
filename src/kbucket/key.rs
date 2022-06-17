@@ -108,7 +108,7 @@ impl From<NodeId> for Key<NodeId> {
 }
 
 /// A distance between two `Key`s.
-#[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Debug, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Default, PartialOrd, Ord, Debug)]
 pub struct Distance(pub(super) U256);
 
 #[cfg(test)]
