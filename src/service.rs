@@ -1006,7 +1006,7 @@ impl Service {
                         topic,
                         node_address.clone(),
                         id.clone(),
-                        "REGTOPIC".into(),
+                        "REGTOPIC",
                     );
 
                     let wait_time = self
@@ -1095,7 +1095,7 @@ impl Service {
                     topic,
                     node_address.clone(),
                     id.clone(),
-                    "REGTOPIC".into(),
+                    "TOPICQUERY",
                 );
                 self.send_topic_query_response(node_address, id, topic);
             }
@@ -1700,7 +1700,7 @@ impl Service {
         topic: TopicHash,
         node_address: NodeAddress,
         id: RequestId,
-        req_type: String,
+        req_type: &str,
     ) {
         let local_key: kbucket::Key<NodeId> = self.local_enr.read().node_id().into();
         let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
@@ -1800,7 +1800,7 @@ impl Service {
                 .handler_send
                 .send(HandlerIn::Response(node_address, Box::new(response)))
             {
-                warn!("Failed to send empty FINDNODES response {}", e)
+                warn!("Failed to send empty {} response {}", req_type, e)
             }
         } else {
             // build the NODES response
@@ -1861,7 +1861,7 @@ impl Service {
                     node_address.clone(),
                     Box::new(response),
                 )) {
-                    warn!("Failed to send FINDNODES response {}", e)
+                    warn!("Failed to send {} response {}", req_type, e)
                 }
             }
         }
