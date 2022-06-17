@@ -57,10 +57,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-use tokio::{
-    sync::{mpsc, oneshot},
-    time::interval,
-};
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
 mod ip_vote;
@@ -171,10 +168,7 @@ pub enum ServiceRequest {
     /// RegisterTopic publishes this node as an advertiser for a topic at given node
     RegisterTopic(Topic),
     ActiveTopics(oneshot::Sender<Result<Ads, RequestError>>),
-    RemoveTopic(
-        TopicHash,
-        oneshot::Sender<Result<Option<String>, RequestError>>,
-    ),
+    RemoveTopic(TopicHash, oneshot::Sender<Result<String, RequestError>>),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
@@ -233,11 +227,9 @@ pub struct Service {
     /// Ads advertised locally for other nodes.
     ads: Ads,
 
-    /// Tickets received by other nodes.
-    tickets: Tickets,
-
-    /// Topics to advertise on other nodes.
-    topics: HashMap<TopicHash, Topic>,
+    /// Topics tracks registration attempts of the topics to advertise on
+    /// other nodes.
+    topics: HashMap<TopicHash, HashMap<u64, HashMap<NodeId, RegistrationState>>>,
 
     /// KBuckets per topic hash.
     topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
@@ -245,11 +237,19 @@ pub struct Service {
     /// Ads currently advertised on other nodes.
     active_topics: Ads,
 
+    /// Tickets received by other nodes.
+    tickets: Tickets,
+
     /// Locally issued tickets returned by nodes pending registration for free local ad slots.
     ticket_pools: TicketPools,
 
-    ///
+    /// Locally initiated topic query requests in process.
     active_topic_queries: ActiveTopicQueries,
+}
+
+pub enum RegistrationState {
+    Confirmed(Instant),
+    Ticket,
 }
 
 pub struct ActiveTopicQuery {
@@ -429,10 +429,10 @@ impl Service {
                     discv5_recv,
                     event_stream: None,
                     ads,
-                    tickets: Tickets::new(Duration::from_secs(60 * 15)),
                     topics: HashMap::new(),
                     topics_kbuckets: HashMap::new(),
                     active_topics,
+                    tickets: Tickets::new(Duration::from_secs(60 * 15)),
                     ticket_pools: TicketPools::default(),
                     active_topic_queries: ActiveTopicQueries::new(
                         config.topic_query_timeout,
@@ -451,8 +451,6 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
-        let mut publish_topics = interval(Duration::from_secs(60 * 15));
-
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -535,7 +533,7 @@ impl Service {
                         }
                         ServiceRequest::RegisterTopic(topic) => {
                             let topic_hash = topic.hash();
-                            if self.topics.insert(topic_hash, topic).is_some() {
+                            if self.topics.insert(topic_hash, HashMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
                             } else {
                                 // NOTE: Currently we don't expose custom filter support in the configuration. Users can
@@ -585,10 +583,11 @@ impl Service {
                             }
                         }
                         ServiceRequest::RemoveTopic(topic_hash, callback) => {
-                            let topic = self.topics.remove(&topic_hash).map(|topic| topic.topic());
-                            METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
-                            if callback.send(Ok(topic)).is_err() {
-                                error!("Failed to return the removed topic");
+                            if self.topics.remove(&topic_hash).is_some() {
+                                METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
+                                if callback.send(Ok(base64::encode(topic_hash.as_bytes()))).is_err() {
+                                    error!("Failed to return the removed topic");
+                                }
                             }
                         }
                     }
@@ -602,11 +601,11 @@ impl Service {
                             self.inject_session_established(enr, direction, Some(topic_hash));
                         }
                         HandlerOut::Request(node_address, request) => {
-                                self.handle_rpc_request(node_address, *request);
-                            }
+                            self.handle_rpc_request(node_address, *request);
+                        }
                         HandlerOut::Response(node_address, response) => {
-                                self.handle_rpc_response(node_address, *response);
-                            }
+                            self.handle_rpc_response(node_address, *response);
+                        }
                         HandlerOut::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
@@ -691,11 +690,6 @@ impl Service {
                     // to the ticket issuer.
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
                 }
-                _ = publish_topics.tick() => {
-                    // Topics are republished at regular intervals.
-
-                    self.topics_kbuckets.clone().keys().for_each(|topic_hash| self.send_register_topics(*topic_hash));
-                }
                 Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
                     // No particular selection is carried out at this stage of implementation, the choice of node to give
                     // the free ad slot to is random.
@@ -731,15 +725,51 @@ impl Service {
 
     fn send_register_topics(&mut self, topic_hash: TopicHash) {
         if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
-            kbuckets.get().clone().iter().for_each(|entry| {
-                let local_enr = self.local_enr.read().clone();
-                if let Ok(node_contact) =
-                    NodeContact::try_from_enr(entry.node.value.clone(), self.config.ip_mode)
-                        .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
-                {
-                    self.reg_topic_request(node_contact, topic_hash, local_enr, None)
+            let all_buckets_reg_attempts = self.topics.entry(topic_hash).or_default();
+            // Remove expired ads
+            let mut new_reg_peers = Vec::new();
+            for reg_attempts in all_buckets_reg_attempts.values_mut() {
+                reg_attempts.retain(|_, reg_attempt| {
+                    if let RegistrationState::Confirmed(insert_time) = reg_attempt {
+                        insert_time.elapsed() >= Duration::from_secs(15 * 60)
+                    } else {
+                        false
+                    }
+                });
+                let reg_attempts_count = reg_attempts.len();
+                if reg_attempts_count < self.config.max_nodes_response {
+                    let mut peers = Vec::new();
+                    let _ = kbuckets.get().clone().iter().map(|entry| {
+                        let peer = entry.node.value.clone();
+                        if let Entry::Vacant(_) = reg_attempts.entry(peer.node_id()) {
+                            peers.push(peer);
+                        }
+                    });
+
+                    if !peers.is_empty() {
+                        let max_nodes_response = self.config.max_nodes_response;
+
+                        new_reg_peers = peers
+                            .into_iter()
+                            .map_while(|peer| {
+                                if reg_attempts_count < max_nodes_response {
+                                    Some(peer)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                    }
                 }
-            });
+            }
+            for peer in new_reg_peers {
+                let local_enr = self.local_enr.read().clone();
+                if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
+                    .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
+                {
+                    self.reg_topic_request(node_contact, topic_hash, local_enr.clone(), None);
+                }
+            }
         } else {
             debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
         }
@@ -1397,7 +1427,7 @@ impl Service {
                     wait_time,
                     topic,
                 } => {
-                    if wait_time <= MAX_WAIT_TIME_TICKET {
+                    if wait_time <= MAX_WAIT_TIME_TICKET && wait_time > 0 {
                         self.tickets
                             .insert(
                                 active_request.contact,
@@ -1407,16 +1437,41 @@ impl Service {
                             )
                             .ok();
                     }
+
+                    let peer_key: kbucket::Key<NodeId> = node_id.into();
+                    let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                    if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                        let registration_attempts = self.topics.entry(topic).or_default();
+                        registration_attempts
+                            .entry(distance)
+                            .or_default()
+                            .entry(node_id)
+                            .or_insert(RegistrationState::Ticket);
+                        self.send_register_topics(topic);
+                    }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
                     if let Some(enr) = active_request.contact.enr() {
-                        self.active_topics.insert(enr, topic).ok();
-                        METRICS
-                            .active_ads
-                            .store(self.active_topics.len(), Ordering::Relaxed);
-                        METRICS
-                            .active_regtopic_req
-                            .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
+                        let now = Instant::now();
+                        let peer_key: kbucket::Key<NodeId> = node_id.into();
+                        let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                        if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                            let registration_attempts = self.topics.entry(topic).or_default();
+                            registration_attempts
+                                .entry(distance)
+                                .or_default()
+                                .entry(node_id)
+                                .or_insert(RegistrationState::Confirmed(now));
+
+                            let _ = self.active_topics.insert(enr, topic);
+
+                            METRICS
+                                .active_ads
+                                .store(self.active_topics.len(), Ordering::Relaxed);
+                            METRICS
+                                .active_regtopic_req
+                                .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
+                        }
                     }
                 }
             }
@@ -1652,7 +1707,6 @@ impl Service {
         let distance_to_topic = local_key.log2_distance(&topic_key);
 
         let mut closest_peers: Vec<Enr> = Vec::new();
-        let closest_peers_length = closest_peers.len();
         if let Some(distance) = distance_to_topic {
             self.kbuckets
                 .write()
@@ -1660,17 +1714,17 @@ impl Service {
                 .iter()
                 .for_each(|entry| closest_peers.push(entry.node.value.clone()));
 
-            if closest_peers_length < self.config.max_nodes_response {
+            if closest_peers.len() < self.config.max_nodes_response {
                 for entry in self
                     .kbuckets
                     .write()
                     .nodes_by_distances(
                         &[distance - 1, distance + 1],
-                        self.config.max_nodes_response - closest_peers_length,
+                        self.config.max_nodes_response - closest_peers.len(),
                     )
                     .iter()
                 {
-                    if closest_peers_length > self.config.max_nodes_response {
+                    if closest_peers.len() > self.config.max_nodes_response {
                         break;
                     }
                     closest_peers.push(entry.node.value.clone());

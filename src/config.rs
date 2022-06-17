@@ -102,7 +102,6 @@ pub struct Discv5Config {
     pub topic_radius: u64,
 
     pub topic_query_timeout: Duration,
-    pub topic_query_peers: usize,
 
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
@@ -146,7 +145,6 @@ impl Default for Discv5Config {
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             topic_radius: 256,
             topic_query_timeout: Duration::from_secs(60),
-            topic_query_peers: 10,
             ip_mode: IpMode::default(),
             executor: None,
         }

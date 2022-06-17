@@ -548,7 +548,7 @@ impl Discv5 {
     pub fn remove_topic(
         &self,
         topic: String,
-    ) -> impl Future<Output = Result<Option<String>, RequestError>> + 'static {
+    ) -> impl Future<Output = Result<String, RequestError>> + 'static {
         let topic = Topic::new(topic);
         let channel = self.clone_channel();
 
