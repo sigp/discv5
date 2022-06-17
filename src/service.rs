@@ -280,7 +280,7 @@ impl ActiveTopicQueries {
 pub enum TopicQueryState {
     Finished(TopicHash),
     TimedOut(TopicHash),
-    Unsatisfied(TopicHash),
+    Unsatisfied(TopicHash, usize),
 }
 
 impl Stream for ActiveTopicQueries {
@@ -301,8 +301,13 @@ impl Stream for ActiveTopicQueries {
                     .iter()
                     .filter(|(_peer, return_status)| **return_status)
                     .count();
+                // If all peers have responded or failed the request and we still did not
+                // obtain enough results, the query is in TopicQueryState::Unsatisfied.
                 if exhausted_peers >= query.queried_peers.len() {
-                    return Poll::Ready(Some(TopicQueryState::Unsatisfied(*topic_hash)));
+                    return Poll::Ready(Some(TopicQueryState::Unsatisfied(
+                        *topic_hash,
+                        query.results.len(),
+                    )));
                 }
             }
         }
@@ -529,7 +534,7 @@ impl Service {
                                 });
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
-                            self.send_topic_queries(topic_hash, Some(callback));
+                            self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic) => {
                             let topic_hash = topic.hash();
@@ -714,8 +719,8 @@ impl Service {
                                 }
                             }
                         },
-                        TopicQueryState::Unsatisfied(topic_hash) => {
-                            self.send_topic_queries(topic_hash, None);
+                        TopicQueryState::Unsatisfied(topic_hash, num_query_peers) => {
+                            self.send_topic_queries(topic_hash, num_query_peers, None);
                         }
                     }
                 }
@@ -779,6 +784,7 @@ impl Service {
     fn send_topic_queries(
         &mut self,
         topic_hash: TopicHash,
+        num_query_peers: usize,
         callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
     ) {
         let query = self
@@ -794,18 +800,23 @@ impl Service {
         let queried_peers = query.queried_peers.clone();
         if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             let mut peers = kbuckets.get().clone();
-            let new_query_peers = peers
-                .iter()
-                .filter_map(|entry| {
-                    (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
-                        query
-                            .queried_peers
-                            .entry(*entry.node.key.preimage())
-                            .or_default();
-                        entry.node.value
-                    })
+            let mut new_query_peers_iter = peers.iter().filter_map(|entry| {
+                (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
+                    query
+                        .queried_peers
+                        .entry(*entry.node.key.preimage())
+                        .or_default();
+                    entry.node.value
                 })
-                .collect::<Vec<_>>();
+            });
+            let mut new_query_peers = Vec::new();
+            while new_query_peers.len() < num_query_peers {
+                // Start querying nodes further away, starting at distance 256
+                if let Some(enr) = new_query_peers_iter.next() {
+                    new_query_peers.push(enr);
+                }
+            }
+
             for enr in new_query_peers {
                 if let Ok(node_contact) =
                     NodeContact::try_from_enr(enr.clone(), self.config.ip_mode)
