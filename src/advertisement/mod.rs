@@ -11,7 +11,7 @@ use std::{
 };
 use tokio::time::Instant;
 use topic::TopicHash;
-use tracing::{debug, error};
+use tracing::debug;
 
 mod test;
 pub mod ticket;
