@@ -690,7 +690,7 @@ pub struct Ticket {
     topic: TopicHash,
     req_time: Instant,
     wait_time: Duration,
-    //cum_wait: Option<Duration>,
+    cum_wait: Duration,
 }
 
 impl rlp::Encodable for Ticket {
@@ -770,10 +770,10 @@ impl rlp::Decodable for Ticket {
 
         let req_time = {
             if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                let s_bytes = decoded_list.remove(0).data()?;
-                let mut s = [0u8; 8];
-                s.copy_from_slice(s_bytes);
-                let secs = u64::from_be_bytes(s);
+                let secs_data = decoded_list.remove(0).data()?;
+                let mut secs_bytes = [0u8; 8];
+                secs_bytes.copy_from_slice(secs_data);
+                let secs = u64::from_be_bytes(secs_bytes);
                 let req_time_since_unix = Duration::from_secs(secs);
                 let time_since_req = time_since_unix - req_time_since_unix;
                 if let Some(req_time) = Instant::now().checked_sub(time_since_req) {
@@ -789,10 +789,18 @@ impl rlp::Decodable for Ticket {
         };
 
         let wait_time = {
-            let s_bytes = decoded_list.remove(0).data()?;
-            let mut s = [0u8; 8];
-            s.copy_from_slice(s_bytes);
-            let secs = u64::from_be_bytes(s);
+            let secs_data = decoded_list.remove(0).data()?;
+            let mut secs_bytes = [0u8; 8];
+            secs_bytes.copy_from_slice(secs_data);
+            let secs = u64::from_be_bytes(secs_bytes);
+            Duration::from_secs(secs)
+        };
+
+        let cum_wait = {
+            let secs_data = decoded_list.remove(0).data()?;
+            let mut secs_bytes = [0u8; 8];
+            secs_bytes.copy_from_slice(secs_data);
+            let secs = u64::from_be_bytes(secs_bytes);
             Duration::from_secs(secs)
         };
 
@@ -802,6 +810,7 @@ impl rlp::Decodable for Ticket {
             topic,
             req_time,
             wait_time,
+            cum_wait,
         })
     }
 }
@@ -823,7 +832,7 @@ impl Ticket {
         topic: TopicHash,
         req_time: Instant,
         wait_time: Duration,
-        //cum_wait: Option<Duration>,
+        cum_wait: Duration,
     ) -> Self {
         Ticket {
             //nonce,
@@ -832,7 +841,7 @@ impl Ticket {
             topic,
             req_time,
             wait_time,
-            //cum_wait,
+            cum_wait,
         }
     }
 
@@ -846,6 +855,14 @@ impl Ticket {
 
     pub fn wait_time(&self) -> Duration {
         self.wait_time
+    }
+
+    pub fn cum_wait(&self) -> Duration {
+        self.cum_wait
+    }
+
+    pub fn set_cum_wait(&mut self, prev_cum_wait: Duration) {
+        self.cum_wait = prev_cum_wait + self.wait_time;
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -1148,6 +1165,7 @@ mod tests {
             TopicHash::from_raw([1u8; 32]),
             Instant::now(),
             Duration::from_secs(11),
+            Duration::from_secs(25),
         );
 
         let ticket = ticket.encode();
@@ -1183,6 +1201,7 @@ mod tests {
             TopicHash::from_raw([1u8; 32]),
             Instant::now(),
             Duration::from_secs(11),
+            Duration::from_secs(25),
         );
 
         let encoded = ticket.encode();
@@ -1207,6 +1226,7 @@ mod tests {
             TopicHash::from_raw([1u8; 32]),
             Instant::now(),
             Duration::from_secs(11),
+            Duration::from_secs(25),
         );
 
         let ticket_key: [u8; 16] = rand::random();
@@ -1256,6 +1276,7 @@ mod tests {
             TopicHash::from_raw([1u8; 32]),
             Instant::now(),
             Duration::from_secs(11),
+            Duration::from_secs(25),
         );
 
         let ticket = ticket.encode();

@@ -225,6 +225,7 @@ async fn encrypt_decrypt_ticket() {
         TopicHash::from_raw([1u8; 32]),
         tokio::time::Instant::now(),
         tokio::time::Duration::from_secs(5),
+        tokio::time::Duration::from_secs(25),
     );
 
     let ticket_key = decoded_enr.get("ticket_key").unwrap();

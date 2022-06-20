@@ -46,7 +46,6 @@ use fnv::FnvHashMap;
 use futures::{future::select_all, prelude::*};
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
-use rand::Rng;
 use rpc::*;
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -696,14 +695,11 @@ impl Service {
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
                 }
                 Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
-                    // No particular selection is carried out at this stage of implementation, the choice of node to give
-                    // the free ad slot to is random.
-                    let random_index = rand::thread_rng().gen_range(0..ticket_pool.len());
-                    let ticket_pool = ticket_pool.values().step_by(random_index).next();
-                    if let Some((node_record, req_id, _ticket)) = ticket_pool.map(|(node_record, req_id, ticket)| (node_record.clone(), req_id.clone(), ticket)) {
-                    self.ads.insert(node_record.clone(), topic).ok();
-                        NodeContact::try_from_enr(node_record, self.config.ip_mode).map(|contact| {
-                            self.send_regconfirmation_response(contact.node_address(), req_id, topic);
+                    // Select ticket with longest cummulative wait time.
+                    if let Some(pool_ticket) = ticket_pool.values().max_by_key(|pool_ticket| pool_ticket.ticket().cum_wait()) {
+                        self.ads.insert(pool_ticket.node_record().clone(), topic).ok();
+                        NodeContact::try_from_enr(pool_ticket.node_record().clone(), self.config.ip_mode).map(|contact| {
+                            self.send_regconfirmation_response(contact.node_address(), pool_ticket.req_id().clone(), topic);
                         }).ok();
                         METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
                     }
@@ -1021,62 +1017,48 @@ impl Service {
                         "REGTOPIC",
                     );
 
+                    // The current wait time for a given topic.
                     let wait_time = self
                         .ads
                         .ticket_wait_time(topic)
                         .unwrap_or(Duration::from_secs(0));
 
-                    let new_ticket = Ticket::new(
+                    let mut new_ticket = Ticket::new(
                         node_address.node_id,
                         node_address.socket_addr.ip(),
                         topic,
                         tokio::time::Instant::now(),
                         wait_time,
+                        Duration::from_secs(0),
                     );
 
-                    // According to spec, a ticket should always be issued upon receiving a REGTOPIC request.
-                    self.send_ticket_response(
-                        node_address,
-                        id.clone(),
-                        new_ticket.clone(),
-                        wait_time,
-                    );
-
-                    // If the wait time has expired, the TICKET is added to the matching ticket pool. If this is
-                    // the first REGTOPIC request from a given node for a given topic, the newly created ticket
-                    // is used to add the registration attempt to to the ticket pool.
-                    if wait_time <= Duration::from_secs(0) {
-                        if !ticket.is_empty() {
-                            let decoded_enr = self
-                                .local_enr
-                                .write()
-                                .to_base64()
-                                .parse::<Enr>()
-                                .map_err(|e| {
-                                    error!(
-                                        "Failed to decrypt ticket in REGTOPIC request. Error: {}",
-                                        e
-                                    )
-                                });
-                            if let Ok(decoded_enr) = decoded_enr {
-                                if let Some(ticket_key) = decoded_enr.get("ticket_key") {
-                                    let decrypted_ticket = {
-                                        let aead =
-                                            Aes128Gcm::new(GenericArray::from_slice(ticket_key));
-                                        let payload = Payload {
-                                            msg: &ticket,
-                                            aad: b"",
-                                        };
-                                        aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                    if !ticket.is_empty() {
+                        let decoded_enr = self
+                            .local_enr
+                            .write()
+                            .to_base64()
+                            .parse::<Enr>()
+                            .map_err(|e| {
+                                error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
+                            });
+                        if let Ok(decoded_enr) = decoded_enr {
+                            if let Some(ticket_key) = decoded_enr.get("ticket_key") {
+                                let decrypted_ticket = {
+                                    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
+                                    let payload = Payload {
+                                        msg: &ticket,
+                                        aad: b"",
+                                    };
+                                    aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
                                         .map_err(|e| {
                                             error!(
                                                 "Failed to decrypt ticket in REGTOPIC request. Error: {}",
                                                 e
                                             )
                                         })
-                                    };
-                                    if let Ok(decrypted_ticket) = decrypted_ticket {
-                                        Ticket::decode(&decrypted_ticket)
+                                };
+                                if let Ok(decrypted_ticket) = decrypted_ticket {
+                                    Ticket::decode(&decrypted_ticket)
                                         .map_err(|e| {
                                             error!(
                                                 "Failed to decode ticket in REGTOPIC request. Error: {}",
@@ -1084,19 +1066,44 @@ impl Service {
                                             )
                                         })
                                         .map(|ticket| {
-                                            // Drop if src_node_id, src_ip and topic derived from node_address and request
-                                            // don't match those in ticket
                                             if let Some(ticket) = ticket {
-                                                if ticket == new_ticket {
-                                                    self.ticket_pools.insert(enr, id, ticket);
+                                                // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
+                                                // wait time for the ad slot. See discv5 spec. This node will not store tickets received 
+                                                // with wait time 0.
+                                                new_ticket.set_cum_wait(ticket.cum_wait());
+                                                self.send_ticket_response(
+                                                    node_address,
+                                                    id.clone(),
+                                                    new_ticket.clone(),
+                                                    wait_time,
+                                                );
+                                                // If current wait time is 0, the ticket is added to the matching ticket pool.
+                                                if wait_time <= Duration::from_secs(0) {
+                                                    // Drop if src_node_id, src_ip and topic derived from node_address and request
+                                                    // don't match those in ticket. For example if a malicious node tries to use
+                                                    // another ticket issued by us.
+                                                    if ticket == new_ticket {
+                                                        self.ticket_pools.insert(enr, id, ticket);
+                                                    }
                                                 }
                                             }
                                         })
                                         .ok();
-                                    }
                                 }
                             }
-                        } else {
+                        }
+                    } else {
+                        // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
+                        // wait time for the ad slot. See discv5 spec. This node will not store tickets received
+                        // with wait time 0.
+                        self.send_ticket_response(
+                            node_address,
+                            id.clone(),
+                            new_ticket.clone(),
+                            wait_time,
+                        );
+                        // If current wait time is 0, the ticket is added to the matching ticket pool.
+                        if wait_time <= Duration::from_secs(0) {
                             self.ticket_pools.insert(enr, id, new_ticket);
                         }
                     }
@@ -1743,7 +1750,7 @@ impl Service {
                 }
             }
         }
-        self.send_nodes_response(closest_peers, node_address, id, &req_type);
+        self.send_nodes_response(closest_peers, node_address, id, req_type);
     }
 
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up

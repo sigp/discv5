@@ -118,7 +118,7 @@ impl Stream for Tickets {
     }
 }
 
-/// An PendingTicket maps to a Ticket in Tickets upon insert.
+/// An PendingTicket maps to a Ticket received by another node in Tickets upon insert.
 #[derive(Clone)]
 struct PendingTicket {
     /// The ActiveTopic serves to match the Ticket to an entry in Tickets'
@@ -209,12 +209,41 @@ struct RegistrationWindow {
     open_time: Instant,
 }
 
+/// The tickets that will be considered for an ad slot.
+pub struct PoolTicket {
+    enr: Enr,
+    req_id: RequestId,
+    ticket: Ticket,
+}
+
+impl PoolTicket {
+    pub fn new(enr: Enr, req_id: RequestId, ticket: Ticket) -> Self {
+        PoolTicket {
+            enr,
+            req_id,
+            ticket,
+        }
+    }
+
+    pub fn node_record(&self) -> &Enr {
+        &self.enr
+    }
+
+    pub fn req_id(&self) -> &RequestId {
+        &self.req_id
+    }
+
+    pub fn ticket(&self) -> &Ticket {
+        &self.ticket
+    }
+}
+
 /// The TicketPools collects all the registration attempts for a free ad slot.
 #[derive(Default)]
 pub struct TicketPools {
     /// The ticket_pools keeps track of all the registrants and their Tickets. One
     /// ticket_pool per TopicHash can be open at a time.
-    ticket_pools: HashMap<TopicHash, HashMap<NodeId, (Enr, RequestId, Ticket)>>,
+    ticket_pools: HashMap<TopicHash, HashMap<NodeId, PoolTicket>>,
     /// The expirations keeps track of when to close a ticket pool so the next one
     /// can be opened.
     expirations: VecDeque<RegistrationWindow>,
@@ -234,7 +263,10 @@ impl TicketPools {
                             open_time,
                         });
                     }
-                    pool.insert(node_record.node_id(), (node_record, req_id, ticket));
+                    pool.insert(
+                        node_record.node_id(),
+                        PoolTicket::new(node_record, req_id, ticket),
+                    );
                 }
             }
         }
@@ -242,7 +274,7 @@ impl TicketPools {
 }
 
 impl Stream for TicketPools {
-    type Item = Result<(TopicHash, HashMap<NodeId, (Enr, RequestId, Ticket)>), String>;
+    type Item = Result<(TopicHash, HashMap<NodeId, PoolTicket>), String>;
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let ticket_pool = self.expirations.front();
         if let Some(reg_window) = ticket_pool {
