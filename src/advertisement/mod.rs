@@ -165,7 +165,7 @@ impl Ads {
         let nodes = self.ads.entry(topic).or_default();
         let ad_node = AdNode::new(node_record, now);
         if nodes.contains(&ad_node) {
-            error!(
+            debug!(
                 "This node {} is already advertising this topic",
                 ad_node.node_record().node_id()
             );

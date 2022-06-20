@@ -708,6 +708,7 @@ impl rlp::Encodable for Ticket {
             s.append(&time_stamp.as_secs().to_be_bytes().to_vec());
         }
         s.append(&self.wait_time.as_secs().to_be_bytes().to_vec());
+        s.append(&self.wait_time.as_secs().to_be_bytes().to_vec());
     }
 }
 
@@ -718,7 +719,7 @@ impl rlp::Decodable for Ticket {
             return Err(DecoderError::RlpExpectedToBeList);
         }
 
-        if rlp.item_count() != Ok(5) {
+        if rlp.item_count() != Ok(6) {
             error!(
                 "List has wrong item count, should be 5 but is {:?}",
                 rlp.item_count()
