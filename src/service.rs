@@ -165,7 +165,7 @@ pub enum ServiceRequest {
     /// Queries given node for nodes advertising a topic hash
     TopicQuery(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
     /// RegisterTopic publishes this node as an advertiser for a topic at given node
-    RegisterTopic(Topic),
+    RegisterTopic(TopicHash),
     ActiveTopics(oneshot::Sender<Result<Ads, RequestError>>),
     RemoveTopic(TopicHash, oneshot::Sender<Result<String, RequestError>>),
 }
@@ -535,9 +535,8 @@ impl Service {
                             }
                             self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
                         }
-                        ServiceRequest::RegisterTopic(topic) => {
+                        ServiceRequest::RegisterTopic(topic_hash) => {
                             debug!("Received REGTOPIC request");
-                            let topic_hash = topic.hash();
                             if self.topics.insert(topic_hash, HashMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
                             } else {

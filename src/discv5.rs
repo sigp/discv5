@@ -571,14 +571,15 @@ impl Discv5 {
         &self,
         topic: String,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
-        let topic = Topic::new(topic);
         let channel = self.clone_channel();
 
         async move {
             let channel = channel
                 .as_ref()
                 .map_err(|_| RequestError::ServiceNotStarted)?;
-            let event = ServiceRequest::RegisterTopic(topic.clone());
+            let topic_hash = Topic::new(&topic).hash();
+            let event = ServiceRequest::RegisterTopic(topic_hash);
+            debug!("Registering topic {} with Sha256 hash {}", topic, topic_hash);
             // send the request
             channel
                 .send(event)
