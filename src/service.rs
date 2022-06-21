@@ -1128,13 +1128,15 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        // A REGTOPIC request receives a TICKET, NODES and then also possibly a REGCONFIRMATION
-        // response.
-        let (active_request, req_type) = if let Some(active_request) = self.active_requests.remove(&id) {
-            (Some(active_request), ActiveRequestType::Other)
-        } else {
-            (self.active_regtopic_requests.remove(&id), ActiveRequestType::RegisterTopic)
-        };
+        let (active_request, req_type) =
+            if let Some(active_request) = self.active_requests.remove(&id) {
+                (Some(active_request), ActiveRequestType::Other)
+            } else {
+                (
+                    self.active_regtopic_requests.remove(&id),
+                    ActiveRequestType::RegisterTopic,
+                )
+            };
 
         if let Some(mut active_request) = active_request {
             debug!(
@@ -1176,7 +1178,7 @@ impl Service {
                         );
                     }
 
-                    let topic_radius = vec![self.config.topic_radius];
+                    let topic_radius = (1..self.config.topic_radius).collect();
                     // These are sanitized and ordered
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
@@ -1998,7 +2000,8 @@ impl Service {
         {
             match request_body {
                 RequestBody::RegisterTopic { .. } => {
-                    self.active_regtopic_requests.insert(id.clone(), active_request);
+                    self.active_regtopic_requests
+                        .insert(id.clone(), active_request);
                     METRICS
                         .active_regtopic_req
                         .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
