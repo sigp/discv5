@@ -756,6 +756,8 @@ impl Service {
                                     debug!("Found new reg peer. Peer: {:?}", peer.key.preimage());
                                     new_peers.push(peer.value.clone())
                                 }
+                            } else {
+                                break;
                             }
                         }
                         new_reg_peers.append(&mut new_peers);
