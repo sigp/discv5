@@ -1291,11 +1291,57 @@ impl Service {
 
                     match active_request.request_body {
                         RequestBody::TopicQuery { topic } => {
-                            if let Some(query) = self.active_topic_queries.queries.get_mut(&topic) {
-                                nodes.into_iter().for_each(|enr| {
-                                    query.results.insert(enr.node_id(), enr);
-                                });
+                            let mut is_ads = false;
+                            for enr in nodes.iter() {
+                                let sender_key: kbucket::Key<NodeId> = node_id.into();
+                                let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
+                                let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                                if let Some(distance_sender_topic) = sender_key.log2_distance(&topic_key) {
+                                    if let Some(distance_peer_topic) = peer_key.log2_distance(&topic_key) {
+                                        if distance_peer_topic > distance_sender_topic + 1 || distance_peer_topic < distance_sender_topic - 1 {
+                                            is_ads = true;
+                                            break;
+                                        }
+                                    }
+                                }
                             }
+                            if is_ads {
+                                if let Some(query) = self.active_topic_queries.queries.get_mut(&topic) {
+                                    nodes.into_iter().for_each(|enr| {
+                                        query.results.insert(enr.node_id(), enr);
+                                    });
+                                }
+                            } else {
+                                if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
+                                    for enr in nodes {
+                                        let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
+                                        match kbuckets.insert_or_update(
+                                            &peer_key,
+                                            enr.clone(),
+                                            NodeStatus {
+                                                state: ConnectionState::Disconnected,
+                                                direction: ConnectionDirection::Incoming,
+                                            },
+                                        ) {
+                                            InsertResult::Failed(FailureReason::BucketFull) => {
+                                                error!("Table full")
+                                            }
+                                            InsertResult::Failed(FailureReason::BucketFilter) => {
+                                                error!("Failed bucket filter")
+                                            }
+                                            InsertResult::Failed(FailureReason::TableFilter) => {
+                                                error!("Failed table filter")
+                                            }
+                                            InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
+                                                error!("Invalid self update")
+                                            }
+                                            InsertResult::Failed(_) => error!("Failed to insert ENR"),
+                                            _ => debug!("Insertion of node {} into KBucket of {} was successful", enr.node_id(), topic),
+                                        }
+                                    }
+                                }
+                            }
+
                         }
                         RequestBody::RegisterTopic {
                             topic,
@@ -1307,7 +1353,7 @@ impl Service {
                                     let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
                                     match kbuckets.insert_or_update(
                                         &peer_key,
-                                        enr,
+                                        enr.clone(),
                                         NodeStatus {
                                             state: ConnectionState::Disconnected,
                                             direction: ConnectionDirection::Incoming,
@@ -1326,7 +1372,7 @@ impl Service {
                                             error!("Invalid self update")
                                         }
                                         InsertResult::Failed(_) => error!("Failed to insert ENR"),
-                                        _ => {}
+                                        _ => debug!("Insertion of node {} into KBucket of {} was successful", enr.node_id(), topic),
                                     }
                                 }
                             }

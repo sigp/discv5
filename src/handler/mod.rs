@@ -388,6 +388,7 @@ impl Handler {
                 .await
             }
             PacketKind::Message { src_id } => {
+                debug!("Received a message");
                 let node_address = NodeAddress {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
