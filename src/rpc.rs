@@ -350,7 +350,7 @@ impl std::fmt::Display for ResponseBody {
                 write!(f, "]")
             }
             ResponseBody::Talk { response } => {
-                write!(f, "Response: Response {}", hex::encode(response))
+                write!(f, "TALK: Response {}", hex::encode(response))
             }
             ResponseBody::Ticket {
                 ticket,
@@ -366,7 +366,7 @@ impl std::fmt::Display for ResponseBody {
                 )
             }
             ResponseBody::RegisterConfirmation { topic } => {
-                write!(f, "REGTOPIC: Registered: {}", topic)
+                write!(f, "REGCONFIRMATION: Registered: {}", topic)
             }
         }
     }
@@ -394,7 +394,7 @@ impl std::fmt::Display for RequestBody {
             RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {}", topic),
             RequestBody::RegisterTopic { topic, enr, ticket } => write!(
                 f,
-                "RegisterTopic: topic: {}, enr: {}, ticket: {}",
+                "REGTOPIC: topic: {}, enr: {}, ticket: {}",
                 topic,
                 enr.to_base64(),
                 hex::encode(ticket),
