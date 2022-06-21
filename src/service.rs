@@ -1128,6 +1128,7 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
+        trace!("Received {} response", response.body);
         let (active_request, req_type) =
             if let Some(active_request) = self.active_requests.remove(&id) {
                 (Some(active_request), ActiveRequestType::Other)
