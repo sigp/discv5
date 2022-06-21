@@ -536,7 +536,6 @@ impl Service {
                             self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic_hash) => {
-                            debug!("Received REGTOPIC request");
                             if self.topics.insert(topic_hash, HashMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
                             } else {
@@ -575,7 +574,7 @@ impl Service {
                                         InsertResult::Failed(FailureReason::TableFilter) => error!("Failed table filter"),
                                         InsertResult::Failed(FailureReason::InvalidSelfUpdate) => error!("Invalid self update"),
                                         InsertResult::Failed(_) => error!("Failed to insert ENR"),
-                                        _  => debug!("Insertion of node {} into KBucket of {} successful.", entry.node.key.preimage(), topic_hash),
+                                        _  => debug!("Insertion of node {} into KBucket of {} was successful", entry.node.key.preimage(), topic_hash),
                                     }
                                 });
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
@@ -727,44 +726,38 @@ impl Service {
     }
 
     fn send_register_topics(&mut self, topic_hash: TopicHash) {
-        if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
-            let all_buckets_reg_attempts = self.topics.entry(topic_hash).or_default();
+        if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
+            let reg_attempts = self.topics.entry(topic_hash).or_default();
             // Remove expired ads
             let mut new_reg_peers = Vec::new();
-            for reg_attempts in all_buckets_reg_attempts.values_mut() {
-                reg_attempts.retain(|_, reg_attempt| {
-                    if let RegistrationState::Confirmed(insert_time) = reg_attempt {
-                        insert_time.elapsed() >= Duration::from_secs(15 * 60)
-                    } else {
-                        false
-                    }
-                });
-                let reg_attempts_count = reg_attempts.len();
-                if reg_attempts_count < self.config.max_nodes_response {
-                    let mut peers = Vec::new();
-                    let _ = kbuckets.get().clone().iter().map(|entry| {
-                        let peer = entry.node.value.clone();
-                        if let Entry::Vacant(_) = reg_attempts.entry(peer.node_id()) {
-                            peers.push(peer);
+            debug!("Sending REGTOPICs to new peers");
+            for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
+                if let Entry::Occupied(ref mut entry) = reg_attempts.entry(index as u64) {
+                    let registrations = entry.get_mut();
+                    registrations.retain(|_, reg_attempt| {
+                        if let RegistrationState::Confirmed(insert_time) = reg_attempt {
+                            insert_time.elapsed() >= Duration::from_secs(15 * 60)
+                        } else {
+                            false
                         }
                     });
-
-                    if !peers.is_empty() {
-                        let max_nodes_response = self.config.max_nodes_response;
-
-                        new_reg_peers = peers
-                            .into_iter()
-                            .map_while(|peer| {
-                                if reg_attempts_count < max_nodes_response {
-                                    Some(peer)
-                                } else {
-                                    None
+                    // The count of active registration attempts after expired adds have been removed
+                    if registrations.len() < self.config.max_nodes_response
+                        && registrations.len() != bucket.num_entries()
+                    {
+                        let mut bucket_iter = bucket.iter();
+                        let mut new_peers = Vec::new();
+                        while new_peers.len() + registrations.len() < self.config.max_nodes_response
+                        {
+                            if let Some(peer) = bucket_iter.next() {
+                                if let Entry::Vacant(_) = registrations.entry(*peer.key.preimage())
+                                {
+                                    debug!("Found new reg peer. Peer: {:?}", peer.key.preimage());
+                                    new_peers.push(peer.value.clone())
                                 }
-                            })
-                            .collect();
-                        debug!("Found new reg peers. Peers: {:?}", new_reg_peers);
-                    } else {
-                        debug!("No peers found to send regtopics to.");
+                            }
+                        }
+                        new_reg_peers.append(&mut new_peers);
                     }
                 }
             }
