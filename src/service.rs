@@ -1482,7 +1482,9 @@ impl Service {
                                 .entry(node_id)
                                 .or_insert(RegistrationState::Confirmed(now));
 
-                            let _ = self.active_topics.insert(enr, topic);
+                            let _ = self.active_topics.insert(enr, topic).map_err(|e| {
+                                error!("Couldn't insert topic into active topics. Error: {}.", e)
+                            });
 
                             METRICS
                                 .active_ads

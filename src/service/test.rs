@@ -252,3 +252,6 @@ async fn encrypt_decrypt_ticket() {
 
     assert_eq!(decoded_ticket, ticket);
 }
+
+#[tokio::test]
+async fn test_ticketing() {}
