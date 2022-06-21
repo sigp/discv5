@@ -573,7 +573,7 @@ impl Service {
                                         InsertResult::Failed(FailureReason::TableFilter) => error!("Failed table filter"),
                                         InsertResult::Failed(FailureReason::InvalidSelfUpdate) => error!("Invalid self update"),
                                         InsertResult::Failed(_) => error!("Failed to insert ENR"),
-                                        _  => {},
+                                        _  => debug!("Insertion of node {} into KBucket of {} successful.", entry.node.key.preimage(), topic_hash),
                                     }
                                 });
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
@@ -760,6 +760,8 @@ impl Service {
                                 }
                             })
                             .collect();
+                    } else {
+                        debug!("No peers found to send regtopics to.");
                     }
                 }
             }
