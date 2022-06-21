@@ -7,7 +7,7 @@ use delay_map::HashMapDelay;
 use enr::NodeId;
 use more_asserts::debug_unreachable;
 use node_info::NodeContact;
-use std::cmp::Eq;
+use std::{cmp::Eq, collections::hash_map::Entry};
 
 /// Max tickets that are stored from one node for a topic (in the configured
 /// time period).
@@ -18,9 +18,9 @@ const REGISTRATION_WINDOW_IN_SECS: u64 = 10;
 const MAX_REGISTRANTS_PER_AD_SLOT: usize = 50;
 /// The duration for which requests are stored.
 const REQUEST_TIMEOUT_IN_SECS: u64 = 15;
-/// Each REGTOPIC request can get both a TICKET response and REGCONFIRMATION
-/// response.
-const MAX_RESPONSES_PER_REGTOPIC: u8 = 2;
+/// Each REGTOPIC request gets a TICKET response, NODES response and can get
+/// a REGCONFIRMATION response.
+const MAX_RESPONSES_PER_REGTOPIC: u8 = 3;
 
 /// A topic is active when it associated with the node id from a node it is
 /// published on.
@@ -347,14 +347,9 @@ impl ActiveRegtopicRequests {
     pub fn remove(&mut self, req_id: &RequestId) -> Option<ActiveRequest> {
         if let Some(seen_count) = self.request_history.get_mut(req_id) {
             *seen_count += 1;
-            if *seen_count < 1 {
+            if *seen_count == 0 {
                 self.request_history.remove(req_id);
-                self.requests.remove(req_id).map(|req| ActiveRequest {
-                    contact: req.contact.clone(),
-                    request_body: req.request_body.clone(),
-                    query_id: req.query_id,
-                    callback: None,
-                })
+                self.requests.remove(req_id)
             } else {
                 self.requests.get(req_id).map(|req| ActiveRequest {
                     contact: req.contact.clone(),
@@ -365,6 +360,15 @@ impl ActiveRegtopicRequests {
             }
         } else {
             None
+        }
+    }
+
+    // If NODES response needs to be divided into multiple NODES responses, the request
+    // must be reinserted.
+    pub fn reinsert(&mut self, req_id: RequestId) {
+        self.remove_expired();
+        if let Entry::Occupied(ref mut entry) = self.request_history.entry(req_id) {
+            *entry.get_mut() += 1;
         }
     }
 

@@ -1008,7 +1008,7 @@ impl Service {
                 if enr.node_id() == node_address.node_id
                     && enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr)
                 {
-                    debug!("Sending NODES response");
+                    debug!("Sending NODES response to REGTOPIC");
                     self.send_topic_nodes_response(
                         topic,
                         node_address.clone(),
@@ -1128,13 +1128,12 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        // A REGTOPIC request can receive both a TICKET and then also possibly a REGCONFIRMATION
-        // response. If no active request exists in active_requests, the response may still be a
-        // REGCONFIRMATION response.
-        let active_request = if let Some(active_request) = self.active_requests.remove(&id) {
-            Some(active_request)
+        // A REGTOPIC request receives a TICKET, NODES and then also possibly a REGCONFIRMATION
+        // response.
+        let (active_request, req_type) = if let Some(active_request) = self.active_requests.remove(&id) {
+            (Some(active_request), ActiveRequestType::Other)
         } else {
-            self.active_regtopic_requests.remove(&id)
+            (self.active_regtopic_requests.remove(&id), ActiveRequestType::RegisterTopic)
         };
 
         if let Some(mut active_request) = active_request {
@@ -1272,7 +1271,14 @@ impl Service {
                             current_response.received_nodes.append(&mut nodes);
                             self.active_nodes_responses
                                 .insert(node_id, current_response);
-                            self.active_requests.insert(id, active_request);
+                            match req_type {
+                                ActiveRequestType::RegisterTopic => {
+                                    self.active_regtopic_requests.reinsert(id);
+                                }
+                                _ => {
+                                    self.active_requests.insert(id, active_request);
+                                }
+                            }
                             return;
                         }
 
@@ -1658,23 +1664,12 @@ impl Service {
             enr,
             ticket: ticket_bytes,
         };
-
-        let active_request = ActiveRequest {
-            contact: contact.clone(),
-            request_body: request_body.clone(),
-            query_id: None,
-            callback: None,
-        };
-        let req_id = self.send_rpc_request(ActiveRequest {
+        self.send_rpc_request(ActiveRequest {
             contact,
             request_body,
             query_id: None,
             callback: None,
         });
-        self.active_regtopic_requests.insert(req_id, active_request);
-        METRICS
-            .active_regtopic_req
-            .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
     }
 
     /// Queries a node for the ads that node currently advertises for a given topic.
@@ -1988,9 +1983,10 @@ impl Service {
     fn send_rpc_request(&mut self, active_request: ActiveRequest) -> RequestId {
         // Generate a random rpc_id which is matched per node id
         let id = RequestId::random();
+        let request_body = active_request.request_body.clone();
         let request: Request = Request {
             id: id.clone(),
-            body: active_request.request_body.clone(),
+            body: request_body.clone(),
         };
         let contact = active_request.contact.clone();
 
@@ -2000,7 +1996,17 @@ impl Service {
             .send(HandlerIn::Request(contact, Box::new(request)))
             .is_ok()
         {
-            self.active_requests.insert(id.clone(), active_request);
+            match request_body {
+                RequestBody::RegisterTopic { .. } => {
+                    self.active_regtopic_requests.insert(id.clone(), active_request);
+                    METRICS
+                        .active_regtopic_req
+                        .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
+                }
+                _ => {
+                    self.active_requests.insert(id.clone(), active_request);
+                }
+            }
         }
         id
     }
@@ -2457,4 +2463,10 @@ enum ConnectionStatus {
     PongReceived(Enr),
     /// The node has disconnected
     Disconnected,
+}
+
+pub enum ActiveRequestType {
+    RegisterTopic,
+    TopicQuery,
+    Other,
 }
