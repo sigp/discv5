@@ -1177,7 +1177,9 @@ impl Service {
                     // These are sanitized and ordered
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
-                        RequestBody::TopicQuery { .. } | RequestBody::RegisterTopic { .. } => &topic_radius,
+                        RequestBody::TopicQuery { .. } | RequestBody::RegisterTopic { .. } => {
+                            &topic_radius
+                        }
                         _ => unreachable!(),
                     };
 
@@ -1295,10 +1297,19 @@ impl Service {
                             for enr in nodes.iter() {
                                 let sender_key: kbucket::Key<NodeId> = node_id.into();
                                 let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
-                                let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
-                                if let Some(distance_sender_topic) = sender_key.log2_distance(&topic_key) {
-                                    if let Some(distance_peer_topic) = peer_key.log2_distance(&topic_key) {
-                                        if distance_peer_topic > distance_sender_topic + 1 || distance_peer_topic < distance_sender_topic - 1 {
+                                let topic_key: kbucket::Key<NodeId> =
+                                    NodeId::new(&topic.as_bytes()).into();
+                                if let Some(distance_sender_topic) =
+                                    sender_key.log2_distance(&topic_key)
+                                {
+                                    if let Some(distance_peer_topic) =
+                                        peer_key.log2_distance(&topic_key)
+                                    {
+                                        // WARNING! This hack is based on the probability that ad nodes are not all in the
+                                        // same bucket +-1
+                                        if distance_peer_topic > distance_sender_topic + 1
+                                            || distance_peer_topic < distance_sender_topic - 1
+                                        {
                                             is_ads = true;
                                             break;
                                         }
@@ -1306,16 +1317,17 @@ impl Service {
                                 }
                             }
                             if is_ads {
-                                if let Some(query) = self.active_topic_queries.queries.get_mut(&topic) {
+                                if let Some(query) =
+                                    self.active_topic_queries.queries.get_mut(&topic)
+                                {
                                     nodes.into_iter().for_each(|enr| {
                                         query.results.insert(enr.node_id(), enr);
                                     });
                                 }
-                            } else {
-                                if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
-                                    for enr in nodes {
-                                        let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
-                                        match kbuckets.insert_or_update(
+                            } else if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
+                                for enr in nodes {
+                                    let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
+                                    match kbuckets.insert_or_update(
                                             &peer_key,
                                             enr.clone(),
                                             NodeStatus {
@@ -1338,10 +1350,8 @@ impl Service {
                                             InsertResult::Failed(_) => error!("Failed to insert ENR"),
                                             _ => debug!("Insertion of node {} into KBucket of {} was successful", enr.node_id(), topic),
                                         }
-                                    }
                                 }
                             }
-
                         }
                         RequestBody::RegisterTopic {
                             topic,
