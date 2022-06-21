@@ -1106,6 +1106,8 @@ impl Service {
                             self.ticket_pools.insert(enr, id, new_ticket);
                         }
                     }
+                } else {
+                    debug!("REGTOPIC enr does not match request sender enr");
                 }
             }
             RequestBody::TopicQuery { topic } => {
