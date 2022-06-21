@@ -730,9 +730,9 @@ impl Service {
             let reg_attempts = self.topics.entry(topic_hash).or_default();
             // Remove expired ads
             let mut new_reg_peers = Vec::new();
-            debug!("Sending REGTOPICs to new peers");
             // WARNING! This currently only works as long as buckets range is one bit
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
+                // Remove expired registrations
                 if let Entry::Occupied(ref mut entry) = reg_attempts.entry(index as u64) {
                     let registrations = entry.get_mut();
                     registrations.retain(|_, reg_attempt| {
@@ -742,28 +742,27 @@ impl Service {
                             false
                         }
                     });
+                }
+                let registrations = reg_attempts.entry(index as u64).or_default();
                     // The count of active registration attempts after expired adds have been removed
                     if registrations.len() < self.config.max_nodes_response
                         && registrations.len() != bucket.num_entries()
                     {
-                        let mut bucket_iter = bucket.iter();
                         let mut new_peers = Vec::new();
-                        while new_peers.len() + registrations.len() < self.config.max_nodes_response
-                        {
-                            if let Some(peer) = bucket_iter.next() {
-                                if let Entry::Vacant(_) = registrations.entry(*peer.key.preimage())
-                                {
-                                    debug!("Found new reg peer. Peer: {:?}", peer.key.preimage());
-                                    new_peers.push(peer.value.clone())
-                                }
-                            } else {
+                        for peer in bucket.iter() {
+                            if new_peers.len() + registrations.len()
+                                >= self.config.max_nodes_response
+                            {
                                 break;
+                            }
+                            if let Entry::Vacant(_) = registrations.entry(*peer.key.preimage()) {
+                                debug!("Found new reg peer. Peer: {:?}", peer.key.preimage());
+                                new_peers.push(peer.value.clone())
                             }
                         }
                         new_reg_peers.append(&mut new_peers);
                     }
                 }
-            }
             for peer in new_reg_peers {
                 let local_enr = self.local_enr.read().clone();
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
