@@ -760,6 +760,7 @@ impl Service {
                                 }
                             })
                             .collect();
+                            debug!("Found new reg peers. Peers: {:?}", new_reg_peers);
                     } else {
                         debug!("No peers found to send regtopics to.");
                     }
