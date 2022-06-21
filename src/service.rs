@@ -731,6 +731,7 @@ impl Service {
             // Remove expired ads
             let mut new_reg_peers = Vec::new();
             debug!("Sending REGTOPICs to new peers");
+            // WARNING! This currently only works as long as buckets range is one bit
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
                 if let Entry::Occupied(ref mut entry) = reg_attempts.entry(index as u64) {
                     let registrations = entry.get_mut();
