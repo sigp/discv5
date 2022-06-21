@@ -224,7 +224,9 @@ impl Response {
             ResponseBody::Nodes { .. } => {
                 matches!(
                     req,
-                    RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. }
+                    RequestBody::FindNode { .. }
+                        | RequestBody::TopicQuery { .. }
+                        | RequestBody::RegisterTopic { .. }
                 )
             }
             ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),

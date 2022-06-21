@@ -744,25 +744,23 @@ impl Service {
                     });
                 }
                 let registrations = reg_attempts.entry(index as u64).or_default();
-                    // The count of active registration attempts after expired adds have been removed
-                    if registrations.len() < self.config.max_nodes_response
-                        && registrations.len() != bucket.num_entries()
-                    {
-                        let mut new_peers = Vec::new();
-                        for peer in bucket.iter() {
-                            if new_peers.len() + registrations.len()
-                                >= self.config.max_nodes_response
-                            {
-                                break;
-                            }
-                            if let Entry::Vacant(_) = registrations.entry(*peer.key.preimage()) {
-                                debug!("Found new reg peer. Peer: {:?}", peer.key.preimage());
-                                new_peers.push(peer.value.clone())
-                            }
+                // The count of active registration attempts after expired adds have been removed
+                if registrations.len() < self.config.max_nodes_response
+                    && registrations.len() != bucket.num_entries()
+                {
+                    let mut new_peers = Vec::new();
+                    for peer in bucket.iter() {
+                        if new_peers.len() + registrations.len() >= self.config.max_nodes_response {
+                            break;
                         }
-                        new_reg_peers.append(&mut new_peers);
+                        if let Entry::Vacant(_) = registrations.entry(*peer.key.preimage()) {
+                            debug!("Found new reg peer. Peer: {:?}", peer.key.preimage());
+                            new_peers.push(peer.value.clone())
+                        }
                     }
+                    new_reg_peers.append(&mut new_peers);
                 }
+            }
             for peer in new_reg_peers {
                 let local_enr = self.local_enr.read().clone();
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
