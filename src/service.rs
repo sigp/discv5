@@ -536,6 +536,7 @@ impl Service {
                             self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic) => {
+                            debug!("Received REGTOPIC request");
                             let topic_hash = topic.hash();
                             if self.topics.insert(topic_hash, HashMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
@@ -552,6 +553,7 @@ impl Service {
                                     (None, None)
                                 };
 
+                                debug!("Initiating kbuckets for topic hash {}", topic_hash);
                                 let mut kbuckets = KBucketsTable::new(
                                     NodeId::new(&topic_hash.as_bytes()).into(),
                                     Duration::from_secs(60),
@@ -559,6 +561,7 @@ impl Service {
                                     table_filter,
                                     bucket_filter,
                                 );
+                                debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
                                 self.kbuckets.write().iter().for_each(|entry| {
                                     match kbuckets.insert_or_update(
                                         entry.node.key,
