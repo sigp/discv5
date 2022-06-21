@@ -1008,6 +1008,7 @@ impl Service {
                 if enr.node_id() == node_address.node_id
                     && enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr)
                 {
+                    debug!("Sending NODES response");
                     self.send_topic_nodes_response(
                         topic,
                         node_address.clone(),
@@ -1091,6 +1092,7 @@ impl Service {
                             }
                         }
                     } else {
+                        debug!("Sending TICKET response");
                         // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
                         // wait time for the ad slot. See discv5 spec. This node will not store tickets received
                         // with wait time 0.
@@ -1106,7 +1108,7 @@ impl Service {
                         }
                     }
                 } else {
-                    debug!("REGTOPIC enr does not match request sender enr");
+                    debug!("REGTOPIC enr does not match request sender's enr. Nodes can only register themselves.");
                 }
             }
             RequestBody::TopicQuery { topic } => {
