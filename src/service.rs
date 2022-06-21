@@ -1004,6 +1004,7 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
+                debug!("Received a REGTOPIC req");
                 // Drop if request tries to advertise another node than sender
                 if enr.node_id() == node_address.node_id
                     && enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr)
