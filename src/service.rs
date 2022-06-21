@@ -1177,7 +1177,7 @@ impl Service {
                     // These are sanitized and ordered
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
-                        RequestBody::TopicQuery { .. } => &topic_radius,
+                        RequestBody::TopicQuery { .. } | RequestBody::RegisterTopic { .. } => &topic_radius,
                         _ => unreachable!(),
                     };
 
