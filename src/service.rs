@@ -19,7 +19,7 @@ use self::{
 use crate::{
     advertisement::{
         ticket::{ActiveRegtopicRequests, TicketPools, Tickets},
-        topic::{Sha256Topic as Topic, TopicHash},
+        topic::TopicHash,
         Ads,
     },
     error::{RequestError, ResponseError},
