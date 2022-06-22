@@ -797,7 +797,7 @@ impl Service {
         if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             let mut peers = kbuckets.get().clone();
             trace!("Found {} peers in kbuckets of topic hash {}", peers.iter().count(), topic_hash);
-            // Start querying nodes further away, starting at distance 256
+            // Prefer querying nodes further away, starting at distance 256 by to avoid hotspots
             let mut new_query_peers_iter = peers.iter().rev().filter_map(|entry| {
                 (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
                     query
@@ -808,13 +808,13 @@ impl Service {
                 })
             });
             let mut new_query_peers = Vec::new();
-            while new_query_peers.len() < num_query_peers {
-                if let Some(enr) = new_query_peers_iter.next() {
-                    new_query_peers.push(enr);
+            for enr in new_query_peers_iter.next() {
+                trace!("Added new TOPICQUERY peer {}", enr.node_id());
+                new_query_peers.push(enr);
+                if new_query_peers.len() < num_query_peers {
+                    break;
                 }
             }
-            let _ = new_query_peers.iter().rev().count();
-
             trace!("Sending TOPICQUERYs to {} peers", new_query_peers.len());
             for enr in new_query_peers {
                 if let Ok(node_contact) =
@@ -825,7 +825,6 @@ impl Service {
                 }
             }
         } else {
-            error!("Debug unreachable");
             debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
         }
     }
