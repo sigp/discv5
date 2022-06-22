@@ -1179,7 +1179,7 @@ impl Service {
                         );
                     }
 
-                    let topic_radius = (1..self.config.topic_radius).collect();
+                    let topic_radius = (1..self.config.topic_radius+1).collect();
                     // These are sanitized and ordered
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
