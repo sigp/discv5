@@ -1531,6 +1531,7 @@ impl Service {
                                     .or_default()
                                     .entry(node_id)
                                     .or_insert(RegistrationState::Ticket);
+                                trace!("Sending REGTOPIC with ticket");
                                 self.send_register_topics(topic);
                             }
                     }
