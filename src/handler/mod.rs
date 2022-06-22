@@ -392,6 +392,7 @@ impl Handler {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
+                trace!("Received a message");
                 self.handle_message(
                     node_address,
                     message_nonce,
@@ -924,6 +925,7 @@ impl Handler {
                     }
                 }
                 Message::Response(response) => {
+                    trace!("Received a response");
                     // Sessions could be awaiting an ENR response. Check if this response matches
                     // these
                     if let Some(request_id) = session.awaiting_enr.as_ref() {
@@ -1010,14 +1012,14 @@ impl Handler {
                         let reinsert = match request_call.request.body {
                             // The request is reinserted for either another nodes response, a ticket or a
                             // register confirmation response that may come, otherwise the request times out.
-                            RequestBody::RegisterTopic { .. } => remaining_responses >= &mut 0,
-                            RequestBody::TopicQuery { .. } => {
-                                // remove from some map of NODES and AD NODES
+                            RequestBody::RegisterTopic { .. } | RequestBody::TopicQuery { .. } => {
+                                trace!("Received a topics NODES reponse");
                                 remaining_responses >= &mut 0
-                            }
+                            },
                             _ => remaining_responses > &mut 0,
                         };
                         if reinsert {
+                            trace!("Reinserting active request");
                             // more responses remaining, add back the request and send the response
                             // add back the request and send the response
                             self.active_requests
