@@ -122,7 +122,7 @@ impl Default for Discv5Config {
 
         Self {
             enable_packet_filter: false,
-            request_timeout: Duration::from_secs(1),
+            request_timeout: Duration::from_secs(3),
             vote_duration: Duration::from_secs(30),
             query_peer_timeout: Duration::from_secs(2),
             query_timeout: Duration::from_secs(60),
