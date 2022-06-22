@@ -782,7 +782,6 @@ impl Service {
         num_query_peers: usize,
         callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
     ) {
-        trace!("Preparing to send TOPICQUERYs");
         let query = self
             .active_topic_queries
             .queries
@@ -809,13 +808,12 @@ impl Service {
             });
             let mut new_query_peers = Vec::new();
             for enr in new_query_peers_iter.next() {
-                trace!("Added new TOPICQUERY peer {}", enr.node_id());
                 new_query_peers.push(enr);
                 if new_query_peers.len() < num_query_peers {
                     break;
                 }
             }
-            trace!("Sending TOPICQUERYs to {} peers", new_query_peers.len());
+            trace!("Sending TOPICQUERYs to {} new peers", new_query_peers.len());
             for enr in new_query_peers {
                 if let Ok(node_contact) =
                     NodeContact::try_from_enr(enr.clone(), self.config.ip_mode)
