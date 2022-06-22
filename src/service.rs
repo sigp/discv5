@@ -796,6 +796,7 @@ impl Service {
         let queried_peers = query.queried_peers.clone();
         if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             let mut peers = kbuckets.get().clone();
+            trace!("Found {} peers in kbuckets of topic hash {}", peers.iter().count(), topic_hash);
             // Start querying nodes further away, starting at distance 256
             let mut new_query_peers_iter = peers.iter().rev().filter_map(|entry| {
                 (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
@@ -824,6 +825,7 @@ impl Service {
                 }
             }
         } else {
+            error!("Debug unreachable");
             debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
         }
     }
