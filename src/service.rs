@@ -195,8 +195,15 @@ pub struct Service {
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
-    /// Keeps track of expected REGCONFIRMATION responses that may be received from a REGTOPIC
-    /// request.
+    /// Keeps track of the number of responses received from a NODES response.
+    active_adnodes_responses: HashMap<NodeId, NodesResponse>,
+
+    /// Keeps track of the 2 expected responses, NODES and ADNODES that may be received from a 
+    /// TOPICQUERY request.
+    topic_query_responses: HashMap<RequestId, usize>,
+
+    /// Keeps track of the 3 expected responses, TICKET, NODES and REGCONFIRMATION that may be 
+    /// received from a REGTOPIC request.
     active_regtopic_requests: ActiveRegtopicRequests,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
@@ -424,6 +431,8 @@ impl Service {
                     queries: QueryPool::new(config.query_timeout),
                     active_requests: Default::default(),
                     active_nodes_responses: HashMap::new(),
+                    active_adnodes_responses: HashMap::new(),
+                    topic_query_responses: HashMap::new(),
                     active_regtopic_requests: ActiveRegtopicRequests::default(),
                     ip_votes,
                     handler_send,
@@ -795,7 +804,11 @@ impl Service {
         let queried_peers = query.queried_peers.clone();
         if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             let mut peers = kbuckets.get().clone();
-            trace!("Found {} peers in kbuckets of topic hash {}", peers.iter().count(), topic_hash);
+            trace!(
+                "Found {} peers in kbuckets of topic hash {}",
+                peers.iter().count(),
+                topic_hash
+            );
             // Prefer querying nodes further away, starting at distance 256 by to avoid hotspots
             let mut new_query_peers_iter = peers.iter().rev().filter_map(|entry| {
                 (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
@@ -1132,14 +1145,11 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        let (active_request, req_type) =
+        let active_request =
             if let Some(active_request) = self.active_requests.remove(&id) {
-                (Some(active_request), ActiveRequestType::Other)
+                Some(active_request)
             } else {
-                (
-                    self.active_regtopic_requests.remove(&id),
-                    ActiveRequestType::RegisterTopic,
-                )
+                self.active_regtopic_requests.remove(&id)   
             };
 
         if let Some(mut active_request) = active_request {
@@ -1182,7 +1192,7 @@ impl Service {
                         );
                     }
 
-                    let topic_radius = (1..self.config.topic_radius+1).collect();
+                    let topic_radius = (1..self.config.topic_radius + 1).collect();
                     // These are sanitized and ordered
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
@@ -1277,10 +1287,10 @@ impl Service {
                             current_response.received_nodes.append(&mut nodes);
                             self.active_nodes_responses
                                 .insert(node_id, current_response);
-                            match req_type {
-                                ActiveRequestType::RegisterTopic => {
+                            match active_request.request_body {
+                                RequestBody::RegisterTopic { .. } => {
                                     self.active_regtopic_requests.reinsert(id);
-                                }
+                                },
                                 _ => {
                                     self.active_requests.insert(id, active_request);
                                 }
@@ -1306,41 +1316,15 @@ impl Service {
                     // will be ignored.
                     // ensure any mapping is removed in this rare case
                     self.active_nodes_responses.remove(&node_id);
+                    
+                    if let Some() = self.topic_query_responses.get_mut(active_request.request.id) {
+
+                    }
+                    
 
                     match active_request.request_body {
                         RequestBody::TopicQuery { topic } => {
-                            let mut is_ads = false;
-                            for enr in nodes.iter() {
-                                let sender_key: kbucket::Key<NodeId> = node_id.into();
-                                let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
-                                let topic_key: kbucket::Key<NodeId> =
-                                    NodeId::new(&topic.as_bytes()).into();
-                                if let Some(distance_sender_topic) =
-                                    sender_key.log2_distance(&topic_key)
-                                {
-                                    if let Some(distance_peer_topic) =
-                                        peer_key.log2_distance(&topic_key)
-                                    {
-                                        // WARNING! This hack is based on the probability that ad nodes are not all in the
-                                        // same bucket +-1
-                                        if distance_peer_topic > distance_sender_topic + 1
-                                            || distance_peer_topic < distance_sender_topic - 1
-                                        {
-                                            is_ads = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            if is_ads {
-                                if let Some(query) =
-                                    self.active_topic_queries.queries.get_mut(&topic)
-                                {
-                                    nodes.into_iter().for_each(|enr| {
-                                        query.results.insert(enr.node_id(), enr);
-                                    });
-                                }
-                            } else if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
+                            if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
                                 for enr in nodes {
                                     let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
                                     match kbuckets.insert_or_update(
@@ -1409,6 +1393,61 @@ impl Service {
                         _ => debug_unreachable!(
                             "Only TOPICQUERY and FINDNODE requests expect NODES response"
                         ),
+                    }
+                }
+                ResponseBody::AdNodes { total, nodes } => {
+                    // handle the case that there is more than one response
+                    if total > 1 {
+                        let mut current_response = self
+                            .active_adnodes_responses
+                            .remove(&node_id)
+                            .unwrap_or_default();
+
+                        debug!(
+                            "ADNODES Response: {} of {} received",
+                            current_response.count, total
+                        );
+                        // if there are more responses coming, store the nodes and wait for
+                        // another response
+                        // We allow for implementations to send at a minimum 3 nodes per response.
+                        // We allow for the number of nodes to be returned as the maximum we emit.
+                        if current_response.count < self.config.max_nodes_response / 3 + 1
+                            && (current_response.count as u64) < total
+                        {
+                            current_response.count += 1;
+
+                            current_response.received_nodes.append(&mut nodes);
+                            self.active_adnodes_responses
+                                .insert(node_id, current_response);
+                            self.active_topic_query_requests.reinsert(id);
+                            return;
+                        }
+
+                        // have received all the Nodes responses we are willing to accept
+                        // ignore duplicates here as they will be handled when adding
+                        // to the DHT
+                        current_response.received_nodes.append(&mut nodes);
+                        nodes = current_response.received_nodes;
+                    }
+
+                    debug!(
+                        "Received a ADNODES response of len: {}, total: {}, from: {}",
+                        nodes.len(),
+                        total,
+                        active_request.contact
+                    );
+                    // note: If a peer sends an initial NODES response with a total > 1 then
+                    // in a later response sends a response with a total of 1, all previous nodes
+                    // will be ignored.
+                    // ensure any mapping is removed in this rare case
+                    self.active_nodes_responses.remove(&node_id);
+
+                    if let RequestBody::TopicQuery { topic } = active_request.request_body {
+                        if let Some(query) = self.active_topic_queries.queries.get_mut(&topic) {
+                            nodes.into_iter().for_each(|enr| {
+                                query.results.insert(enr.node_id(), enr);
+                            });
+                        }
                     }
                 }
                 ResponseBody::Pong { enr_seq, ip, port } => {
@@ -1525,17 +1564,17 @@ impl Service {
                                 topic,
                             )
                             .ok();
-                            let peer_key: kbucket::Key<NodeId> = node_id.into();
-                            let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
-                            if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                                let registration_attempts = self.topics.entry(topic).or_default();
-                                registration_attempts
-                                    .entry(distance)
-                                    .or_default()
-                                    .entry(node_id)
-                                    .or_insert(RegistrationState::Ticket);
-                                self.send_register_topics(topic);
-                            }
+                        let peer_key: kbucket::Key<NodeId> = node_id.into();
+                        let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                        if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                            let registration_attempts = self.topics.entry(topic).or_default();
+                            registration_attempts
+                                .entry(distance)
+                                .or_default()
+                                .entry(node_id)
+                                .or_insert(RegistrationState::Ticket);
+                            self.send_register_topics(topic);
+                        }
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
@@ -2469,10 +2508,4 @@ enum ConnectionStatus {
     PongReceived(Enr),
     /// The node has disconnected
     Disconnected,
-}
-
-pub enum ActiveRequestType {
-    RegisterTopic,
-    TopicQuery,
-    Other,
 }

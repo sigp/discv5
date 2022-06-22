@@ -168,6 +168,9 @@ pub(crate) struct RequestCall {
     /// If we receive a Nodes Response with a total greater than 1. This keeps track of the
     /// remaining responses expected.
     remaining_responses: Option<u64>,
+    /// If we receive a AdNodes Response with a total greater than 1. This keeps track of the
+    /// remaining responses expected.
+    remaining_adnode_responses: Option<u64>,
     /// Signifies if we are initiating the session with a random packet. This is only used to
     /// determine the connection direction of the session.
     initiating_session: bool,
@@ -187,6 +190,7 @@ impl RequestCall {
             handshake_sent: false,
             retries: 1,
             remaining_responses: None,
+            remaining_adnode_responses: None,
             initiating_session,
         }
     }
@@ -300,7 +304,9 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests::new(config.request_timeout + Duration::from_secs(15)),
+                    active_requests: ActiveRequests::new(
+                        config.request_timeout + Duration::from_secs(15),
+                    ),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
@@ -1016,12 +1022,23 @@ impl Handler {
                     if let Some(remaining_responses) = request_call.remaining_responses.as_mut() {
                         *remaining_responses -= 1;
                         let reinsert = match request_call.request.body {
-                            // The request is reinserted for either another nodes response, a ticket or a
-                            // register confirmation response that may come, otherwise the request times out.
-                            RequestBody::RegisterTopic { .. } | RequestBody::TopicQuery { .. } => {
-                                trace!("Received a topics NODES reponse");
+                            RequestBody::RegisterTopic { .. } => {
+                                trace!("Received a REGTOPIC NODES reponse");
+                                // The request is reinserted for either another NODES response, a TICKET or a
+                                // REGCONFIRMATION response that may come, otherwise the request times out.
                                 remaining_responses >= &mut 0
-                            },
+                            }
+                            RequestBody::TopicQuery { .. } => {
+                                trace!("Received a TOPICQUERY NODES reponse");
+                                // TopicQuerys may receive multiple ADNODE responses as well as NODES responses
+                                // so the request call must be reinserted.
+                                let remaining_adnode_responses =
+                                    match request_call.remaining_adnode_responses {
+                                        Some(remaining) => remaining > 0,
+                                        None => false,
+                                    };
+                                remaining_responses > &mut 0 || remaining_adnode_responses
+                            }
                             _ => remaining_responses > &mut 0,
                         };
                         if reinsert {
@@ -1054,16 +1071,73 @@ impl Handler {
                         }
                         return;
                     }
-                } else if  let RequestBody::RegisterTopic { .. } | RequestBody::TopicQuery { .. } = request_call.request.body {
+                // If there is only one NODES response but it is for a REGTOPIC, reinsert the active request for a
+                // TICKET or a potential REGCONFIRMATION.
+                } else if let RequestBody::RegisterTopic { .. } = request_call.request.body {
                     trace!("Received a topics NODES reponse");
                     self.active_requests
+                        .insert(node_address.clone(), request_call);
+                }
+            } else if let ResponseBody::AdNodes { total, .. } = response.body {
+                if total > 1 {
+                    // This is a multi-response Nodes response
+                    if let Some(ref mut remaining_adnode_responses) =
+                        request_call.remaining_adnode_responses
+                    {
+                        *remaining_adnode_responses -= 1;
+                        let reinsert = {
+                            // TopicQuerys may receive multiple ADNODE responses as well as NODES responses
+                            // so the request call must be reinserted.
+                            let remaining_responses = match request_call.remaining_responses {
+                                Some(remaining) => remaining > 0,
+                                None => false,
+                            };
+                            remaining_adnode_responses > &mut 0 || remaining_responses
+                        };
+                        if reinsert {
+                            trace!("Reinserting active TOPICQUERY request");
+                            // more responses remaining, add back the request and send the response
+                            // add back the request and send the response
+                            self.active_requests
                                 .insert(node_address.clone(), request_call);
+                            if let Err(e) = self
+                                .service_send
+                                .send(HandlerOut::Response(node_address, Box::new(response)))
+                                .await
+                            {
+                                warn!("Failed to inform of response {}", e)
+                            }
+                            return;
+                        }
+                    } else {
+                        // This is the first instance
+                        request_call.remaining_responses = Some(total - 1);
+                        // add back the request and send the response
+                        self.active_requests
+                            .insert(node_address.clone(), request_call);
+                        if let Err(e) = self
+                            .service_send
+                            .send(HandlerOut::Response(node_address, Box::new(response)))
+                            .await
+                        {
+                            warn!("Failed to inform of response {}", e)
+                        }
+                        return;
+                    }
                 }
             } else if let ResponseBody::Ticket { .. } = response.body {
-                // The request is reinserted for either a nodes response or a register
-                // confirmation response that may come, otherwise the request times out.
+                // The request is reinserted for either a NODES response or a potential REGCONFIRMATION
+                // response that may come.
                 self.active_requests
                     .insert(node_address.clone(), request_call);
+                if let Err(e) = self
+                    .service_send
+                    .send(HandlerOut::Response(node_address, Box::new(response)))
+                    .await
+                {
+                    warn!("Failed to inform of response {}", e)
+                }
+                return;
             }
 
             // Remove the expected response
