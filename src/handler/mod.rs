@@ -196,6 +196,12 @@ impl RequestCall {
     }
 }
 
+pub enum ResponseType {
+    Nodes,
+    Ticket,
+    Regconfirmation,
+}
+
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.

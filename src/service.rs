@@ -1522,18 +1522,17 @@ impl Service {
                                 topic,
                             )
                             .ok();
-                    }
-
-                    let peer_key: kbucket::Key<NodeId> = node_id.into();
-                    let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
-                    if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                        let registration_attempts = self.topics.entry(topic).or_default();
-                        registration_attempts
-                            .entry(distance)
-                            .or_default()
-                            .entry(node_id)
-                            .or_insert(RegistrationState::Ticket);
-                        self.send_register_topics(topic);
+                            let peer_key: kbucket::Key<NodeId> = node_id.into();
+                            let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                            if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                                let registration_attempts = self.topics.entry(topic).or_default();
+                                registration_attempts
+                                    .entry(distance)
+                                    .or_default()
+                                    .entry(node_id)
+                                    .or_insert(RegistrationState::Ticket);
+                                self.send_register_topics(topic);
+                            }
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
