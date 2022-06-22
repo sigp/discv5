@@ -1011,7 +1011,7 @@ impl Service {
                     && enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr)
                 {
                     debug!("Sending NODES response to REGTOPIC");
-                    self.send_topic_nodes_response(
+                    self.send_find_topic_nodes_response(
                         topic,
                         node_address.clone(),
                         id.clone(),
@@ -1114,13 +1114,15 @@ impl Service {
                 }
             }
             RequestBody::TopicQuery { topic } => {
-                self.send_topic_nodes_response(
+                trace!("Sending TOPICQUERY find nodes response");
+                self.send_find_topic_nodes_response(
                     topic,
                     node_address.clone(),
                     id.clone(),
                     "TOPICQUERY",
                 );
-                self.send_topic_query_response(node_address, id, topic);
+                trace!("Sending TOPICQUERY AD nodes response");
+                self.send_topic_query_nodes_response(node_address, id, topic);
             }
         }
     }
@@ -1130,7 +1132,6 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        trace!("Received {} response", response.body);
         let (active_request, req_type) =
             if let Some(active_request) = self.active_requests.remove(&id) {
                 (Some(active_request), ActiveRequestType::Other)
@@ -1759,7 +1760,7 @@ impl Service {
 
     /// Answer to a topic query containing the nodes currently advertised for the
     /// requested topic if any.
-    fn send_topic_query_response(
+    fn send_topic_query_nodes_response(
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
@@ -1770,10 +1771,10 @@ impl Service {
             .get_ad_nodes(topic)
             .map(|ad| ad.node_record().clone())
             .collect();
-        self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY");
+        self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY ADS");
     }
 
-    fn send_topic_nodes_response(
+    fn send_find_topic_nodes_response(
         &mut self,
         topic: TopicHash,
         node_address: NodeAddress,
@@ -1930,7 +1931,7 @@ impl Service {
 
             for response in responses {
                 trace!(
-                    "Sending {} response to: {}. Response: {} ",
+                    "Sending {} NODES response to: {}. Response: {} ",
                     req_type,
                     node_address,
                     response
