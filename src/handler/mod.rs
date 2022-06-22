@@ -300,7 +300,7 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests::new(config.request_timeout),
+                    active_requests: ActiveRequests::new(config.request_timeout+Duration::from_secs(10)),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
@@ -346,6 +346,7 @@ impl Handler {
                     self.process_inbound_packet(inbound_packet).await;
                 }
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
+                    trace!("Discarding request {} with timeout", pending_request.request.body);
                     self.handle_request_timeout(node_address, pending_request).await;
                 }
                 _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
