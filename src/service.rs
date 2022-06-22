@@ -531,23 +531,10 @@ impl Service {
                                     table_filter,
                                     bucket_filter,
                                 );
-                                self.kbuckets.write().iter().for_each(|entry| {
-                                    match kbuckets.insert_or_update(
-                                        entry.node.key,
-                                        entry.node.value.clone(),
-                                        NodeStatus {
-                                            state: ConnectionState::Disconnected,
-                                            direction: ConnectionDirection::Incoming,
-                                        },
-                                    ) {
-                                        InsertResult::Failed(FailureReason::BucketFull) => error!("Table full"),
-                                        InsertResult::Failed(FailureReason::BucketFilter) => error!("Failed bucket filter"),
-                                        InsertResult::Failed(FailureReason::TableFilter) => error!("Failed table filter"),
-                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => error!("Invalid self update"),
-                                        InsertResult::Failed(_) => error!("Failed to insert ENR"),
-                                        _  => {},
-                                    }
-                                });
+                                {
+                                    let mut local_routing_table = self.kbuckets.write();
+                                    Service::new_connections_disconnected(&mut kbuckets, topic_hash, local_routing_table.iter().map(|entry| entry.node.value.clone()));
+                                }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
                             self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
@@ -577,25 +564,14 @@ impl Service {
                                     bucket_filter,
                                 );
                                 debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
-                                self.kbuckets.write().iter().for_each(|entry| {
-                                    match kbuckets.insert_or_update(
-                                        entry.node.key,
-                                        entry.node.value.clone(),
-                                        NodeStatus {
-                                            state: ConnectionState::Disconnected,
-                                            direction: ConnectionDirection::Incoming,
-                                        },
-                                    ) {
-                                        InsertResult::Failed(FailureReason::BucketFull) => error!("Table full"),
-                                        InsertResult::Failed(FailureReason::BucketFilter) => error!("Failed bucket filter"),
-                                        InsertResult::Failed(FailureReason::TableFilter) => error!("Failed table filter"),
-                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => error!("Invalid self update"),
-                                        InsertResult::Failed(_) => error!("Failed to insert ENR"),
-                                        _  => debug!("Insertion of node {} into KBucket of {} was successful", entry.node.key.preimage(), topic_hash),
-                                    }
-                                });
+
+                                {
+                                    let mut local_routing_table = self.kbuckets.write();
+                                    Service::new_connections_disconnected(&mut kbuckets, topic_hash, local_routing_table.iter().map(|entry| entry.node.value.clone()));
+                                }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                                 METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
+
                                 self.send_register_topics(topic_hash);
                             }
                         }
@@ -817,7 +793,7 @@ impl Service {
                 topic_hash
             );
             // Prefer querying nodes further away, starting at distance 256 by to avoid hotspots
-            let mut new_query_peers_iter = peers.iter().rev().filter_map(|entry| {
+            let new_query_peers_iter = peers.iter().rev().filter_map(|entry| {
                 (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
                     query
                         .queried_peers
@@ -827,7 +803,7 @@ impl Service {
                 })
             });
             let mut new_query_peers = Vec::new();
-            for enr in new_query_peers_iter.next() {
+            for enr in new_query_peers_iter {
                 new_query_peers.push(enr);
                 if new_query_peers.len() < num_query_peers {
                     break;
@@ -1326,32 +1302,11 @@ impl Service {
                     match active_request.request_body {
                         RequestBody::TopicQuery { topic } => {
                             if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
-                                for enr in nodes {
-                                    let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
-                                    match kbuckets.insert_or_update(
-                                            &peer_key,
-                                            enr.clone(),
-                                            NodeStatus {
-                                                state: ConnectionState::Disconnected,
-                                                direction: ConnectionDirection::Incoming,
-                                            },
-                                        ) {
-                                            InsertResult::Failed(FailureReason::BucketFull) => {
-                                                error!("Table full")
-                                            }
-                                            InsertResult::Failed(FailureReason::BucketFilter) => {
-                                                error!("Failed bucket filter")
-                                            }
-                                            InsertResult::Failed(FailureReason::TableFilter) => {
-                                                error!("Failed table filter")
-                                            }
-                                            InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
-                                                error!("Invalid self update")
-                                            }
-                                            InsertResult::Failed(_) => error!("Failed to insert ENR"),
-                                            _ => debug!("Insertion of node {} into KBucket of {} was successful", enr.node_id(), topic),
-                                        }
-                                }
+                                Service::new_connections_disconnected(
+                                    kbuckets,
+                                    topic,
+                                    nodes.into_iter(),
+                                );
                             }
                         }
                         RequestBody::RegisterTopic {
@@ -1360,32 +1315,11 @@ impl Service {
                             ticket: _,
                         } => {
                             if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
-                                for enr in nodes {
-                                    let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
-                                    match kbuckets.insert_or_update(
-                                        &peer_key,
-                                        enr.clone(),
-                                        NodeStatus {
-                                            state: ConnectionState::Disconnected,
-                                            direction: ConnectionDirection::Incoming,
-                                        },
-                                    ) {
-                                        InsertResult::Failed(FailureReason::BucketFull) => {
-                                            error!("Table full")
-                                        }
-                                        InsertResult::Failed(FailureReason::BucketFilter) => {
-                                            error!("Failed bucket filter")
-                                        }
-                                        InsertResult::Failed(FailureReason::TableFilter) => {
-                                            error!("Failed table filter")
-                                        }
-                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
-                                            error!("Invalid self update")
-                                        }
-                                        InsertResult::Failed(_) => error!("Failed to insert ENR"),
-                                        _ => debug!("Insertion of node {} into KBucket of {} was successful", enr.node_id(), topic),
-                                    }
-                                }
+                                Service::new_connections_disconnected(
+                                    kbuckets,
+                                    topic,
+                                    nodes.into_iter(),
+                                );
                             }
                         }
                         RequestBody::FindNode { .. } => {
@@ -2430,8 +2364,48 @@ impl Service {
                     topic,
                     enr: _,
                     ticket: _,
-                } => self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic)),
+                }
+                | RequestBody::TopicQuery { topic } => {
+                    self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic))
+                }
                 _ => self.connection_updated(node_id, ConnectionStatus::Disconnected, None),
+            }
+        }
+    }
+
+    fn new_connections_disconnected(
+        kbuckets: &mut KBucketsTable<NodeId, Enr>,
+        topic: TopicHash,
+        nodes: impl Iterator<Item = Enr>,
+    ) {
+        for enr in nodes {
+            let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
+            match kbuckets.insert_or_update(
+                &peer_key,
+                enr.clone(),
+                NodeStatus {
+                    state: ConnectionState::Disconnected,
+                    direction: ConnectionDirection::Incoming,
+                },
+            ) {
+                InsertResult::Failed(FailureReason::BucketFull) => {
+                    error!("Table full")
+                }
+                InsertResult::Failed(FailureReason::BucketFilter) => {
+                    error!("Failed bucket filter")
+                }
+                InsertResult::Failed(FailureReason::TableFilter) => {
+                    error!("Failed table filter")
+                }
+                InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
+                    error!("Invalid self update")
+                }
+                InsertResult::Failed(_) => error!("Failed to insert ENR"),
+                _ => debug!(
+                    "Insertion of node {} into KBucket of {} was successful",
+                    enr.node_id(),
+                    topic
+                ),
             }
         }
     }
