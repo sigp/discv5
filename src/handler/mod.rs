@@ -392,7 +392,6 @@ impl Handler {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                trace!("Received a message");
                 self.handle_message(
                     node_address,
                     message_nonce,
@@ -925,7 +924,6 @@ impl Handler {
                     }
                 }
                 Message::Response(response) => {
-                    trace!("Received a response");
                     // Sessions could be awaiting an ENR response. Check if this response matches
                     // these
                     if let Some(request_id) = session.awaiting_enr.as_ref() {
@@ -962,6 +960,7 @@ impl Handler {
                             return;
                         }
                     }
+                    trace!("Handling a {} response", response.body);
                     // Handle standard responses
                     self.handle_response(node_address, response).await;
                 }
