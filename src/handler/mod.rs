@@ -300,7 +300,7 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests::new(config.request_timeout + Duration::from_secs(20)),
+                    active_requests: ActiveRequests::new(config.request_timeout + Duration::from_secs(15)),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(

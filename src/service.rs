@@ -495,6 +495,7 @@ impl Service {
                         ServiceRequest::TopicQuery(topic_hash, callback) => {
                             // If we look up the topic hash for the first time we initialise its kbuckets.
                             if let Entry::Vacant(_) = self.topics_kbuckets.entry(topic_hash) {
+                                trace!("Init kbuckets for topic hash {}", topic_hash);
                                 // NOTE: Currently we don't expose custom filter support in the configuration. Users can
                                 // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
                                 // may expose this functionality to the users if there is demand for it.
@@ -781,6 +782,7 @@ impl Service {
         num_query_peers: usize,
         callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
     ) {
+        trace!("Preparing to send TOPICQUERYs");
         let query = self
             .active_topic_queries
             .queries
@@ -812,6 +814,7 @@ impl Service {
             }
             let _ = new_query_peers.iter().rev().count();
 
+            trace!("Sending TOPICQUERYs to {} peers", new_query_peers.len());
             for enr in new_query_peers {
                 if let Ok(node_contact) =
                     NodeContact::try_from_enr(enr.clone(), self.config.ip_mode)
