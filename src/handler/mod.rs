@@ -1047,6 +1047,10 @@ impl Handler {
                         }
                         return;
                     }
+                } else if  let RequestBody::RegisterTopic { .. } | RequestBody::TopicQuery { .. } = request_call.request.body {
+                    trace!("Received a topics NODES reponse");
+                    self.active_requests
+                                .insert(node_address.clone(), request_call);
                 }
             } else if let ResponseBody::Ticket { .. } = response.body {
                 // The request is reinserted for either a nodes response or a register
