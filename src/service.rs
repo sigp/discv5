@@ -198,12 +198,12 @@ pub struct Service {
     /// Keeps track of the number of responses received from a NODES response.
     active_adnodes_responses: HashMap<NodeId, NodesResponse>,
 
-    /// Keeps track of the 2 expected responses, NODES and ADNODES that may be received from a 
+    /// Keeps track of the 2 expected responses, NODES and ADNODES that should be received from a
     /// TOPICQUERY request.
-    topic_query_responses: HashMap<RequestId, usize>,
+    topic_query_responses: HashMap<NodeId, TopicQueryResponseState>,
 
-    /// Keeps track of the 3 expected responses, TICKET, NODES and REGCONFIRMATION that may be 
-    /// received from a REGTOPIC request.
+    /// Keeps track of the 3 expected responses, TICKET and NODES that should be received from a
+    /// REGTOPIC request and REGCONFIRMATION that may be received.
     active_regtopic_requests: ActiveRegtopicRequests,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
@@ -251,6 +251,13 @@ pub struct Service {
 
     /// Locally initiated topic query requests in process.
     active_topic_queries: ActiveTopicQueries,
+}
+
+pub enum TopicQueryResponseState {
+    Start,
+    Nodes,
+    AdNodes,
+    Complete,
 }
 
 pub enum RegistrationState {
@@ -1145,12 +1152,11 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        let active_request =
-            if let Some(active_request) = self.active_requests.remove(&id) {
-                Some(active_request)
-            } else {
-                self.active_regtopic_requests.remove(&id)   
-            };
+        let active_request = if let Some(active_request) = self.active_requests.remove(&id) {
+            Some(active_request)
+        } else {
+            self.active_regtopic_requests.remove(&id)
+        };
 
         if let Some(mut active_request) = active_request {
             debug!(
@@ -1290,7 +1296,7 @@ impl Service {
                             match active_request.request_body {
                                 RequestBody::RegisterTopic { .. } => {
                                     self.active_regtopic_requests.reinsert(id);
-                                },
+                                }
                                 _ => {
                                     self.active_requests.insert(id, active_request);
                                 }
@@ -1316,11 +1322,6 @@ impl Service {
                     // will be ignored.
                     // ensure any mapping is removed in this rare case
                     self.active_nodes_responses.remove(&node_id);
-                    
-                    if let Some() = self.topic_query_responses.get_mut(active_request.request.id) {
-
-                    }
-                    
 
                     match active_request.request_body {
                         RequestBody::TopicQuery { topic } => {
@@ -1394,8 +1395,23 @@ impl Service {
                             "Only TOPICQUERY and FINDNODE requests expect NODES response"
                         ),
                     }
+
+                    if let Some(response_state) = self.topic_query_responses.get_mut(&node_id) {
+                        match response_state {
+                            TopicQueryResponseState::Start => {
+                                *response_state = TopicQueryResponseState::Nodes;
+                                self.active_requests.insert(id, active_request);
+                            }
+                            TopicQueryResponseState::AdNodes => {
+                                *response_state = TopicQueryResponseState::Complete;
+                            }
+                            _ => {
+                                debug_unreachable!("No more NODES responses should be received if TOPICQUERY is in Complete or Nodes state.")
+                            }
+                        }
+                    }
                 }
-                ResponseBody::AdNodes { total, nodes } => {
+                ResponseBody::AdNodes { total, mut nodes } => {
                     // handle the case that there is more than one response
                     if total > 1 {
                         let mut current_response = self
@@ -1419,7 +1435,7 @@ impl Service {
                             current_response.received_nodes.append(&mut nodes);
                             self.active_adnodes_responses
                                 .insert(node_id, current_response);
-                            self.active_topic_query_requests.reinsert(id);
+                            self.active_requests.insert(id, active_request);
                             return;
                         }
 
@@ -1440,13 +1456,28 @@ impl Service {
                     // in a later response sends a response with a total of 1, all previous nodes
                     // will be ignored.
                     // ensure any mapping is removed in this rare case
-                    self.active_nodes_responses.remove(&node_id);
+                    self.active_adnodes_responses.remove(&node_id);
 
                     if let RequestBody::TopicQuery { topic } = active_request.request_body {
                         if let Some(query) = self.active_topic_queries.queries.get_mut(&topic) {
                             nodes.into_iter().for_each(|enr| {
                                 query.results.insert(enr.node_id(), enr);
                             });
+                        }
+                    }
+
+                    if let Some(response_state) = self.topic_query_responses.get_mut(&node_id) {
+                        match response_state {
+                            TopicQueryResponseState::Start => {
+                                *response_state = TopicQueryResponseState::AdNodes;
+                                self.active_requests.insert(id, active_request);
+                            }
+                            TopicQueryResponseState::Nodes => {
+                                *response_state = TopicQueryResponseState::Complete;
+                            }
+                            _ => {
+                                debug_unreachable!("No more ADNODES responses should be received if TOPICQUERY is in Complete or AdNodes state.")
+                            }
                         }
                     }
                 }
