@@ -932,10 +932,7 @@ impl Service {
     /// Processes an RPC request from a peer. Requests respond to the received socket address,
     /// rather than the IP of the known ENR.
     fn handle_rpc_request(&mut self, node_address: NodeAddress, req: Request) {
-        debug!(
-            "Received RPC request: {} from: {}",
-            req.body, node_address
-        );
+        debug!("Received RPC request: {} from: {}", req.body, node_address);
         let id = req.id;
         match req.body {
             RequestBody::FindNode { distances } => {
@@ -1330,22 +1327,25 @@ impl Service {
                             self.discovered(&node_id, nodes, active_request.query_id)
                         }
                         _ => debug_unreachable!(
-                            "Only TOPICQUERY and FINDNODE requests expect NODES response"
+                            "Only TOPICQUERY, REGTOPIC and FINDNODE requests expect NODES response"
                         ),
                     }
 
-                    if let Some(response_state) = self.topic_query_responses.get_mut(&node_id) {
-                        match response_state {
-                            TopicQueryResponseState::Start => {
-                                *response_state = TopicQueryResponseState::Nodes;
-                                self.active_requests.insert(id, active_request);
-                            }
-                            TopicQueryResponseState::AdNodes => {
-                                *response_state = TopicQueryResponseState::Complete;
-                            }
-                            _ => {
-                                debug_unreachable!("No more NODES responses should be received if TOPICQUERY is in Complete or Nodes state.")
-                            }
+                    let response_state = self
+                        .topic_query_responses
+                        .entry(node_id)
+                        .or_insert(TopicQueryResponseState::Start);
+
+                    match response_state {
+                        TopicQueryResponseState::Start => {
+                            *response_state = TopicQueryResponseState::Nodes;
+                            self.active_requests.insert(id, active_request);
+                        }
+                        TopicQueryResponseState::AdNodes => {
+                            *response_state = TopicQueryResponseState::Complete;
+                        }
+                        _ => {
+                            debug_unreachable!("No more NODES responses should be received if TOPICQUERY is in Complete or Nodes state.")
                         }
                     }
                 }
