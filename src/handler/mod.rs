@@ -200,10 +200,10 @@ impl RequestCall {
     }
 }
 
-pub enum ResponseType {
+pub enum TopicQueryResponseState {
+    Start,
     Nodes,
-    Ticket,
-    Regconfirmation,
+    AdNodes,
 }
 
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
@@ -221,6 +221,9 @@ pub struct Handler {
     active_requests: ActiveRequests,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
+    /// Keeps track of the 2 expected responses, NODES and ADNODES that should be received from a
+    /// TOPICQUERY request.
+    topic_query_responses: HashMap<NodeAddress, TopicQueryResponseState>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
     /// Currently in-progress handshakes with peers.
@@ -309,6 +312,7 @@ impl Handler {
                     ),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
+                    topic_query_responses: HashMap::new(),
                     sessions: LruTimeCache::new(
                         config.session_timeout,
                         Some(config.session_cache_capacity),
@@ -1001,6 +1005,7 @@ impl Handler {
     /// Nodes response.
     async fn handle_response(&mut self, node_address: NodeAddress, response: Response) {
         // Find a matching request, if any
+        trace!("Received {} response", response.body);
         if let Some(mut request_call) = self.active_requests.remove(&node_address) {
             if request_call.id() != &response.id {
                 trace!(
@@ -1076,7 +1081,26 @@ impl Handler {
                 } else if let RequestBody::RegisterTopic { .. } = request_call.request.body {
                     trace!("Received a topics NODES reponse");
                     self.active_requests
-                        .insert(node_address.clone(), request_call);
+                        .insert(node_address.clone(), request_call.clone());
+                }
+                let response_state = self
+                    .topic_query_responses
+                    .entry(node_address.clone())
+                    .or_insert(TopicQueryResponseState::Start);
+
+                match response_state {
+                    TopicQueryResponseState::Start => {
+                        *response_state = TopicQueryResponseState::Nodes;
+                        self.active_requests
+                            .insert(node_address.clone(), request_call);
+                    }
+                    TopicQueryResponseState::AdNodes => {
+                        self.topic_query_responses.remove(&node_address);
+                    }
+                    TopicQueryResponseState::Nodes => {
+                        warn!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.");
+                        self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
+                    }
                 }
             } else if let ResponseBody::AdNodes { total, .. } = response.body {
                 if total > 1 {

@@ -113,6 +113,9 @@ pub enum RequestError {
     EntropyFailure(&'static str),
     /// Finding nodes closest to a topic hash failed.
     TopicDistance(String),
+    /// A request that is responded with multiple respones
+    /// gets the wrong combination of responses.
+    InvalidResponseCombo(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

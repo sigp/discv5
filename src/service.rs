@@ -253,6 +253,12 @@ pub struct Service {
     active_topic_queries: ActiveTopicQueries,
 }
 
+pub enum TopicQueryState {
+    Finished(TopicHash),
+    TimedOut(TopicHash),
+    Unsatisfied(TopicHash, usize),
+}
+
 pub enum TopicQueryResponseState {
     Start,
     Nodes,
@@ -287,12 +293,6 @@ impl ActiveTopicQueries {
             num_results,
         }
     }
-}
-
-pub enum TopicQueryState {
-    Finished(TopicHash),
-    TimedOut(TopicHash),
-    Unsatisfied(TopicHash, usize),
 }
 
 impl Stream for ActiveTopicQueries {
