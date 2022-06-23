@@ -932,6 +932,10 @@ impl Service {
     /// Processes an RPC request from a peer. Requests respond to the received socket address,
     /// rather than the IP of the known ENR.
     fn handle_rpc_request(&mut self, node_address: NodeAddress, req: Request) {
+        debug!(
+            "Received RPC request: {} from: {}",
+            req.body, node_address
+        );
         let id = req.id;
         match req.body {
             RequestBody::FindNode { distances } => {
