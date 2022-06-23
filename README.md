@@ -77,7 +77,8 @@ A simple example of creating this service is as follows:
 # Addresses in ENRs 
 
 This protocol will drop messages (i.e not respond to requests) from peers that
-advertise non-contactable address in their ENR (e.g `127.0.0.1`). This section
+advertise non-contactable address in their ENR (e.g `127.0.0.1` when connecting
+to non-local nodes). This section
 explains the rationale behind this design decision.
 
 An ENR is a signed record which is primarily used in this protocol for
@@ -88,7 +89,8 @@ If a node does not know its contactable address (i.e if it is behind a NAT), it 
 empty. This is done for the following reasons:
 1. When we receive an ENR we must decide whether to add it to our local routing
    table and advertise it to other peers. If a node has put some
-   non-contactable address in the ENR (i.e `127.0.0.1`) we cannot use this ENR
+   non-contactable address in the ENR (e.g `127.0.0.1` when connecting to
+   non-local nodes) we cannot use this ENR
    to contact the node and we therefore do not wish to advertise it to other
    nodes. Putting a non-contactable address is therefore functionally
    equivalent to leaving the fields empty.
@@ -119,8 +121,10 @@ This is done in the following way:
    valid and attempt to add it to our local routing table and therefore may advertise
    its ENR to others.
 3. If a peer connects to us with an ENR that specifies an IP address that does
-   not match the src socket it connects to us on (i.e `127.0.0.1`, or
-   potentially some internal subnet IP) we consider this peer malicious/faulty
+   not match the src socket it connects to us on (e.g `127.0.0.1`, or
+   potentially some internal subnet IP that is unreachable from our current
+   network) we consider this peer malicious/faulty
    and drop all packets. This way we can efficiently drop peers that may try to
    get us to send messages to arbitrary remote IPs, and we can be sure that all
-   ENRs in our routing table are contactable (at least by our local node).
+   ENRs in our routing table are contactable (at least by our local node at
+   some point in time).
