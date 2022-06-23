@@ -1307,6 +1307,23 @@ impl Service {
                                     topic,
                                     nodes.into_iter(),
                                 );
+                                let response_state = self
+                                    .topic_query_responses
+                                    .entry(node_id)
+                                    .or_insert(TopicQueryResponseState::Start);
+
+                                match response_state {
+                                    TopicQueryResponseState::Start => {
+                                        *response_state = TopicQueryResponseState::Nodes;
+                                        self.active_requests.insert(id, active_request);
+                                    }
+                                    TopicQueryResponseState::AdNodes => {
+                                        self.topic_query_responses.remove(&node_id);
+                                    }
+                                    TopicQueryResponseState::Nodes => {
+                                        debug_unreachable!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.")
+                                    }
+                                }
                             }
                         }
                         RequestBody::RegisterTopic {
@@ -1328,24 +1345,6 @@ impl Service {
                         _ => debug_unreachable!(
                             "Only TOPICQUERY, REGTOPIC and FINDNODE requests expect NODES response"
                         ),
-                    }
-
-                    let response_state = self
-                        .topic_query_responses
-                        .entry(node_id)
-                        .or_insert(TopicQueryResponseState::Start);
-
-                    match response_state {
-                        TopicQueryResponseState::Start => {
-                            *response_state = TopicQueryResponseState::Nodes;
-                            self.active_requests.insert(id, active_request);
-                        }
-                        TopicQueryResponseState::AdNodes => {
-                            self.topic_query_responses.remove(&node_id);
-                        }
-                        TopicQueryResponseState::Nodes => {
-                            debug_unreachable!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.")
-                        }
                     }
                 }
                 ResponseBody::AdNodes { total, mut nodes } => {
@@ -1401,14 +1400,12 @@ impl Service {
                                 query.results.insert(enr.node_id(), enr);
                             });
                         }
-                    }
+                        let response_state = self
+                            .topic_query_responses
+                            .entry(node_id)
+                            .or_insert(TopicQueryResponseState::Start);
 
-                    let response_state = self
-                        .topic_query_responses
-                        .entry(node_id)
-                        .or_insert(TopicQueryResponseState::Start);
-
-                    match response_state {
+                        match response_state {
                             TopicQueryResponseState::Start => {
                                 *response_state = TopicQueryResponseState::AdNodes;
                                 self.active_requests.insert(id, active_request);
@@ -1420,6 +1417,7 @@ impl Service {
                                 debug_unreachable!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.")
                             }
                         }
+                    }
                 }
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
