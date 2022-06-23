@@ -206,6 +206,12 @@ pub enum TopicQueryResponseState {
     AdNodes,
 }
 
+pub enum RegTopicResponseState {
+    Start,
+    Nodes,
+    Ticket,
+}
+
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.
@@ -224,6 +230,9 @@ pub struct Handler {
     /// Keeps track of the 2 expected responses, NODES and ADNODES that should be received from a
     /// TOPICQUERY request.
     topic_query_responses: HashMap<NodeAddress, TopicQueryResponseState>,
+    /// Keeps track of the 3 expected responses, NODES and TICKET that should be received from a
+    /// REGTOPIC request, and REGCONFIRMATION that may be recieved.
+    reg_topic_responses: HashMap<NodeAddress, RegTopicResponseState>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
     /// Currently in-progress handshakes with peers.
@@ -313,6 +322,7 @@ impl Handler {
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     topic_query_responses: HashMap::new(),
+                    reg_topic_responses: HashMap::new(),
                     sessions: LruTimeCache::new(
                         config.session_timeout,
                         Some(config.session_cache_capacity),
@@ -1076,31 +1086,99 @@ impl Handler {
                         }
                         return;
                     }
-                // If there is only one NODES response but it is for a REGTOPIC, reinsert the active request for a
-                // TICKET or a potential REGCONFIRMATION.
-                } else if let RequestBody::RegisterTopic { .. } = request_call.request.body {
-                    trace!("Received a topics NODES reponse");
-                    self.active_requests
-                        .insert(node_address.clone(), request_call.clone());
                 }
-                let response_state = self
-                    .topic_query_responses
-                    .entry(node_address.clone())
-                    .or_insert(TopicQueryResponseState::Start);
+                // If the total number of NODES responses arrived and it is for a REGTOPIC or a
+                // TOPICQUERY the active request might be waiting for more types of responses.
+                match request_call.request.body {
+                    RequestBody::RegisterTopic { .. } => {
+                        trace!("Received a NODES reponse for a REGTOPIC request");
+                        let response_state = self
+                            .reg_topic_responses
+                            .entry(node_address.clone())
+                            .or_insert(RegTopicResponseState::Start);
 
-                match response_state {
-                    TopicQueryResponseState::Start => {
-                        *response_state = TopicQueryResponseState::Nodes;
-                        self.active_requests
-                            .insert(node_address.clone(), request_call);
+                        match response_state {
+                            RegTopicResponseState::Start => {
+                                *response_state = RegTopicResponseState::Nodes;
+                                self.active_requests
+                                    .insert(node_address.clone(), request_call);
+                                if let Err(e) = self
+                                    .service_send
+                                    .send(HandlerOut::Response(
+                                        node_address.clone(),
+                                        Box::new(response),
+                                    ))
+                                    .await
+                                {
+                                    warn!("Failed to inform of response {}", e)
+                                }
+                                return;
+                            }
+                            RegTopicResponseState::Ticket => {
+                                self.reg_topic_responses.remove(&node_address);
+                                // Still a REGCONFIRMATION may come hence request call is reinserted.
+                                self.active_requests
+                                    .insert(node_address.clone(), request_call);
+                                if let Err(e) = self
+                                    .service_send
+                                    .send(HandlerOut::Response(
+                                        node_address.clone(),
+                                        Box::new(response),
+                                    ))
+                                    .await
+                                {
+                                    warn!("Failed to inform of response {}", e)
+                                }
+                                return;
+                            }
+                            RegTopicResponseState::Nodes => {
+                                warn!("No more NODES responses should be received if REGTOPIC response is in Nodes state.");
+                                self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a REGTOPIC request".into()), true).await;
+                                // Remove the expected response
+                                self.remove_expected_response(node_address.socket_addr);
+                                self.send_next_request(node_address).await;
+                                return;
+                            }
+                        }
                     }
-                    TopicQueryResponseState::AdNodes => {
-                        self.topic_query_responses.remove(&node_address);
+                    RequestBody::TopicQuery { .. } => {
+                        trace!("Received a NODES reponse for a TOPICQUERY request");
+                        let response_state = self
+                            .topic_query_responses
+                            .entry(node_address.clone())
+                            .or_insert(TopicQueryResponseState::Start);
+
+                        match response_state {
+                            TopicQueryResponseState::Start => {
+                                *response_state = TopicQueryResponseState::Nodes;
+                                self.active_requests
+                                    .insert(node_address.clone(), request_call);
+                                if let Err(e) = self
+                                    .service_send
+                                    .send(HandlerOut::Response(
+                                        node_address.clone(),
+                                        Box::new(response),
+                                    ))
+                                    .await
+                                {
+                                    warn!("Failed to inform of response {}", e)
+                                }
+                                return;
+                            }
+                            TopicQueryResponseState::AdNodes => {
+                                self.topic_query_responses.remove(&node_address);
+                            }
+                            TopicQueryResponseState::Nodes => {
+                                warn!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.");
+                                self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
+                                // Remove the expected response
+                                self.remove_expected_response(node_address.socket_addr);
+                                self.send_next_request(node_address).await;
+                                return;
+                            }
+                        }
                     }
-                    TopicQueryResponseState::Nodes => {
-                        warn!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.");
-                        self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
-                    }
+                    _ => {}
                 }
             } else if let ResponseBody::AdNodes { total, .. } = response.body {
                 if total > 1 {
@@ -1149,19 +1227,99 @@ impl Handler {
                         return;
                     }
                 }
+                let response_state = self
+                    .topic_query_responses
+                    .entry(node_address.clone())
+                    .or_insert(TopicQueryResponseState::Start);
+
+                match response_state {
+                    TopicQueryResponseState::Start => {
+                        *response_state = TopicQueryResponseState::AdNodes;
+                        self.active_requests
+                            .insert(node_address.clone(), request_call);
+                        if let Err(e) = self
+                            .service_send
+                            .send(HandlerOut::Response(
+                                node_address.clone(),
+                                Box::new(response),
+                            ))
+                            .await
+                        {
+                            warn!("Failed to inform of response {}", e)
+                        }
+                        return;
+                    }
+                    TopicQueryResponseState::Nodes => {
+                        self.topic_query_responses.remove(&node_address);
+                    }
+                    TopicQueryResponseState::AdNodes => {
+                        warn!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.");
+                        self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
+                        // Remove the expected response
+                        self.remove_expected_response(node_address.socket_addr);
+                        self.send_next_request(node_address).await;
+                        return;
+                    }
+                }
             } else if let ResponseBody::Ticket { .. } = response.body {
                 // The request is reinserted for either a NODES response or a potential REGCONFIRMATION
                 // response that may come.
-                self.active_requests
-                    .insert(node_address.clone(), request_call);
-                if let Err(e) = self
-                    .service_send
-                    .send(HandlerOut::Response(node_address, Box::new(response)))
-                    .await
-                {
-                    warn!("Failed to inform of response {}", e)
+                let response_state = self
+                    .reg_topic_responses
+                    .entry(node_address.clone())
+                    .or_insert(RegTopicResponseState::Start);
+
+                match response_state {
+                    RegTopicResponseState::Start => {
+                        *response_state = RegTopicResponseState::Ticket;
+                        self.active_requests
+                            .insert(node_address.clone(), request_call.clone());
+                        if let Err(e) = self
+                            .service_send
+                            .send(HandlerOut::Response(
+                                node_address.clone(),
+                                Box::new(response),
+                            ))
+                            .await
+                        {
+                            warn!("Failed to inform of response {}", e)
+                        }
+                        return;
+                    }
+                    RegTopicResponseState::Nodes => {
+                        self.reg_topic_responses.remove(&node_address);
+                        // Still a REGCONFIRMATION may come hence request call is reinserted.
+                        self.active_requests
+                            .insert(node_address.clone(), request_call.clone());
+                        if let Err(e) = self
+                            .service_send
+                            .send(HandlerOut::Response(
+                                node_address.clone(),
+                                Box::new(response),
+                            ))
+                            .await
+                        {
+                            warn!("Failed to inform of response {}", e)
+                        }
+                        return;
+                    }
+                    RegTopicResponseState::Ticket => {
+                        warn!("No more TICKET responses should be received if REGTOPIC response is in Ticket state.");
+                        self.fail_request(
+                            request_call,
+                            RequestError::InvalidResponseCombo(
+                                "Received more than one TICKET response for a REGTOPIC request"
+                                    .into(),
+                            ),
+                            true,
+                        )
+                        .await;
+                        // Remove the expected response
+                        self.remove_expected_response(node_address.socket_addr);
+                        self.send_next_request(node_address).await;
+                        return;
+                    }
                 }
-                return;
             }
 
             // Remove the expected response
