@@ -1141,7 +1141,6 @@ impl Service {
         let active_request = self
             .active_requests
             .remove(&id)
-            .and_then(|active_request| Some(active_request))
             .or_else(|| self.active_regtopic_requests.remove(&id));
 
         if let Some(mut active_request) = active_request {
