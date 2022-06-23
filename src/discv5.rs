@@ -58,6 +58,12 @@ pub enum Discv5Event {
     /// This happen spontaneously through queries as nodes return ENR's. These ENR's are not
     /// guaranteed to be live or contactable.
     Discovered(Enr),
+    /// A node has been discovered from either a REGTOPIC or a TOPICQUERY request.
+    ///
+    /// The ENR of the node is returned. Various properties can be derived from the ENR.
+    /// This happen spontaneously through requests as nodes return ENR's. These ENR's are not
+    /// guaranteed to be live or contactable.
+    DiscoveredTopic(Enr, TopicHash),
     /// A new ENR was added to the routing table.
     EnrAdded { enr: Enr, replaced: Option<Enr> },
     /// A new node has been added to the routing table.

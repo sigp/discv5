@@ -523,7 +523,7 @@ impl Service {
                                     (None, None)
                                 };
 
-                                let mut kbuckets = KBucketsTable::new(
+                                let kbuckets = KBucketsTable::new(
                                     NodeId::new(&topic_hash.as_bytes()).into(),
                                     Duration::from_secs(60),
                                     self.config.incoming_bucket_limit,
@@ -531,8 +531,14 @@ impl Service {
                                     bucket_filter,
                                 );
                                 {
-                                    let mut local_routing_table = self.kbuckets.write();
-                                    Service::new_connections_disconnected(&mut kbuckets, topic_hash, local_routing_table.iter().map(|entry| entry.node.value.clone()));
+                                    let mut local_routing_table = self.kbuckets.write().clone();
+                                    for enr in local_routing_table.iter().map(|entry| entry.node.value.clone()) {
+                                        self.connection_updated(
+                                            enr.node_id(),
+                                            ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
+                                            Some(topic_hash),
+                                        );
+                                    }
                                 }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
@@ -555,7 +561,7 @@ impl Service {
                                 };
 
                                 debug!("Initiating kbuckets for topic hash {}", topic_hash);
-                                let mut kbuckets = KBucketsTable::new(
+                                let kbuckets = KBucketsTable::new(
                                     NodeId::new(&topic_hash.as_bytes()).into(),
                                     Duration::from_secs(60),
                                     self.config.incoming_bucket_limit,
@@ -564,9 +570,13 @@ impl Service {
                                 );
                                 debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
 
-                                {
-                                    let mut local_routing_table = self.kbuckets.write();
-                                    Service::new_connections_disconnected(&mut kbuckets, topic_hash, local_routing_table.iter().map(|entry| entry.node.value.clone()));
+                                let mut local_routing_table = self.kbuckets.write().clone();
+                                for enr in local_routing_table.iter().map(|entry| entry.node.value.clone()) {
+                                    self.connection_updated(
+                                        enr.node_id(),
+                                        ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
+                                        Some(topic_hash),
+                                    );
                                 }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                                 METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
@@ -1128,11 +1138,11 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        let active_request = if let Some(active_request) = self.active_requests.remove(&id) {
-            Some(active_request)
-        } else {
-            self.active_regtopic_requests.remove(&id)
-        };
+        let active_request = self
+            .active_requests
+            .remove(&id)
+            .and_then(|active_request| Some(active_request))
+            .or_else(|| self.active_regtopic_requests.remove(&id));
 
         if let Some(mut active_request) = active_request {
             debug!(
@@ -1301,28 +1311,23 @@ impl Service {
 
                     match active_request.request_body {
                         RequestBody::TopicQuery { topic } => {
-                            if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
-                                Service::new_connections_disconnected(
-                                    kbuckets,
-                                    topic,
-                                    nodes.into_iter(),
-                                );
-                                let response_state = self
-                                    .topic_query_responses
-                                    .entry(node_id)
-                                    .or_insert(TopicQueryResponseState::Start);
+                            self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
 
-                                match response_state {
-                                    TopicQueryResponseState::Start => {
-                                        *response_state = TopicQueryResponseState::Nodes;
-                                        self.active_requests.insert(id, active_request);
-                                    }
-                                    TopicQueryResponseState::AdNodes => {
-                                        self.topic_query_responses.remove(&node_id);
-                                    }
-                                    TopicQueryResponseState::Nodes => {
-                                        debug_unreachable!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.")
-                                    }
+                            let response_state = self
+                                .topic_query_responses
+                                .entry(node_id)
+                                .or_insert(TopicQueryResponseState::Start);
+
+                            match response_state {
+                                TopicQueryResponseState::Start => {
+                                    *response_state = TopicQueryResponseState::Nodes;
+                                    self.active_requests.insert(id, active_request);
+                                }
+                                TopicQueryResponseState::AdNodes => {
+                                    self.topic_query_responses.remove(&node_id);
+                                }
+                                TopicQueryResponseState::Nodes => {
+                                    debug_unreachable!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.")
                                 }
                             }
                         }
@@ -1330,17 +1335,9 @@ impl Service {
                             topic,
                             enr: _,
                             ticket: _,
-                        } => {
-                            if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic) {
-                                Service::new_connections_disconnected(
-                                    kbuckets,
-                                    topic,
-                                    nodes.into_iter(),
-                                );
-                            }
-                        }
+                        } => self.discovered(&node_id, nodes, active_request.query_id, Some(topic)),
                         RequestBody::FindNode { .. } => {
-                            self.discovered(&node_id, nodes, active_request.query_id)
+                            self.discovered(&node_id, nodes, active_request.query_id, None)
                         }
                         _ => debug_unreachable!(
                             "Only TOPICQUERY, REGTOPIC and FINDNODE requests expect NODES response"
@@ -2035,7 +2032,13 @@ impl Service {
     }
 
     /// Processes discovered peers from a query.
-    fn discovered(&mut self, source: &NodeId, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
+    fn discovered(
+        &mut self,
+        source: &NodeId,
+        mut enrs: Vec<Enr>,
+        query_id: Option<QueryId>,
+        topic_hash: Option<TopicHash>,
+    ) {
         let local_id = self.local_enr.read().node_id();
         enrs.retain(|enr| {
             if enr.node_id() == local_id {
@@ -2045,20 +2048,43 @@ impl Service {
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
             if self.config.report_discovered_peers {
-                self.send_event(Discv5Event::Discovered(enr.clone()));
+                if let Some(topic_hash) = topic_hash {
+                    self.send_event(Discv5Event::DiscoveredTopic(enr.clone(), topic_hash));
+                } else {
+                    self.send_event(Discv5Event::Discovered(enr.clone()));
+                }
             }
 
             // ignore peers that don't pass the table filter
             if (self.config.table_filter)(enr) {
+                let kbuckets_topic = topic_hash.and_then(|topic_hash| {
+                    self.topics_kbuckets
+                        .get_mut(&topic_hash)
+                        .and_then(|kbuckets| {
+                            Some(kbuckets).or_else(|| {
+                                debug_unreachable!("A kbuckets table should exist for topic hash");
+                                None
+                            })
+                        })
+                });
+
                 let key = kbucket::Key::from(enr.node_id());
 
                 // If the ENR exists in the routing table and the discovered ENR has a greater
                 // sequence number, perform some filter checks before updating the enr.
 
-                let must_update_enr = match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
-                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
-                    _ => false,
+                let must_update_enr = if let Some(kbuckets_topic) = kbuckets_topic {
+                    match kbuckets_topic.entry(&key) {
+                        kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
+                        kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                        _ => false,
+                    }
+                } else {
+                    match self.kbuckets.write().entry(&key) {
+                        kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
+                        kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                        _ => false,
+                    }
                 };
 
                 if must_update_enr {
@@ -2084,6 +2110,10 @@ impl Service {
             // query, so we remove it from the discovered list here.
             source != &enr.node_id()
         });
+
+        if topic_hash.is_some() {
+            return;
+        }
 
         // if this is part of a query, update the query
         if let Some(query_id) = query_id {
@@ -2121,16 +2151,16 @@ impl Service {
         let mut ping_peer = None;
         let mut event_to_send = None;
 
-        let kbuckets_topic = if let Some(topic_hash) = topic_hash {
-            if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
-                Some(kbuckets)
-            } else {
-                debug_unreachable!("A kbuckets table should exist for topic hash");
-                None
-            }
-        } else {
-            None
-        };
+        let kbuckets_topic = topic_hash.and_then(|topic_hash| {
+            self.topics_kbuckets
+                .get_mut(&topic_hash)
+                .and_then(|kbuckets| {
+                    Some(kbuckets).or_else(|| {
+                        debug_unreachable!("A kbuckets table should exist for topic hash");
+                        None
+                    })
+                })
+        });
 
         let key = kbucket::Key::from(node_id);
         match new_status {
@@ -2145,6 +2175,7 @@ impl Service {
                 } else {
                     self.kbuckets.write().insert_or_update(&key, enr, status)
                 };
+
                 match insert_result {
                     InsertResult::Inserted => {
                         // We added this peer to the table
@@ -2316,6 +2347,7 @@ impl Service {
                                 &node_id,
                                 nodes_response.received_nodes,
                                 active_request.query_id,
+                                None,
                             );
                         }
                     } else {
@@ -2373,43 +2405,6 @@ impl Service {
                     self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic))
                 }
                 _ => self.connection_updated(node_id, ConnectionStatus::Disconnected, None),
-            }
-        }
-    }
-
-    fn new_connections_disconnected(
-        kbuckets: &mut KBucketsTable<NodeId, Enr>,
-        topic: TopicHash,
-        nodes: impl Iterator<Item = Enr>,
-    ) {
-        for enr in nodes {
-            let peer_key: kbucket::Key<NodeId> = enr.node_id().into();
-            match kbuckets.insert_or_update(
-                &peer_key,
-                enr.clone(),
-                NodeStatus {
-                    state: ConnectionState::Disconnected,
-                    direction: ConnectionDirection::Incoming,
-                },
-            ) {
-                InsertResult::Failed(FailureReason::BucketFull) => {
-                    error!("Table full")
-                }
-                InsertResult::Failed(FailureReason::BucketFilter) => {
-                    error!("Failed bucket filter")
-                }
-                InsertResult::Failed(FailureReason::TableFilter) => {
-                    error!("Failed table filter")
-                }
-                InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
-                    error!("Invalid self update")
-                }
-                InsertResult::Failed(_) => error!("Failed to insert ENR"),
-                _ => debug!(
-                    "Insertion of node {} into KBucket of {} was successful",
-                    enr.node_id(),
-                    topic
-                ),
             }
         }
     }
