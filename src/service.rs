@@ -257,7 +257,6 @@ pub enum TopicQueryResponseState {
     Start,
     Nodes,
     AdNodes,
-    Complete,
 }
 
 pub enum RegistrationState {
@@ -1342,10 +1341,10 @@ impl Service {
                             self.active_requests.insert(id, active_request);
                         }
                         TopicQueryResponseState::AdNodes => {
-                            *response_state = TopicQueryResponseState::Complete;
+                            self.topic_query_responses.remove(&node_id);
                         }
-                        _ => {
-                            debug_unreachable!("No more NODES responses should be received if TOPICQUERY is in Complete or Nodes state.")
+                        TopicQueryResponseState::Nodes => {
+                            debug_unreachable!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.")
                         }
                     }
                 }
@@ -1404,20 +1403,23 @@ impl Service {
                         }
                     }
 
-                    if let Some(response_state) = self.topic_query_responses.get_mut(&node_id) {
-                        match response_state {
+                    let response_state = self
+                        .topic_query_responses
+                        .entry(node_id)
+                        .or_insert(TopicQueryResponseState::Start);
+
+                    match response_state {
                             TopicQueryResponseState::Start => {
                                 *response_state = TopicQueryResponseState::AdNodes;
                                 self.active_requests.insert(id, active_request);
                             }
                             TopicQueryResponseState::Nodes => {
-                                *response_state = TopicQueryResponseState::Complete;
+                                self.topic_query_responses.remove(&node_id);
                             }
-                            _ => {
-                                debug_unreachable!("No more ADNODES responses should be received if TOPICQUERY is in Complete or AdNodes state.")
+                            TopicQueryResponseState::AdNodes => {
+                                debug_unreachable!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.")
                             }
                         }
-                    }
                 }
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
