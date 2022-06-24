@@ -530,7 +530,10 @@ impl Service {
                                     table_filter,
                                     bucket_filter,
                                 );
-                                {
+
+                                self.topics_kbuckets.insert(topic_hash, kbuckets);
+
+
                                     let mut local_routing_table = self.kbuckets.write().clone();
                                     for enr in local_routing_table.iter().map(|entry| entry.node.value.clone()) {
                                         self.connection_updated(
@@ -539,8 +542,6 @@ impl Service {
                                             Some(topic_hash),
                                         );
                                     }
-                                }
-                                self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
                             self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
                         }
@@ -570,6 +571,8 @@ impl Service {
                                 );
                                 debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
 
+                                self.topics_kbuckets.insert(topic_hash, kbuckets);
+
                                 let mut local_routing_table = self.kbuckets.write().clone();
                                 for enr in local_routing_table.iter().map(|entry| entry.node.value.clone()) {
                                     self.connection_updated(
@@ -578,7 +581,6 @@ impl Service {
                                         Some(topic_hash),
                                     );
                                 }
-                                self.topics_kbuckets.insert(topic_hash, kbuckets);
                                 METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
 
                                 self.send_register_topics(topic_hash);
@@ -730,7 +732,11 @@ impl Service {
     fn send_register_topics(&mut self, topic_hash: TopicHash) {
         trace!("Sending REGTOPICS");
         if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
-            trace!("Found {} new entries in kbuckets of topic hash {}", kbuckets.get_mut().iter().count(), topic_hash);
+            trace!(
+                "Found {} new entries in kbuckets of topic hash {}",
+                kbuckets.get_mut().iter().count(),
+                topic_hash
+            );
             let reg_attempts = self.topics.entry(topic_hash).or_default();
             // Remove expired ads
             let mut new_reg_peers = Vec::new();
@@ -2179,7 +2185,10 @@ impl Service {
                 };
 
                 if let Some(_) = topic_hash {
-                    trace!("Inserting node into kbucket of topic gave result: {:?}", insert_result);
+                    trace!(
+                        "Inserting node into kbucket of topic gave result: {:?}",
+                        insert_result
+                    );
                 }
 
                 match insert_result {
