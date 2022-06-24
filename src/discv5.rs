@@ -522,8 +522,6 @@ impl Discv5 {
         let channel = self.clone_channel();
 
         async move {
-            let mut all_found_ad_nodes = Vec::new();
-
             // the service will verify if this node is contactable, we just send it and
             // await a response.
             let (callback_send, callback_recv) = oneshot::channel();
@@ -539,13 +537,15 @@ impl Discv5 {
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             // await the response
-            callback_recv
+            let ad_nodes = callback_recv
                 .await
-                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
-                .map(|ad_nodes| all_found_ad_nodes.push(ad_nodes))
-                .ok();
-            let all_found_ad_nodes = all_found_ad_nodes.into_iter().flatten().collect();
-            Ok(all_found_ad_nodes)
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?;
+            if let Ok(ad_nodes) = ad_nodes {
+                debug!("Received {} ad nodes", ad_nodes.len());
+                Ok(ad_nodes)
+            } else {
+                Ok(Vec::new())
+            }
         }
     }
 

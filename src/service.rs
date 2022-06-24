@@ -256,7 +256,10 @@ pub struct Service {
 pub enum TopicQueryState {
     Finished(TopicHash),
     TimedOut(TopicHash),
+    // Not enough ads have been returned, more peers should be queried.
     Unsatisfied(TopicHash, usize),
+    // No new peers can be found to send TOPICQUERYs to.
+    Dry(TopicHash),
 }
 
 pub enum TopicQueryResponseState {
@@ -277,6 +280,7 @@ pub struct ActiveTopicQuery {
     results: HashMap<NodeId, Enr>,
     callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
     start: Instant,
+    dry: bool,
 }
 
 pub struct ActiveTopicQueries {
@@ -299,7 +303,9 @@ impl Stream for ActiveTopicQueries {
     type Item = TopicQueryState;
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         for (topic_hash, query) in self.queries.iter() {
-            if query.results.len() >= self.num_results {
+            if query.dry {
+                return Poll::Ready(Some(TopicQueryState::Dry(*topic_hash)));
+            } else if query.results.len() >= self.num_results {
                 return Poll::Ready(Some(TopicQueryState::Finished(*topic_hash)));
             } else if query.start.elapsed() >= self.time_out {
                 warn!(
@@ -711,7 +717,7 @@ impl Service {
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
                     match topic_query_progress {
-                        TopicQueryState::Finished(topic_hash) | TopicQueryState::TimedOut(topic_hash) => {
+                        TopicQueryState::Finished(topic_hash) | TopicQueryState::TimedOut(topic_hash) | TopicQueryState::Dry(topic_hash) => {
                             if let Some(query) = self.active_topic_queries.queries.remove(&topic_hash) {
                                 if let Some(callback) = query.callback {
                                     if callback.send(Ok(query.results.into_values().collect::<Vec<_>>())).is_err() {
@@ -800,6 +806,7 @@ impl Service {
                 results: HashMap::new(),
                 callback,
                 start: Instant::now(),
+                dry: false,
             });
         let queried_peers = query.queried_peers.clone();
         if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
@@ -828,19 +835,9 @@ impl Service {
             }
             // If no new nodes can be found to query, return TOPICQUERY request early.
             if new_query_peers.is_empty() {
-                debug!("Found no new peers to send TOPICQUERY to, returning unsatisfied request");
-                if let Some(query) = self.active_topic_queries.queries.remove(&topic_hash) {
-                    if let Some(callback) = query.callback {
-                        if callback
-                            .send(Ok(query.results.into_values().collect::<Vec<_>>()))
-                            .is_err()
-                        {
-                            warn!(
-                                "Callback dropped for topic query {}. Results dropped",
-                                topic_hash
-                            );
-                        }
-                    }
+                debug!("Found no new peers to send TOPICQUERY to, setting query status to dry");
+                if let Some(mut query) = self.active_topic_queries.queries.remove(&topic_hash) {
+                    query.dry = true;
                 }
                 return;
             }
@@ -1420,6 +1417,11 @@ impl Service {
                     if let RequestBody::TopicQuery { topic } = active_request.request_body {
                         if let Some(query) = self.active_topic_queries.queries.get_mut(&topic) {
                             nodes.into_iter().for_each(|enr| {
+                                trace!(
+                                    "Inserting node {} into query for topic hash {}",
+                                    enr.node_id(),
+                                    topic
+                                );
                                 query.results.insert(enr.node_id(), enr);
                             });
                         }
