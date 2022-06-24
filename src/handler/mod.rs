@@ -317,7 +317,7 @@ impl Handler {
                     enr,
                     key,
                     active_requests: ActiveRequests::new(
-                        config.request_timeout + Duration::from_secs(15),
+                        config.request_timeout + Duration::from_secs(25),
                     ),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
