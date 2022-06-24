@@ -86,7 +86,7 @@ pub enum RequestBody {
     },
     /// A REGTOPIC request.
     RegisterTopic {
-        /// The topic we want to advertise at the node receiving this request.
+        /// The hashed topic we want to advertise at the node receiving this request.
         topic: TopicHash,
         // Current node record of sender.
         enr: crate::Enr,
@@ -223,7 +223,7 @@ impl Response {
             ResponseBody::Talk { .. } => 6,
             ResponseBody::Ticket { .. } => 8,
             ResponseBody::RegisterConfirmation { .. } => 9,
-            ResponseBody::AdNodes { .. } => 10,
+            ResponseBody::AdNodes { .. } => 11,
         }
     }
 
@@ -692,6 +692,33 @@ impl Message {
                 Message::Request(Request {
                     id,
                     body: RequestBody::TopicQuery { topic },
+                })
+            }
+            11 => {
+                // AdNodesResponse
+                if list_len != 3 {
+                    debug!(
+                        "AdNodes Response has an invalid RLP list length. Expected 3, found {}",
+                        list_len
+                    );
+                    return Err(DecoderError::RlpIncorrectListLen);
+                }
+
+                let nodes = {
+                    let enr_list_rlp = rlp.at(2)?;
+                    if enr_list_rlp.is_empty() {
+                        // no records
+                        vec![]
+                    } else {
+                        enr_list_rlp.as_list::<Enr<CombinedKey>>()?
+                    }
+                };
+                Message::Response(Response {
+                    id,
+                    body: ResponseBody::AdNodes {
+                        total: rlp.val_at::<u64>(1)?,
+                        nodes,
+                    },
                 })
             }
             _ => {

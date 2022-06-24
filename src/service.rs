@@ -827,7 +827,7 @@ impl Service {
                 }
             }
             // If no new nodes can be found to query, return TOPICQUERY request early.
-            if new_query_peers.len() < 1 {
+            if new_query_peers.is_empty() {
                 debug!("Found no new peers to send TOPICQUERY to, returning unsatisfied request");
                 if let Some(query) = self.active_topic_queries.queries.remove(&topic_hash) {
                     if let Some(callback) = query.callback {
