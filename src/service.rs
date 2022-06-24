@@ -1128,14 +1128,17 @@ impl Service {
                 }
             }
             RequestBody::TopicQuery { topic } => {
-                trace!("Sending TOPICQUERY find nodes response");
+                trace!(
+                    "Sending NODES response to TOPICQUERY request {}",
+                    id
+                );
                 self.send_find_topic_nodes_response(
                     topic,
                     node_address.clone(),
                     id.clone(),
                     "TOPICQUERY",
                 );
-                trace!("Sending TOPICQUERY AD nodes response");
+                trace!("Sending ADNODES response");
                 self.send_topic_query_nodes_response(node_address, id, topic);
             }
         }
@@ -1784,7 +1787,16 @@ impl Service {
             .get_ad_nodes(topic)
             .map(|ad| ad.node_record().clone())
             .collect();
-        self.send_nodes_response(nodes_to_send, node_address, rpc_id, "TOPICQUERY ADS");
+        self.send_nodes_response(
+            nodes_to_send,
+            node_address,
+            rpc_id,
+            "TOPICQUERY",
+            ResponseBody::AdNodes {
+                total: 1u64,
+                nodes: Vec::new(),
+            },
+        );
     }
 
     fn send_find_topic_nodes_response(
@@ -1823,7 +1835,16 @@ impl Service {
                 }
             }
         }
-        self.send_nodes_response(closest_peers, node_address, id, req_type);
+        self.send_nodes_response(
+            closest_peers,
+            node_address,
+            id,
+            req_type,
+            ResponseBody::Nodes {
+                total: 1u64,
+                nodes: Vec::new(),
+            },
+        );
     }
 
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
@@ -1864,7 +1885,16 @@ impl Service {
                 nodes_to_send.push(node);
             }
         }
-        self.send_nodes_response(nodes_to_send, node_address, rpc_id, "FINDNODE");
+        self.send_nodes_response(
+            nodes_to_send,
+            node_address,
+            rpc_id,
+            "FINDNODE",
+            ResponseBody::Nodes {
+                total: 1u64,
+                nodes: Vec::new(),
+            },
+        );
     }
 
     fn send_nodes_response(
@@ -1873,15 +1903,13 @@ impl Service {
         node_address: NodeAddress,
         rpc_id: RequestId,
         req_type: &str,
+        resp_body: ResponseBody,
     ) {
         // if there are no nodes, send an empty response
         if nodes_to_send.is_empty() {
             let response = Response {
                 id: rpc_id,
-                body: ResponseBody::Nodes {
-                    total: 1u64,
-                    nodes: Vec::new(),
-                },
+                body: resp_body.clone(),
             };
             trace!(
                 "Sending empty {} response to: {}",
@@ -1892,7 +1920,10 @@ impl Service {
                 .handler_send
                 .send(HandlerIn::Response(node_address, Box::new(response)))
             {
-                warn!("Failed to send empty {} response {}", req_type, e)
+                warn!(
+                    "Failed to send empty response {} to request {} response. Error: {}",
+                    resp_body, req_type, e
+                )
             }
         } else {
             // build the NODES response
@@ -1933,12 +1964,21 @@ impl Service {
 
             let responses: Vec<Response> = to_send_nodes
                 .into_iter()
-                .map(|nodes| Response {
-                    id: rpc_id.clone(),
-                    body: ResponseBody::Nodes {
-                        total: (rpc_index + 1) as u64,
-                        nodes,
-                    },
+                .map(|nodes| {
+                    let body = match resp_body {
+                        ResponseBody::AdNodes { .. } => ResponseBody::AdNodes {
+                            total: (rpc_index + 1) as u64,
+                            nodes,
+                        },
+                        _ => ResponseBody::Nodes {
+                            total: (rpc_index + 1) as u64,
+                            nodes,
+                        },
+                    };
+                    Response {
+                        id: rpc_id.clone(),
+                        body,
+                    }
                 })
                 .collect();
 
@@ -2184,7 +2224,7 @@ impl Service {
                     self.kbuckets.write().insert_or_update(&key, enr, status)
                 };
 
-                if let Some(_) = topic_hash {
+                if topic_hash.is_some() {
                     trace!(
                         "Inserting node into kbucket of topic gave result: {:?}",
                         insert_result
