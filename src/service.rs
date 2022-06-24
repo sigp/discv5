@@ -826,6 +826,25 @@ impl Service {
                     break;
                 }
             }
+            // If no new nodes can be found to query, return TOPICQUERY request early.
+            if new_query_peers.len() < 1 {
+                debug!("Found no new peers to send TOPICQUERY to, returning unsatisfied request");
+                if let Some(query) = self.active_topic_queries.queries.remove(&topic_hash) {
+                    if let Some(callback) = query.callback {
+                        if callback
+                            .send(Ok(query.results.into_values().collect::<Vec<_>>()))
+                            .is_err()
+                        {
+                            warn!(
+                                "Callback dropped for topic query {}. Results dropped",
+                                topic_hash
+                            );
+                        }
+                    }
+                }
+                return;
+            }
+
             trace!("Sending TOPICQUERYs to {} new peers", new_query_peers.len());
             for enr in new_query_peers {
                 if let Ok(node_contact) =
@@ -1128,10 +1147,7 @@ impl Service {
                 }
             }
             RequestBody::TopicQuery { topic } => {
-                trace!(
-                    "Sending NODES response to TOPICQUERY request {}",
-                    id
-                );
+                trace!("Sending NODES response to TOPICQUERY request {}", id);
                 self.send_find_topic_nodes_response(
                     topic,
                     node_address.clone(),
