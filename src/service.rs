@@ -728,6 +728,7 @@ impl Service {
     }
 
     fn send_register_topics(&mut self, topic_hash: TopicHash) {
+        trace!("Sending REGTOPICS");
         if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             let reg_attempts = self.topics.entry(topic_hash).or_default();
             // Remove expired ads
@@ -2174,6 +2175,10 @@ impl Service {
                 } else {
                     self.kbuckets.write().insert_or_update(&key, enr, status)
                 };
+
+                if let Some(topic_hash) = topic_hash {
+                    trace!("Inserting node into kbucket of topic gave result: {:?}", insert_result);
+                }
 
                 match insert_result {
                     InsertResult::Inserted => {
