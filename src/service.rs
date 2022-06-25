@@ -253,6 +253,7 @@ pub struct Service {
     active_topic_queries: ActiveTopicQueries,
 }
 
+#[derive(Debug)]
 pub enum TopicQueryState {
     Finished(TopicHash),
     TimedOut(TopicHash),
@@ -716,10 +717,12 @@ impl Service {
                     }
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
+                    trace!("Query is in state {:?}", topic_query_progress);
                     match topic_query_progress {
                         TopicQueryState::Finished(topic_hash) | TopicQueryState::TimedOut(topic_hash) | TopicQueryState::Dry(topic_hash) => {
                             if let Some(query) = self.active_topic_queries.queries.remove(&topic_hash) {
                                 if let Some(callback) = query.callback {
+                                    trace!("Sending result of query for topic hash {} to discv5 layer", topic_hash);
                                     if callback.send(Ok(query.results.into_values().collect::<Vec<_>>())).is_err() {
                                         warn!("Callback dropped for topic query {}. Results dropped", topic_hash);
                                     }
@@ -1436,6 +1439,7 @@ impl Service {
                                 self.active_requests.insert(id, active_request);
                             }
                             TopicQueryResponseState::Nodes => {
+                                trace!("TOPICQUERY has received expected responses");
                                 self.topic_query_responses.remove(&node_id);
                             }
                             TopicQueryResponseState::AdNodes => {
