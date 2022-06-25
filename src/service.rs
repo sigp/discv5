@@ -839,7 +839,7 @@ impl Service {
             // If no new nodes can be found to query, return TOPICQUERY request early.
             if new_query_peers.is_empty() {
                 debug!("Found no new peers to send TOPICQUERY to, setting query status to dry");
-                if let Some(mut query) = self.active_topic_queries.queries.remove(&topic_hash) {
+                if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
                     query.dry = true;
                 }
                 return;
