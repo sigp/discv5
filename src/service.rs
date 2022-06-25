@@ -301,19 +301,20 @@ impl ActiveTopicQueries {
 }
 
 impl Stream for ActiveTopicQueries {
-    type Item = TopicQueryState;
+    type Item = Result<TopicQueryState, String>;
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        trace!("Polling active topic queries");
         for (topic_hash, query) in self.queries.iter() {
             if query.dry {
-                return Poll::Ready(Some(TopicQueryState::Dry(*topic_hash)));
+                return Poll::Ready(Some(Ok(TopicQueryState::Dry(*topic_hash))));
             } else if query.results.len() >= self.num_results {
-                return Poll::Ready(Some(TopicQueryState::Finished(*topic_hash)));
+                return Poll::Ready(Some(Ok(TopicQueryState::Finished(*topic_hash))));
             } else if query.start.elapsed() >= self.time_out {
                 warn!(
                     "TOPICQUERY timed out. Only {} ads found for topic hash.",
                     query.results.len()
                 );
-                return Poll::Ready(Some(TopicQueryState::TimedOut(*topic_hash)));
+                return Poll::Ready(Some(Ok(TopicQueryState::TimedOut(*topic_hash))));
             } else {
                 let exhausted_peers = query
                     .queried_peers
@@ -323,10 +324,10 @@ impl Stream for ActiveTopicQueries {
                 // If all peers have responded or failed the request and we still did not
                 // obtain enough results, the query is in TopicQueryState::Unsatisfied.
                 if exhausted_peers >= query.queried_peers.len() {
-                    return Poll::Ready(Some(TopicQueryState::Unsatisfied(
+                    return Poll::Ready(Some(Ok(TopicQueryState::Unsatisfied(
                         *topic_hash,
                         query.results.len(),
-                    )));
+                    ))));
                 }
             }
         }
@@ -716,7 +717,7 @@ impl Service {
                         METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
                     }
                 }
-                Some(topic_query_progress) = self.active_topic_queries.next() => {
+                Some(Ok(topic_query_progress)) = self.active_topic_queries.next() => {
                     trace!("Query is in state {:?}", topic_query_progress);
                     match topic_query_progress {
                         TopicQueryState::Finished(topic_hash) | TopicQueryState::TimedOut(topic_hash) | TopicQueryState::Dry(topic_hash) => {
@@ -1210,7 +1211,7 @@ impl Service {
                         );
                     }
 
-                    let topic_radius = (1..self.config.topic_radius + 1).collect();
+                    let topic_radius = (1..=self.config.topic_radius).collect();
                     // These are sanitized and ordered
                     let distances_requested = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances,
