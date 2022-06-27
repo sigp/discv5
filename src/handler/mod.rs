@@ -41,7 +41,7 @@ use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     convert::TryFrom,
     default::Default,
     net::SocketAddr,
@@ -218,6 +218,8 @@ const TIMEOUT_REGCONFIRMATION: Duration = Duration::from_secs(20);
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
+    /// Configuration for the discv5 service of duration for which nodes are banned.
+    ban_duration: Option<Duration>,
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
     /// during the operation of the server.
     node_id: NodeId,
@@ -315,12 +317,11 @@ impl Handler {
 
                 let mut handler = Handler {
                     request_retries: config.request_retries,
+                    ban_duration: config.ban_duration,
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests::new(
-                        config.request_timeout,
-                    ),
+                    active_requests: ActiveRequests::new(config.request_timeout),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     topic_query_responses: HashMap::new(),
@@ -458,6 +459,38 @@ impl Handler {
         node_address: NodeAddress,
         mut request_call: RequestCall,
     ) {
+        if let RequestBody::RegisterTopic { .. } = request_call.request.body {
+            if let Entry::Occupied(entry) = self.reg_topic_responses.entry(node_address.clone()) {
+                let response_state = entry.get();
+                if let RegTopicResponseState::Ticket | RegTopicResponseState::Nodes = response_state
+                {
+                    self.reg_topic_responses.remove(&node_address);
+                    trace!("Request timed out with {}", node_address);
+                    // Remove the request from the awaiting packet_filter
+                    self.remove_expected_response(node_address.socket_addr);
+                    // The request has timed out. We keep any established session for future use.
+                    self.fail_request(request_call, RequestError::Timeout, false)
+                        .await;
+                    return;
+                }
+            }
+        } else if let RequestBody::TopicQuery { .. } = request_call.request.body {
+            if let Entry::Occupied(entry) = self.topic_query_responses.entry(node_address.clone()) {
+                let response_state = entry.get();
+                if let TopicQueryResponseState::AdNodes | TopicQueryResponseState::Nodes =
+                    response_state
+                {
+                    self.topic_query_responses.remove(&node_address);
+                    trace!("Request timed out with {}", node_address);
+                    // Remove the request from the awaiting packet_filter
+                    self.remove_expected_response(node_address.socket_addr);
+                    // The request has timed out. We keep any established session for future use.
+                    self.fail_request(request_call, RequestError::Timeout, false)
+                        .await;
+                }
+            }
+            return;
+        }
         if request_call.retries >= self.request_retries {
             trace!("Request timed out with {}", node_address);
             // Remove the request from the awaiting packet_filter
@@ -1117,10 +1150,12 @@ impl Handler {
                                 return;
                             }
                             RegTopicResponseState::Ticket => {
-                                self.reg_topic_responses.remove(&node_address);
                                 // Still a REGCONFIRMATION may come hence request call is reinserted.
-                                self.active_requests
-                                    .insert_at(node_address.clone(), request_call, TIMEOUT_REGCONFIRMATION);
+                                self.active_requests.insert_at(
+                                    node_address.clone(),
+                                    request_call,
+                                    TIMEOUT_REGCONFIRMATION,
+                                );
                                 if let Err(e) = self
                                     .service_send
                                     .send(HandlerOut::Response(
@@ -1138,7 +1173,14 @@ impl Handler {
                                 self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a REGTOPIC request".into()), true).await;
                                 // Remove the expected response
                                 self.remove_expected_response(node_address.socket_addr);
-                                self.send_next_request(node_address).await;
+                                warn!(
+                                    "Peer returned more than one set of NODES responses for REGTOPIC request. Blacklisting {}",
+                                    node_address
+                                );
+                                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+                                PERMIT_BAN_LIST
+                                    .write()
+                                    .ban(node_address.clone(), ban_timeout);
                                 return;
                             }
                         }
@@ -1175,7 +1217,14 @@ impl Handler {
                                 self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
                                 // Remove the expected response
                                 self.remove_expected_response(node_address.socket_addr);
-                                self.send_next_request(node_address).await;
+                                warn!(
+                                    "Peer returned more than one set of NODES responses for TOPICQUERY request. Blacklisting {}",
+                                    node_address
+                                );
+                                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+                                PERMIT_BAN_LIST
+                                    .write()
+                                    .ban(node_address.clone(), ban_timeout);
                                 return;
                             }
                         }
@@ -1259,6 +1308,14 @@ impl Handler {
                         self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
                         // Remove the expected response
                         self.remove_expected_response(node_address.socket_addr);
+                        warn!(
+                            "Peer returned more than one set of ADNODES responses for TOPICQUERY request. Blacklisting {}",
+                            node_address
+                        );
+                        let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST
+                            .write()
+                            .ban(node_address.clone(), ban_timeout);
                         self.send_next_request(node_address).await;
                         return;
                     }
@@ -1289,10 +1346,12 @@ impl Handler {
                         return;
                     }
                     RegTopicResponseState::Nodes => {
-                        self.reg_topic_responses.remove(&node_address);
                         // Still a REGCONFIRMATION may come hence request call is reinserted.
-                        self.active_requests
-                            .insert_at(node_address.clone(), request_call.clone(), TIMEOUT_REGCONFIRMATION);
+                        self.active_requests.insert_at(
+                            node_address.clone(),
+                            request_call.clone(),
+                            TIMEOUT_REGCONFIRMATION,
+                        );
                         if let Err(e) = self
                             .service_send
                             .send(HandlerOut::Response(
@@ -1318,10 +1377,19 @@ impl Handler {
                         .await;
                         // Remove the expected response
                         self.remove_expected_response(node_address.socket_addr);
-                        self.send_next_request(node_address).await;
+                        warn!(
+                            "Peer returned more than one TICKET responses for REGTOPIC request. Blacklisting {}",
+                            node_address
+                        );
+                        let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST
+                            .write()
+                            .ban(node_address.clone(), ban_timeout);
                         return;
                     }
                 }
+            } else if let ResponseBody::RegisterConfirmation { .. } = response.body {
+                self.reg_topic_responses.remove(&node_address);
             }
 
             // Remove the expected response

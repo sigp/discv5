@@ -541,14 +541,14 @@ impl Service {
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
 
 
-                                    let mut local_routing_table = self.kbuckets.write().clone();
-                                    for enr in local_routing_table.iter().map(|entry| entry.node.value.clone()) {
-                                        self.connection_updated(
-                                            enr.node_id(),
-                                            ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
-                                            Some(topic_hash),
-                                        );
-                                    }
+                                let mut local_routing_table = self.kbuckets.write().clone();
+                                for enr in local_routing_table.iter().map(|entry| entry.node.value.clone()) {
+                                    self.connection_updated(
+                                        enr.node_id(),
+                                        ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
+                                        Some(topic_hash),
+                                    );
+                                }
                             }
                             self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
                         }
@@ -2386,7 +2386,11 @@ impl Service {
     /// specified).
     fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
         trace!("RPC Error removing request. Reason: {:?}, id {}", error, id);
-        if let Some(active_request) = self.active_requests.remove(&id) {
+        if let Some(active_request) = self
+            .active_requests
+            .remove(&id)
+            .or_else(|| self.active_regtopic_requests.remove(&id))
+        {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
             match active_request.callback {
