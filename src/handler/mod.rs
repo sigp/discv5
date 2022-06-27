@@ -212,6 +212,8 @@ pub enum RegTopicResponseState {
     Ticket,
 }
 
+const TIMEOUT_REGCONFIRMATION: Duration = Duration::from_secs(20);
+
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.
@@ -317,7 +319,7 @@ impl Handler {
                     enr,
                     key,
                     active_requests: ActiveRequests::new(
-                        config.request_timeout + Duration::from_secs(25),
+                        config.request_timeout,
                     ),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
@@ -1118,7 +1120,7 @@ impl Handler {
                                 self.reg_topic_responses.remove(&node_address);
                                 // Still a REGCONFIRMATION may come hence request call is reinserted.
                                 self.active_requests
-                                    .insert(node_address.clone(), request_call);
+                                    .insert_at(node_address.clone(), request_call, TIMEOUT_REGCONFIRMATION);
                                 if let Err(e) = self
                                     .service_send
                                     .send(HandlerOut::Response(
@@ -1290,7 +1292,7 @@ impl Handler {
                         self.reg_topic_responses.remove(&node_address);
                         // Still a REGCONFIRMATION may come hence request call is reinserted.
                         self.active_requests
-                            .insert(node_address.clone(), request_call.clone());
+                            .insert_at(node_address.clone(), request_call.clone(), TIMEOUT_REGCONFIRMATION);
                         if let Err(e) = self
                             .service_send
                             .send(HandlerOut::Response(
