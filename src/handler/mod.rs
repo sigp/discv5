@@ -210,6 +210,7 @@ pub enum RegTopicResponseState {
     Start,
     Nodes,
     Ticket,
+    RegisterConfirmation,
 }
 
 const TIMEOUT_REGCONFIRMATION: Duration = Duration::from_secs(20);
@@ -462,7 +463,13 @@ impl Handler {
         if let RequestBody::RegisterTopic { .. } = request_call.request.body {
             if let Entry::Occupied(entry) = self.reg_topic_responses.entry(node_address.clone()) {
                 let response_state = entry.get();
-                if let RegTopicResponseState::Ticket | RegTopicResponseState::Nodes = response_state
+                if let RegTopicResponseState::RegisterConfirmation = response_state {
+                    self.reg_topic_responses.remove(&node_address);
+                    self.remove_expected_response(node_address.socket_addr);
+                    self.send_next_request(node_address).await;
+                    return;
+                } else if let RegTopicResponseState::Ticket | RegTopicResponseState::Nodes =
+                    response_state
                 {
                     self.reg_topic_responses.remove(&node_address);
                     trace!("Request timed out with {}", node_address);
@@ -1150,6 +1157,7 @@ impl Handler {
                                 return;
                             }
                             RegTopicResponseState::Ticket => {
+                                *response_state = RegTopicResponseState::RegisterConfirmation;
                                 // Still a REGCONFIRMATION may come hence request call is reinserted.
                                 self.active_requests.insert_at(
                                     node_address.clone(),
@@ -1168,8 +1176,9 @@ impl Handler {
                                 }
                                 return;
                             }
-                            RegTopicResponseState::Nodes => {
-                                warn!("No more NODES responses should be received if REGTOPIC response is in Nodes state.");
+                            RegTopicResponseState::Nodes
+                            | RegTopicResponseState::RegisterConfirmation => {
+                                warn!("No more NODES responses should be received if REGTOPIC response is in Nodes or RegisterConfirmation state.");
                                 self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a REGTOPIC request".into()), true).await;
                                 // Remove the expected response
                                 self.remove_expected_response(node_address.socket_addr);
@@ -1346,6 +1355,7 @@ impl Handler {
                         return;
                     }
                     RegTopicResponseState::Nodes => {
+                        *response_state = RegTopicResponseState::RegisterConfirmation;
                         // Still a REGCONFIRMATION may come hence request call is reinserted.
                         self.active_requests.insert_at(
                             node_address.clone(),
@@ -1364,8 +1374,8 @@ impl Handler {
                         }
                         return;
                     }
-                    RegTopicResponseState::Ticket => {
-                        warn!("No more TICKET responses should be received if REGTOPIC response is in Ticket state.");
+                    RegTopicResponseState::Ticket | RegTopicResponseState::RegisterConfirmation => {
+                        warn!("No more TICKET responses should be received if REGTOPIC response is in Ticket or RegisterConfirmation state.");
                         self.fail_request(
                             request_call,
                             RequestError::InvalidResponseCombo(
