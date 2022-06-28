@@ -34,7 +34,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr,
+    rpc, Discv5Config, Discv5Event, Enr, IpMode,
 };
 use aes_gcm::{
     aead::{generic_array::GenericArray, Aead, NewAead, Payload},
@@ -1041,59 +1041,71 @@ impl Service {
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
                 // Drop if request tries to advertise another node than sender
-                if enr.node_id() == node_address.node_id
-                    && enr.udp4_socket().map(SocketAddr::V4) == Some(node_address.socket_addr)
-                {
-                    debug!("Sending NODES response to REGTOPIC");
-                    self.send_find_topic_nodes_response(
-                        topic,
-                        node_address.clone(),
-                        id.clone(),
-                        "REGTOPIC",
-                    );
+                if enr.node_id() != node_address.node_id {
+                    return;
+                }
+                match self.config.ip_mode {
+                    IpMode::Ip4 => {
+                        if enr.udp4_socket().map(SocketAddr::V4) != Some(node_address.socket_addr) {
+                            return;
+                        }
+                    }
+                    IpMode::Ip6 { .. } => {
+                        if enr.udp6_socket().map(SocketAddr::V6) != Some(node_address.socket_addr) {
+                            return;
+                        }
+                    }
+                }
+                debug!("Sending NODES response to REGTOPIC");
+                self.send_find_topic_nodes_response(
+                    topic,
+                    node_address.clone(),
+                    id.clone(),
+                    "REGTOPIC",
+                );
 
-                    // The current wait time for a given topic.
-                    let wait_time = self
-                        .ads
-                        .ticket_wait_time(topic)
-                        .unwrap_or(Duration::from_secs(0));
+                // The current wait time for a given topic.
+                let wait_time = self
+                    .ads
+                    .ticket_wait_time(topic, node_address.node_id, node_address.socket_addr.ip())
+                    .unwrap_or(Duration::from_secs(0));
 
-                    let mut new_ticket = Ticket::new(
-                        node_address.node_id,
-                        node_address.socket_addr.ip(),
-                        topic,
-                        tokio::time::Instant::now(),
-                        wait_time,
-                        Duration::from_secs(0),
-                    );
+                let mut new_ticket = Ticket::new(
+                    node_address.node_id,
+                    node_address.socket_addr.ip(),
+                    topic,
+                    tokio::time::Instant::now(),
+                    wait_time,
+                    Duration::from_secs(0),
+                );
 
-                    if !ticket.is_empty() {
-                        let decoded_enr = self
-                            .local_enr
+                if !ticket.is_empty() {
+                    let decoded_enr =
+                        self.local_enr
                             .write()
                             .to_base64()
                             .parse::<Enr>()
                             .map_err(|e| {
                                 error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
                             });
-                        if let Ok(decoded_enr) = decoded_enr {
-                            if let Some(ticket_key) = decoded_enr.get("ticket_key") {
-                                let decrypted_ticket = {
-                                    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
-                                    let payload = Payload {
-                                        msg: &ticket,
-                                        aad: b"",
-                                    };
-                                    aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                    if let Ok(decoded_enr) = decoded_enr {
+                        if let Some(ticket_key) = decoded_enr.get("ticket_key") {
+                            let decrypted_ticket = {
+                                let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
+                                let payload = Payload {
+                                    msg: &ticket,
+                                    aad: b"",
+                                };
+                                aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
                                         .map_err(|e| {
                                             error!(
                                                 "Failed to decrypt ticket in REGTOPIC request. Error: {}",
                                                 e
                                             )
                                         })
-                                };
-                                if let Ok(decrypted_ticket) = decrypted_ticket {
-                                    Ticket::decode(&decrypted_ticket)
+                            };
+                            if let Ok(decrypted_ticket) = decrypted_ticket {
+                                Ticket::decode(&decrypted_ticket)
                                         .map_err(|e| {
                                             error!(
                                                 "Failed to decode ticket in REGTOPIC request. Error: {}",
@@ -1124,7 +1136,6 @@ impl Service {
                                             }
                                         })
                                         .ok();
-                                }
                             }
                         }
                     } else {

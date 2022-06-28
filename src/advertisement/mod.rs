@@ -1,11 +1,12 @@
 use super::*;
-use crate::Enr;
+use crate::{enr::NodeId, Enr};
 use core::time::Duration;
 use futures::prelude::*;
 use more_asserts::debug_unreachable;
 use std::{
     collections::{HashMap, VecDeque},
     fmt,
+    net::IpAddr,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -112,22 +113,44 @@ impl Ads {
         self.ads.get(&topic).into_iter().flatten()
     }
 
-    pub fn ticket_wait_time(&mut self, topic: TopicHash) -> Option<Duration> {
+    pub fn ticket_wait_time(
+        &mut self,
+        topic: TopicHash,
+        node_id: NodeId,
+        ip: IpAddr,
+    ) -> Option<Duration> {
         self.remove_expired();
         let now = Instant::now();
+        // The occupancy score encompasses checking if the table is full.
         if self.expirations.len() < self.max_ads {
-            self.ads
-                .get(&topic)
-                .filter(|nodes| nodes.len() >= self.max_ads_per_topic)
-                .map(|nodes| {
-                    nodes.get(0).map(|ad| {
+            if let Some(nodes) = self.ads.get(&topic) {
+                for ad in nodes.iter() {
+                    // The similarity score encompasses checking if ads with same node id and ip exist.
+                    let same_ip = match ip {
+                        IpAddr::V4(ip) => ad.node_record.ip4() == Some(ip),
+                        IpAddr::V6(ip) => ad.node_record.ip6() == Some(ip),
+                    };
+                    if ad.node_record.node_id() == node_id || same_ip {
+                        let elapsed_time = now.saturating_duration_since(ad.insert_time);
+                        let wait_time = self.ad_lifetime.saturating_sub(elapsed_time);
+                        return Some(wait_time);
+                    }
+                }
+                // The occupancy score also encompasses checking if the ad slots for a
+                // certain topic are full.
+                if nodes.len() >= self.max_ads_per_topic {
+                    return nodes.front().map(|ad| {
                         let elapsed_time = now.saturating_duration_since(ad.insert_time);
                         self.ad_lifetime.saturating_sub(elapsed_time)
-                    })
-                })
-                .unwrap_or_default()
+                    });
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         } else {
-            self.expirations.get(0).map(|ad| {
+            self.expirations.front().map(|ad| {
                 let elapsed_time = now.saturating_duration_since(ad.insert_time);
                 self.ad_lifetime.saturating_sub(elapsed_time)
             })

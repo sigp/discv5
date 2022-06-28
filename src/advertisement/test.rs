@@ -79,9 +79,14 @@ async fn insert_ad_and_get_nodes() {
 
 #[tokio::test]
 async fn ticket_wait_time_no_wait_time() {
+    // Create the test values needed
+    let port = 6666;
+    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let key = CombinedKey::generate_secp256k1();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
     let mut ads = Ads::new(Duration::from_secs(1), 10, 50).unwrap();
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
-    assert_eq!(ads.ticket_wait_time(topic), None)
+    assert_eq!(ads.ticket_wait_time(topic, enr.node_id(), ip), None)
 }
 
 #[tokio::test]
@@ -97,10 +102,10 @@ async fn ticket_wait_time_duration() {
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
 
     // Add an add for topic
-    ads.insert(enr, topic).unwrap();
+    ads.insert(enr.clone(), topic).unwrap();
 
-    assert_gt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(2)));
-    assert_lt!(ads.ticket_wait_time(topic), Some(Duration::from_secs(3)));
+    assert_gt!(ads.ticket_wait_time(topic, enr.node_id(), ip), Some(Duration::from_secs(2)));
+    assert_lt!(ads.ticket_wait_time(topic, enr.node_id(), ip), Some(Duration::from_secs(3)));
 }
 
 #[tokio::test]
@@ -111,10 +116,10 @@ async fn ticket_wait_time_full_table() {
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
-    let port = 5000;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
-    let key = CombinedKey::generate_secp256k1();
-    let enr_2 = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
+    let port_2 = 5000;
+    let ip_2: IpAddr = "192.168.0.1".parse().unwrap();
+    let key_2 = CombinedKey::generate_secp256k1();
+    let enr_2 = EnrBuilder::new("v4").ip(ip_2).udp4(port_2).build(&key_2).unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 3).unwrap();
 
@@ -131,14 +136,14 @@ async fn ticket_wait_time_full_table() {
     ads.insert(enr.clone(), topic_2).unwrap();
 
     // Now max_ads in table is reached so the second ad for topic_2 has to wait
-    assert_ne!(ads.ticket_wait_time(topic_2), None);
+    assert_ne!(ads.ticket_wait_time(topic_2, enr.node_id(), ip), None);
 
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     // Now the first ads have expired and the table is not full so no neither topic
     // or topic_2 ads have to wait
-    assert_eq!(ads.ticket_wait_time(topic), None);
-    assert_eq!(ads.ticket_wait_time(topic_2), None);
+    assert_eq!(ads.ticket_wait_time(topic, enr.node_id(), ip), None);
+    assert_eq!(ads.ticket_wait_time(topic_2, enr_2.node_id(), ip_2), None);
 }
 
 #[tokio::test]
@@ -149,10 +154,15 @@ async fn ticket_wait_time_full_topic() {
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
-    let port = 5000;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
-    let key = CombinedKey::generate_secp256k1();
-    let enr_2 = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
+    let port_2 = 5000;
+    let ip_2: IpAddr = "192.168.0.1".parse().unwrap();
+    let key_2 = CombinedKey::generate_secp256k1();
+    let enr_2 = EnrBuilder::new("v4").ip(ip_2).udp4(port_2).build(&key_2).unwrap();
+
+    let port_3 = 5000;
+    let ip_3: IpAddr = "8.8.8.8".parse().unwrap();
+    let key_3 = CombinedKey::generate_secp256k1();
+    let enr_3 = EnrBuilder::new("v4").ip(ip_3).udp4(port_3).build(&key_3).unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 4).unwrap();
 
@@ -164,17 +174,14 @@ async fn ticket_wait_time_full_topic() {
     ads.insert(enr_2.clone(), topic).unwrap();
 
     // Now max_ads_per_topic is reached for topic
-    assert_ne!(ads.ticket_wait_time(topic), None);
+    assert_ne!(ads.ticket_wait_time(topic, enr_3.node_id(), ip_3), None);
 
     // Add a topic_2 ad
-    ads.insert(enr, topic_2).unwrap();
+    ads.insert(enr.clone(), topic_2).unwrap();
 
     // The table isn't full so topic_2 ads don't have to wait
-    assert_eq!(ads.ticket_wait_time(topic_2), None);
-
-    // But for topic they do until the first ads have expired
-    assert_ne!(ads.ticket_wait_time(topic), None);
+    assert_eq!(ads.ticket_wait_time(topic_2, enr_2.node_id(), ip_2), None);
 
     tokio::time::sleep(Duration::from_secs(3)).await;
-    assert_eq!(ads.ticket_wait_time(topic), None);
+    assert_eq!(ads.ticket_wait_time(topic, enr_3.node_id(), ip), None);
 }
