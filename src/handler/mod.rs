@@ -773,7 +773,9 @@ impl Handler {
                     | RequestBody::TopicQuery { topic } => {
                         HandlerOut::EstablishedTopic(enr, connection_direction, topic)
                     }
-                    _ => HandlerOut::Established(enr, node_address.socket_addr, connection_direction),
+                    _ => {
+                        HandlerOut::Established(enr, node_address.socket_addr, connection_direction)
+                    }
                 };
                 self.service_send
                     .send(kbucket_addition)
