@@ -610,7 +610,8 @@ impl Service {
                 }
                 Some(event) = self.handler_recv.recv() => {
                     match event {
-                        HandlerOut::Established(enr, direction) => {
+                        HandlerOut::Established(enr, socket_addr, direction) => {
+                            self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
                             self.inject_session_established(enr, direction, None);
                         }
                         HandlerOut::EstablishedTopic(enr, direction, topic_hash) => {

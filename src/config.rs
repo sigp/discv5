@@ -11,7 +11,7 @@ pub struct Discv5Config {
     /// Whether to enable the incoming packet filter. Default: false.
     pub enable_packet_filter: bool,
 
-    /// The request timeout for each UDP request. Default: 2 seconds.
+    /// The request timeout for each UDP request. Default: 1 seconds.
     pub request_timeout: Duration,
 
     /// The interval over which votes are remembered when determining our external IP. A lower

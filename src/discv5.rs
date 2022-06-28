@@ -77,6 +77,8 @@ pub enum Discv5Event {
         replaced: Option<NodeId>,
         topic_hash: TopicHash,
     },
+    /// A new session has been established with a node.
+    SessionEstablished(Enr, SocketAddr),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
     /// A node has initiated a talk request.

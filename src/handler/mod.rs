@@ -24,7 +24,7 @@
 //!
 //! Requests from the application layer can be made via the receive channel using a [`HandlerIn`].
 //! Responses from the application layer can be made via the receive channel using a [`HandlerIn`].
-//! Messages from the a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
+//! Messages from a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
     advertisement::topic::TopicHash,
@@ -37,6 +37,7 @@ use crate::{
     socket::{FilterConfig, Socket},
     Enr,
 };
+use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
@@ -108,8 +109,9 @@ pub enum HandlerOut {
     /// A session has been established with a node.
     ///
     /// A session is only considered established once we have received a signed ENR from the
-    /// node and received messages from it's `SocketAddr` matching it's ENR fields.
-    Established(Enr, ConnectionDirection),
+    /// node and either the observed `SocketAddr` matches the one declared in the ENR or the
+    /// ENR declares no `SocketAddr`.
+    Established(Enr, SocketAddr, ConnectionDirection),
 
     /// A session has been established for the purpose of publishing advertisements.
     EstablishedTopic(Enr, ConnectionDirection, TopicHash),
@@ -240,8 +242,8 @@ pub struct Handler {
     reg_topic_responses: HashMap<NodeAddress, RegTopicResponseState>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
-    /// Currently in-progress handshakes with peers.
-    active_challenges: LruTimeCache<NodeAddress, Challenge>,
+    /// Currently in-progress outbound handshakes (WHOAREYOU packets) with peers.
+    active_challenges: HashMapDelay<NodeAddress, Challenge>,
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
     /// The channel to receive messages from the application layer.
@@ -331,7 +333,7 @@ impl Handler {
                         config.session_timeout,
                         Some(config.session_cache_capacity),
                     ),
-                    active_challenges: LruTimeCache::new(config.request_timeout * 2, None),
+                    active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
                     service_send,
                     listen_socket,
@@ -372,6 +374,11 @@ impl Handler {
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     trace!("Discarding request {} with timeout", pending_request.request.body);
                     self.handle_request_timeout(node_address, pending_request).await;
+                }
+                Some(Ok((node_address, _challenge))) = self.active_challenges.next() => {
+                    // A challenge has expired. There could be pending requests awaiting this
+                    // challenge. We process them here
+                    self.send_next_request(node_address).await;
                 }
                 _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
@@ -532,8 +539,10 @@ impl Handler {
             return Err(RequestError::SelfRequest);
         }
 
-        // If there is already an active request for this node, add to pending requests
-        if self.active_requests.get(&node_address).is_some() {
+        // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
+        if self.active_requests.get(&node_address).is_some()
+            || self.active_challenges.get(&node_address).is_some()
+        {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
@@ -600,19 +609,16 @@ impl Handler {
         let node_address = wru_ref.0;
         let message_nonce = wru_ref.1;
 
-        if self.active_challenges.peek(&node_address).is_some() {
+        if self.active_challenges.get(&node_address).is_some() {
             warn!("WHOAREYOU already sent. {}", node_address);
             return;
         }
 
-        // Ignore this request if the session is already established
-        if self.sessions.get(&node_address).is_some() {
-            trace!(
-                "Session already established. WHOAREYOU not sent to {}",
-                node_address
-            );
-            return;
-        }
+        // NOTE: We do not check if we have an active session here. This was checked before
+        // requesting the ENR from the service. It could be the case we have established a session
+        // in the meantime, we allow this challenge to establish a second session in the event this
+        // race occurs. The nodes will decide amongst themselves which session keys to use (the
+        // most recent).
 
         // It could be the case we have sent an ENR with an active request, however we consider
         // these independent as this is in response to an unknown packet. If the ENR it not in our
@@ -625,6 +631,7 @@ impl Handler {
         let challenge_data = ChallengeData::try_from(packet.authenticated_data().as_slice())
             .expect("Must be the correct challenge size");
         debug!("Sending WHOAREYOU to {}", node_address);
+        self.add_expected_response(node_address.socket_addr);
         self.send(node_address.clone(), packet).await;
         self.active_challenges.insert(
             node_address,
@@ -766,7 +773,7 @@ impl Handler {
                     | RequestBody::TopicQuery { topic } => {
                         HandlerOut::EstablishedTopic(enr, connection_direction, topic)
                     }
-                    _ => HandlerOut::Established(enr, connection_direction),
+                    _ => HandlerOut::Established(enr, node_address.socket_addr, connection_direction),
                 };
                 self.service_send
                     .send(kbucket_addition)
@@ -856,19 +863,26 @@ impl Handler {
                         // This occurs when a node established a connection with us.
                         if let Err(e) = self
                             .service_send
-                            .send(HandlerOut::Established(enr, ConnectionDirection::Incoming))
+                            .send(HandlerOut::Established(
+                                enr,
+                                node_address.socket_addr,
+                                ConnectionDirection::Incoming,
+                            ))
                             .await
                         {
                             warn!("Failed to inform of established session {}", e)
                         }
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
-                            node_address,
+                            node_address.clone(),
                             message_nonce,
                             message,
                             authenticated_data,
                         )
                         .await;
+                        // We could have pending messages that were awaiting this session to be
+                        // established. If so process them.
+                        self.send_next_request(node_address).await;
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
@@ -908,19 +922,27 @@ impl Handler {
 
     async fn send_next_request(&mut self, node_address: NodeAddress) {
         // ensure we are not over writing any existing requests
-
         if self.active_requests.get(&node_address).is_none() {
             if let std::collections::hash_map::Entry::Occupied(mut entry) =
                 self.pending_requests.entry(node_address)
             {
                 // If it exists, there must be a request here
-                let request = entry.get_mut().remove(0);
+                let (contact, request) = entry.get_mut().remove(0);
                 if entry.get().is_empty() {
                     entry.remove();
                 }
-                trace!("Sending next awaiting message. Node: {}", request.0);
-                if let Err(e) = self.send_request(request.0, request.1).await {
-                    warn!("Failed to send next awaiting request {}", e)
+                let id = request.id.clone();
+                trace!("Sending next awaiting message. Node: {}", contact);
+                if let Err(request_error) = self.send_request(contact, request).await {
+                    warn!("Failed to send next awaiting request {}", request_error);
+                    // Inform the service that the request failed
+                    if let Err(e) = self
+                        .service_send
+                        .send(HandlerOut::RequestFailed(id, request_error))
+                        .await
+                    {
+                        warn!("Failed to inform that request failed {}", e);
+                    }
                 }
             }
         }
@@ -961,8 +983,7 @@ impl Handler {
                         .await;
                     // If we haven't already sent a WhoAreYou,
                     // spawn a WHOAREYOU event to check for highest known ENR
-                    // Update the cache time and remove expired entries.
-                    if self.active_challenges.peek(&node_address).is_none() {
+                    if self.active_challenges.get(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
                         if let Err(e) = self
                             .service_send
@@ -1011,6 +1032,7 @@ impl Handler {
                                                 .service_send
                                                 .send(HandlerOut::Established(
                                                     enr,
+                                                    node_address.socket_addr,
                                                     ConnectionDirection::Outgoing,
                                                 ))
                                                 .await
