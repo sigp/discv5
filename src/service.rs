@@ -1470,7 +1470,7 @@ impl Service {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
 
-                    // Only count votes that from peers we have contacted.
+                    // Only count votes that are from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
                     let should_count = match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(_, status)
@@ -1478,7 +1478,21 @@ impl Service {
                         {
                             true
                         }
-                        _ => false,
+                        _ => {
+                            let mut should_count = false;
+                            for kbuckets in self.topics_kbuckets.values_mut() {
+                                match kbuckets.entry(&key) {
+                                    kbucket::Entry::Present(_, status)
+                                        if status.is_connected() && !status.is_incoming() =>
+                                    {
+                                        should_count = true;
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            should_count
+                        }
                     };
 
                     if should_count {
@@ -2336,12 +2350,27 @@ impl Service {
                 }
             }
             ConnectionStatus::PongReceived(enr) => {
-                if let kbucket::Entry::Present(_, _) = self.kbuckets.write().entry(&key) {
-                    match self.kbuckets.write().update_node(
-                        &key,
-                        enr.clone(),
-                        Some(ConnectionState::Connected),
-                    ) {
+                match self.kbuckets.write().update_node(
+                    &key,
+                    enr.clone(),
+                    Some(ConnectionState::Connected),
+                ) {
+                    UpdateResult::Failed(FailureReason::KeyNonExistant) => {}
+                    UpdateResult::Failed(reason) => {
+                        self.peers_to_ping.remove(&node_id);
+                        debug!(
+                            "Could not update ENR from pong. Node: {}, reason: {:?}",
+                            node_id, reason
+                        );
+                    }
+                    update => {
+                        debug!("Updated {:?}", update)
+                    } // Updated ENR successfully.
+                }
+                for kbuckets in self.topics_kbuckets.values_mut() {
+                    match kbuckets.update_node(&key, enr.clone(), Some(ConnectionState::Connected))
+                    {
+                        UpdateResult::Failed(FailureReason::KeyNonExistant) => {}
                         UpdateResult::Failed(reason) => {
                             self.peers_to_ping.remove(&node_id);
                             debug!(
@@ -2352,26 +2381,6 @@ impl Service {
                         update => {
                             debug!("Updated {:?}", update)
                         } // Updated ENR successfully.
-                    }
-                }
-                for kbuckets in self.topics_kbuckets.values_mut() {
-                    if let kbucket::Entry::Present(_, _) = kbuckets.entry(&key) {
-                        match kbuckets.update_node(
-                            &key,
-                            enr.clone(),
-                            Some(ConnectionState::Connected),
-                        ) {
-                            UpdateResult::Failed(reason) => {
-                                self.peers_to_ping.remove(&node_id);
-                                debug!(
-                                    "Could not update ENR from pong. Node: {}, reason: {:?}",
-                                    node_id, reason
-                                );
-                            }
-                            update => {
-                                debug!("Updated {:?}", update)
-                            } // Updated ENR successfully.
-                        }
                     }
                 }
             }
