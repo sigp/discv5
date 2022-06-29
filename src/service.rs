@@ -813,24 +813,38 @@ impl Service {
 
                                 // Check if our advertised IPV6 address needs to be updated.
                                 if let Some(new_ip6) = new_ip6 {
-                                    info!("Local UDP ip6 socket updated to: {}", new_ip6);
                                     let new_ip6: SocketAddr = new_ip6.into();
-                                    self.send_event(Discv5Event::SocketUpdated(new_ip6));
-                                    updated |= self
+                                    let result = self
                                         .local_enr
                                         .write()
-                                        .set_udp_socket(new_ip6, &self.enr_key.read())
-                                        .is_ok();
+                                        .set_udp_socket(new_ip6, &self.enr_key.read());
+                                    match result {
+                                        Ok(_) => {
+                                            updated = true;
+                                            info!("Local UDP ip6 socket updated to: {}", new_ip6);
+                                            self.send_event(Discv5Event::SocketUpdated(new_ip6));
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to update local UDP ip6 socket. ip6: {}, error: {:?}", new_ip6, e);
+                                        }
+                                    }
                                 }
                                 if let Some(new_ip4) = new_ip4 {
-                                    info!("Local UDP socket updated to: {}", new_ip4);
                                     let new_ip4: SocketAddr = new_ip4.into();
-                                    self.send_event(Discv5Event::SocketUpdated(new_ip4));
-                                    updated |= self
+                                    let result = self
                                         .local_enr
                                         .write()
-                                        .set_udp_socket(new_ip4, &self.enr_key.read())
-                                        .is_ok();
+                                        .set_udp_socket(new_ip4, &self.enr_key.read());
+                                    match result {
+                                        Ok(_) => {
+                                            updated = true;
+                                            info!("Local UDP socket updated to: {}", new_ip4);
+                                            self.send_event(Discv5Event::SocketUpdated(new_ip4));
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to update local UDP socket. ip: {}, error: {:?}", new_ip4, e);
+                                        }
+                                    }
                                 }
                                 if updated {
                                     self.ping_connected_peers();
