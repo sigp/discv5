@@ -2160,6 +2160,41 @@ impl Service {
                     match kbuckets_topic.entry(&key) {
                         kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
                         kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                        kbucket::Entry::Absent(_) => {
+                            match kbuckets_topic.insert_or_update(
+                                &key,
+                                enr.clone(),
+                                NodeStatus {
+                                    state: ConnectionState::Disconnected,
+                                    direction: ConnectionDirection::Incoming,
+                                },
+                            ) {
+                                InsertResult::Inserted
+                                | InsertResult::Pending { .. }
+                                | InsertResult::StatusUpdated { .. }
+                                | InsertResult::ValueUpdated
+                                | InsertResult::Updated { .. }
+                                | InsertResult::UpdatedPending => trace!(
+                                    "Added node id {} to kbucket of topic hash {:?}",
+                                    enr.node_id(),
+                                    topic_hash
+                                ),
+                                InsertResult::Failed(FailureReason::BucketFull) => {
+                                    error!("Table full")
+                                }
+                                InsertResult::Failed(FailureReason::BucketFilter) => {
+                                    error!("Failed bucket filter")
+                                }
+                                InsertResult::Failed(FailureReason::TableFilter) => {
+                                    error!("Failed table filter")
+                                }
+                                InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
+                                    error!("Invalid self update")
+                                }
+                                InsertResult::Failed(_) => error!("Failed to insert ENR"),
+                            }
+                            false
+                        }
                         _ => false,
                     }
                 } else {
@@ -2193,17 +2228,6 @@ impl Service {
             // query, so we remove it from the discovered list here.
             source != &enr.node_id()
         });
-
-        if topic_hash.is_some() {
-            for enr in enrs.into_iter() {
-                self.connection_updated(
-                    enr.node_id(),
-                    ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
-                    topic_hash,
-                );
-            }
-            return;
-        }
 
         // if this is part of a query, update the query
         if let Some(query_id) = query_id {

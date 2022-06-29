@@ -104,8 +104,14 @@ async fn ticket_wait_time_duration() {
     // Add an add for topic
     ads.insert(enr.clone(), topic).unwrap();
 
-    assert_gt!(ads.ticket_wait_time(topic, enr.node_id(), ip), Some(Duration::from_secs(2)));
-    assert_lt!(ads.ticket_wait_time(topic, enr.node_id(), ip), Some(Duration::from_secs(3)));
+    assert_gt!(
+        ads.ticket_wait_time(topic, enr.node_id(), ip),
+        Some(Duration::from_secs(2))
+    );
+    assert_lt!(
+        ads.ticket_wait_time(topic, enr.node_id(), ip),
+        Some(Duration::from_secs(3))
+    );
 }
 
 #[tokio::test]
@@ -119,7 +125,11 @@ async fn ticket_wait_time_full_table() {
     let port_2 = 5000;
     let ip_2: IpAddr = "192.168.0.1".parse().unwrap();
     let key_2 = CombinedKey::generate_secp256k1();
-    let enr_2 = EnrBuilder::new("v4").ip(ip_2).udp4(port_2).build(&key_2).unwrap();
+    let enr_2 = EnrBuilder::new("v4")
+        .ip(ip_2)
+        .udp4(port_2)
+        .build(&key_2)
+        .unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 3).unwrap();
 
@@ -157,12 +167,20 @@ async fn ticket_wait_time_full_topic() {
     let port_2 = 5000;
     let ip_2: IpAddr = "192.168.0.1".parse().unwrap();
     let key_2 = CombinedKey::generate_secp256k1();
-    let enr_2 = EnrBuilder::new("v4").ip(ip_2).udp4(port_2).build(&key_2).unwrap();
+    let enr_2 = EnrBuilder::new("v4")
+        .ip(ip_2)
+        .udp4(port_2)
+        .build(&key_2)
+        .unwrap();
 
     let port_3 = 5000;
     let ip_3: IpAddr = "8.8.8.8".parse().unwrap();
     let key_3 = CombinedKey::generate_secp256k1();
-    let enr_3 = EnrBuilder::new("v4").ip(ip_3).udp4(port_3).build(&key_3).unwrap();
+    let enr_3 = EnrBuilder::new("v4")
+        .ip(ip_3)
+        .udp4(port_3)
+        .build(&key_3)
+        .unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(3), 2, 4).unwrap();
 
