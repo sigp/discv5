@@ -2356,7 +2356,11 @@ impl Service {
                 }
                 for kbuckets in self.topics_kbuckets.values_mut() {
                     if let kbucket::Entry::Present(_, _) = kbuckets.entry(&key) {
-                        match kbuckets.update_node(&key, enr.clone(), Some(ConnectionState::Connected)) {
+                        match kbuckets.update_node(
+                            &key,
+                            enr.clone(),
+                            Some(ConnectionState::Connected),
+                        ) {
                             UpdateResult::Failed(reason) => {
                                 self.peers_to_ping.remove(&node_id);
                                 debug!(
