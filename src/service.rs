@@ -408,13 +408,13 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
-        let ads = match Ads::new(Duration::from_secs(60 * 15), 100, 50000) {
+        let ads = match Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3) {
             Ok(ads) => ads,
             Err(e) => {
                 return Err(Error::new(ErrorKind::InvalidInput, e));
             }
         };
-        let active_topics = match Ads::new(Duration::from_secs(60 * 15), 100, 50000) {
+        let active_topics = match Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3) {
             Ok(ads) => ads,
             Err(e) => {
                 return Err(Error::new(ErrorKind::InvalidInput, e));

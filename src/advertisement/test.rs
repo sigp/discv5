@@ -14,7 +14,7 @@ async fn insert_same_node() {
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(2), 10, 50).unwrap();
+    let mut ads = Ads::new(Duration::from_secs(2), 10, 50, 100, 100).unwrap();
 
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
 
@@ -43,7 +43,7 @@ async fn insert_ad_and_get_nodes() {
     let key = CombinedKey::generate_secp256k1();
     let enr_2 = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(2), 10, 50).unwrap();
+    let mut ads = Ads::new(Duration::from_secs(2), 10, 50, 100, 100).unwrap();
 
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
     let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
@@ -84,7 +84,7 @@ async fn ticket_wait_time_no_wait_time() {
     let ip: IpAddr = "127.0.0.1".parse().unwrap();
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
-    let mut ads = Ads::new(Duration::from_secs(1), 10, 50).unwrap();
+    let mut ads = Ads::new(Duration::from_secs(1), 10, 50, 100, 100).unwrap();
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
     assert_eq!(ads.ticket_wait_time(topic, enr.node_id(), ip), None)
 }
@@ -97,7 +97,7 @@ async fn ticket_wait_time_duration() {
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(3), 1, 3).unwrap();
+    let mut ads = Ads::new(Duration::from_secs(3), 1, 3, 100, 100).unwrap();
 
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
 
@@ -131,7 +131,7 @@ async fn ticket_wait_time_full_table() {
         .build(&key_2)
         .unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(3), 2, 3).unwrap();
+    let mut ads = Ads::new(Duration::from_secs(3), 2, 3, 100, 100).unwrap();
 
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
     let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
@@ -182,7 +182,7 @@ async fn ticket_wait_time_full_topic() {
         .build(&key_3)
         .unwrap();
 
-    let mut ads = Ads::new(Duration::from_secs(3), 2, 4).unwrap();
+    let mut ads = Ads::new(Duration::from_secs(3), 2, 4, 100, 100).unwrap();
 
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
     let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
