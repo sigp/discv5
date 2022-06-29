@@ -2195,6 +2195,13 @@ impl Service {
         });
 
         if topic_hash.is_some() {
+            for enr in enrs.into_iter() {
+                self.connection_updated(
+                    enr.node_id(),
+                    ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
+                    topic_hash,
+                );
+            }
             return;
         }
 
