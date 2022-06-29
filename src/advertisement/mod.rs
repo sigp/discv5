@@ -161,13 +161,13 @@ impl Ads {
                         .unwrap_or(false),
                     IpAddr::V6(_) => ad
                         .node_record
-                        .ip4()
+                        .ip6()
                         .map(|ip| ip.octets()[0..=5].to_vec() == subnet)
                         .unwrap_or(false),
                 };
 
                 if subnet_match {
-                    if !subnet_first_insert_time.is_some() {
+                    if subnet_first_insert_time.is_none() {
                         subnet_first_insert_time = Some(ad.insert_time);
                     }
                     subnet_ads_count += 1;
@@ -230,9 +230,9 @@ impl Ads {
                     if let Some(ad) = ad {
                         let subnet = if let Some(ip) = ad.node_record.ip4() {
                             Some(ip.octets()[0..=2].to_vec())
-                        } else if let Some(ip6) = ad.node_record.ip6() {
-                            Some(ip6.octets()[0..=5].to_vec())
-                        } else { None };
+                        } else {
+                            ad.node_record.ip6().map(|ip6| ip6.octets()[0..=5].to_vec())
+                        };
                         if let Some(subnet) = subnet {
                             if let Some(subnet_expiries) = self.subnet_expirations.get_mut(&subnet) {
                                 subnet_expiries.pop_front();
@@ -261,16 +261,14 @@ impl Ads {
 
         let subnet = if let Some(ip) = node_record.ip4() {
             Some(ip.octets()[0..=2].to_vec())
-        } else if let Some(ip6) = node_record.ip6() {
-            Some(ip6.octets()[0..=5].to_vec())
         } else {
-            None
+            node_record.ip6().map(|ip6| ip6.octets()[0..=5].to_vec())
         };
         if let Some(subnet) = subnet {
             let subnet_expirires = self
                 .subnet_expirations
                 .entry(subnet)
-                .or_insert(VecDeque::new());
+                .or_insert_with(VecDeque::new);
             subnet_expirires.push_back(now);
         }
 
