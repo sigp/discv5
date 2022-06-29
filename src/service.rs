@@ -946,11 +946,16 @@ impl Service {
     }
 
     /// Returns an ENR if one is known for the given NodeId.
-    pub fn find_enr(&self, node_id: &NodeId) -> Option<Enr> {
+    pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
         if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
             return Some(entry.value().clone());
+        }
+        for kbuckets in self.topics_kbuckets.values_mut() {
+            if let kbucket::Entry::Present(entry, _) = kbuckets.entry(&key) {
+                return Some(entry.value().clone());
+            }
         }
         // check the untrusted addresses for ongoing queries
         for query in self.queries.iter() {
@@ -2331,21 +2336,39 @@ impl Service {
                 }
             }
             ConnectionStatus::PongReceived(enr) => {
-                match self
-                    .kbuckets
-                    .write()
-                    .update_node(&key, enr, Some(ConnectionState::Connected))
-                {
-                    UpdateResult::Failed(reason) => {
-                        self.peers_to_ping.remove(&node_id);
-                        debug!(
-                            "Could not update ENR from pong. Node: {}, reason: {:?}",
-                            node_id, reason
-                        );
+                if let kbucket::Entry::Present(_, _) = self.kbuckets.write().entry(&key) {
+                    match self.kbuckets.write().update_node(
+                        &key,
+                        enr.clone(),
+                        Some(ConnectionState::Connected),
+                    ) {
+                        UpdateResult::Failed(reason) => {
+                            self.peers_to_ping.remove(&node_id);
+                            debug!(
+                                "Could not update ENR from pong. Node: {}, reason: {:?}",
+                                node_id, reason
+                            );
+                        }
+                        update => {
+                            debug!("Updated {:?}", update)
+                        } // Updated ENR successfully.
                     }
-                    update => {
-                        debug!("Updated {:?}", update)
-                    } // Updated ENR successfully.
+                }
+                for kbuckets in self.topics_kbuckets.values_mut() {
+                    if let kbucket::Entry::Present(_, _) = kbuckets.entry(&key) {
+                        match kbuckets.update_node(&key, enr.clone(), Some(ConnectionState::Connected)) {
+                            UpdateResult::Failed(reason) => {
+                                self.peers_to_ping.remove(&node_id);
+                                debug!(
+                                    "Could not update ENR from pong. Node: {}, reason: {:?}",
+                                    node_id, reason
+                                );
+                            }
+                            update => {
+                                debug!("Updated {:?}", update)
+                            } // Updated ENR successfully.
+                        }
+                    }
                 }
             }
             ConnectionStatus::Disconnected => {
