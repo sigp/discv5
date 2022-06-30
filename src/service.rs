@@ -1442,6 +1442,7 @@ impl Service {
                     self.active_adnodes_responses.remove(&node_id);
 
                     if let RequestBody::TopicQuery { topic } = active_request.request_body {
+                        nodes.retain(|enr| (self.config.table_filter)(enr));
                         if let Some(query) = self.active_topic_queries.queries.get_mut(&topic) {
                             nodes.into_iter().for_each(|enr| {
                                 trace!(
