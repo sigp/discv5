@@ -214,14 +214,16 @@ pub struct PoolTicket {
     enr: Enr,
     req_id: RequestId,
     ticket: Ticket,
+    ip: IpAddr,
 }
 
 impl PoolTicket {
-    pub fn new(enr: Enr, req_id: RequestId, ticket: Ticket) -> Self {
+    pub fn new(enr: Enr, req_id: RequestId, ticket: Ticket, ip: IpAddr) -> Self {
         PoolTicket {
             enr,
             req_id,
             ticket,
+            ip,
         }
     }
 
@@ -236,13 +238,18 @@ impl PoolTicket {
     pub fn ticket(&self) -> &Ticket {
         &self.ticket
     }
+
+    pub fn ip(&self) -> &IpAddr {
+        &self.ip
+    }
 }
 
 /// The TicketPools collects all the registration attempts for a free ad slot.
 #[derive(Default)]
 pub struct TicketPools {
     /// The ticket_pools keeps track of all the registrants and their Tickets. One
-    /// ticket_pool per TopicHash can be open at a time.
+    /// ticket_pool per TopicHash can be open at a time. A ticket pool collects the
+    /// valid tickets received within the registration window for a topic.
     ticket_pools: HashMap<TopicHash, HashMap<NodeId, PoolTicket>>,
     /// The expirations keeps track of when to close a ticket pool so the next one
     /// can be opened.
@@ -250,7 +257,7 @@ pub struct TicketPools {
 }
 
 impl TicketPools {
-    pub fn insert(&mut self, node_record: Enr, req_id: RequestId, ticket: Ticket) {
+    pub fn insert(&mut self, node_record: Enr, req_id: RequestId, ticket: Ticket, ip: IpAddr) {
         if let Some(open_time) = ticket.req_time().checked_add(ticket.wait_time()) {
             if open_time.elapsed() <= Duration::from_secs(REGISTRATION_WINDOW_IN_SECS) {
                 let pool = self.ticket_pools.entry(ticket.topic()).or_default();
@@ -265,7 +272,7 @@ impl TicketPools {
                     }
                     pool.insert(
                         node_record.node_id(),
-                        PoolTicket::new(node_record, req_id, ticket),
+                        PoolTicket::new(node_record, req_id, ticket, ip),
                     );
                 }
             }

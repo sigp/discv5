@@ -707,7 +707,9 @@ impl Service {
                     // to the ticket issuer.
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
                 }
-                Some(Ok((topic, ticket_pool))) = self.ticket_pools.next() => {
+                Some(Ok((topic, mut ticket_pool))) = self.ticket_pools.next() => {
+                    // Remove any tickets which don't have a current wait time of None.
+                    ticket_pool.retain(|node_id, pool_ticket| self.ads.ticket_wait_time(topic, *node_id, *pool_ticket.ip()) == None);
                     // Select ticket with longest cummulative wait time.
                     if let Some(pool_ticket) = ticket_pool.values().max_by_key(|pool_ticket| pool_ticket.ticket().cum_wait()) {
                         self.ads.insert(pool_ticket.node_record().clone(), topic).ok();
@@ -1081,7 +1083,7 @@ impl Service {
                     topic,
                     tokio::time::Instant::now(),
                     wait_time,
-                    Duration::from_secs(0),
+                    wait_time,
                 );
 
                 if !ticket.is_empty() {
@@ -1124,7 +1126,7 @@ impl Service {
                                                 // with wait time 0.
                                                 new_ticket.set_cum_wait(ticket.cum_wait());
                                                 self.send_ticket_response(
-                                                    node_address,
+                                                    node_address.clone(),
                                                     id.clone(),
                                                     new_ticket.clone(),
                                                     wait_time,
@@ -1135,7 +1137,7 @@ impl Service {
                                                     // don't match those in ticket. For example if a malicious node tries to use
                                                     // another ticket issued by us.
                                                     if ticket == new_ticket {
-                                                        self.ticket_pools.insert(enr, id, ticket);
+                                                        self.ticket_pools.insert(enr, id, ticket, node_address.socket_addr.ip());
                                                     }
                                                 }
                                             }
@@ -1149,14 +1151,19 @@ impl Service {
                         // wait time for the ad slot. See discv5 spec. This node will not store tickets received
                         // with wait time 0.
                         self.send_ticket_response(
-                            node_address,
+                            node_address.clone(),
                             id.clone(),
                             new_ticket.clone(),
                             wait_time,
                         );
                         // If current wait time is 0, the ticket is added to the matching ticket pool.
-                        if wait_time <= Duration::from_secs(0) {
-                            self.ticket_pools.insert(enr, id, new_ticket);
+                        if wait_time == Duration::from_secs(0) {
+                            self.ticket_pools.insert(
+                                enr,
+                                id,
+                                new_ticket,
+                                node_address.socket_addr.ip(),
+                            );
                         }
                     }
                 } else {
