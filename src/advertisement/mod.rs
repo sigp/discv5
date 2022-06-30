@@ -63,7 +63,8 @@ impl AdTopic {
     }
 }
 
-/// The Ads struct contains the locally adveritsed AdNodes.
+/// The Ads struct contains adveritsed AdNodes. Table is used to refer to all
+/// the ads, and the table stores ads by topic.
 #[derive(Clone, Debug)]
 pub struct Ads {
     /// The expirations makes sure that AdNodes are advertised only for the
@@ -96,8 +97,8 @@ impl Ads {
         max_ads_subnet: usize,
         max_ads_subnet_topic: usize,
     ) -> Result<Self, &'static str> {
-        if max_ads_per_topic > max_ads {
-            return Err("Ads per topic cannot be > max_ads");
+        if max_ads_per_topic > max_ads || max_ads_subnet_topic > max_ads_subnet {
+            return Err("Ads per topic [per subnet] cannot be > max_ads [per subnet]");
         }
 
         Ok(Ads {
@@ -139,6 +140,20 @@ impl Ads {
             IpAddr::V6(ip) => ip.octets()[0..=5].to_vec(),
         };
 
+        let wait_time_max_ads_subnet =
+            if let Some(expirations) = self.subnet_expirations.get_mut(&subnet) {
+                if expirations.len() >= self.max_ads_subnet {
+                    expirations.pop_front().map(|insert_time| {
+                        let elapsed_time = now.saturating_duration_since(insert_time);
+                        self.ad_lifetime.saturating_sub(elapsed_time)
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         if let Some(nodes) = self.ads.get(&topic) {
             let mut subnet_first_insert_time = None;
             let mut subnet_ads_count = 0;
@@ -165,7 +180,6 @@ impl Ads {
                         .map(|ip| ip.octets()[0..=5].to_vec() == subnet)
                         .unwrap_or(false),
                 };
-
                 if subnet_match {
                     if subnet_first_insert_time.is_none() {
                         subnet_first_insert_time = Some(ad.insert_time);
@@ -175,7 +189,8 @@ impl Ads {
             }
             // Similarity check to see if the limit of ads per subnet per topic or otherwise table is reached.
             // If the ad slots per subnet per topic are not full and neither are the ad slots per subnet for
-            // the whole table then waiting time is not decided by subnet.
+            // the whole table then waiting time is not decided by subnet but by the number of free ad slots
+            // for the topic.
             if subnet_ads_count >= self.max_ads_subnet_topic {
                 if let Some(insert_time) = subnet_first_insert_time {
                     let elapsed_time = now.saturating_duration_since(insert_time);
@@ -183,14 +198,8 @@ impl Ads {
                     return Some(wait_time);
                 }
             }
-            if let Some(expirations) = self.subnet_expirations.get_mut(&subnet) {
-                if expirations.len() >= self.max_ads_subnet {
-                    if let Some(insert_time) = expirations.pop_front() {
-                        let elapsed_time = now.saturating_duration_since(insert_time);
-                        let wait_time = self.ad_lifetime.saturating_sub(elapsed_time);
-                        return Some(wait_time);
-                    }
-                }
+            if wait_time_max_ads_subnet.is_some() {
+                return wait_time_max_ads_subnet;
             }
 
             // Occupancy check to see if the ad slots for a certain topic are full.
@@ -200,6 +209,10 @@ impl Ads {
                     self.ad_lifetime.saturating_sub(elapsed_time)
                 });
             }
+        }
+        // Similarity check to see if the limit of ads per subnet per table is reached.
+        if wait_time_max_ads_subnet.is_some() {
+            return wait_time_max_ads_subnet;
         }
         // If the ad slots per topic are not full and neither is the table then waiting time is None,
         // otherwise waiting time is that of the next ad in the table to expire.

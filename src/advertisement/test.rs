@@ -203,3 +203,56 @@ async fn ticket_wait_time_full_topic() {
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert_eq!(ads.ticket_wait_time(topic, enr_3.node_id(), ip), None);
 }
+
+#[tokio::test]
+async fn ticket_wait_time_full_subnet() {
+    let port = 1510;
+    let ip: IpAddr = "192.168.0.1".parse().unwrap();
+    let key = CombinedKey::generate_secp256k1();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
+
+    let port_2 = 1995;
+    let ip_2: IpAddr = "192.168.0.2".parse().unwrap();
+    let key_2 = CombinedKey::generate_secp256k1();
+    let enr_2 = EnrBuilder::new("v4")
+        .ip(ip_2)
+        .udp4(port_2)
+        .build(&key_2)
+        .unwrap();
+
+    let mut ads = Ads::new(Duration::from_secs(2), 2, 4, 2, 1).unwrap();
+    let topic_1 = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
+    let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
+    let topic_3 = Topic::new(std::str::from_utf8(&[3u8; 32]).unwrap()).hash();
+
+    ads.insert(enr.clone(), topic_1).unwrap();
+    ads.insert(enr_2, topic_2).unwrap();
+
+    assert_ne!(ads.ticket_wait_time(topic_3, enr.node_id(), ip), None);
+}
+
+#[tokio::test]
+async fn ticket_wait_time_full_subnet_topic() {
+    let port = 1510;
+    let ip: IpAddr = "192.168.0.1".parse().unwrap();
+    let key = CombinedKey::generate_secp256k1();
+    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
+
+    let port_2 = 1995;
+    let ip_2: IpAddr = "192.168.0.2".parse().unwrap();
+    let key_2 = CombinedKey::generate_secp256k1();
+    let enr_2 = EnrBuilder::new("v4")
+        .ip(ip_2)
+        .udp4(port_2)
+        .build(&key_2)
+        .unwrap();
+
+    let mut ads = Ads::new(Duration::from_secs(2), 2, 4, 2, 1).unwrap();
+    let topic_1 = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
+    let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
+
+    ads.insert(enr.clone(), topic_1).unwrap();
+
+    assert_ne!(ads.ticket_wait_time(topic_1, enr_2.node_id(), ip), None);
+    assert_eq!(ads.ticket_wait_time(topic_2, enr.node_id(), ip), None);
+}
