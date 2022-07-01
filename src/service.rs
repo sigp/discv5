@@ -530,7 +530,7 @@ impl Service {
                                 };
 
                                 trace!("Initiating kbuckets for topic hash {}", topic_hash);
-                                let kbuckets = KBucketsTable::new(
+                                let mut kbuckets = KBucketsTable::new(
                                     NodeId::new(&topic_hash.as_bytes()).into(),
                                     Duration::from_secs(60),
                                     self.config.incoming_bucket_limit,
