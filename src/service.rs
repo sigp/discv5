@@ -517,7 +517,6 @@ impl Service {
                         ServiceRequest::TopicQuery(topic_hash, callback) => {
                             // If we look up the topic hash for the first time we initialise its kbuckets.
                             if let Entry::Vacant(_) = self.topics_kbuckets.entry(topic_hash) {
-                                trace!("Init kbuckets for topic hash {}", topic_hash);
                                 // NOTE: Currently we don't expose custom filter support in the configuration. Users can
                                 // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
                                 // may expose this functionality to the users if there is demand for it.
@@ -530,6 +529,7 @@ impl Service {
                                     (None, None)
                                 };
 
+                                trace!("Initiating kbuckets for topic hash {}", topic_hash);
                                 let kbuckets = KBucketsTable::new(
                                     NodeId::new(&topic_hash.as_bytes()).into(),
                                     Duration::from_secs(60),
@@ -538,17 +538,36 @@ impl Service {
                                     bucket_filter,
                                 );
 
-                                self.topics_kbuckets.insert(topic_hash, kbuckets);
+                                debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
 
-
-                                let mut local_routing_table = self.kbuckets.write().clone();
-                                for enr in local_routing_table.iter().map(|entry| entry.node.value.clone()) {
-                                    self.connection_updated(
-                                        enr.node_id(),
-                                        ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
-                                        Some(topic_hash),
-                                    );
+                                for entry in self.kbuckets.write().iter() {
+                                    match kbuckets.insert_or_update(entry.node.key, entry.node.value.clone(), entry.status) {
+                                        InsertResult::Inserted
+                                        | InsertResult::Pending { .. }
+                                        | InsertResult::StatusUpdated { .. }
+                                        | InsertResult::ValueUpdated
+                                        | InsertResult::Updated { .. }
+                                        | InsertResult::UpdatedPending => trace!(
+                                            "Added node id {} to kbucket of topic hash {}",
+                                            entry.node.value.node_id(),
+                                            topic_hash
+                                        ),
+                                        InsertResult::Failed(FailureReason::BucketFull) => {
+                                            error!("Table full for topic hash {}", topic_hash)
+                                        }
+                                        InsertResult::Failed(FailureReason::BucketFilter) => {
+                                            error!("Failed bucket filter for topic hash {}", topic_hash)
+                                        }
+                                        InsertResult::Failed(FailureReason::TableFilter) => {
+                                            error!("Failed table filter for topic hash {}", topic_hash)
+                                        }
+                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
+                                            error!("Invalid self update for topic hash {}", topic_hash)
+                                        }
+                                        InsertResult::Failed(_) => error!("Failed to insert ENR for topic hash {}", topic_hash),
+                                    }
                                 }
+                                self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
                             self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
                         }
@@ -568,26 +587,45 @@ impl Service {
                                     (None, None)
                                 };
 
-                                debug!("Initiating kbuckets for topic hash {}", topic_hash);
-                                let kbuckets = KBucketsTable::new(
+                                trace!("Initiating kbuckets for topic hash {}", topic_hash);
+                                let mut kbuckets = KBucketsTable::new(
                                     NodeId::new(&topic_hash.as_bytes()).into(),
                                     Duration::from_secs(60),
                                     self.config.incoming_bucket_limit,
                                     table_filter,
                                     bucket_filter,
                                 );
+
                                 debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
 
-                                self.topics_kbuckets.insert(topic_hash, kbuckets);
-
-                                let mut local_routing_table = self.kbuckets.write().clone();
-                                for enr in local_routing_table.iter().map(|entry| entry.node.value.clone()) {
-                                    self.connection_updated(
-                                        enr.node_id(),
-                                        ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
-                                        Some(topic_hash),
-                                    );
+                                for entry in self.kbuckets.write().iter() {
+                                    match kbuckets.insert_or_update(entry.node.key, entry.node.value.clone(), entry.status) {
+                                        InsertResult::Inserted
+                                        | InsertResult::Pending { .. }
+                                        | InsertResult::StatusUpdated { .. }
+                                        | InsertResult::ValueUpdated
+                                        | InsertResult::Updated { .. }
+                                        | InsertResult::UpdatedPending => trace!(
+                                            "Added node id {} to kbucket of topic hash {}",
+                                            entry.node.value.node_id(),
+                                            topic_hash
+                                        ),
+                                        InsertResult::Failed(FailureReason::BucketFull) => {
+                                            error!("Table full for topic hash {}", topic_hash)
+                                        }
+                                        InsertResult::Failed(FailureReason::BucketFilter) => {
+                                            error!("Failed bucket filter for topic hash {}", topic_hash)
+                                        }
+                                        InsertResult::Failed(FailureReason::TableFilter) => {
+                                            error!("Failed table filter for topic hash {}", topic_hash)
+                                        }
+                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
+                                            error!("Invalid self update for topic hash {}", topic_hash)
+                                        }
+                                        InsertResult::Failed(_) => error!("Failed to insert ENR for topic hash {}", topic_hash),
+                                    }
                                 }
+                                self.topics_kbuckets.insert(topic_hash, kbuckets);
                                 METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
 
                                 self.send_register_topics(topic_hash);
