@@ -1087,16 +1087,19 @@ impl Service {
             RequestBody::RegisterTopic { topic, enr, ticket } => {
                 // Drop if request tries to advertise another node than sender
                 if enr.node_id() != node_address.node_id {
+                    debug!("The enr node id in REGTOPIC request body does not match sender's. Nodes can only register themselves.");
                     return;
                 }
                 match self.config.ip_mode {
                     IpMode::Ip4 => {
                         if enr.udp4_socket().map(SocketAddr::V4) != Some(node_address.socket_addr) {
+                            debug!("The enr ip in REGTOPIC request body does not match sender's. Nodes can only register themselves.");
                             return;
                         }
                     }
                     IpMode::Ip6 { .. } => {
                         if enr.udp6_socket().map(SocketAddr::V6) != Some(node_address.socket_addr) {
+                            debug!("The enr ip in REGTOPIC request body does not match sender's. Nodes can only register themselves.");
                             return;
                         }
                     }
@@ -1125,7 +1128,7 @@ impl Service {
                 );
 
                 if !ticket.is_empty() {
-                    let decoded_enr =
+                    let decoded_local_enr =
                         self.local_enr
                             .write()
                             .to_base64()
@@ -1133,8 +1136,8 @@ impl Service {
                             .map_err(|e| {
                                 error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
                             });
-                    if let Ok(decoded_enr) = decoded_enr {
-                        if let Some(ticket_key) = decoded_enr.get("ticket_key") {
+                    if let Ok(decoded_local_enr) = decoded_local_enr {
+                        if let Some(ticket_key) = decoded_local_enr.get("ticket_key") {
                             let decrypted_ticket = {
                                 let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
                                 let payload = Payload {
@@ -1181,31 +1184,34 @@ impl Service {
                                             }
                                         })
                                         .ok();
+                            } else {
+                                warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting: {}", node_address.node_id);
+                                let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                                PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                self.rpc_failure(id, RequestError::InvalidTicket);
                             }
-                        }
-                    } else {
-                        debug!("Sending TICKET response");
-                        // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
-                        // wait time for the ad slot. See discv5 spec. This node will not store tickets received
-                        // with wait time 0.
-                        self.send_ticket_response(
-                            node_address.clone(),
-                            id.clone(),
-                            new_ticket.clone(),
-                            wait_time,
-                        );
-                        // If current wait time is 0, the ticket is added to the matching ticket pool.
-                        if wait_time == Duration::from_secs(0) {
-                            self.ticket_pools.insert(
-                                enr,
-                                id,
-                                new_ticket,
-                                node_address.socket_addr.ip(),
-                            );
                         }
                     }
                 } else {
-                    debug!("REGTOPIC enr does not match request sender's enr. Nodes can only register themselves.");
+                    debug!("Sending TICKET response");
+                    // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
+                    // wait time for the ad slot. See discv5 spec. This node will not store tickets received
+                    // with wait time 0.
+                    self.send_ticket_response(
+                        node_address.clone(),
+                        id.clone(),
+                        new_ticket.clone(),
+                        wait_time,
+                    );
+                    // If current wait time is 0, the ticket is added to the matching ticket pool.
+                    if wait_time == Duration::from_secs(0) {
+                        self.ticket_pools.insert(
+                            enr,
+                            id,
+                            new_ticket,
+                            node_address.socket_addr.ip(),
+                        );
+                    }
                 }
             }
             RequestBody::TopicQuery { topic } => {

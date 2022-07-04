@@ -116,6 +116,9 @@ pub enum RequestError {
     /// A request that is responded with multiple respones
     /// gets the wrong combination of responses.
     InvalidResponseCombo(String),
+    /// A REGTOPIC requerst has sent a ticket that was not
+    /// issued by us.
+    InvalidTicket,
 }
 
 #[derive(Debug, Clone, PartialEq)]
