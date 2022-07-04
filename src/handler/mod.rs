@@ -215,7 +215,9 @@ pub enum RegTopicResponseState {
     RegisterConfirmation,
 }
 
-const TIMEOUT_REGCONFIRMATION: Duration = Duration::from_secs(20);
+/// The time out for awaiting REGCONFIRMATION responses is the registration window (10 seconds)
+/// plus some seconds for processing.
+const TIMEOUT_REGCONFIRMATION: Duration = Duration::from_secs(15);
 
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
@@ -232,6 +234,8 @@ pub struct Handler {
     key: Arc<RwLock<CombinedKey>>,
     /// Pending raw requests.
     active_requests: ActiveRequests,
+    /// Pending raw REGTOPIC requests awaiting a REGCONFIRMATION response that may come.
+    requests_awaiting_regconf: ActiveRequests,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Keeps track of the 2 expected responses, NODES and ADNODES that should be received from a
@@ -325,6 +329,9 @@ impl Handler {
                     enr,
                     key,
                     active_requests: ActiveRequests::new(config.request_timeout),
+                    requests_awaiting_regconf: ActiveRequests::new(
+                        TIMEOUT_REGCONFIRMATION + config.request_timeout,
+                    ),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     topic_query_responses: HashMap::new(),
@@ -1162,8 +1169,10 @@ impl Handler {
                             }
                             RegTopicResponseState::Ticket => {
                                 *response_state = RegTopicResponseState::RegisterConfirmation;
-                                // Still a REGCONFIRMATION may come hence request call is reinserted.
-                                self.active_requests.insert_at(
+                                // Still a REGCONFIRMATION may come hence request call is reinserted, in a separate
+                                // struct to avoid blocking further requests to the node address during
+                                // TIMEOUT_REGCONFIRMATION time.
+                                self.requests_awaiting_regconf.insert_at(
                                     node_address.clone(),
                                     request_call,
                                     TIMEOUT_REGCONFIRMATION,
@@ -1351,8 +1360,10 @@ impl Handler {
                     }
                     RegTopicResponseState::Nodes => {
                         *response_state = RegTopicResponseState::RegisterConfirmation;
-                        // Still a REGCONFIRMATION may come hence request call is reinserted.
-                        self.active_requests.insert_at(
+                        // Still a REGCONFIRMATION may come hence request call is reinserted, in a separate
+                        // struct to avoid blocking further requests to the node address during
+                        // TIMEOUT_REGCONFIRMATION time.
+                        self.requests_awaiting_regconf.insert_at(
                             node_address.clone(),
                             request_call.clone(),
                             TIMEOUT_REGCONFIRMATION,
