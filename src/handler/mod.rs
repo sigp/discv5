@@ -1102,27 +1102,7 @@ impl Handler {
                     // This is a multi-response Nodes response
                     if let Some(remaining_responses) = request_call.remaining_responses.as_mut() {
                         *remaining_responses -= 1;
-                        let reinsert = match request_call.request.body {
-                            RequestBody::RegisterTopic { .. } => {
-                                trace!("Received a REGTOPIC NODES reponse");
-                                // The request is reinserted for either another NODES response, a TICKET or a
-                                // REGCONFIRMATION response that may come, otherwise the request times out.
-                                remaining_responses >= &mut 0
-                            }
-                            RequestBody::TopicQuery { .. } => {
-                                trace!("Received a TOPICQUERY NODES reponse");
-                                // TopicQuerys may receive multiple ADNODE responses as well as NODES responses
-                                // so the request call must be reinserted.
-                                let remaining_adnode_responses =
-                                    match request_call.remaining_adnode_responses {
-                                        Some(remaining) => remaining > 0,
-                                        None => false,
-                                    };
-                                remaining_responses > &mut 0 || remaining_adnode_responses
-                            }
-                            _ => remaining_responses > &mut 0,
-                        };
-                        if reinsert {
+                        if remaining_responses != &0 {
                             trace!("Reinserting active request");
                             // more responses remaining, add back the request and send the response
                             // add back the request and send the response
@@ -1271,16 +1251,7 @@ impl Handler {
                         request_call.remaining_adnode_responses
                     {
                         *remaining_adnode_responses -= 1;
-                        let reinsert = {
-                            // TopicQuerys may receive multiple ADNODE responses as well as NODES responses
-                            // so the request call must be reinserted.
-                            let remaining_responses = match request_call.remaining_responses {
-                                Some(remaining) => remaining > 0,
-                                None => false,
-                            };
-                            remaining_adnode_responses > &mut 0 || remaining_responses
-                        };
-                        if reinsert {
+                        if remaining_adnode_responses != &0 {
                             trace!("Reinserting active TOPICQUERY request");
                             // more responses remaining, add back the request and send the response
                             // add back the request and send the response
