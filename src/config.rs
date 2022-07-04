@@ -96,11 +96,8 @@ pub struct Discv5Config {
     /// will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
-    /// The max length in bits that the suffix of the topic hash is allowed to vary from the node ids that
-    /// REGTOPIC and TOPICQUERY requests are sent to. Setting it to 256 means that the requests are sent to
-    /// all of the nodes in the kbuckets.
-    pub topic_radius: u64,
-
+    /// A topic look up should time out after a set duration, after which no more TOPICQUERY requests should
+    /// be sent to peers regardless of the number of results found. This is in order to avoid starvation.
     pub topic_query_timeout: Duration,
 
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
@@ -143,7 +140,6 @@ impl Default for Discv5Config {
             filter_max_bans_per_ip: Some(5),
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
-            topic_radius: 256,
             topic_query_timeout: Duration::from_secs(60),
             ip_mode: IpMode::default(),
             executor: None,
@@ -306,11 +302,6 @@ impl Discv5ConfigBuilder {
     /// will last indefinitely. Default is 1 hour.
     pub fn ban_duration(&mut self, ban_duration: Option<Duration>) -> &mut Self {
         self.config.ban_duration = ban_duration;
-        self
-    }
-
-    pub fn topic_radius(&mut self, topic_radius: u64) -> &mut Self {
-        self.config.topic_radius = topic_radius;
         self
     }
 

@@ -1279,12 +1279,25 @@ impl Service {
                         );
                     }
 
-                    let topic_radius = (1..=self.config.topic_radius).collect();
                     // These are sanitized and ordered
-                    let distances_requested = match &active_request.request_body {
-                        RequestBody::FindNode { distances } => distances,
-                        RequestBody::TopicQuery { .. } | RequestBody::RegisterTopic { .. } => {
-                            &topic_radius
+                    let distances_requested: Vec<u64> = match &active_request.request_body {
+                        RequestBody::FindNode { distances } => distances.clone(),
+                        RequestBody::TopicQuery { topic }
+                        | RequestBody::RegisterTopic { topic, .. } => {
+                            let peer_key: kbucket::Key<NodeId> = node_address.node_id.into();
+                            let topic_key: kbucket::Key<NodeId> =
+                                NodeId::new(&topic.as_bytes()).into();
+                            let distance_to_topic = peer_key.log2_distance(&topic_key);
+                            if let Some(distance) = distance_to_topic {
+                                [distance - 1, distance, distance + 1].into()
+                            } else {
+                                warn!("The node id of this peer is the requested topic hash. Blacklisting peer with node id {}", node_id);
+                                let ban_timeout =
+                                    self.config.ban_duration.map(|v| Instant::now() + v);
+                                PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                self.rpc_failure(id, RequestError::InvalidTicket);
+                                return;
+                            }
                         }
                         _ => unreachable!(),
                     };
@@ -1404,39 +1417,32 @@ impl Service {
                     // ensure any mapping is removed in this rare case
                     self.active_nodes_responses.remove(&node_id);
 
-                    match active_request.request_body {
-                        RequestBody::TopicQuery { topic } => {
-                            self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
+                    if let RequestBody::TopicQuery { topic } = active_request.request_body {
+                        self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
 
-                            let response_state = self
-                                .topic_query_responses
-                                .entry(node_id)
-                                .or_insert(TopicQueryResponseState::Start);
+                        let response_state = self
+                            .topic_query_responses
+                            .entry(node_id)
+                            .or_insert(TopicQueryResponseState::Start);
 
-                            match response_state {
-                                TopicQueryResponseState::Start => {
-                                    *response_state = TopicQueryResponseState::Nodes;
-                                    self.active_requests.insert(id, active_request);
-                                }
-                                TopicQueryResponseState::AdNodes => {
-                                    self.topic_query_responses.remove(&node_id);
-                                }
-                                TopicQueryResponseState::Nodes => {
-                                    debug_unreachable!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.")
-                                }
+                        match response_state {
+                            TopicQueryResponseState::Start => {
+                                *response_state = TopicQueryResponseState::Nodes;
+                                self.active_requests.insert(id, active_request);
+                            }
+                            TopicQueryResponseState::AdNodes => {
+                                self.topic_query_responses.remove(&node_id);
+                            }
+                            TopicQueryResponseState::Nodes => {
+                                debug_unreachable!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.")
                             }
                         }
-                        RequestBody::RegisterTopic {
-                            topic,
-                            enr: _,
-                            ticket: _,
-                        } => self.discovered(&node_id, nodes, active_request.query_id, Some(topic)),
-                        RequestBody::FindNode { .. } => {
-                            self.discovered(&node_id, nodes, active_request.query_id, None)
-                        }
-                        _ => debug_unreachable!(
-                            "Only TOPICQUERY, REGTOPIC and FINDNODE requests expect NODES response"
-                        ),
+                    } else if let RequestBody::RegisterTopic { topic, .. } =
+                        active_request.request_body
+                    {
+                        self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
+                    } else if let RequestBody::FindNode { .. } = active_request.request_body {
+                        self.discovered(&node_id, nodes, active_request.query_id, None)
                     }
                 }
                 ResponseBody::AdNodes { total, mut nodes } => {
@@ -1930,7 +1936,7 @@ impl Service {
                     .kbuckets
                     .write()
                     .nodes_by_distances(
-                        &[distance - 1, distance + 1],
+                        &[distance - 1, distance, distance + 1],
                         self.config.max_nodes_response - closest_peers.len(),
                     )
                     .iter()
