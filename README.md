@@ -109,7 +109,7 @@ non-contactable peers.
 
 This is done in the following way:
 
-1. If a connecting node provides and ENR without specifying an address (this
+1. If a connecting node provides an ENR without specifying an address (this
    should be the default case for most nodes behind a NAT, or ones that have
    just started) we consider this valid. Typically this will occur when a node
    has yet to determine its external IP address via PONG responses and has not
