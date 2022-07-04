@@ -1128,14 +1128,14 @@ impl Service {
                 );
 
                 if !ticket.is_empty() {
-                    let decoded_local_enr =
-                        self.local_enr
-                            .write()
-                            .to_base64()
-                            .parse::<Enr>()
-                            .map_err(|e| {
-                                error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
-                            });
+                    let decoded_local_enr = self
+                        .local_enr
+                        .write()
+                        .to_base64()
+                        .parse::<Enr>()
+                        .map_err(|e| {
+                            error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
+                        });
                     if let Ok(decoded_local_enr) = decoded_local_enr {
                         if let Some(ticket_key) = decoded_local_enr.get("ticket_key") {
                             let decrypted_ticket = {
@@ -1186,7 +1186,8 @@ impl Service {
                                         .ok();
                             } else {
                                 warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting: {}", node_address.node_id);
-                                let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                                let ban_timeout =
+                                    self.config.ban_duration.map(|v| Instant::now() + v);
                                 PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                                 self.rpc_failure(id, RequestError::InvalidTicket);
                             }
