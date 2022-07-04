@@ -40,6 +40,10 @@ impl ActiveTopic {
     pub fn topic(&self) -> TopicHash {
         self.topic
     }
+
+    pub fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
 }
 
 /// A ticket is active when it is associated with the node contact of
@@ -118,7 +122,7 @@ impl Stream for Tickets {
     }
 }
 
-/// An PendingTicket maps to a Ticket received by another node in Tickets upon insert.
+/// A PendingTicket maps to a Ticket received by another node in Tickets upon insert.
 #[derive(Clone)]
 struct PendingTicket {
     /// The ActiveTopic serves to match the Ticket to an entry in Tickets'
@@ -248,7 +252,7 @@ impl PoolTicket {
 #[derive(Default)]
 pub struct TicketPools {
     /// The ticket_pools keeps track of all the registrants and their Tickets. One
-    /// ticket_pool per TopicHash can be open at a time. A ticket pool collects the
+    /// ticket pool per TopicHash can be open at a time. A ticket pool collects the
     /// valid tickets received within the registration window for a topic.
     ticket_pools: HashMap<TopicHash, HashMap<NodeId, PoolTicket>>,
     /// The expirations keeps track of when to close a ticket pool so the next one

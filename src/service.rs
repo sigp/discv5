@@ -143,6 +143,18 @@ impl TalkRequest {
 /// The max wait time accpeted for tickets.
 const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
 
+/// The max nodes to adveritse for a topic.
+const MAX_ADS_TOPIC: usize = 100;
+
+/// The max nodes to advertise.
+const MAX_ADS: usize = 50000;
+
+/// The max ads per subnet per topic.
+const MAX_ADS_SUBNET_TOPIC: usize = 5;
+
+/// The max ads per subnet.
+const MAX_ADS_SUBNET: usize = 50;
+
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
     /// A request to start a query. There are two types of queries:
@@ -162,12 +174,15 @@ pub enum ServiceRequest {
     /// Sets up an event stream where the discv5 server will return various events such as
     /// discovered nodes as it traverses the DHT.
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
-    /// Queries given node for nodes advertising a topic hash
+    /// Starts a topic look up of nodes advertising a topic in a discv5 network.
     TopicQuery(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
-    /// RegisterTopic publishes this node as an advertiser for a topic at given node
+    /// RegisterTopic publishes this node as an advertiser for a topic in a discv5 network
+    /// until removed.
     RegisterTopic(TopicHash),
-    ActiveTopics(oneshot::Sender<Result<Ads, RequestError>>),
+    /// Stops publishing this node as an advetiser for a topic.
     RemoveTopic(TopicHash, oneshot::Sender<Result<String, RequestError>>),
+    /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
+    ActiveTopics(oneshot::Sender<Result<Ads, RequestError>>),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
@@ -203,7 +218,8 @@ pub struct Service {
     topic_query_responses: HashMap<NodeId, TopicQueryResponseState>,
 
     /// Keeps track of the 3 expected responses, TICKET and NODES that should be received from a
-    /// REGTOPIC request and REGCONFIRMATION that may be received.
+    /// REGTOPIC request and REGCONFIRMATION that may be received if there is a free ad slot and
+    /// the node is selected by the remote node for the free ad slot.
     active_regtopic_requests: ActiveRegtopicRequests,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
@@ -233,7 +249,7 @@ pub struct Service {
     /// Ads advertised locally for other nodes.
     ads: Ads,
 
-    /// Topics tracks registration attempts of the topics to advertise on
+    /// Topics tracks registration attempts of the topic hashes to advertise on
     /// other nodes.
     topics: HashMap<TopicHash, HashMap<u64, HashMap<NodeId, RegistrationState>>>,
 
@@ -253,40 +269,74 @@ pub struct Service {
     active_topic_queries: ActiveTopicQueries,
 }
 
+/// The state of a topic lookup which changes as responses to sent TOPICQUERYs are received.
+/// A topic look up may require more than one round of sending TOPICQUERYs to obtain the set
+/// number of ads for the topic.
 #[derive(Debug)]
 pub enum TopicQueryState {
+    /// The topic look up has obtained enough results.
     Finished(TopicHash),
+    /// The topic look up has not obtained enough results and has timed out.
     TimedOut(TopicHash),
-    // Not enough ads have been returned, more peers should be queried.
+    /// Not enough ads have been returned from the first round of sending TOPICQUERY
+    /// requests, new peers in the topic's kbucktes should be queried.
     Unsatisfied(TopicHash, usize),
-    // No new peers can be found to send TOPICQUERYs to.
+    /// No new peers in the topic's kbuckets can be found to send TOPICQUERYs too.
     Dry(TopicHash),
 }
 
+/// The state of a response to a single TOPICQUERY request. A topic lookup/query is
+/// made up of several TOPICQUERYs each being sent to a different peer.
+#[derive(Default)]
 pub enum TopicQueryResponseState {
+    #[default]
+    /// The Start state is intermediary upon receving the first response to the
+    /// TOPICQUERY request, either a NODES or ADNODES response.
     Start,
+    /// A NODES response has been completely received.
     Nodes,
+    /// An ADNODES response has been completely received.
     AdNodes,
 }
 
+/// At any given time, a set number of registrations should be active per topic hash to
+/// set to be registered. A registration is active when either a ticket for an adslot is
+/// held and the ticket wait time has not yet expired, or a REGCONFIRMATION has been
+/// received for an ad slot and the ad lifetime has not yet elapsed.
 pub enum RegistrationState {
+    /// A REGCONFIRMATION has been received at the given instant.
     Confirmed(Instant),
+    /// A TICKET has been received and the ticket is being held for the duration of the
+    /// wait time.
     Ticket,
 }
 
+/// An active topic query/lookup keeps track of which peers from the topic's kbuckets
+/// have already been queired until the set number of ads are found for the lookup or it
+/// is prematurely terminated in lack of peers or time.
 pub struct ActiveTopicQuery {
-    // A NodeId mapped to false is waiting for a response or failed request.
+    /// A NodeId mapped to false is waiting for a response. A value of true means the
+    /// TOPICQUERY has received a response or the request has failed.
     queried_peers: HashMap<NodeId, bool>,
-    // An ad returned by multiple peers is only included once.
+    /// An ad returned by multiple peers is only included once in the results.
     results: HashMap<NodeId, Enr>,
+    /// The resulting ad nodes are returned to the app layer when the query has reached
+    /// a Finished, TimedOut or Dry state.
     callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
+    /// A start time is used to montior time out of the query.
     start: Instant,
+    /// A query is marked as dry being true if no peers are found in the topic's kbuckets
+    /// that aren't already queried peers.
     dry: bool,
 }
 
+/// ActiveTopicQueries marks the progress of active topic queries/lookups.
 pub struct ActiveTopicQueries {
+    /// Each topic lookup initiates an ActiveTopicQuery process.
     queries: HashMap<TopicHash, ActiveTopicQuery>,
+    /// The time out for any topic lookup.
     time_out: Duration,
+    /// The number of ads an ActiveTopicQuery sets out to find.
     num_results: usize,
 }
 
@@ -408,7 +458,13 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
-        let ads = match Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3) {
+        let ads = match Ads::new(
+            Duration::from_secs(60 * 15),
+            MAX_ADS_TOPIC,
+            MAX_ADS,
+            MAX_ADS_SUBNET,
+            MAX_ADS_SUBNET_TOPIC,
+        ) {
             Ok(ads) => ads,
             Err(e) => {
                 return Err(Error::new(ErrorKind::InvalidInput, e));
@@ -421,6 +477,8 @@ impl Service {
             }
         };
 
+        // A key is generated for en-/decrypting tickets that are issued upon receiving a topic
+        // regsitration attempt.
         let ticket_key: [u8; 16] = rand::random();
         match local_enr
             .write()
@@ -742,7 +800,16 @@ impl Service {
                 Some(Ok((active_topic, active_ticket))) = self.tickets.next() => {
                     let enr = self.local_enr.read().clone();
                     // When the ticket time expires a new regtopic request is automatically sent
-                    // to the ticket issuer.
+                    // to the ticket issuer and the registration state for the given topic is
+                    // updated.
+                    if let Some(reg_attempts) = self.topics.get_mut(&active_topic.topic()) {
+                        for kbucket_reg_attempts in reg_attempts.values_mut() {
+                            let reg_state = kbucket_reg_attempts.remove(active_topic.node_id());
+                            if reg_state.is_some() {
+                                break;
+                            }
+                        }
+                    }
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
                 }
                 Some(Ok((topic, mut ticket_pool))) = self.ticket_pools.next() => {
@@ -779,6 +846,7 @@ impl Service {
         }
     }
 
+    /// Internal function that starts a topic registration.
     fn send_register_topics(&mut self, topic_hash: TopicHash) {
         trace!("Sending REGTOPICS");
         if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
@@ -834,7 +902,7 @@ impl Service {
         }
     }
 
-    /// Internal function that starts a query.
+    /// Internal function that starts a topic lookup.
     fn send_topic_queries(
         &mut self,
         topic_hash: TopicHash,
@@ -1224,7 +1292,7 @@ impl Service {
                     "TOPICQUERY",
                 );
                 trace!("Sending ADNODES response");
-                self.send_topic_query_nodes_response(node_address, id, topic);
+                self.send_topic_query_adnodes_response(node_address, id, topic);
             }
         }
     }
@@ -1420,10 +1488,7 @@ impl Service {
                     if let RequestBody::TopicQuery { topic } = active_request.request_body {
                         self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
 
-                        let response_state = self
-                            .topic_query_responses
-                            .entry(node_id)
-                            .or_insert(TopicQueryResponseState::Start);
+                        let response_state = self.topic_query_responses.entry(node_id).or_default();
 
                         match response_state {
                             TopicQueryResponseState::Start => {
@@ -1505,10 +1570,7 @@ impl Service {
                             });
                             *query.queried_peers.entry(node_id).or_default() = true;
                         }
-                        let response_state = self
-                            .topic_query_responses
-                            .entry(node_id)
-                            .or_insert(TopicQueryResponseState::Start);
+                        let response_state = self.topic_query_responses.entry(node_id).or_default();
 
                         match response_state {
                             TopicQueryResponseState::Start => {
@@ -1887,9 +1949,9 @@ impl Service {
             .send(HandlerIn::Response(node_address, Box::new(response)));
     }
 
-    /// Answer to a topic query containing the nodes currently advertised for the
+    /// Response to a topic query containing the nodes currently advertised for the
     /// requested topic if any.
-    fn send_topic_query_nodes_response(
+    fn send_topic_query_adnodes_response(
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
@@ -1912,6 +1974,9 @@ impl Service {
         );
     }
 
+    /// Finds a list of ENRs in the local routing table's kbucktets at the distance ±1 that
+    /// the topic hash would be placed in, to send in a NODES response to a TOPICQUERY or
+    /// REGTOPIC request.
     fn send_find_topic_nodes_response(
         &mut self,
         topic: TopicHash,
@@ -1960,8 +2025,8 @@ impl Service {
         );
     }
 
-    /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
-    /// into multiple responses to ensure the response stays below the maximum packet size.
+    /// Finds a list of ENRs in the local routing table at the given distances, to send in a
+    /// NODES response to a FINDNODE request.
     fn send_find_nodes_response(
         &mut self,
         node_address: NodeAddress,
@@ -2010,6 +2075,8 @@ impl Service {
         );
     }
 
+    /// Sends a NODES response, given a list of ENRs. This function splits the nodes up
+    /// into multiple responses to ensure the response stays below the maximum packet size.
     fn send_nodes_response(
         &self,
         nodes_to_send: Vec<Enr>,
@@ -2192,7 +2259,7 @@ impl Service {
         }
     }
 
-    /// Processes discovered peers from a query.
+    /// Processes discovered peers from a query or a TOPICQUERY or REGTOPIC request.
     fn discovered(
         &mut self,
         source: &NodeId,
@@ -2332,7 +2399,7 @@ impl Service {
 
     /// Update the connection status of a node in the routing table.
     /// This tracks whether or not we should be pinging peers. Disconnected peers are removed from
-    /// the queue and newly added peers to the routing table are added to the queue.
+    /// the queue and newly added peers to the routing table (or topics kbucktes) are added to the queue.
     fn connection_updated(
         &mut self,
         node_id: NodeId,
@@ -2648,8 +2715,9 @@ impl Service {
         .await
     }
 
-    /// A future that maintains the topic kbuckets and inserts nodes when required. This returns the
-    /// `Discv5Event::NodeInsertedTopics` variants.
+    /// A future that maintains the topic kbuckets and inserts nodes when required. This optionally
+    /// returns the `Discv5Event::NodeInsertedTopics` variant if a new node has been inserted into
+    /// the routing table.
     async fn bucket_maintenance_poll_topics(
         kbuckets: impl Iterator<Item = (&TopicHash, &mut KBucketsTable<NodeId, Enr>)>,
     ) -> Option<Discv5Event> {

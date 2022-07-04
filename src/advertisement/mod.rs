@@ -125,6 +125,7 @@ impl Ads {
         self.ads.get(&topic).into_iter().flatten()
     }
 
+    /// Ticket wait time enforces diversity among adveritsed nodes.
     pub fn ticket_wait_time(
         &mut self,
         topic: TopicHash,

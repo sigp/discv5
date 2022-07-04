@@ -202,16 +202,37 @@ impl RequestCall {
     }
 }
 
+/// TOPICQUERY requests receive 2 types of responses ADNODES and NODES, in an
+/// order which cannot be guranteed. If a peer sends the wrong combination of
+/// responses the peer is blacklisted.
+#[derive(Default)]
 pub enum TopicQueryResponseState {
+    /// The Start state is intermediary upon receving the first response to the
+    /// TOPICQUERY request, either a NODES or ADNODES response.
+    #[default]
     Start,
+    /// A NODES response has been completely received.
     Nodes,
+    /// An ADNODES response has been completely received.
     AdNodes,
 }
 
+/// REGTOPIC requests receive 3 types of responses TICKET, NODES and possibly
+/// a REGCONFIRMATION. The order of the ticket and nodes is non-determinsitic
+/// but the regconf, if it comes, always comes at least 10 seconds (duration
+/// of the registration window) + latency later. If a peer sends the wrong
+/// permutation of responses the peer is blacklisted.
+#[derive(Default)]
 pub enum RegTopicResponseState {
+    /// The Start state is intermediary upon receving the first response to the
+    /// REGTOPIC request, either a NODES or TICKET response.
+    #[default]
     Start,
+    /// A NODES response has been completely received.
     Nodes,
+    /// A TICKET response has been received.
     Ticket,
+    /// A REGISTERCONFIRMATION response has been received.
     RegisterConfirmation,
 }
 
@@ -478,6 +499,8 @@ impl Handler {
             if let Entry::Occupied(entry) = self.reg_topic_responses.entry(node_address.clone()) {
                 let response_state = entry.get();
                 if let RegTopicResponseState::RegisterConfirmation = response_state {
+                    // There is no guarantee that a REGCONFIRMATION responses should come to a REGTOPIC
+                    // request. A timeout while awaiting a REGCONFIRMATION is not a failure.
                     self.reg_topic_responses.remove(&node_address);
                     self.remove_expected_response(node_address.socket_addr);
                     self.send_next_request(node_address).await;
@@ -1155,7 +1178,7 @@ impl Handler {
                         let response_state = self
                             .reg_topic_responses
                             .entry(node_address.clone())
-                            .or_insert(RegTopicResponseState::Start);
+                            .or_default();
 
                         match response_state {
                             RegTopicResponseState::Start => {
@@ -1215,7 +1238,7 @@ impl Handler {
                         let response_state = self
                             .topic_query_responses
                             .entry(node_address.clone())
-                            .or_insert(TopicQueryResponseState::Start);
+                            .or_default();
 
                         match response_state {
                             TopicQueryResponseState::Start => {
@@ -1297,7 +1320,7 @@ impl Handler {
                 let response_state = self
                     .topic_query_responses
                     .entry(node_address.clone())
-                    .or_insert(TopicQueryResponseState::Start);
+                    .or_default();
 
                 match response_state {
                     TopicQueryResponseState::Start => {
@@ -1342,7 +1365,7 @@ impl Handler {
                 let response_state = self
                     .reg_topic_responses
                     .entry(node_address.clone())
-                    .or_insert(RegTopicResponseState::Start);
+                    .or_default();
 
                 match response_state {
                     RegTopicResponseState::Start => {
