@@ -28,19 +28,6 @@ impl ActiveRequests {
             .insert(nonce, node_address);
     }
 
-    pub(crate) fn insert_at(
-        &mut self,
-        node_address: NodeAddress,
-        request_call: RequestCall,
-        timeout: Duration,
-    ) {
-        let nonce = *request_call.packet.message_nonce();
-        self.active_requests_mapping
-            .insert_at(node_address.clone(), request_call, timeout);
-        self.active_requests_nonce_mapping
-            .insert(nonce, node_address);
-    }
-
     pub(crate) fn get(&self, node_address: &NodeAddress) -> Option<&RequestCall> {
         self.active_requests_mapping.get(node_address)
     }

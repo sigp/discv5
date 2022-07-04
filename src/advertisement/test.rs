@@ -22,7 +22,7 @@ async fn insert_same_node() {
 
     // Since 2 seconds haven't passed
     assert_eq!(
-        ads.insert(enr.clone(), topic).map_err(|e| e),
+        ads.insert(enr.clone(), topic),
         Err("Node already advertising this topic")
     );
 
@@ -53,7 +53,7 @@ async fn insert_ad_and_get_nodes() {
 
     // The ad hasn't expired and duplicates are not allowed
     assert_eq!(
-        ads.insert(enr.clone(), topic).map_err(|e| e),
+        ads.insert(enr.clone(), topic),
         Err("Node already advertising this topic")
     );
 

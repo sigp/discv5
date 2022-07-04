@@ -235,7 +235,7 @@ pub struct Handler {
     /// Pending raw requests.
     active_requests: ActiveRequests,
     /// Pending raw REGTOPIC requests awaiting a REGCONFIRMATION response that may come.
-    requests_awaiting_regconf: ActiveRequests,
+    active_requests_regconf: ActiveRequests,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Keeps track of the 2 expected responses, NODES and ADNODES that should be received from a
@@ -329,7 +329,7 @@ impl Handler {
                     enr,
                     key,
                     active_requests: ActiveRequests::new(config.request_timeout),
-                    requests_awaiting_regconf: ActiveRequests::new(
+                    active_requests_regconf: ActiveRequests::new(
                         TIMEOUT_REGCONFIRMATION + config.request_timeout,
                     ),
                     pending_requests: HashMap::new(),
@@ -1089,7 +1089,14 @@ impl Handler {
     async fn handle_response(&mut self, node_address: NodeAddress, response: Response) {
         // Find a matching request, if any
         trace!("Received {} response", response.body);
-        if let Some(mut request_call) = self.active_requests.remove(&node_address) {
+
+        let request_call = if let Some(request_call) = self.active_requests.remove(&node_address) {
+            Some(request_call)
+        } else {
+            self.active_requests_regconf.remove(&node_address)
+        };
+
+        if let Some(mut request_call) = request_call {
             if request_call.id() != &response.id {
                 trace!(
                     "Received an RPC Response to an unknown request. Likely late response. {}",
@@ -1170,13 +1177,9 @@ impl Handler {
                             RegTopicResponseState::Ticket => {
                                 *response_state = RegTopicResponseState::RegisterConfirmation;
                                 // Still a REGCONFIRMATION may come hence request call is reinserted, in a separate
-                                // struct to avoid blocking further requests to the node address during
-                                // TIMEOUT_REGCONFIRMATION time.
-                                self.requests_awaiting_regconf.insert_at(
-                                    node_address.clone(),
-                                    request_call,
-                                    TIMEOUT_REGCONFIRMATION,
-                                );
+                                // struct to avoid blocking further requests to the node address during the request timeout.
+                                self.active_requests_regconf
+                                    .insert(node_address.clone(), request_call);
                                 if let Err(e) = self
                                     .service_send
                                     .send(HandlerOut::Response(
@@ -1361,13 +1364,9 @@ impl Handler {
                     RegTopicResponseState::Nodes => {
                         *response_state = RegTopicResponseState::RegisterConfirmation;
                         // Still a REGCONFIRMATION may come hence request call is reinserted, in a separate
-                        // struct to avoid blocking further requests to the node address during
-                        // TIMEOUT_REGCONFIRMATION time.
-                        self.requests_awaiting_regconf.insert_at(
-                            node_address.clone(),
-                            request_call.clone(),
-                            TIMEOUT_REGCONFIRMATION,
-                        );
+                        // struct to avoid blocking further requests to the node address during the request timeout.
+                        self.active_requests_regconf
+                            .insert(node_address.clone(), request_call.clone());
                         if let Err(e) = self
                             .service_send
                             .send(HandlerOut::Response(
