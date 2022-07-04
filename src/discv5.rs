@@ -58,11 +58,7 @@ pub enum Discv5Event {
     /// This happen spontaneously through queries as nodes return ENR's. These ENR's are not
     /// guaranteed to be live or contactable.
     Discovered(Enr),
-    /// A node has been discovered from either a REGTOPIC or a TOPICQUERY request.
-    ///
-    /// The ENR of the node is returned. Various properties can be derived from the ENR.
-    /// This happen spontaneously through requests as nodes return ENR's. These ENR's are not
-    /// guaranteed to be live or contactable.
+    /// A node has been discovered from either a REGTOPIC or a TOPICQUERY request. See [`Discv5Event::Discovered`].
     DiscoveredTopic(Enr, TopicHash),
     /// A new ENR was added to the routing table.
     EnrAdded { enr: Enr, replaced: Option<Enr> },
@@ -555,15 +551,14 @@ impl Discv5 {
     /// from the next interval on.
     pub fn remove_topic(
         &self,
-        topic: String,
+        topic_hash: TopicHash,
     ) -> impl Future<Output = Result<String, RequestError>> + 'static {
-        let topic = Topic::new(topic);
         let channel = self.clone_channel();
 
         async move {
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
             let (callback_send, callback_recv) = oneshot::channel();
-            let event = ServiceRequest::RemoveTopic(topic.hash(), callback_send);
+            let event = ServiceRequest::RemoveTopic(topic_hash, callback_send);
             channel
                 .send(event)
                 .await
