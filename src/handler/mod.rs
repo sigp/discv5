@@ -219,9 +219,9 @@ pub enum TopicQueryResponseState {
 
 /// REGTOPIC requests receive 3 types of responses TICKET, NODES and possibly
 /// a REGCONFIRMATION. The order of the ticket and nodes is non-determinsitic
-/// but the regconf, if it comes, always comes at least 10 seconds (duration
-/// of the registration window) + latency later. If a peer sends the wrong
-/// permutation of responses the peer is blacklisted.
+/// but the regconf, if it comes, always come up to 10 seconds (depending on
+/// when in the registration window the request comes) + latency later. If a
+/// peer sends the wrong permutation of responses the peer is blacklisted.
 #[derive(Default)]
 pub enum RegTopicResponseState {
     /// The Start state is intermediary upon receving the first response to the
