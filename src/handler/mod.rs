@@ -1130,6 +1130,15 @@ impl Handler {
                 return;
             }
 
+            let blacklist_peer = |handler: &mut Handler| {
+                // Remove the expected response
+                handler.remove_expected_response(node_address.socket_addr);
+                let ban_timeout = handler.ban_duration.map(|v| Instant::now() + v);
+                PERMIT_BAN_LIST
+                    .write()
+                    .ban(node_address.clone(), ban_timeout);
+            };
+
             // The response matches a request
 
             // Check to see if this is a Nodes response, in which case we may require to wait for
@@ -1217,18 +1226,13 @@ impl Handler {
                             }
                             RegTopicResponseState::Nodes
                             | RegTopicResponseState::RegisterConfirmation => {
-                                warn!("No more NODES responses should be received if REGTOPIC response is in Nodes or RegisterConfirmation state.");
-                                self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a REGTOPIC request".into()), true).await;
-                                // Remove the expected response
-                                self.remove_expected_response(node_address.socket_addr);
+                                debug!("No more NODES responses should be received if REGTOPIC response is in Nodes or RegisterConfirmation state.");
                                 warn!(
                                     "Peer returned more than one set of NODES responses for REGTOPIC request. Blacklisting {}",
                                     node_address
                                 );
-                                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
-                                PERMIT_BAN_LIST
-                                    .write()
-                                    .ban(node_address.clone(), ban_timeout);
+                                self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a REGTOPIC request".into()), true).await;
+                                blacklist_peer(self);
                                 return;
                             }
                         }
@@ -1261,18 +1265,13 @@ impl Handler {
                                 self.topic_query_responses.remove(&node_address);
                             }
                             TopicQueryResponseState::Nodes => {
-                                warn!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.");
-                                self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
-                                // Remove the expected response
-                                self.remove_expected_response(node_address.socket_addr);
+                                debug!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.");
                                 warn!(
                                     "Peer returned more than one set of NODES responses for TOPICQUERY request. Blacklisting {}",
                                     node_address
                                 );
-                                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
-                                PERMIT_BAN_LIST
-                                    .write()
-                                    .ban(node_address.clone(), ban_timeout);
+                                self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
+                                blacklist_peer(self);
                                 return;
                             }
                         }
@@ -1343,19 +1342,13 @@ impl Handler {
                         self.topic_query_responses.remove(&node_address);
                     }
                     TopicQueryResponseState::AdNodes => {
-                        warn!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.");
-                        self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
-                        // Remove the expected response
-                        self.remove_expected_response(node_address.socket_addr);
+                        debug!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.");
                         warn!(
                             "Peer returned more than one set of ADNODES responses for TOPICQUERY request. Blacklisting {}",
                             node_address
                         );
-                        let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST
-                            .write()
-                            .ban(node_address.clone(), ban_timeout);
-                        self.send_next_request(node_address).await;
+                        self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of ADNODES responses for a TOPICQUERY request".into()), true).await;
+                        blacklist_peer(self);
                         return;
                     }
                 }
@@ -1403,7 +1396,11 @@ impl Handler {
                         return;
                     }
                     RegTopicResponseState::Ticket | RegTopicResponseState::RegisterConfirmation => {
-                        warn!("No more TICKET responses should be received if REGTOPIC response is in Ticket or RegisterConfirmation state.");
+                        debug!("No more TICKET responses should be received if REGTOPIC response is in Ticket or RegisterConfirmation state.");
+                        warn!(
+                            "Peer returned more than one TICKET responses for REGTOPIC request. Blacklisting {}",
+                            node_address
+                        );
                         self.fail_request(
                             request_call,
                             RequestError::InvalidResponseCombo(
@@ -1413,16 +1410,7 @@ impl Handler {
                             true,
                         )
                         .await;
-                        // Remove the expected response
-                        self.remove_expected_response(node_address.socket_addr);
-                        warn!(
-                            "Peer returned more than one TICKET responses for REGTOPIC request. Blacklisting {}",
-                            node_address
-                        );
-                        let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST
-                            .write()
-                            .ban(node_address.clone(), ban_timeout);
+                        blacklist_peer(self);
                         return;
                     }
                 }
