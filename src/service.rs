@@ -155,6 +155,12 @@ const MAX_ADS_SUBNET_TOPIC: usize = 5;
 /// The max ads per subnet.
 const MAX_ADS_SUBNET: usize = 50;
 
+/// The time window within in which the number of new tickets from a peer for a topic will be limitied.
+const TICKET_LIMITER: Duration = Duration::from_secs(60 * 15);
+
+/// The time after a REGCONFIRMATION is sent that an ad is placed.
+const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
+
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
     /// A request to start a query. There are two types of queries:
@@ -251,10 +257,15 @@ pub struct Service {
 
     /// Topics tracks registration attempts of the topic hashes to advertise on
     /// other nodes.
-    topics: HashMap<TopicHash, HashMap<u64, HashMap<NodeId, RegistrationState>>>,
+    registration_attempts: HashMap<TopicHash, HashMap<u64, HashMap<NodeId, RegistrationState>>>,
 
     /// KBuckets per topic hash.
     topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
+
+    /// The peers returned in a NODES response to a TOPICQUERY or REGTOPIC request are inserted in
+    /// this intermediary stroage to check their connectivity before inserting them in the topic's
+    /// kbuckets.
+    discovered_peers_topic: HashMap<TopicHash, Vec<Enr>>,
 
     /// Ads currently advertised on other nodes.
     active_topics: Ads,
@@ -459,7 +470,7 @@ impl Service {
         let (exit_send, exit) = oneshot::channel();
 
         let ads = match Ads::new(
-            Duration::from_secs(60 * 15),
+            AD_LIFETIME,
             MAX_ADS_TOPIC,
             MAX_ADS,
             MAX_ADS_SUBNET,
@@ -470,7 +481,13 @@ impl Service {
                 return Err(Error::new(ErrorKind::InvalidInput, e));
             }
         };
-        let active_topics = match Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3) {
+        let active_topics = match Ads::new(
+            AD_LIFETIME,
+            MAX_ADS_TOPIC,
+            MAX_ADS,
+            MAX_ADS_SUBNET,
+            MAX_ADS_SUBNET_TOPIC,
+        ) {
             Ok(ads) => ads,
             Err(e) => {
                 return Err(Error::new(ErrorKind::InvalidInput, e));
@@ -513,10 +530,11 @@ impl Service {
                     discv5_recv,
                     event_stream: None,
                     ads,
-                    topics: HashMap::new(),
+                    registration_attempts: HashMap::new(),
                     topics_kbuckets: HashMap::new(),
+                    discovered_peers_topic: HashMap::new(),
                     active_topics,
-                    tickets: Tickets::new(Duration::from_secs(60 * 15)),
+                    tickets: Tickets::new(TICKET_LIMITER),
                     ticket_pools: TicketPools::default(),
                     active_topic_queries: ActiveTopicQueries::new(
                         config.topic_query_timeout,
@@ -610,19 +628,7 @@ impl Service {
                                             entry.node.value.node_id(),
                                             topic_hash
                                         ),
-                                        InsertResult::Failed(FailureReason::BucketFull) => {
-                                            error!("Table full for topic hash {}", topic_hash)
-                                        }
-                                        InsertResult::Failed(FailureReason::BucketFilter) => {
-                                            error!("Failed bucket filter for topic hash {}", topic_hash)
-                                        }
-                                        InsertResult::Failed(FailureReason::TableFilter) => {
-                                            error!("Failed table filter for topic hash {}", topic_hash)
-                                        }
-                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
-                                            error!("Invalid self update for topic hash {}", topic_hash)
-                                        }
-                                        InsertResult::Failed(_) => error!("Failed to insert ENR for topic hash {}", topic_hash),
+                                        InsertResult::Failed(f) => error!("Failed to insert ENR for topic hash {}. Failure reason: {:?}", topic_hash, f),
                                     }
                                 }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
@@ -630,7 +636,7 @@ impl Service {
                             self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic_hash) => {
-                            if self.topics.insert(topic_hash, HashMap::new()).is_some() {
+                            if self.registration_attempts.insert(topic_hash, HashMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
                             } else {
                                 // NOTE: Currently we don't expose custom filter support in the configuration. Users can
@@ -668,23 +674,11 @@ impl Service {
                                             entry.node.value.node_id(),
                                             topic_hash
                                         ),
-                                        InsertResult::Failed(FailureReason::BucketFull) => {
-                                            error!("Table full for topic hash {}", topic_hash)
-                                        }
-                                        InsertResult::Failed(FailureReason::BucketFilter) => {
-                                            error!("Failed bucket filter for topic hash {}", topic_hash)
-                                        }
-                                        InsertResult::Failed(FailureReason::TableFilter) => {
-                                            error!("Failed table filter for topic hash {}", topic_hash)
-                                        }
-                                        InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
-                                            error!("Invalid self update for topic hash {}", topic_hash)
-                                        }
-                                        InsertResult::Failed(_) => error!("Failed to insert ENR for topic hash {}", topic_hash),
+                                        InsertResult::Failed(f) => error!("Failed to insert ENR for topic hash {}. Failure reason: {:?}", topic_hash, f),
                                     }
                                 }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
-                                METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
+                                METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
 
                                 self.send_register_topics(topic_hash);
                             }
@@ -695,8 +689,8 @@ impl Service {
                             }
                         }
                         ServiceRequest::RemoveTopic(topic_hash, callback) => {
-                            if self.topics.remove(&topic_hash).is_some() {
-                                METRICS.topics_to_publish.store(self.topics.len(), Ordering::Relaxed);
+                            if self.registration_attempts.remove(&topic_hash).is_some() {
+                                METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
                                 if callback.send(Ok(base64::encode(topic_hash.as_bytes()))).is_err() {
                                     error!("Failed to return the removed topic");
                                 }
@@ -802,7 +796,7 @@ impl Service {
                     // When the ticket time expires a new regtopic request is automatically sent
                     // to the ticket issuer and the registration state for the given topic is
                     // updated.
-                    if let Some(reg_attempts) = self.topics.get_mut(&active_topic.topic()) {
+                    if let Some(reg_attempts) = self.registration_attempts.get_mut(&active_topic.topic()) {
                         for kbucket_reg_attempts in reg_attempts.values_mut() {
                             let reg_state = kbucket_reg_attempts.remove(active_topic.node_id());
                             if reg_state.is_some() {
@@ -855,34 +849,62 @@ impl Service {
                 kbuckets.get_mut().iter().count(),
                 topic_hash
             );
-            let reg_attempts = self.topics.entry(topic_hash).or_default();
+            let reg_attempts = self.registration_attempts.entry(topic_hash).or_default();
             // Remove expired ads
             let mut new_reg_peers = Vec::new();
-            // WARNING! This currently only works as long as buckets range is one bit
+
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
                 // Remove expired registrations
                 if let Entry::Occupied(ref mut entry) = reg_attempts.entry(index as u64) {
                     let registrations = entry.get_mut();
                     registrations.retain(|_, reg_attempt| {
                         if let RegistrationState::Confirmed(insert_time) = reg_attempt {
-                            insert_time.elapsed() >= Duration::from_secs(15 * 60)
+                            insert_time.elapsed() < AD_LIFETIME
                         } else {
-                            false
+                            true
                         }
                     });
                 }
                 let registrations = reg_attempts.entry(index as u64).or_default();
-                // The count of active registration attempts after expired adds have been removed
+                let max_reg_attempts_bucket = self.config.max_nodes_response;
+                let mut new_peers = Vec::new();
+
+                // Attempt initating a connection to newly discovred peers if any.
+                if let Some(peers) = self.discovered_peers_topic.get_mut(&topic_hash) {
+                    peers.retain(|peer| {
+                        if new_peers.len() + registrations.len() >= max_reg_attempts_bucket {
+                            true
+                        } else if let Entry::Vacant(_) = registrations.entry(peer.node_id()) {
+                            debug!("Found new registration peer in discovered peers for topic {}. Peer: {:?}", topic_hash, peer.node_id());
+                            new_peers.push(peer.clone());
+                            false
+                        } else {
+                            debug_unreachable!(
+                                "Newly discovered peer {} shouldn't be stored in registration attempts",
+                                peer.node_id()
+                            );
+                            true
+                        }
+                    });
+                    new_reg_peers.append(&mut new_peers);
+                }
+
+                // The count of active registration attempts for a distance after expired ads have been
+                // removed is less than the max number of registration attempts that should be active
+                // per bucket and is not equal to the total number of peers available in that bucket.
                 if registrations.len() < self.config.max_nodes_response
                     && registrations.len() != bucket.num_entries()
                 {
-                    let mut new_peers = Vec::new();
                     for peer in bucket.iter() {
                         if new_peers.len() + registrations.len() >= self.config.max_nodes_response {
                             break;
                         }
                         if let Entry::Vacant(_) = registrations.entry(*peer.key.preimage()) {
-                            debug!("Found new reg peer. Peer: {:?}", peer.key.preimage());
+                            debug!(
+                                "Found new registration peer in kbuckets of topic {}. Peer: {:?}",
+                                topic_hash,
+                                peer.key.preimage()
+                            );
                             new_peers.push(peer.value.clone())
                         }
                     }
@@ -894,6 +916,7 @@ impl Service {
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
                     .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
                 {
+                    // Registration attempts are acknowledged upon receiving a TICKET or REGCONFIRMATION response.
                     self.reg_topic_request(node_contact, topic_hash, local_enr.clone(), None);
                 }
             }
@@ -1732,7 +1755,8 @@ impl Service {
                         let peer_key: kbucket::Key<NodeId> = node_id.into();
                         let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
                         if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                            let registration_attempts = self.topics.entry(topic).or_default();
+                            let registration_attempts =
+                                self.registration_attempts.entry(topic).or_default();
                             registration_attempts
                                 .entry(distance)
                                 .or_default()
@@ -1748,7 +1772,8 @@ impl Service {
                         let peer_key: kbucket::Key<NodeId> = node_id.into();
                         let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
                         if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                            let registration_attempts = self.topics.entry(topic).or_default();
+                            let registration_attempts =
+                                self.registration_attempts.entry(topic).or_default();
                             registration_attempts
                                 .entry(distance)
                                 .or_default()
@@ -2320,37 +2345,11 @@ impl Service {
                         kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
                         kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
                         kbucket::Entry::Absent(_) => {
-                            match kbuckets_topic.insert_or_update(
-                                &key,
-                                enr.clone(),
-                                NodeStatus {
-                                    state: ConnectionState::Disconnected,
-                                    direction: ConnectionDirection::Incoming,
-                                },
-                            ) {
-                                InsertResult::Inserted
-                                | InsertResult::Pending { .. }
-                                | InsertResult::StatusUpdated { .. }
-                                | InsertResult::ValueUpdated
-                                | InsertResult::Updated { .. }
-                                | InsertResult::UpdatedPending => trace!(
-                                    "Added node id {} to kbucket of topic hash {:?}",
-                                    enr.node_id(),
-                                    topic_hash
-                                ),
-                                InsertResult::Failed(FailureReason::BucketFull) => {
-                                    error!("Table full")
-                                }
-                                InsertResult::Failed(FailureReason::BucketFilter) => {
-                                    error!("Failed bucket filter")
-                                }
-                                InsertResult::Failed(FailureReason::TableFilter) => {
-                                    error!("Failed table filter")
-                                }
-                                InsertResult::Failed(FailureReason::InvalidSelfUpdate) => {
-                                    error!("Invalid self update")
-                                }
-                                InsertResult::Failed(_) => error!("Failed to insert ENR"),
+                            if let Some(topic_hash) = topic_hash {
+                                self.discovered_peers_topic
+                                    .entry(topic_hash)
+                                    .or_default()
+                                    .push(enr.clone());
                             }
                             false
                         }
