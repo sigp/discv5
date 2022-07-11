@@ -143,6 +143,9 @@ impl TalkRequest {
 /// The max wait time accpeted for tickets.
 const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
 
+/// The time window within in which the number of new tickets from a peer for a topic will be limitied.
+const TICKET_LIMITER: Duration = Duration::from_secs(60 * 15);
+
 /// The max nodes to adveritse for a topic.
 const MAX_ADS_TOPIC: usize = 100;
 
@@ -155,11 +158,11 @@ const MAX_ADS_SUBNET_TOPIC: usize = 5;
 /// The max ads per subnet.
 const MAX_ADS_SUBNET: usize = 50;
 
-/// The time window within in which the number of new tickets from a peer for a topic will be limitied.
-const TICKET_LIMITER: Duration = Duration::from_secs(60 * 15);
-
 /// The time after a REGCONFIRMATION is sent that an ad is placed.
 const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
+
+/// The max number of uncontacted peers to store before the kbuckets per topic.
+const MAX_UNCONTACTED_PEERS_TOPIC: usize = 1000;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
@@ -265,7 +268,7 @@ pub struct Service {
     /// The peers returned in a NODES response to a TOPICQUERY or REGTOPIC request are inserted in
     /// this intermediary stroage to check their connectivity before inserting them in the topic's
     /// kbuckets.
-    discovered_peers_topic: HashMap<TopicHash, Vec<Enr>>,
+    discovered_peers_topic: HashMap<TopicHash, HashMap<NodeId, Enr>>,
 
     /// Ads currently advertised on other nodes.
     active_topics: Ads,
@@ -869,19 +872,19 @@ impl Service {
                 let max_reg_attempts_bucket = self.config.max_nodes_response;
                 let mut new_peers = Vec::new();
 
-                // Attempt initating a connection to newly discovred peers if any.
+                // Attempt sending a request to uncontacted peers if any.
                 if let Some(peers) = self.discovered_peers_topic.get_mut(&topic_hash) {
-                    peers.retain(|peer| {
+                    peers.retain(|node_id, enr    | {
                         if new_peers.len() + registrations.len() >= max_reg_attempts_bucket {
                             true
-                        } else if let Entry::Vacant(_) = registrations.entry(peer.node_id()) {
-                            debug!("Found new registration peer in discovered peers for topic {}. Peer: {:?}", topic_hash, peer.node_id());
-                            new_peers.push(peer.clone());
+                        } else if let Entry::Vacant(_) = registrations.entry(*node_id) {
+                            debug!("Found new registration peer in discovered peers for topic {}. Peer: {:?}", topic_hash, node_id);
+                            new_peers.push(enr.clone());
                             false
                         } else {
                             debug_unreachable!(
                                 "Newly discovered peer {} shouldn't be stored in registration attempts",
-                                peer.node_id()
+                                node_id
                             );
                             true
                         }
@@ -2346,10 +2349,13 @@ impl Service {
                         kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
                         kbucket::Entry::Absent(_) => {
                             if let Some(topic_hash) = topic_hash {
-                                self.discovered_peers_topic
-                                    .entry(topic_hash)
-                                    .or_default()
-                                    .push(enr.clone());
+                                let discovered_peers =
+                                    self.discovered_peers_topic.entry(topic_hash).or_default();
+                                // If the intermediary storage before the topic's kbucktes is at bounds, discard the
+                                // uncontacted peers.
+                                if discovered_peers.len() < MAX_UNCONTACTED_PEERS_TOPIC {
+                                    discovered_peers.insert(enr.node_id(), enr.clone());
+                                };
                             }
                             false
                         }
