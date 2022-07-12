@@ -40,7 +40,7 @@ impl ActiveRequests {
             Some(node_address) => match self.active_requests_mapping.remove(&node_address) {
                 Some(request_call) => Some((node_address, request_call)),
                 None => {
-                    debug_unreachable!("Panic on debug, a matching request call doesn't exist");
+                    debug_unreachable!("A matching request call doesn't exist");
                     error!("A matching request call doesn't exist");
                     None
                 }
@@ -59,9 +59,7 @@ impl ActiveRequests {
                 {
                     Some(_) => Some(request_call),
                     None => {
-                        debug_unreachable!(
-                            "Panic on debug, a matching nonce mapping doesn't exist"
-                        );
+                        debug_unreachable!("A matching nonce mapping doesn't exist");
                         error!("A matching nonce mapping doesn't exist");
                         None
                     }
