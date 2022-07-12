@@ -97,7 +97,7 @@ pub enum HandlerIn {
 
     /// A Random packet has been received and we have requested the application layer to inform
     /// us what the highest known ENR is for this node.
-    /// The `WhoAreYouRef` is sent out in the `HandlerResponse::WhoAreYou` event and should
+    /// The `WhoAreYouRef` is sent out in the `HandlerOut::WhoAreYou` event and should
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 }
@@ -119,7 +119,7 @@ pub enum HandlerOut {
     Response(NodeAddress, Box<Response>),
 
     /// An unknown source has requested information from us. Return the reference with the known
-    /// ENR of this node (if known). See the `HandlerRequest::WhoAreYou` variant.
+    /// ENR of this node (if known). See the `HandlerIn::WhoAreYou` variant.
     WhoAreYou(WhoAreYouRef),
 
     /// An RPC request failed.
@@ -530,7 +530,7 @@ impl Handler {
         }
     }
 
-    /// This is called in response to a `HandlerResponse::WhoAreYou` event. The applications finds the
+    /// This is called in response to a `HandlerOut::WhoAreYou` event. The applications finds the
     /// highest known ENR for a node then we respond to the node with a WHOAREYOU packet.
     async fn send_challenge(&mut self, wru_ref: WhoAreYouRef, remote_enr: Option<Enr>) {
         let node_address = wru_ref.0;
