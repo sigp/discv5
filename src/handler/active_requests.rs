@@ -1,5 +1,6 @@
 use super::*;
 use delay_map::HashMapDelay;
+use more_asserts::debug_unreachable;
 
 pub(crate) struct ActiveRequests {
     /// A list of raw messages we are awaiting a response from the remote.
@@ -39,13 +40,9 @@ impl ActiveRequests {
             Some(node_address) => match self.active_requests_mapping.remove(&node_address) {
                 Some(request_call) => Some((node_address, request_call)),
                 None => {
-                    #[cfg(debug_assertions)]
-                    panic!("Panic on debug, a matching request call doesn't exist");
-                    #[cfg(not(debug_assertions))]
-                    {
-                        error!("A matching request call doesn't exist");
-                        return None;
-                    }
+                    debug_unreachable!("A matching request call doesn't exist");
+                    error!("A matching request call doesn't exist");
+                    None
                 }
             },
             None => None,
@@ -62,13 +59,9 @@ impl ActiveRequests {
                 {
                     Some(_) => Some(request_call),
                     None => {
-                        #[cfg(debug_assertions)]
-                        panic!("Panic on debug, a matching nonce mapping doesn't exist");
-                        #[cfg(not(debug_assertions))]
-                        {
-                            error!("A matching nonce mapping doesn't exist");
-                            return None;
-                        }
+                        debug_unreachable!("A matching nonce mapping doesn't exist");
+                        error!("A matching nonce mapping doesn't exist");
+                        None
                     }
                 }
             }
