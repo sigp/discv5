@@ -957,7 +957,7 @@ impl Service {
                 peers.iter().count(),
                 topic_hash
             );
-            // Prefer querying nodes further away, starting at distance 256 by to avoid hotspots
+            // Prefer querying nodes further away, starting at distance 256 by to avoid hotspots.
             let new_query_peers_iter = peers.iter().rev().filter_map(|entry| {
                 (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
                     query
@@ -974,7 +974,7 @@ impl Service {
                     break;
                 }
             }
-            // If no new nodes can be found to query, return TOPICQUERY request early.
+            // If no new nodes can be found to query, let topic lookup wait for new peers or time out.
             if new_query_peers.is_empty() {
                 debug!("Found no new peers to send TOPICQUERY to, setting query status to dry");
                 if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
@@ -2344,6 +2344,7 @@ impl Service {
                         kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
                         kbucket::Entry::Absent(_) => {
                             if let Some(topic_hash) = topic_hash {
+                                trace!("Discovered new peer {} for topic hash {}", enr.node_id(), topic_hash);
                                 let discovered_peers =
                                     self.discovered_peers_topic.entry(topic_hash).or_default();
                                 // If the intermediary storage before the topic's kbucktes is at bounds, discard the

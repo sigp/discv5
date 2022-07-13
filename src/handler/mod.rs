@@ -1113,20 +1113,28 @@ impl Handler {
         // Find a matching request, if any
         trace!("Received {} response", response.body);
 
-        let request_call = if let Some(request_call) = self.active_requests.remove(&node_address) {
-            Some(request_call)
+        let (request_call, is_regconf) = if let Some(request_call) = self.active_requests_regconf.remove(&node_address) {
+            (Some(request_call), true)
         } else {
-            self.active_requests_regconf.remove(&node_address)
+            (self.active_requests.remove(&node_address), false)
         };
 
         if let Some(mut request_call) = request_call {
             if request_call.id() != &response.id {
-                trace!(
-                    "Received an RPC Response to an unknown request. Likely late response. {}",
-                    node_address
-                );
                 // add the request back and reset the timer
-                self.active_requests.insert(node_address, request_call);
+                if is_regconf {
+                    trace!(
+                        "Received an RPC Response from a node we are also waiting for a REGISTERCONFIRMATION from. {}",
+                        node_address
+                    );
+                    self.active_requests_regconf.insert(node_address, request_call);
+                } else {
+                    trace!(
+                        "Received an RPC Response to an unknown request. Likely late response. {}",
+                        node_address
+                    );
+                    self.active_requests.insert(node_address, request_call);
+                }
                 return;
             }
 
