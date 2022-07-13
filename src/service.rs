@@ -540,6 +540,9 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
+        // In the case where not many peers populate the topic's kbuckets, ensure topics keep being republished.
+        let mut registration_interval = tokio::time::interval(AD_LIFETIME);
+
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -827,12 +830,10 @@ impl Service {
                     }
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
-                    trace!("Query is in state {:?}", topic_query_progress);
                     match topic_query_progress {
                         TopicQueryState::Finished(topic_hash) | TopicQueryState::TimedOut(topic_hash) | TopicQueryState::Dry(topic_hash) => {
                             if let Some(query) = self.active_topic_queries.queries.remove(&topic_hash) {
                                 if let Some(callback) = query.callback {
-                                    trace!("Sending result of query for topic hash {} to discv5 layer", topic_hash);
                                     if callback.send(Ok(query.results.into_values().collect::<Vec<_>>())).is_err() {
                                         warn!("Callback dropped for topic query {}. Results dropped", topic_hash);
                                     }
@@ -842,6 +843,12 @@ impl Service {
                         TopicQueryState::Unsatisfied(topic_hash, num_query_peers) => {
                             self.send_topic_queries(topic_hash, num_query_peers, None);
                         }
+                    }
+                }
+                _ = registration_interval.tick() => {
+                    let topics_to_reg = self.registration_attempts.keys().copied().collect::<Vec<TopicHash>>();
+                    for topic_hash in topics_to_reg {
+                        self.send_register_topics(topic_hash);
                     }
                 }
             }
@@ -1765,9 +1772,9 @@ impl Service {
                                 .or_default()
                                 .entry(node_id)
                                 .or_insert(RegistrationState::Ticket);
-                            self.send_register_topics(topic);
                         }
                     }
+                    self.send_register_topics(topic_hash);
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
                     let now = Instant::now();
@@ -1786,6 +1793,7 @@ impl Service {
                             .active_regtopic_req
                             .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
                     }
+                    self.send_register_topics(topic_hash);
                 }
             }
         } else {
