@@ -481,18 +481,6 @@ impl Service {
                 return Err(Error::new(ErrorKind::InvalidInput, e));
             }
         };
-        let active_topics = match Ads::new(
-            AD_LIFETIME,
-            MAX_ADS_TOPIC,
-            MAX_ADS,
-            MAX_ADS_SUBNET,
-            MAX_ADS_SUBNET_TOPIC,
-        ) {
-            Ok(ads) => ads,
-            Err(e) => {
-                return Err(Error::new(ErrorKind::InvalidInput, e));
-            }
-        };
 
         // A key is generated for en-/decrypting tickets that are issued upon receiving a topic
         // regsitration attempt.
@@ -685,7 +673,7 @@ impl Service {
                         ServiceRequest::ActiveTopics(callback) => {
                             let mut active_topics = HashMap::<TopicHash, Vec<NodeId>>::new();
                             self.registration_attempts.iter_mut().for_each(|(topic_hash, reg_attempts_by_distance)| {
-                                for (_distance, reg_attempts) in reg_attempts_by_distance {
+                                for reg_attempts in reg_attempts_by_distance.values_mut() {
                                     reg_attempts.retain(|node_id, reg_state| {
                                             if let RegistrationState::Confirmed(insert_time) = reg_state {
                                                 if insert_time.elapsed() < AD_LIFETIME {
@@ -1782,23 +1770,21 @@ impl Service {
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
-                    if let Some(enr) = active_request.contact.enr() {
-                        let now = Instant::now();
-                        let peer_key: kbucket::Key<NodeId> = node_id.into();
-                        let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
-                        if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                            let registration_attempts =
-                                self.registration_attempts.entry(topic).or_default();
-                            registration_attempts
-                                .entry(distance)
-                                .or_default()
-                                .entry(node_id)
-                                .or_insert(RegistrationState::Confirmed(now));
+                    let now = Instant::now();
+                    let peer_key: kbucket::Key<NodeId> = node_id.into();
+                    let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                    if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                        let registration_attempts =
+                            self.registration_attempts.entry(topic).or_default();
+                        registration_attempts
+                            .entry(distance)
+                            .or_default()
+                            .entry(node_id)
+                            .or_insert(RegistrationState::Confirmed(now));
 
-                            METRICS
-                                .active_regtopic_req
-                                .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
-                        }
+                        METRICS
+                            .active_regtopic_req
+                            .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
                     }
                 }
             }
