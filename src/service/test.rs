@@ -101,7 +101,6 @@ async fn build_service(
         registration_attempts: HashMap::new(),
         topics_kbuckets: HashMap::new(),
         discovered_peers_topic: HashMap::new(),
-        active_topics: Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3).unwrap(),
         ticket_pools: TicketPools::default(),
         active_topic_queries: ActiveTopicQueries::new(
             config.topic_query_timeout,

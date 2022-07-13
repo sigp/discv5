@@ -191,7 +191,7 @@ pub enum ServiceRequest {
     /// Stops publishing this node as an advetiser for a topic.
     RemoveTopic(TopicHash, oneshot::Sender<Result<String, RequestError>>),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
-    ActiveTopics(oneshot::Sender<Result<Ads, RequestError>>),
+    ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
@@ -269,9 +269,6 @@ pub struct Service {
     /// this intermediary stroage to check their connectivity before inserting them in the topic's
     /// kbuckets.
     discovered_peers_topic: HashMap<TopicHash, HashMap<NodeId, Enr>>,
-
-    /// Ads currently advertised on other nodes.
-    active_topics: Ads,
 
     /// Tickets received by other nodes.
     tickets: Tickets,
@@ -536,7 +533,6 @@ impl Service {
                     registration_attempts: HashMap::new(),
                     topics_kbuckets: HashMap::new(),
                     discovered_peers_topic: HashMap::new(),
-                    active_topics,
                     tickets: Tickets::new(TICKET_LIMITER),
                     ticket_pools: TicketPools::default(),
                     active_topic_queries: ActiveTopicQueries::new(
@@ -687,7 +683,28 @@ impl Service {
                             }
                         }
                         ServiceRequest::ActiveTopics(callback) => {
-                            if callback.send(Ok(self.active_topics.clone())).is_err() {
+                            let mut active_topics = HashMap::<TopicHash, Vec<NodeId>>::new();
+                            self.registration_attempts.iter_mut().for_each(|(topic_hash, reg_attempts_by_distance)| {
+                                for (_distance, reg_attempts) in reg_attempts_by_distance {
+                                    reg_attempts.retain(|node_id, reg_state| {
+                                            if let RegistrationState::Confirmed(insert_time) = reg_state {
+                                                if insert_time.elapsed() < AD_LIFETIME {
+                                                    active_topics.entry(*topic_hash).or_default().push(*node_id);
+                                                    true
+                                                } else {
+                                                    false
+                                                }
+                                            } else {
+                                                true
+                                            }
+                                    });
+                                }
+                            });
+                            METRICS
+                            .active_ads
+                            .store(active_topics.values().flatten().count(), Ordering::Relaxed);
+
+                            if callback.send(Ok(active_topics)).is_err() {
                                 error!("Failed to return active topics");
                             }
                         }
@@ -853,7 +870,6 @@ impl Service {
                 topic_hash
             );
             let reg_attempts = self.registration_attempts.entry(topic_hash).or_default();
-            // Remove expired ads
             let mut new_reg_peers = Vec::new();
 
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
@@ -1783,13 +1799,6 @@ impl Service {
                                 .entry(node_id)
                                 .or_insert(RegistrationState::Confirmed(now));
 
-                            let _ = self.active_topics.insert(enr, topic).map_err(|e| {
-                                error!("Couldn't insert topic into active topics. Error: {}.", e)
-                            });
-
-                            METRICS
-                                .active_ads
-                                .store(self.active_topics.len(), Ordering::Relaxed);
                             METRICS
                                 .active_regtopic_req
                                 .store(self.active_regtopic_requests.len(), Ordering::Relaxed);

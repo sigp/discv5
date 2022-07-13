@@ -13,10 +13,7 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
-    advertisement::{
-        topic::{Sha256Topic as Topic, TopicHash},
-        Ads,
-    },
+    advertisement::topic::{Sha256Topic as Topic, TopicHash},
     error::{Discv5Error, QueryError, RequestError},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
@@ -29,6 +26,7 @@ use crate::{
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
+    collections::HashMap,
     future::Future,
     net::SocketAddr,
     sync::Arc,
@@ -596,7 +594,9 @@ impl Discv5 {
     }
 
     /// Retrieves the topics that we have published on other nodes.
-    pub fn active_topics(&self) -> impl Future<Output = Result<Ads, RequestError>> + 'static {
+    pub fn active_topics(
+        &self,
+    ) -> impl Future<Output = Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>> + 'static {
         // the service will verify if this node is contactable, we just send it and
         // await a response.
         let (callback_send, callback_recv) = oneshot::channel();
