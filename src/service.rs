@@ -1774,7 +1774,7 @@ impl Service {
                                 .or_insert(RegistrationState::Ticket);
                         }
                     }
-                    self.send_register_topics(topic_hash);
+                    self.send_register_topics(topic);
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
                     let now = Instant::now();
@@ -1793,7 +1793,7 @@ impl Service {
                             .active_regtopic_req
                             .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
                     }
-                    self.send_register_topics(topic_hash);
+                    self.send_register_topics(topic);
                 }
             }
         } else {
