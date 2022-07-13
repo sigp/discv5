@@ -162,7 +162,7 @@ const MAX_ADS_SUBNET: usize = 50;
 const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
 
 /// The max number of uncontacted peers to store before the kbuckets per topic.
-const MAX_UNCONTACTED_PEERS_TOPIC: usize = 1000;
+const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
@@ -268,7 +268,7 @@ pub struct Service {
     /// The peers returned in a NODES response to a TOPICQUERY or REGTOPIC request are inserted in
     /// this intermediary stroage to check their connectivity before inserting them in the topic's
     /// kbuckets.
-    discovered_peers_topic: HashMap<TopicHash, HashMap<NodeId, Enr>>,
+    discovered_peers_topic: HashMap<TopicHash, HashMap<u64, HashMap<NodeId, Enr>>>,
 
     /// Tickets received by other nodes.
     tickets: Tickets,
@@ -689,9 +689,6 @@ impl Service {
                                     });
                                 }
                             });
-                            METRICS
-                            .active_ads
-                            .store(active_topics.values().flatten().count(), Ordering::Relaxed);
 
                             if callback.send(Ok(active_topics)).is_err() {
                                 error!("Failed to return active topics");
@@ -877,22 +874,27 @@ impl Service {
                         }
                     });
                 }
-                let registrations = reg_attempts.entry(index as u64).or_default();
+                let distance = index as u64;
+
+                let registrations = reg_attempts.entry(distance).or_default();
                 let max_reg_attempts_bucket = self.config.max_nodes_response;
                 let mut new_peers = Vec::new();
 
                 // Attempt sending a request to uncontacted peers if any.
                 if let Some(peers) = self.discovered_peers_topic.get_mut(&topic_hash) {
-                    peers.retain(|node_id, enr    | {
-                        if new_peers.len() + registrations.len() >= max_reg_attempts_bucket {
-                            true
-                        } else {
-                            debug!("Found new registration peer in discovered peers for topic {}. Peer: {:?}", topic_hash, node_id);
-                            new_peers.push(enr.clone());
-                            false
-                        }
-                    });
-                    new_reg_peers.append(&mut new_peers);
+                    if let Some(bucket) = peers.get_mut(&distance) {
+                        bucket.retain(|node_id, enr | {
+                            if new_peers.len() + registrations.len() >= max_reg_attempts_bucket {
+                                true
+                            } else {
+                                debug!("Found new registration peer in discovered peers for topic {}. Peer: {:?}", topic_hash, node_id);
+                                registrations.insert(*node_id, RegistrationState::Ticket);
+                                new_peers.push(enr.clone());
+                                false
+                            }
+                        });
+                        new_reg_peers.append(&mut new_peers);
+                    }
                 }
 
                 // The count of active registration attempts for a distance after expired ads have been
@@ -905,12 +907,14 @@ impl Service {
                         if new_peers.len() + registrations.len() >= self.config.max_nodes_response {
                             break;
                         }
-                        if let Entry::Vacant(_) = registrations.entry(*peer.key.preimage()) {
+                        let node_id = *peer.key.preimage();
+                        if let Entry::Vacant(_) = registrations.entry(node_id) {
                             debug!(
                                 "Found new registration peer in kbuckets of topic {}. Peer: {:?}",
                                 topic_hash,
                                 peer.key.preimage()
                             );
+                            registrations.insert(node_id, RegistrationState::Ticket);
                             new_peers.push(peer.value.clone())
                         }
                     }
@@ -1754,17 +1758,6 @@ impl Service {
                                 topic,
                             )
                             .ok();
-                        let peer_key: kbucket::Key<NodeId> = node_id.into();
-                        let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
-                        if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                            let registration_attempts =
-                                self.registration_attempts.entry(topic).or_default();
-                            registration_attempts
-                                .entry(distance)
-                                .or_default()
-                                .entry(node_id)
-                                .or_insert(RegistrationState::Ticket);
-                        }
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
@@ -2349,11 +2342,17 @@ impl Service {
                                     self.discovered_peers_topic.entry(topic_hash).or_default();
                                 // If the intermediary storage before the topic's kbucktes is at bounds, discard the
                                 // uncontacted peers.
-                                if discovered_peers.len() < MAX_UNCONTACTED_PEERS_TOPIC {
-                                    discovered_peers.insert(enr.node_id(), enr.clone());
+                                let node_id = enr.node_id();
+                                let peer_key: kbucket::Key<NodeId> = node_id.into();
+                                let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic_hash.as_bytes()).into();
+                                if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                                    let bucket = discovered_peers.entry(distance).or_default();
+                                if bucket.len() < MAX_UNCONTACTED_PEERS_TOPIC_BUCKET {
+                                    bucket.insert(node_id, enr.clone());
                                 } else {
                                     warn!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
                                 }
+                            }
                             }
                             false
                         }
@@ -2376,7 +2375,6 @@ impl Service {
                             "Failed to update discovered ENR. Node: {}, Reason: {:?}",
                             source, reason
                         );
-
                         return false; // Remove this peer from the discovered list if the update failed
                     }
                 }
@@ -2692,6 +2690,29 @@ impl Service {
                             );
                         }
                     }
+                    self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic));
+                    return;
+                }
+                RequestBody::RegisterTopic {
+                    topic,
+                    enr: _,
+                    ticket: _,
+                } => {
+                    let peer_key: kbucket::Key<NodeId> = node_id.into();
+                    let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                    if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                        let registration_attempts =
+                            self.registration_attempts.entry(topic).or_default();
+                        if let Some(bucket) = registration_attempts.get_mut(&distance) {
+                            bucket.remove(&node_id);
+                        }
+
+                        METRICS
+                            .active_regtopic_req
+                            .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
+                    }
+                    self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic));
+                    return;
                 }
                 // for all other requests, if any are queries, mark them as failures.
                 _ => {
@@ -2712,17 +2733,7 @@ impl Service {
                 }
             }
 
-            match active_request.request_body {
-                RequestBody::RegisterTopic {
-                    topic,
-                    enr: _,
-                    ticket: _,
-                }
-                | RequestBody::TopicQuery { topic } => {
-                    self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic))
-                }
-                _ => self.connection_updated(node_id, ConnectionStatus::Disconnected, None),
-            }
+            self.connection_updated(node_id, ConnectionStatus::Disconnected, None);
         }
     }
 
