@@ -858,7 +858,7 @@ impl Service {
         trace!("Sending REGTOPICS");
         if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             trace!(
-                "Found {} new entries in kbuckets of topic hash {}",
+                "Found {} entries in kbuckets of topic hash {}",
                 kbuckets.get_mut().iter().count(),
                 topic_hash
             );
@@ -886,16 +886,10 @@ impl Service {
                     peers.retain(|node_id, enr    | {
                         if new_peers.len() + registrations.len() >= max_reg_attempts_bucket {
                             true
-                        } else if let Entry::Vacant(_) = registrations.entry(*node_id) {
+                        } else {
                             debug!("Found new registration peer in discovered peers for topic {}. Peer: {:?}", topic_hash, node_id);
                             new_peers.push(enr.clone());
                             false
-                        } else {
-                            debug_unreachable!(
-                                "Newly discovered peer {} shouldn't be stored in registration attempts",
-                                node_id
-                            );
-                            true
                         }
                     });
                     new_reg_peers.append(&mut new_peers);
@@ -2406,6 +2400,7 @@ impl Service {
             // and no more peers to contact) any new peers to contact will come with a NODES response
             // to a REGTOPIC request, or a TOPICQUERY if the same topic has also been looked up.
             self.send_register_topics(topic_hash);
+            return;
         }
 
         // if this is part of a query, update the query
