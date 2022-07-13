@@ -2310,7 +2310,7 @@ impl Service {
         }
 
         let local_id = self.local_enr.read().node_id();
-        
+
         enrs.retain(|enr| {
             if enr.node_id() == local_id {
                 return false;
@@ -2404,7 +2404,7 @@ impl Service {
             }
             // If a topic registration runs dry (not enough regsitration attempts per topic kbucket
             // and no more peers to contact) any new peers to contact will come with a NODES response
-            // to a REGTOPIC request or a TOPICQUERY if the same topic has also been looked up.
+            // to a REGTOPIC request, or a TOPICQUERY if the same topic has also been looked up.
             self.send_register_topics(topic_hash);
         }
 
