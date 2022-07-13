@@ -1539,6 +1539,10 @@ impl Service {
                         active_request.request_body
                     {
                         self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
+                        // If a regtopic request runs dry (not enough regsitration attempts per topic kbucket
+                        // and no more peers to contact) any new peers to contact will come with a NODES response
+                        // to a REGTOPIC request.
+                        self.send_register_topics(topic);
                     } else if let RequestBody::FindNode { .. } = active_request.request_body {
                         self.discovered(&node_id, nodes, active_request.query_id, None)
                     }
@@ -1774,7 +1778,6 @@ impl Service {
                                 .or_insert(RegistrationState::Ticket);
                         }
                     }
-                    self.send_register_topics(topic);
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
                     let now = Instant::now();
@@ -1793,7 +1796,6 @@ impl Service {
                             .active_regtopic_req
                             .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
                     }
-                    self.send_register_topics(topic);
                 }
             }
         } else {
