@@ -2291,11 +2291,6 @@ impl Service {
         query_id: Option<QueryId>,
         topic_hash: Option<TopicHash>,
     ) {
-        if enrs.is_empty() {
-            warn!("Discovered was called with an empty enrs vector");
-            return;
-        }
-
         let local_id = self.local_enr.read().node_id();
 
         enrs.retain(|enr| {
@@ -2390,6 +2385,9 @@ impl Service {
         });
 
         if let Some(topic_hash) = topic_hash {
+            if enrs.is_empty() {
+                return;
+            }
             // If a topic lookup has dried up (no more peers to query), the query can now proceed as long as
             // it hasn't timed out already.
             if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
