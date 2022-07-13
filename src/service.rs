@@ -2298,6 +2298,8 @@ impl Service {
                 return false;
             }
 
+            let mut new_or_updated_peer = false;
+
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
             if self.config.report_discovered_peers {
@@ -2326,10 +2328,36 @@ impl Service {
                 // If the ENR exists in the routing table and the discovered ENR has a greater
                 // sequence number, perform some filter checks before updating the enr.
 
-                let must_update_enr = if let Some(kbuckets_topic) = kbuckets_topic {
+                if let Some(kbuckets_topic) = kbuckets_topic {
                     match kbuckets_topic.entry(&key) {
-                        kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
-                        kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                        kbucket::Entry::Present(entry, _) => {
+                            if entry.value().seq() < enr.seq() {
+                                if let UpdateResult::Failed(reason) =
+                                kbuckets_topic.update_node(&key, enr.clone(), None) {
+                                    self.peers_to_ping.remove(&enr.node_id());
+                                    debug!(
+                                        "Failed to update discovered ENR for kbucket of topic hash {:?}. Node: {}, Reason: {:?}",
+                                        topic_hash, source, reason
+                                    );
+                                    return false; // Remove this peer from the discovered list if the update failed
+                                }
+                                new_or_updated_peer = true;
+                            }
+                        },
+                        kbucket::Entry::Pending(mut entry, _) => {
+                            if entry.value().seq() < enr.seq() {
+                                if let UpdateResult::Failed(reason) =
+                                kbuckets_topic.update_node(&key, enr.clone(), None) {
+                                    self.peers_to_ping.remove(&enr.node_id());
+                                    debug!(
+                                        "Failed to update discovered ENR for kbucket of topic hash {:?}. Node: {}, Reason: {:?}",
+                                        topic_hash, source, reason
+                                    );
+                                    return false; // Remove this peer from the discovered list if the update failed
+                                }
+                                new_or_updated_peer = true;
+                            }
+                        }
                         kbucket::Entry::Absent(_) => {
                             if let Some(topic_hash) = topic_hash {
                                 trace!("Discovered new peer {} for topic hash {}", enr.node_id(), topic_hash);
@@ -2342,35 +2370,33 @@ impl Service {
                                 let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic_hash.as_bytes()).into();
                                 if let Some(distance) = peer_key.log2_distance(&topic_key) {
                                     let bucket = discovered_peers.entry(distance).or_default();
-                                if bucket.len() < MAX_UNCONTACTED_PEERS_TOPIC_BUCKET {
-                                    bucket.insert(node_id, enr.clone());
-                                } else {
-                                    warn!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
+                                    if bucket.len() < MAX_UNCONTACTED_PEERS_TOPIC_BUCKET {
+                                        bucket.insert(node_id, enr.clone());
+                                    } else {
+                                        warn!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
+                                    }
                                 }
                             }
-                            }
-                            false
+                            new_or_updated_peer = true;
                         }
-                        _ => false,
+                        _ => {}
                     }
                 } else {
-                    match self.kbuckets.write().entry(&key) {
+                    let must_update_enr = match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
                         kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
                         _ => false,
-                    }
-                };
-
-                if must_update_enr {
+                    };
+                    if must_update_enr {
                     if let UpdateResult::Failed(reason) =
-                        self.kbuckets.write().update_node(&key, enr.clone(), None)
-                    {
-                        self.peers_to_ping.remove(&enr.node_id());
-                        debug!(
-                            "Failed to update discovered ENR. Node: {}, Reason: {:?}",
-                            source, reason
-                        );
-                        return false; // Remove this peer from the discovered list if the update failed
+                        self.kbuckets.write().update_node(&key, enr.clone(), None) {
+                            self.peers_to_ping.remove(&enr.node_id());
+                            debug!(
+                                "Failed to update discovered ENR. Node: {}, Reason: {:?}",
+                                source, reason
+                            );
+                            return false; // Remove this peer from the discovered list if the update failed
+                        }
                     }
                 }
             } else {
@@ -2381,7 +2407,12 @@ impl Service {
             // requesting the target of the query, this ENR could be the result of requesting the
             // target-nodes own id. We don't want to add this as a "new" discovered peer in the
             // query, so we remove it from the discovered list here.
-            source != &enr.node_id()
+            if topic_hash.is_some() {
+                // For a topic lookup or registration only new or updated peers are retained.
+                new_or_updated_peer && source != &enr.node_id()
+            } else {
+                source != &enr.node_id()
+            }
         });
 
         if let Some(topic_hash) = topic_hash {
