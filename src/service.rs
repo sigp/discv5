@@ -1155,12 +1155,11 @@ impl Service {
                             self.request_enr(contact, None);
                         }
                         Err(NonContactable { enr }) => {
+                            debug_unreachable!("Stored ENR is not contactable. {}", enr);
                             error!(
                                 "Stored ENR is not contactable! This should never happen {}",
                                 enr
                             );
-                            #[cfg(debug_assertions)]
-                            panic!("Stored ENR is not contactable. {}", enr);
                         }
                     }
                 }
@@ -1273,7 +1272,7 @@ impl Service {
                                         .map(|ticket| {
                                             if let Some(ticket) = ticket {
                                                 // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
-                                                // wait time for the ad slot. See discv5 spec. This node will not store tickets received 
+                                                // wait time for the ad slot. See discv5 spec. This node will not store tickets received
                                                 // with wait time 0.
                                                 new_ticket.set_cum_wait(ticket.cum_wait());
                                                 self.send_ticket_response(
@@ -1359,11 +1358,8 @@ impl Service {
 
             let expected_node_address = active_request.contact.node_address();
             if expected_node_address != node_address {
-                error!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
-                #[cfg(debug_assertions)]
-                panic!("Handler returned a response not matching the used socket addr");
-                #[cfg(not(debug_assertions))]
-                return;
+                debug_unreachable!("Handler returned a response not matching the used socket addr");
+                return error!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
             }
 
             if !response.match_request(&active_request.request_body) {
