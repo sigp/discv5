@@ -292,8 +292,6 @@ pub enum TopicQueryState {
     /// Not enough ads have been returned from the first round of sending TOPICQUERY
     /// requests, new peers in the topic's kbucktes should be queried.
     Unsatisfied(TopicHash, usize),
-    /// No new peers in the topic's kbuckets can be found to send TOPICQUERYs too.
-    Dry(TopicHash),
 }
 
 /// The state of a response to a single TOPICQUERY request. A topic lookup/query is
@@ -366,7 +364,7 @@ impl Stream for ActiveTopicQueries {
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         for (topic_hash, query) in self.queries.iter() {
             if query.dry {
-                return Poll::Ready(Some(TopicQueryState::Dry(*topic_hash)));
+                return Poll::Pending;
             } else if query.results.len() >= self.num_results {
                 return Poll::Ready(Some(TopicQueryState::Finished(*topic_hash)));
             } else if query.start.elapsed() >= self.time_out {
@@ -831,7 +829,7 @@ impl Service {
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
                     match topic_query_progress {
-                        TopicQueryState::Finished(topic_hash) | TopicQueryState::TimedOut(topic_hash) | TopicQueryState::Dry(topic_hash) => {
+                        TopicQueryState::Finished(topic_hash) | TopicQueryState::TimedOut(topic_hash) => {
                             if let Some(query) = self.active_topic_queries.queries.remove(&topic_hash) {
                                 if let Some(callback) = query.callback {
                                     if callback.send(Ok(query.results.into_values().collect::<Vec<_>>())).is_err() {
@@ -842,7 +840,7 @@ impl Service {
                         },
                         TopicQueryState::Unsatisfied(topic_hash, num_query_peers) => {
                             self.send_topic_queries(topic_hash, num_query_peers, None);
-                        }
+                        },
                     }
                 }
                 _ = registration_interval.tick() => {
@@ -1539,10 +1537,6 @@ impl Service {
                         active_request.request_body
                     {
                         self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
-                        // If a regtopic request runs dry (not enough regsitration attempts per topic kbucket
-                        // and no more peers to contact) any new peers to contact will come with a NODES response
-                        // to a REGTOPIC request.
-                        self.send_register_topics(topic);
                     } else if let RequestBody::FindNode { .. } = active_request.request_body {
                         self.discovered(&node_id, nodes, active_request.query_id, None)
                     }
@@ -2310,7 +2304,13 @@ impl Service {
         query_id: Option<QueryId>,
         topic_hash: Option<TopicHash>,
     ) {
+        if enrs.is_empty() {
+            warn!("Discovered was called with an empty enrs vector");
+            return;
+        }
+
         let local_id = self.local_enr.read().node_id();
+        
         enrs.retain(|enr| {
             if enr.node_id() == local_id {
                 return false;
@@ -2356,7 +2356,9 @@ impl Service {
                                 // uncontacted peers.
                                 if discovered_peers.len() < MAX_UNCONTACTED_PEERS_TOPIC {
                                     discovered_peers.insert(enr.node_id(), enr.clone());
-                                };
+                                } else {
+                                    warn!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
+                                }
                             }
                             false
                         }
@@ -2393,6 +2395,18 @@ impl Service {
             // query, so we remove it from the discovered list here.
             source != &enr.node_id()
         });
+
+        if let Some(topic_hash) = topic_hash {
+            // If a topic lookup has dried up (no more peers to query), the query can now proceed as long as
+            // it hasn't timed out already.
+            if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
+                query.dry = false;
+            }
+            // If a topic registration runs dry (not enough regsitration attempts per topic kbucket
+            // and no more peers to contact) any new peers to contact will come with a NODES response
+            // to a REGTOPIC request or a TOPICQUERY if the same topic has also been looked up.
+            self.send_register_topics(topic_hash);
+        }
 
         // if this is part of a query, update the query
         if let Some(query_id) = query_id {
