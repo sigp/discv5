@@ -159,7 +159,7 @@ const MAX_ADS_SUBNET_TOPIC: usize = 5;
 const MAX_ADS_SUBNET: usize = 50;
 
 /// The time after a REGCONFIRMATION is sent that an ad is placed.
-const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
+const AD_LIFETIME: Duration = Duration::from_secs(60 * 2);
 
 /// The max number of uncontacted peers to store before the kbuckets per topic.
 const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
@@ -864,18 +864,25 @@ impl Service {
             let mut new_reg_peers = Vec::new();
 
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
+                let distance = index as u64;
+
                 // Remove expired registrations
-                if let Entry::Occupied(ref mut entry) = reg_attempts.entry(index as u64) {
+                if let Entry::Occupied(ref mut entry) = reg_attempts.entry(distance) {
+                    trace!("Removing expired registration attempts");
                     let registrations = entry.get_mut();
-                    registrations.retain(|_, reg_attempt| {
+                    registrations.retain(|node_id, reg_attempt| {
                         if let RegistrationState::Confirmed(insert_time) = reg_attempt {
-                            insert_time.elapsed() < AD_LIFETIME
+                            if insert_time.elapsed() < AD_LIFETIME {
+                                true
+                            } else {
+                                trace!("Registration has expired for node id {}. Removing from registration attempts.", node_id);
+                                false
+                            }
                         } else {
                             true
                         }
                     });
                 }
-                let distance = index as u64;
 
                 let registrations = reg_attempts.entry(distance).or_default();
                 let max_reg_attempts_bucket = self.config.max_nodes_response;
@@ -888,7 +895,7 @@ impl Service {
                             if new_peers.len() + registrations.len() >= max_reg_attempts_bucket {
                                 true
                             } else {
-                                debug!("Found new registration peer in discovered peers for topic {}. Peer: {:?}", topic_hash, node_id);
+                                debug!("Found new registration peer in uncontacted peers for topic {}. Peer: {:?}", topic_hash, node_id);
                                 registrations.insert(*node_id, RegistrationState::Ticket);
                                 new_peers.push(enr.clone());
                                 false
@@ -927,7 +934,6 @@ impl Service {
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
                     .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
                 {
-                    // Registration attempts are acknowledged upon receiving a TICKET or REGCONFIRMATION response.
                     self.reg_topic_request(node_contact, topic_hash, local_enr.clone(), None);
                 }
             }
