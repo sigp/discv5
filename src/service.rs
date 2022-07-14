@@ -2447,7 +2447,9 @@ impl Service {
             // If a topic registration runs dry (not enough regsitration attempts per topic kbucket
             // and no more peers to contact) any new peers to contact will come with a NODES response
             // to a REGTOPIC request, or a TOPICQUERY if the same topic has also been looked up.
-            self.send_register_topics(topic_hash);
+            if self.registration_attempts.contains_key(&topic_hash) {
+                self.send_register_topics(topic_hash);
+            }
             return;
         }
 
