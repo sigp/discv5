@@ -48,7 +48,7 @@ use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap},
     io::{Error, ErrorKind},
     net::SocketAddr,
     pin::Pin,
@@ -268,7 +268,7 @@ pub struct Service {
     /// The peers returned in a NODES response to a TOPICQUERY or REGTOPIC request are inserted in
     /// this intermediary stroage to check their connectivity before inserting them in the topic's
     /// kbuckets.
-    discovered_peers_topic: HashMap<TopicHash, HashMap<u64, HashMap<NodeId, Enr>>>,
+    discovered_peers_topic: HashMap<TopicHash, BTreeMap<u64, HashMap<NodeId, Enr>>>,
 
     /// Tickets received by other nodes.
     tickets: Tickets,
@@ -953,51 +953,71 @@ impl Service {
                 start: Instant::now(),
                 dry: false,
             });
-        let queried_peers = query.queried_peers.clone();
-        if let Entry::Occupied(kbuckets) = self.topics_kbuckets.entry(topic_hash) {
-            let mut peers = kbuckets.get().clone();
-            trace!(
-                "Found {} peers in kbuckets of topic hash {}",
-                peers.iter().count(),
-                topic_hash
-            );
-            // Prefer querying nodes further away, starting at distance 256 by to avoid hotspots.
-            let new_query_peers_iter = peers.iter().rev().filter_map(|entry| {
-                (!queried_peers.contains_key(entry.node.key.preimage())).then(|| {
-                    query
-                        .queried_peers
-                        .entry(*entry.node.key.preimage())
-                        .or_default();
-                    entry.node.value
-                })
-            });
-            let mut new_query_peers = Vec::new();
-            for enr in new_query_peers_iter {
-                new_query_peers.push(enr);
+
+        let mut new_query_peers: Vec<Enr> = Vec::new();
+
+        // Attempt sending a request to uncontacted peers if any.
+        if let Some(peers) = self.discovered_peers_topic.get_mut(&topic_hash) {
+            // Prefer querying nodes further away, i.e. in buckets of further distance to topic, to avoid hotspots.
+            for bucket in peers.values_mut().rev() {
                 if new_query_peers.len() < num_query_peers {
                     break;
                 }
+                bucket.retain(|node_id, enr| {
+                    if new_query_peers.len() >= num_query_peers {
+                        true
+                    } else if let Entry::Vacant(entry) = query.queried_peers.entry(*node_id) {
+                        entry.insert(false);
+                        new_query_peers.push(enr.clone());
+                        trace!(
+                            "Found a new topic query peer {} in uncontacted peers of topic hash {}",
+                            node_id,
+                            topic_hash
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
-            // If no new nodes can be found to query, let topic lookup wait for new peers or time out.
-            if new_query_peers.is_empty() {
-                debug!("Found no new peers to send TOPICQUERY to, setting query status to dry");
-                if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
-                    query.dry = true;
-                }
-                return;
-            }
+        }
 
-            trace!("Sending TOPICQUERYs to {} new peers", new_query_peers.len());
-            for enr in new_query_peers {
-                if let Ok(node_contact) =
-                    NodeContact::try_from_enr(enr.clone(), self.config.ip_mode)
-                        .map_err(|e| error!("Failed to send TOPICQUERY to peer. Error: {:?}", e))
-                {
-                    self.topic_query_request(node_contact, topic_hash);
+        if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
+            // Prefer querying nodes further away, i.e. in buckets of further distance to topic, to avoid hotspots.
+            for kbuckets_entry in kbuckets.iter().rev() {
+                if new_query_peers.len() < num_query_peers {
+                    break;
+                }
+                let node_id = *kbuckets_entry.node.key.preimage();
+                let enr = kbuckets_entry.node.value;
+
+                if let Entry::Vacant(entry) = query.queried_peers.entry(node_id) {
+                    entry.insert(false);
+                    new_query_peers.push(enr.clone());
+                    trace!(
+                        "Found a new topic query peer {} in kbuckets of topic hash {}",
+                        node_id,
+                        topic_hash
+                    );
                 }
             }
-        } else {
-            debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
+        }
+        // If no new nodes can be found to query, let topic lookup wait for new peers or time out.
+        if new_query_peers.is_empty() {
+            debug!("Found no new peers to send TOPICQUERY to, setting query status to dry");
+            if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
+                query.dry = true;
+            }
+            return;
+        }
+
+        trace!("Sending TOPICQUERYs to {} new peers", new_query_peers.len());
+        for enr in new_query_peers {
+            if let Ok(node_contact) = NodeContact::try_from_enr(enr.clone(), self.config.ip_mode)
+                .map_err(|e| error!("Failed to send TOPICQUERY to peer. Error: {:?}", e))
+            {
+                self.topic_query_request(node_contact, topic_hash);
+            }
         }
     }
 

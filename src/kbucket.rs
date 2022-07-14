@@ -499,7 +499,9 @@ where
         }
     }
 
-    /// Returns an iterator over all the entries in the routing table.
+    /// Returns an iterator over all the entries in the routing table, which will be ordered
+    /// in increasing order by distance since the buckets are stored in a vector to which
+    /// the are added in increasing order.
     pub fn iter(&mut self) -> impl DoubleEndedIterator<Item = EntryRefView<'_, TNodeId, TVal>> {
         let applied_pending = &mut self.applied_pending;
         self.buckets.iter_mut().flat_map(move |table| {
