@@ -985,7 +985,7 @@ impl Service {
         if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
             // Prefer querying nodes further away, i.e. in buckets of further distance to topic, to avoid hotspots.
             for kbuckets_entry in kbuckets.iter().rev() {
-                if new_query_peers.len() < num_query_peers {
+                if new_query_peers.len() >= num_query_peers {
                     break;
                 }
                 let node_id = *kbuckets_entry.node.key.preimage();
