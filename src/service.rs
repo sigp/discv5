@@ -843,6 +843,7 @@ impl Service {
                 _ = registration_interval.tick() => {
                     let topics_to_reg = self.registration_attempts.keys().copied().collect::<Vec<TopicHash>>();
                     for topic_hash in topics_to_reg {
+                        trace!("Republishing topic hash {}", topic_hash);
                         self.send_register_topics(topic_hash);
                     }
                 }
