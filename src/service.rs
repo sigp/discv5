@@ -312,6 +312,7 @@ pub enum TopicQueryResponseState {
 /// set to be registered. A registration is active when either a ticket for an adslot is
 /// held and the ticket wait time has not yet expired, or a REGCONFIRMATION has been
 /// received for an ad slot and the ad lifetime has not yet elapsed.
+#[derive(Debug)]
 pub enum RegistrationState {
     /// A REGCONFIRMATION has been received at the given instant.
     Confirmed(Instant),
@@ -870,8 +871,9 @@ impl Service {
                 // Remove expired registrations
                 if let Entry::Occupied(ref mut entry) = reg_attempts.entry(distance) {
                     let registrations = entry.get_mut();
-                    registrations.retain(|node_id, reg_attempt| {
-                        if let RegistrationState::Confirmed(insert_time) = reg_attempt {
+                    registrations.retain(|node_id, reg_state| {
+                        trace!("node id {}, reg state {:?}", node_id, reg_state);
+                        if let RegistrationState::Confirmed(insert_time) = reg_state {
                             if insert_time.elapsed() < AD_LIFETIME {
                                 true
                             } else {
