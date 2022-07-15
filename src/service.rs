@@ -144,7 +144,7 @@ impl TalkRequest {
 const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
 
 /// The time window within in which the number of new tickets from a peer for a topic will be limitied.
-const TICKET_LIMITER: Duration = Duration::from_secs(60 * 15);
+const TICKET_LIMITER_DURATION: Duration = Duration::from_secs(60 * 15);
 
 /// The max nodes to adveritse for a topic.
 const MAX_ADS_TOPIC: usize = 100;
@@ -319,6 +319,10 @@ pub enum RegistrationState {
     /// A TICKET has been received and the ticket is being held for the duration of the
     /// wait time.
     Ticket,
+    /// A fixed number of tickets are accepted within a certain time span. A node id in
+    /// ticket limit regsitration state will not be sent a REGTOPIC till the ticket
+    /// TICKET_LIMITER_DURATION has expired.
+    TicketLimit(Instant),
 }
 
 /// An active topic query/lookup keeps track of which peers from the topic's kbuckets
@@ -517,7 +521,7 @@ impl Service {
                     registration_attempts: HashMap::new(),
                     topics_kbuckets: HashMap::new(),
                     discovered_peers_topic: HashMap::new(),
-                    tickets: Tickets::new(TICKET_LIMITER),
+                    tickets: Tickets::new(TICKET_LIMITER_DURATION),
                     ticket_pools: TicketPools::default(),
                     active_topic_queries: ActiveTopicQueries::new(
                         config.topic_query_timeout,
@@ -674,16 +678,18 @@ impl Service {
                             self.registration_attempts.iter_mut().for_each(|(topic_hash, reg_attempts_by_distance)| {
                                 for reg_attempts in reg_attempts_by_distance.values_mut() {
                                     reg_attempts.retain(|node_id, reg_state| {
-                                            if let RegistrationState::Confirmed(insert_time) = reg_state {
+                                        match reg_state {
+                                            RegistrationState::Confirmed(insert_time) => {
                                                 if insert_time.elapsed() < AD_LIFETIME {
                                                     active_topics.entry(*topic_hash).or_default().push(*node_id);
                                                     true
                                                 } else {
                                                     false
                                                 }
-                                            } else {
-                                                true
                                             }
+                                            RegistrationState::TicketLimit(insert_time) => insert_time.elapsed() < TICKET_LIMITER_DURATION,
+                                            RegistrationState::Ticket => true,
+                                        }
                                     });
                                 }
                             });
@@ -859,7 +865,7 @@ impl Service {
                 topic_hash
             );
             let reg_attempts = self.registration_attempts.entry(topic_hash).or_default();
-            let mut new_reg_peers = Vec::new();
+            let mut new_peers = Vec::new();
 
             // Ensure that max_reg_attempts_bucket registration attempts are alive per bucket if that many peers are
             // available at that distance.
@@ -867,55 +873,62 @@ impl Service {
 
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
                 let distance = index as u64 + 1;
-
-                // Remove expired registrations
-                if let Entry::Occupied(ref mut entry) = reg_attempts.entry(distance) {
-                    let registrations = entry.get_mut();
-                    registrations.retain(|node_id, reg_state| {
-                        trace!("node id {}, reg state {:?} at distance {}", node_id, reg_state, distance);
-                        if let RegistrationState::Confirmed(insert_time) = reg_state {
-                            if insert_time.elapsed() < AD_LIFETIME {
-                                true
-                            } else {
-                                trace!("Registration has expired for node id {}. Removing from registration attempts.", node_id);
-                                false
-                            }
-                        } else {
-                            true
-                        }
-                    });
-                }
+                let mut active_reg_attempts_bucket = 0;
 
                 let registrations = reg_attempts.entry(distance).or_default();
-                let mut new_peers = Vec::new();
+
+                // Remove expired registrations and ticket limit blockages.
+                registrations.retain(|node_id, reg_state| {
+                        trace!("Registration attempt of node id {}, reg state {:?} at distance {}", node_id, reg_state, distance);
+                        match reg_state {
+                            RegistrationState::Confirmed(insert_time) => {
+                                if insert_time.elapsed() < AD_LIFETIME {
+                                    active_reg_attempts_bucket += 1;
+                                    true
+                                } else {
+                                    trace!("Registration has expired for node id {}. Removing from registration attempts.", node_id);
+                                    false
+                                }
+                            }
+                            RegistrationState::TicketLimit(insert_time) => insert_time.elapsed() < TICKET_LIMITER_DURATION,
+                            RegistrationState::Ticket => {
+                                active_reg_attempts_bucket += 1;
+                                true
+                            }
+                        }
+                    });
+
+                let mut new_peers_bucket = Vec::new();
 
                 // Attempt sending a request to uncontacted peers if any.
                 if let Some(peers) = self.discovered_peers_topic.get_mut(&topic_hash) {
                     if let Some(bucket) = peers.get_mut(&distance) {
                         bucket.retain(|node_id, enr | {
-                            if new_peers.len() + registrations.len() >= max_reg_attempts_bucket {
+                            if new_peers_bucket.len() + active_reg_attempts_bucket >= max_reg_attempts_bucket {
                                 true
                             } else if let Entry::Vacant(_) = registrations.entry(*node_id) {
                                 debug!("Found new registration peer in uncontacted peers for topic {}. Peer: {:?}", topic_hash, node_id);
                                 registrations.insert(*node_id, RegistrationState::Ticket);
-                                new_peers.push(enr.clone());
+                                new_peers_bucket.push(enr.clone());
                                 false
                             } else {
                                 true
                             }
                         });
-                        new_reg_peers.append(&mut new_peers);
+                        new_peers.append(&mut new_peers_bucket);
                     }
                 }
 
                 // The count of active registration attempts for a distance after expired ads have been
                 // removed is less than the max number of registration attempts that should be active
                 // per bucket and is not equal to the total number of peers available in that bucket.
-                if registrations.len() < self.config.max_nodes_response
+                if active_reg_attempts_bucket < self.config.max_nodes_response
                     && registrations.len() != bucket.num_entries()
                 {
                     for peer in bucket.iter() {
-                        if new_peers.len() + registrations.len() >= self.config.max_nodes_response {
+                        if new_peers_bucket.len() + active_reg_attempts_bucket
+                            >= self.config.max_nodes_response
+                        {
                             break;
                         }
                         let node_id = *peer.key.preimage();
@@ -926,13 +939,13 @@ impl Service {
                                 peer.key.preimage()
                             );
                             registrations.insert(node_id, RegistrationState::Ticket);
-                            new_peers.push(peer.value.clone())
+                            new_peers_bucket.push(peer.value.clone())
                         }
                     }
-                    new_reg_peers.append(&mut new_peers);
+                    new_peers.append(&mut new_peers_bucket);
                 }
             }
-            for peer in new_reg_peers {
+            for peer in new_peers {
                 let local_enr = self.local_enr.read().clone();
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
                     .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
@@ -1783,14 +1796,34 @@ impl Service {
                     topic,
                 } => {
                     if wait_time <= MAX_WAIT_TIME_TICKET && wait_time > 0 {
-                        self.tickets
-                            .insert(
-                                active_request.contact,
-                                ticket,
-                                Duration::from_secs(wait_time),
-                                topic,
-                            )
-                            .ok();
+                        if let Err(e) = self.tickets.insert(
+                            active_request.contact,
+                            ticket,
+                            Duration::from_secs(wait_time),
+                            topic,
+                        ) {
+                            error!(
+                                "Failed storing ticket from node id {}. Error {}",
+                                node_id, e
+                            );
+                            self.registration_attempts.get_mut(&topic).map(
+                                |reg_attempts_by_distance| {
+                                    let now = Instant::now();
+                                    let peer_key: kbucket::Key<NodeId> = node_id.into();
+                                    let topic_key: kbucket::Key<NodeId> =
+                                        NodeId::new(&topic.as_bytes()).into();
+                                    if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                                        reg_attempts_by_distance.get_mut(&distance).map(
+                                            |reg_attempts| {
+                                                reg_attempts.get_mut(&node_id).map(|reg_state| {
+                                                    *reg_state = RegistrationState::TicketLimit(now)
+                                                })
+                                            },
+                                        );
+                                    }
+                                },
+                            );
+                        }
                     }
                 }
                 ResponseBody::RegisterConfirmation { topic } => {
