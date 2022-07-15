@@ -159,7 +159,7 @@ const MAX_ADS_SUBNET_TOPIC: usize = 5;
 const MAX_ADS_SUBNET: usize = 50;
 
 /// The time after a REGCONFIRMATION is sent that an ad is placed.
-const AD_LIFETIME: Duration = Duration::from_secs(60 * 2);
+const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
 
 /// The max number of uncontacted peers to store before the kbuckets per topic.
 const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
