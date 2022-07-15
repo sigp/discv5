@@ -1806,23 +1806,23 @@ impl Service {
                                 "Failed storing ticket from node id {}. Error {}",
                                 node_id, e
                             );
-                            self.registration_attempts.get_mut(&topic).map(
-                                |reg_attempts_by_distance| {
-                                    let now = Instant::now();
-                                    let peer_key: kbucket::Key<NodeId> = node_id.into();
-                                    let topic_key: kbucket::Key<NodeId> =
-                                        NodeId::new(&topic.as_bytes()).into();
-                                    if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                                        reg_attempts_by_distance.get_mut(&distance).map(
-                                            |reg_attempts| {
-                                                reg_attempts.get_mut(&node_id).map(|reg_state| {
-                                                    *reg_state = RegistrationState::TicketLimit(now)
-                                                })
-                                            },
-                                        );
-                                    }
-                                },
-                            );
+                            if let Some(reg_attempts_by_distance) =
+                                self.registration_attempts.get_mut(&topic)
+                            {
+                                let now = Instant::now();
+                                let peer_key: kbucket::Key<NodeId> = node_id.into();
+                                let topic_key: kbucket::Key<NodeId> =
+                                    NodeId::new(&topic.as_bytes()).into();
+                                if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                                    reg_attempts_by_distance.get_mut(&distance).map(
+                                        |reg_attempts| {
+                                            reg_attempts.get_mut(&node_id).map(|reg_state| {
+                                                *reg_state = RegistrationState::TicketLimit(now)
+                                            })
+                                        },
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -2086,7 +2086,11 @@ impl Service {
                 .write()
                 .nodes_by_distances(&[distance], self.config.max_nodes_response)
                 .iter()
-                .for_each(|entry| closest_peers.push(entry.node.value.clone()));
+                .for_each(|entry| {
+                    if entry.node.key.preimage() != &node_address.node_id {
+                        closest_peers.push(entry.node.value.clone())
+                    }
+                });
 
             if closest_peers.len() < self.config.max_nodes_response {
                 for entry in self
@@ -2101,7 +2105,9 @@ impl Service {
                     if closest_peers.len() > self.config.max_nodes_response {
                         break;
                     }
-                    closest_peers.push(entry.node.value.clone());
+                    if entry.node.key.preimage() != &node_address.node_id {
+                        closest_peers.push(entry.node.value.clone())
+                    }
                 }
             }
         }
