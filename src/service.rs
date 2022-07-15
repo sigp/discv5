@@ -298,9 +298,9 @@ pub enum TopicQueryState {
 /// made up of several TOPICQUERYs each being sent to a different peer.
 #[derive(Default)]
 pub enum TopicQueryResponseState {
-    #[default]
     /// The Start state is intermediary upon receving the first response to the
     /// TOPICQUERY request, either a NODES or ADNODES response.
+    #[default]
     Start,
     /// A NODES response has been completely received.
     Nodes,
@@ -872,7 +872,7 @@ impl Service {
                 if let Entry::Occupied(ref mut entry) = reg_attempts.entry(distance) {
                     let registrations = entry.get_mut();
                     registrations.retain(|node_id, reg_state| {
-                        trace!("node id {}, reg state {:?}", node_id, reg_state);
+                        trace!("node id {}, reg state {:?} at distance {}", node_id, reg_state, distance);
                         if let RegistrationState::Confirmed(insert_time) = reg_state {
                             if insert_time.elapsed() < AD_LIFETIME {
                                 true
@@ -1800,11 +1800,13 @@ impl Service {
                     if let Some(distance) = peer_key.log2_distance(&topic_key) {
                         let registration_attempts =
                             self.registration_attempts.entry(topic).or_default();
-                        registration_attempts
+                        if let Some(reg_state) = registration_attempts
                             .entry(distance)
                             .or_default()
-                            .entry(node_id)
-                            .or_insert(RegistrationState::Confirmed(now));
+                            .get_mut(&node_id)
+                        {
+                            *reg_state = RegistrationState::Confirmed(now);
+                        }
 
                         METRICS
                             .active_regtopic_req
