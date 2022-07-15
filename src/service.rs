@@ -1800,13 +1800,17 @@ impl Service {
                     if let Some(distance) = peer_key.log2_distance(&topic_key) {
                         let registration_attempts =
                             self.registration_attempts.entry(topic).or_default();
-                        if let Some(reg_state) = registration_attempts
+                        /*if let Some(reg_state) = registration_attempts
                             .entry(distance)
                             .or_default()
                             .get_mut(&node_id)
                         {
                             *reg_state = RegistrationState::Confirmed(now);
-                        }
+                        }*/
+                        *registration_attempts
+                            .entry(distance)
+                            .or_default()
+                            .entry(node_id).or_insert(RegistrationState::Confirmed(now)) = RegistrationState::Confirmed(now);
 
                         METRICS
                             .active_regtopic_req
