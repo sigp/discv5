@@ -866,7 +866,7 @@ impl Service {
             let max_reg_attempts_bucket = self.config.max_nodes_response;
 
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
-                let distance = index as u64;
+                let distance = index as u64 + 1;
 
                 // Remove expired registrations
                 if let Entry::Occupied(ref mut entry) = reg_attempts.entry(distance) {
@@ -1800,17 +1800,13 @@ impl Service {
                     if let Some(distance) = peer_key.log2_distance(&topic_key) {
                         let registration_attempts =
                             self.registration_attempts.entry(topic).or_default();
-                        /*if let Some(reg_state) = registration_attempts
+                        if let Some(reg_state) = registration_attempts
                             .entry(distance)
                             .or_default()
                             .get_mut(&node_id)
                         {
                             *reg_state = RegistrationState::Confirmed(now);
-                        }*/
-                        *registration_attempts
-                            .entry(distance)
-                            .or_default()
-                            .entry(node_id).or_insert(RegistrationState::Confirmed(now)) = RegistrationState::Confirmed(now);
+                        }
 
                         METRICS
                             .active_regtopic_req
