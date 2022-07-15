@@ -873,6 +873,7 @@ impl Service {
                     registrations.retain(|node_id, reg_attempt| {
                         if let RegistrationState::Confirmed(insert_time) = reg_attempt {
                             if insert_time.elapsed() < AD_LIFETIME {
+                                trace!("Registration still alive for node id {}. Keeping in registration attempts.", node_id);
                                 true
                             } else {
                                 trace!("Registration has expired for node id {}. Removing from registration attempts.", node_id);
@@ -2052,7 +2053,7 @@ impl Service {
                     .kbuckets
                     .write()
                     .nodes_by_distances(
-                        &[distance - 1, distance, distance + 1],
+                        &[distance - 1, distance + 1],
                         self.config.max_nodes_response - closest_peers.len(),
                     )
                     .iter()
