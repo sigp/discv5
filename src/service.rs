@@ -291,7 +291,7 @@ pub enum TopicQueryState {
     TimedOut(TopicHash),
     /// Not enough ads have been returned from the first round of sending TOPICQUERY
     /// requests, new peers in the topic's kbucktes should be queried.
-    Unsatisfied(TopicHash, usize),
+    Unsatisfied(TopicHash),
 }
 
 /// The state of a response to a single TOPICQUERY request. A topic lookup/query is
@@ -382,10 +382,7 @@ impl Stream for ActiveTopicQueries {
                 // If all peers have responded or failed the request and we still did not
                 // obtain enough results, the query is in TopicQueryState::Unsatisfied.
                 if exhausted_peers >= query.queried_peers.len() {
-                    return Poll::Ready(Some(TopicQueryState::Unsatisfied(
-                        *topic_hash,
-                        query.results.len(),
-                    )));
+                    return Poll::Ready(Some(TopicQueryState::Unsatisfied(*topic_hash)));
                 }
             }
         }
@@ -621,7 +618,7 @@ impl Service {
                                 }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
-                            self.send_topic_queries(topic_hash, self.config.max_nodes_response, Some(callback));
+                            self.send_topic_queries(topic_hash, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic_hash) => {
                             if self.registration_attempts.insert(topic_hash, HashMap::new()).is_some() {
@@ -835,8 +832,8 @@ impl Service {
                                 }
                             }
                         },
-                        TopicQueryState::Unsatisfied(topic_hash, num_query_peers) => {
-                            self.send_topic_queries(topic_hash, num_query_peers, None);
+                        TopicQueryState::Unsatisfied(topic_hash) => {
+                            self.send_topic_queries(topic_hash, None);
                         },
                     }
                 }
@@ -863,17 +860,19 @@ impl Service {
             let reg_attempts = self.registration_attempts.entry(topic_hash).or_default();
             let mut new_reg_peers = Vec::new();
 
+            // Ensure that max_reg_attempts_bucket registration attempts are alive per bucket if that many peers are
+            // available at that distance.
+            let max_reg_attempts_bucket = self.config.max_nodes_response;
+
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
                 let distance = index as u64;
 
                 // Remove expired registrations
                 if let Entry::Occupied(ref mut entry) = reg_attempts.entry(distance) {
-                    trace!("Removing expired registration attempts");
                     let registrations = entry.get_mut();
                     registrations.retain(|node_id, reg_attempt| {
                         if let RegistrationState::Confirmed(insert_time) = reg_attempt {
                             if insert_time.elapsed() < AD_LIFETIME {
-                                trace!("Registration still alive for node id {}. Keeping in registration attempts.", node_id);
                                 true
                             } else {
                                 trace!("Registration has expired for node id {}. Removing from registration attempts.", node_id);
@@ -886,7 +885,6 @@ impl Service {
                 }
 
                 let registrations = reg_attempts.entry(distance).or_default();
-                let max_reg_attempts_bucket = self.config.max_nodes_response;
                 let mut new_peers = Vec::new();
 
                 // Attempt sending a request to uncontacted peers if any.
@@ -895,11 +893,13 @@ impl Service {
                         bucket.retain(|node_id, enr | {
                             if new_peers.len() + registrations.len() >= max_reg_attempts_bucket {
                                 true
-                            } else {
+                            } else if let Entry::Vacant(_) = registrations.entry(*node_id) {
                                 debug!("Found new registration peer in uncontacted peers for topic {}. Peer: {:?}", topic_hash, node_id);
                                 registrations.insert(*node_id, RegistrationState::Ticket);
                                 new_peers.push(enr.clone());
                                 false
+                            } else {
+                                true
                             }
                         });
                         new_reg_peers.append(&mut new_peers);
@@ -947,7 +947,6 @@ impl Service {
     fn send_topic_queries(
         &mut self,
         topic_hash: TopicHash,
-        num_query_peers: usize,
         callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
     ) {
         let query = self
@@ -962,17 +961,21 @@ impl Service {
                 dry: false,
             });
 
+        // Attempt to query max_topic_query_peers peers at a time. Possibly some peers will return more than one result
+        // (ADNODES of length > 1), or no results will be returned from that peer.
+        let max_topic_query_peers = self.config.max_nodes_response;
+
         let mut new_query_peers: Vec<Enr> = Vec::new();
 
         // Attempt sending a request to uncontacted peers if any.
         if let Some(peers) = self.discovered_peers_topic.get_mut(&topic_hash) {
             // Prefer querying nodes further away, i.e. in buckets of further distance to topic, to avoid hotspots.
             for bucket in peers.values_mut().rev() {
-                if new_query_peers.len() < num_query_peers {
+                if new_query_peers.len() < max_topic_query_peers {
                     break;
                 }
                 bucket.retain(|node_id, enr| {
-                    if new_query_peers.len() >= num_query_peers {
+                    if new_query_peers.len() >= max_topic_query_peers {
                         true
                     } else if let Entry::Vacant(entry) = query.queried_peers.entry(*node_id) {
                         entry.insert(false);
@@ -993,7 +996,7 @@ impl Service {
         if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
             // Prefer querying nodes further away, i.e. in buckets of further distance to topic, to avoid hotspots.
             for kbuckets_entry in kbuckets.iter().rev() {
-                if new_query_peers.len() >= num_query_peers {
+                if new_query_peers.len() >= max_topic_query_peers {
                     break;
                 }
                 let node_id = *kbuckets_entry.node.key.preimage();
