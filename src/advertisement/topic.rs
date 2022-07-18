@@ -61,7 +61,7 @@ impl Hasher for Sha256Hash {
     }
 }
 
-/// The 32-bytes that are sent in the body of a topic request are interpreted 
+/// The 32-bytes that are sent in the body of a topic request are interpreted
 /// as a hash by the agreed upon hash algorithm in the discv5 network (defaults
 /// to Sha256).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
