@@ -567,10 +567,10 @@ impl Discv5 {
         }
     }
 
-    /// Registers a topic for the first time.
+    /// Add a topic to keep registering on other nodes.
     pub fn register_topic(
         &self,
-        topic: String,
+        topic: &'static str,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
         let channel = self.clone_channel();
 
@@ -578,7 +578,7 @@ impl Discv5 {
             let channel = channel
                 .as_ref()
                 .map_err(|_| RequestError::ServiceNotStarted)?;
-            let topic_hash = Topic::new(&topic).hash();
+            let topic_hash = Topic::new(topic).hash();
             let event = ServiceRequest::RegisterTopic(topic_hash);
             debug!(
                 "Registering topic {} with Sha256 hash {}",
@@ -619,14 +619,31 @@ impl Discv5 {
         }
     }
 
-    /// Finds the relevant nodes to publish the topics on, as far away from the topic as
-    /// the bits configured by the Discv5 topic_radius distance in the Discv5 config.
-    pub fn find_closest_nodes_to_topic(
+    /// Get the ads advertised for other nodes for a given topic.
+    pub fn ads(
         &self,
-        topic_hash: TopicHash,
-    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
-        let key = NodeId::new(&topic_hash.as_bytes());
-        self.find_node(key)
+        topic: &'static str,
+    ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
+        // the service will verify if this node is contactable, we just send it and
+        // await a response.
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+            let topic_hash = Topic::new(topic).hash();
+            let event = ServiceRequest::Ads(topic_hash, callback_send);
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
     }
 
     /// Runs an iterative `FIND_NODE` request.

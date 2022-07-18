@@ -192,6 +192,8 @@ pub enum ServiceRequest {
     RemoveTopic(TopicHash, oneshot::Sender<Result<String, RequestError>>),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
+    /// Retrieves the ads adveritsed for other nodes for a given topic.
+    Ads(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
@@ -702,8 +704,14 @@ impl Service {
                             if self.registration_attempts.remove(&topic_hash).is_some() {
                                 METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
                                 if callback.send(Ok(base64::encode(topic_hash.as_bytes()))).is_err() {
-                                    error!("Failed to return the removed topic");
+                                    error!("Failed to return the removed topic {}", topic_hash);
                                 }
+                            }
+                        }
+                        ServiceRequest::Ads(topic, callback) => {
+                            let ads = self.ads.get_ad_nodes(topic).map(|ad_node| ad_node.node_record().clone()).collect::<Vec<Enr>>();
+                            if callback.send(Ok(ads)).is_err() {
+                                error!("Failed to return ads for topic {}", topic);
                             }
                         }
                     }
