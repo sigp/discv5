@@ -61,11 +61,9 @@ impl Hasher for Sha256Hash {
     }
 }
 
-/// A topic hashed by the hash algorithm implemented by the sending node.
-/// TopicHash is used in place of a Vec<u8> in requests and responses. This
-/// deviates from the wire protocol, it was necessary that the sender hashes
-/// the topic as the hash is used to deteremine by XOR distance which nodes
-/// to send the REGTOPIC request to.
+/// The 32-bytes that are sent in the body of a topic request are interpreted 
+/// as a hash by the agreed upon hash algorithm in the discv5 network (defaults
+/// to Sha256).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TopicHash {
     /// The topic hash. Stored as a fixed length byte array.
