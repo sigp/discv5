@@ -568,7 +568,7 @@ impl Discv5 {
     }
 
     /// Registers a topic for the first time.
-    pub fn reg_topic_req(
+    pub fn register_topic(
         &self,
         topic: String,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
