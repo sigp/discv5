@@ -512,7 +512,7 @@ impl Discv5 {
     }
 
     /// Returns an iterator over all ENR node IDs of nodes currently contained in the routing table.
-    pub async fn table_entries_id_topic(
+    pub fn table_entries_id_topic(
         &self,
         topic: &'static str,
     ) -> impl Future<Output = Result<BTreeMap<u64, Vec<NodeId>>, RequestError>> {
@@ -531,6 +531,7 @@ impl Discv5 {
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+
             callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive table entries' ids for topic {} with topic hash {} {}. Error {}", topic, topic_hash, topic.hash_function_name(), e)))?
         }
     }
