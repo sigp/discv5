@@ -57,7 +57,7 @@ pub enum Discv5Event {
     /// guaranteed to be live or contactable.
     Discovered(Enr),
     /// A node has been discovered from either a REGTOPIC or a TOPICQUERY request. See [`Discv5Event::Discovered`].
-    DiscoveredTopic(Enr, TopicHash),
+    DiscoveredNewPeerTopic(Enr, TopicHash),
     /// A new ENR was added to the routing table.
     EnrAdded { enr: Enr, replaced: Option<Enr> },
     /// A new node has been added to the routing table.

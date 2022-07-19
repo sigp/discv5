@@ -2053,8 +2053,7 @@ impl Service {
         };
         debug!(
             "Sending REGCONFIRMATION response to: {}. Response: {} ",
-            node_address,
-            response
+            node_address, response
         );
         let _ = self
             .handler_send
@@ -2203,7 +2202,7 @@ impl Service {
         req_type: &str,
         resp_body: ResponseBody,
     ) {
-        debug!("Sending NODES response to {} request {}", req_type, id);
+        debug!("Sending NODES response to {} request {}", req_type, rpc_id);
         // if there are no nodes, send an empty response
         if nodes_to_send.is_empty() {
             let response = Response {
@@ -2397,12 +2396,8 @@ impl Service {
 
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
-            if self.config.report_discovered_peers {
-                if let Some(topic_hash) = topic_hash {
-                    self.send_event(Discv5Event::DiscoveredTopic(enr.clone(), topic_hash));
-                } else {
-                    self.send_event(Discv5Event::Discovered(enr.clone()));
-                }
+            if self.config.report_discovered_peers && topic_hash.is_none() {
+                self.send_event(Discv5Event::Discovered(enr.clone()));
             }
 
             // ignore peers that don't pass the table filter
@@ -2455,6 +2450,9 @@ impl Service {
                         }
                         kbucket::Entry::Absent(_) => {
                             if let Some(topic_hash) = topic_hash {
+                                if self.config.report_discovered_peers {
+                                    self.send_event(Discv5Event::DiscoveredNewPeerTopic(enr.clone(), topic_hash));
+                                }
                                 trace!("Discovered new peer {} for topic hash {}", enr.node_id(), topic_hash);
                                 let discovered_peers =
                                     self.discovered_peers_topic.entry(topic_hash).or_default();
