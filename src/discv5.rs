@@ -511,6 +511,30 @@ impl Discv5 {
         }
     }
 
+    /// Returns an iterator over all ENR node IDs of nodes currently contained in the routing table.
+    pub async fn table_entries_id_topic(
+        &self,
+        topic: &'static str,
+    ) -> impl Future<Output = Result<BTreeMap<u64, Vec<NodeId>>, RequestError>> {
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+            let (callback_send, callback_recv) = oneshot::channel();
+
+            let topic = Topic::new(topic);
+            let topic_hash = topic.hash();
+
+            let event = ServiceRequest::TableEntriesIdTopic(topic_hash, callback_send);
+
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive table entries' ids for topic {} with topic hash {} {}. Error {}", topic, topic_hash, topic.hash_function_name(), e)))?
+        }
+    }
+
     pub fn topic_query_req(
         &self,
         topic: &'static str,
@@ -526,9 +550,7 @@ impl Discv5 {
             let topic_hash = topic.hash();
 
             let event = ServiceRequest::TopicQuery(topic_hash, callback_send);
-            let channel = channel
-                .as_ref()
-                .map_err(|_| RequestError::ServiceNotStarted)?;
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             // send the request
             channel
@@ -536,9 +558,12 @@ impl Discv5 {
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             // await the response
-            let ad_nodes = callback_recv
-                .await
-                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?;
+            let ad_nodes = callback_recv.await.map_err(|e| {
+                RequestError::ChannelFailed(format!(
+                    "Failed to receive ad nodes from lookup of topic hash {}. Error {}",
+                    topic_hash, e
+                ))
+            })?;
             if let Ok(ad_nodes) = ad_nodes {
                 debug!(
                     "Received {} ad nodes for topic {} with topic hash {} {}",
@@ -570,9 +595,12 @@ impl Discv5 {
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
-            callback_recv
-                .await
-                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+            callback_recv.await.map_err(|e| {
+                RequestError::ChannelFailed(format!(
+                    "Failed to receive removed topic hash {}. Error {}",
+                    topic_hash, e
+                ))
+            })?
         }
     }
 

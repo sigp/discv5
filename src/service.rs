@@ -184,6 +184,11 @@ pub enum ServiceRequest {
         TopicHash,
         oneshot::Sender<Result<BTreeMap<u64, RegAttempts>, RequestError>>,
     ),
+    /// Retrieves the node id of entries in a given topic's kbuckets by distance.
+    TableEntriesIdTopic(
+        TopicHash,
+        oneshot::Sender<Result<BTreeMap<u64, Vec<NodeId>>, RequestError>>,
+    ),
 }
 
 /// The max wait time accpeted for tickets.
@@ -728,6 +733,23 @@ impl Service {
                             };
                             if callback.send(Ok(reg_attempts)).is_err() {
                                 error!("Failed to return registration attempts for topic hash {}", topic_hash);
+                            }
+                        }
+                        ServiceRequest::TableEntriesIdTopic(topic_hash, callback) => {
+                            let mut table_entries = BTreeMap::new();
+                            if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
+                                for (index, bucket) in kbuckets.buckets_iter().enumerate() {
+                                    // The bucket's index in the Vec of buckets in the kbucket table will
+                                    // be one less than the distance as the log2distance 0 from the local
+                                    // node, i.e. the local node, is not assigned a bucket.
+                                    let distance = index as u64 + 1;
+                                    let mut node_ids = Vec::new();
+                                    bucket.iter().for_each(|node| node_ids.push(*node.key.preimage()));
+                                    table_entries.insert(distance, node_ids);
+                                }
+                            }
+                            if callback.send(Ok(table_entries)).is_err() {
+                                error!("Failed to return table entries' ids for topic hash {}", topic_hash);
                             }
                         }
                     }
