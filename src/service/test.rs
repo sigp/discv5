@@ -97,6 +97,7 @@ async fn build_service(
         discv5_recv,
         event_stream: None,
         ads: Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3).unwrap(),
+        ticket_key: rand::random(),
         tickets: Tickets::new(Duration::from_secs(60 * 15)),
         registration_attempts: HashMap::new(),
         topics_kbuckets: HashMap::new(),

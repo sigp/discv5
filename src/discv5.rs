@@ -20,13 +20,13 @@ use crate::{
         NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
-    service::{QueryKind, Service, ServiceRequest, TalkRequest},
+    service::{QueryKind, RegAttempts, Service, ServiceRequest, TalkRequest},
     Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     future::Future,
     net::SocketAddr,
     sync::Arc,
@@ -435,7 +435,7 @@ impl Discv5 {
             .collect()
     }
 
-    pub fn hashes(topic: String) -> Vec<(TopicHash, String)> {
+    pub fn hashes(topic: &'static str) -> Vec<(TopicHash, String)> {
         let sha256_topic = Topic::new(topic);
         vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
     }
@@ -513,7 +513,7 @@ impl Discv5 {
 
     pub fn topic_query_req(
         &self,
-        topic_hash: TopicHash,
+        topic: &'static str,
     ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
         let channel = self.clone_channel();
 
@@ -521,6 +521,9 @@ impl Discv5 {
             // the service will verify if this node is contactable, we just send it and
             // await a response.
             let (callback_send, callback_recv) = oneshot::channel();
+
+            let topic = Topic::new(topic);
+            let topic_hash = topic.hash();
 
             let event = ServiceRequest::TopicQuery(topic_hash, callback_send);
             let channel = channel
@@ -537,7 +540,13 @@ impl Discv5 {
                 .await
                 .map_err(|e| RequestError::ChannelFailed(e.to_string()))?;
             if let Ok(ad_nodes) = ad_nodes {
-                debug!("Received {} ad nodes", ad_nodes.len());
+                debug!(
+                    "Received {} ad nodes for topic {} with topic hash {} {}",
+                    ad_nodes.len(),
+                    topic,
+                    topic_hash,
+                    topic.hash_function_name()
+                );
                 Ok(ad_nodes)
             } else {
                 Ok(Vec::new())
@@ -593,6 +602,28 @@ impl Discv5 {
         }
     }
 
+    pub fn reg_attempts(
+        &self,
+        topic: &'static str,
+    ) -> impl Future<Output = Result<BTreeMap<u64, RegAttempts>, RequestError>> + 'static {
+        let channel = self.clone_channel();
+        let (callback_send, callback_recv) = oneshot::channel();
+
+        async move {
+            let channel = channel
+                .as_ref()
+                .map_err(|_| RequestError::ServiceNotStarted)?;
+            let topic = Topic::new(topic);
+            let topic_hash = topic.hash();
+            let event = ServiceRequest::RegistrationAttempts(topic_hash, callback_send);
+
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ServiceNotStarted)?;
+            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive regsitration attempts for topic {} with topic hash {} {}. Error {}", topic, topic_hash, topic.hash_function_name(), e)))?
+        }
+    }
     /// Retrieves the topics that we have published on other nodes.
     pub fn active_topics(
         &self,
@@ -613,9 +644,9 @@ impl Discv5 {
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             // await the response
-            callback_recv
-                .await
-                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+            callback_recv.await.map_err(|e| {
+                RequestError::ChannelFailed(format!("Failed to receive active topics. Error {}", e))
+            })?
         }
     }
 
@@ -631,7 +662,8 @@ impl Discv5 {
 
         async move {
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
-            let topic_hash = Topic::new(topic).hash();
+            let topic = Topic::new(topic);
+            let topic_hash = topic.hash();
             let event = ServiceRequest::Ads(topic_hash, callback_send);
 
             // send the request
@@ -640,9 +672,15 @@ impl Discv5 {
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             // await the response
-            callback_recv
-                .await
-                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+            callback_recv.await.map_err(|e| {
+                RequestError::ChannelFailed(format!(
+                    "Failed to receive ads for topic {} with topic hash {} {}. Error {}",
+                    topic,
+                    topic_hash,
+                    topic.hash_function_name(),
+                    e
+                ))
+            })?
         }
     }
 

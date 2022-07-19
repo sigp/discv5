@@ -140,29 +140,14 @@ impl TalkRequest {
     }
 }
 
-/// The max wait time accpeted for tickets.
-const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
-
-/// The time window within in which the number of new tickets from a peer for a topic will be limitied.
-const TICKET_LIMITER_DURATION: Duration = Duration::from_secs(60 * 15);
-
-/// The max nodes to adveritse for a topic.
-const MAX_ADS_TOPIC: usize = 100;
-
-/// The max nodes to advertise.
-const MAX_ADS: usize = 50000;
-
-/// The max ads per subnet per topic.
-const MAX_ADS_SUBNET_TOPIC: usize = 5;
-
-/// The max ads per subnet.
-const MAX_ADS_SUBNET: usize = 50;
-
-/// The time after a REGCONFIRMATION is sent that an ad is placed.
-const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
-
-/// The max number of uncontacted peers to store before the kbuckets per topic.
-const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
+/// The active and temporarily limited (too many tickets received from a node
+/// in a given time span) registration attempts. Upon sending a REGTOPIC to
+/// a node, it is inserted into RegAttempts with RegistrationState::Ticket.
+#[derive(Default, Clone)]
+pub struct RegAttempts {
+    /// One registration attempt per node is allowed at a time.
+    pub reg_attempts: HashMap<NodeId, RegistrationState>,
+}
 
 /// The types of requests to send to the Discv5 service.
 pub enum ServiceRequest {
@@ -194,7 +179,36 @@ pub enum ServiceRequest {
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
     /// Retrieves the ads adveritsed for other nodes for a given topic.
     Ads(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
+    /// Retrieves the registration attempts acitve for a given topic.
+    RegistrationAttempts(
+        TopicHash,
+        oneshot::Sender<Result<BTreeMap<u64, RegAttempts>, RequestError>>,
+    ),
 }
+
+/// The max wait time accpeted for tickets.
+const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
+
+/// The time window within in which the number of new tickets from a peer for a topic will be limitied.
+const TICKET_LIMITER_DURATION: Duration = Duration::from_secs(60 * 15);
+
+/// The max nodes to adveritse for a topic.
+const MAX_ADS_TOPIC: usize = 100;
+
+/// The max nodes to advertise.
+const MAX_ADS: usize = 50000;
+
+/// The max ads per subnet per topic.
+const MAX_ADS_SUBNET_TOPIC: usize = 5;
+
+/// The max ads per subnet.
+const MAX_ADS_SUBNET: usize = 50;
+
+/// The time after a REGCONFIRMATION is sent that an ad is placed.
+const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
+
+/// The max number of uncontacted peers to store before the kbuckets per topic.
+const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
 
 use crate::discv5::PERMIT_BAN_LIST;
 
@@ -262,7 +276,7 @@ pub struct Service {
 
     /// Topics tracks registration attempts of the topic hashes to advertise on
     /// other nodes.
-    registration_attempts: HashMap<TopicHash, HashMap<u64, HashMap<NodeId, RegistrationState>>>,
+    registration_attempts: HashMap<TopicHash, BTreeMap<u64, RegAttempts>>,
 
     /// KBuckets per topic hash.
     topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
@@ -271,6 +285,9 @@ pub struct Service {
     /// this intermediary stroage to check their connectivity before inserting them in the topic's
     /// kbuckets.
     discovered_peers_topic: HashMap<TopicHash, BTreeMap<u64, HashMap<NodeId, Enr>>>,
+
+    /// The key used for en-/decrypting tickets.
+    ticket_key: [u8; 16],
 
     /// Tickets received by other nodes.
     tickets: Tickets,
@@ -314,7 +331,7 @@ pub enum TopicQueryResponseState {
 /// set to be registered. A registration is active when either a ticket for an adslot is
 /// held and the ticket wait time has not yet expired, or a REGCONFIRMATION has been
 /// received for an ad slot and the ad lifetime has not yet elapsed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RegistrationState {
     /// A REGCONFIRMATION has been received at the given instant.
     Confirmed(Instant),
@@ -484,19 +501,6 @@ impl Service {
             }
         };
 
-        // A key is generated for en-/decrypting tickets that are issued upon receiving a topic
-        // regsitration attempt.
-        let ticket_key: [u8; 16] = rand::random();
-        match local_enr
-            .write()
-            .insert("ticket_key", &ticket_key, &enr_key.write())
-        {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(Error::new(ErrorKind::Other, format!("{:?}", e)));
-            }
-        }
-
         config
             .executor
             .clone()
@@ -523,6 +527,7 @@ impl Service {
                     registration_attempts: HashMap::new(),
                     topics_kbuckets: HashMap::new(),
                     discovered_peers_topic: HashMap::new(),
+                    ticket_key: rand::random(),
                     tickets: Tickets::new(TICKET_LIMITER_DURATION),
                     ticket_pools: TicketPools::default(),
                     active_topic_queries: ActiveTopicQueries::new(
@@ -628,7 +633,7 @@ impl Service {
                             self.send_topic_queries(topic_hash, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic_hash) => {
-                            if self.registration_attempts.insert(topic_hash, HashMap::new()).is_some() {
+                            if self.registration_attempts.insert(topic_hash, BTreeMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
                             } else {
                                 // NOTE: Currently we don't expose custom filter support in the configuration. Users can
@@ -679,7 +684,7 @@ impl Service {
                             let mut active_topics = HashMap::<TopicHash, Vec<NodeId>>::new();
                             self.registration_attempts.iter_mut().for_each(|(topic_hash, reg_attempts_by_distance)| {
                                 for reg_attempts in reg_attempts_by_distance.values_mut() {
-                                    reg_attempts.retain(|node_id, reg_state| {
+                                    reg_attempts.reg_attempts.retain(|node_id, reg_state| {
                                         match reg_state {
                                             RegistrationState::Confirmed(insert_time) => {
                                                 if insert_time.elapsed() < AD_LIFETIME {
@@ -708,10 +713,21 @@ impl Service {
                                 }
                             }
                         }
-                        ServiceRequest::Ads(topic, callback) => {
-                            let ads = self.ads.get_ad_nodes(topic).map(|ad_node| ad_node.node_record().clone()).collect::<Vec<Enr>>();
+                        ServiceRequest::Ads(topic_hash, callback) => {
+                            let ads = self.ads.get_ad_nodes(topic_hash).map(|ad_node| ad_node.node_record().clone()).collect::<Vec<Enr>>();
                             if callback.send(Ok(ads)).is_err() {
-                                error!("Failed to return ads for topic {}", topic);
+                                error!("Failed to return ads for topic {}", topic_hash);
+                            }
+                        }
+                        ServiceRequest::RegistrationAttempts(topic_hash, callback) => {
+                            let reg_attempts = if let Some(reg_attempts) = self.registration_attempts.get(&topic_hash) {
+                                reg_attempts.clone()
+                            } else {
+                                error!("Topic hash {} is not being registered", topic_hash);
+                                BTreeMap::new()
+                            };
+                            if callback.send(Ok(reg_attempts)).is_err() {
+                                error!("Failed to return registration attempts for topic hash {}", topic_hash);
                             }
                         }
                     }
@@ -816,7 +832,7 @@ impl Service {
                     // updated.
                     if let Some(reg_attempts) = self.registration_attempts.get_mut(&active_topic.topic()) {
                         for kbucket_reg_attempts in reg_attempts.values_mut() {
-                            let reg_state = kbucket_reg_attempts.remove(active_topic.node_id());
+                            let reg_state = kbucket_reg_attempts.reg_attempts.remove(active_topic.node_id());
                             if reg_state.is_some() {
                                 break;
                             }
@@ -886,7 +902,7 @@ impl Service {
                 let registrations = reg_attempts.entry(distance).or_default();
 
                 // Remove expired registrations and ticket limit blockages.
-                registrations.retain(|node_id, reg_state| {
+                registrations.reg_attempts.retain(|node_id, reg_state| {
                         trace!("Registration attempt of node id {}, reg state {:?} at distance {}", node_id, reg_state, distance);
                         match reg_state {
                             RegistrationState::Confirmed(insert_time) => {
@@ -914,9 +930,9 @@ impl Service {
                         bucket.retain(|node_id, enr | {
                             if new_peers_bucket.len() + active_reg_attempts_bucket >= max_reg_attempts_bucket {
                                 true
-                            } else if let Entry::Vacant(_) = registrations.entry(*node_id) {
+                            } else if let Entry::Vacant(_) = registrations.reg_attempts.entry(*node_id) {
                                 debug!("Found new registration peer in uncontacted peers for topic {}. Peer: {:?}", topic_hash, node_id);
-                                registrations.insert(*node_id, RegistrationState::Ticket);
+                                registrations.reg_attempts.insert(*node_id, RegistrationState::Ticket);
                                 new_peers_bucket.push(enr.clone());
                                 false
                             } else {
@@ -931,7 +947,7 @@ impl Service {
                 // removed is less than the max number of registration attempts that should be active
                 // per bucket and is not equal to the total number of peers available in that bucket.
                 if active_reg_attempts_bucket < self.config.max_nodes_response
-                    && registrations.len() != bucket.num_entries()
+                    && registrations.reg_attempts.len() != bucket.num_entries()
                 {
                     for peer in bucket.iter() {
                         if new_peers_bucket.len() + active_reg_attempts_bucket
@@ -940,13 +956,15 @@ impl Service {
                             break;
                         }
                         let node_id = *peer.key.preimage();
-                        if let Entry::Vacant(_) = registrations.entry(node_id) {
+                        if let Entry::Vacant(_) = registrations.reg_attempts.entry(node_id) {
                             debug!(
                                 "Found new registration peer in kbuckets of topic {}. Peer: {:?}",
                                 topic_hash,
                                 peer.key.preimage()
                             );
-                            registrations.insert(node_id, RegistrationState::Ticket);
+                            registrations
+                                .reg_attempts
+                                .insert(node_id, RegistrationState::Ticket);
                             new_peers_bucket.push(peer.value.clone())
                         }
                     }
@@ -1282,70 +1300,56 @@ impl Service {
                 );
 
                 if !ticket.is_empty() {
-                    let decoded_local_enr = self
-                        .local_enr
-                        .write()
-                        .to_base64()
-                        .parse::<Enr>()
-                        .map_err(|e| {
-                            error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
-                        });
-                    if let Ok(decoded_local_enr) = decoded_local_enr {
-                        if let Some(ticket_key) = decoded_local_enr.get("ticket_key") {
-                            let decrypted_ticket = {
-                                let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
-                                let payload = Payload {
-                                    msg: &ticket,
-                                    aad: b"",
-                                };
-                                aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
-                                        .map_err(|e| {
-                                            error!(
-                                                "Failed to decrypt ticket in REGTOPIC request. Error: {}",
-                                                e
-                                            )
-                                        })
-                            };
-                            if let Ok(decrypted_ticket) = decrypted_ticket {
-                                Ticket::decode(&decrypted_ticket)
-                                        .map_err(|e| {
-                                            error!(
-                                                "Failed to decode ticket in REGTOPIC request. Error: {}",
-                                                e
-                                            )
-                                        })
-                                        .map(|ticket| {
-                                            if let Some(ticket) = ticket {
-                                                // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
-                                                // wait time for the ad slot. See discv5 spec. This node will not store tickets received
-                                                // with wait time 0.
-                                                new_ticket.set_cum_wait(ticket.cum_wait());
-                                                self.send_ticket_response(
-                                                    node_address.clone(),
-                                                    id.clone(),
-                                                    new_ticket.clone(),
-                                                    wait_time,
-                                                );
-                                                // If current wait time is 0, the ticket is added to the matching ticket pool.
-                                                if wait_time <= Duration::from_secs(0) {
-                                                    // Drop if src_node_id, src_ip and topic derived from node_address and request
-                                                    // don't match those in ticket. For example if a malicious node tries to use
-                                                    // another ticket issued by us.
-                                                    if ticket == new_ticket {
-                                                        self.ticket_pools.insert(enr, id, ticket, node_address.socket_addr.ip());
-                                                    }
-                                                }
-                                            }
-                                        })
-                                        .ok();
-                            } else {
-                                warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting: {}", node_address.node_id);
-                                let ban_timeout =
-                                    self.config.ban_duration.map(|v| Instant::now() + v);
-                                PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                                self.rpc_failure(id, RequestError::InvalidTicket);
-                            }
-                        }
+                    let decrypted_ticket = {
+                        let aead = Aes128Gcm::new(GenericArray::from_slice(&self.ticket_key));
+                        let payload = Payload {
+                            msg: &ticket,
+                            aad: b"",
+                        };
+                        aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                            .map_err(|e| {
+                                error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
+                            })
+                    };
+                    if let Ok(decrypted_ticket) = decrypted_ticket {
+                        Ticket::decode(&decrypted_ticket)
+                            .map_err(|e| {
+                                error!("Failed to decode ticket in REGTOPIC request. Error: {}", e)
+                            })
+                            .map(|ticket| {
+                                if let Some(ticket) = ticket {
+                                    // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
+                                    // wait time for the ad slot. See discv5 spec. This node will not store tickets received
+                                    // with wait time 0.
+                                    new_ticket.set_cum_wait(ticket.cum_wait());
+                                    self.send_ticket_response(
+                                        node_address.clone(),
+                                        id.clone(),
+                                        new_ticket.clone(),
+                                        wait_time,
+                                    );
+                                    // If current wait time is 0, the ticket is added to the matching ticket pool.
+                                    if wait_time <= Duration::from_secs(0) {
+                                        // Drop if src_node_id, src_ip and topic derived from node_address and request
+                                        // don't match those in ticket. For example if a malicious node tries to use
+                                        // another ticket issued by us.
+                                        if ticket == new_ticket {
+                                            self.ticket_pools.insert(
+                                                enr,
+                                                id,
+                                                ticket,
+                                                node_address.socket_addr.ip(),
+                                            );
+                                        }
+                                    }
+                                }
+                            })
+                            .ok();
+                    } else {
+                        warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting: {}", node_address.node_id);
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                        self.rpc_failure(id, RequestError::InvalidTicket);
                     }
                 } else {
                     debug!("Sending TICKET response");
@@ -1822,13 +1826,11 @@ impl Service {
                                 let topic_key: kbucket::Key<NodeId> =
                                     NodeId::new(&topic.as_bytes()).into();
                                 if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                                    reg_attempts_by_distance.get_mut(&distance).map(
-                                        |reg_attempts| {
-                                            reg_attempts.get_mut(&node_id).map(|reg_state| {
-                                                *reg_state = RegistrationState::TicketLimit(now)
-                                            })
-                                        },
-                                    );
+                                    reg_attempts_by_distance.get_mut(&distance).map(|bucket| {
+                                        bucket.reg_attempts.get_mut(&node_id).map(|reg_state| {
+                                            *reg_state = RegistrationState::TicketLimit(now)
+                                        })
+                                    });
                                 }
                             }
                         }
@@ -1844,6 +1846,7 @@ impl Service {
                         if let Some(reg_state) = registration_attempts
                             .entry(distance)
                             .or_default()
+                            .reg_attempts
                             .get_mut(&node_id)
                         {
                             *reg_state = RegistrationState::Confirmed(now);
@@ -1989,42 +1992,32 @@ impl Service {
         ticket: Ticket,
         wait_time: Duration,
     ) {
-        self.local_enr
-            .write()
-            .to_base64()
-            .parse::<Enr>()
+        let aead = Aes128Gcm::new(GenericArray::from_slice(&self.ticket_key));
+        let payload = Payload {
+            msg: &ticket.encode(),
+            aad: b"",
+        };
+        let _ = aead
+            .encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
             .map_err(|e| error!("Failed to send TICKET response: {}", e))
-            .map(|decoded_enr| {
-                if let Some(ticket_key) = decoded_enr.get("ticket_key") {
-                    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
-                    let payload = Payload {
-                        msg: &ticket.encode(),
-                        aad: b"",
-                    };
-                    aead.encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
-                        .map_err(|e| error!("Failed to send TICKET response: {}", e))
-                        .map(|encrypted_ticket| {
-                            let response = Response {
-                                id: rpc_id,
-                                body: ResponseBody::Ticket {
-                                    ticket: encrypted_ticket,
-                                    wait_time: wait_time.as_secs(),
-                                    topic: ticket.topic(),
-                                },
-                            };
-                            trace!(
-                                "Sending TICKET response to: {}. Response: {} ",
-                                node_address,
-                                response
-                            );
-                            let _ = self
-                                .handler_send
-                                .send(HandlerIn::Response(node_address, Box::new(response)));
-                        })
-                        .ok();
-                }
-            })
-            .ok();
+            .map(|encrypted_ticket| {
+                let response = Response {
+                    id: rpc_id,
+                    body: ResponseBody::Ticket {
+                        ticket: encrypted_ticket,
+                        wait_time: wait_time.as_secs(),
+                        topic: ticket.topic(),
+                    },
+                };
+                trace!(
+                    "Sending TICKET response to: {}. Response: {} ",
+                    node_address,
+                    response
+                );
+                let _ = self
+                    .handler_send
+                    .send(HandlerIn::Response(node_address, Box::new(response)));
+            });
     }
 
     /// The response sent to a node which is selected out of a ticket pool of registrants
@@ -2814,10 +2807,11 @@ impl Service {
                     let peer_key: kbucket::Key<NodeId> = node_id.into();
                     let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
                     if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                        // Remove the registration attempt before disconnecting the peer.
                         let registration_attempts =
                             self.registration_attempts.entry(topic).or_default();
                         if let Some(bucket) = registration_attempts.get_mut(&distance) {
-                            bucket.remove(&node_id);
+                            bucket.reg_attempts.remove(&node_id);
                         }
 
                         METRICS
