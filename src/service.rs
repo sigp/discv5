@@ -1298,7 +1298,6 @@ impl Service {
                         }
                     }
                 }
-                debug!("Sending NODES response to REGTOPIC");
                 self.send_find_topic_nodes_response(
                     topic,
                     node_address.clone(),
@@ -1374,7 +1373,6 @@ impl Service {
                         self.rpc_failure(id, RequestError::InvalidTicket);
                     }
                 } else {
-                    debug!("Sending TICKET response");
                     // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
                     // wait time for the ad slot. See discv5 spec. This node will not store tickets received
                     // with wait time 0.
@@ -1396,7 +1394,6 @@ impl Service {
                 }
             }
             RequestBody::TopicQuery { topic } => {
-                trace!("Sending NODES response to TOPICQUERY request {}", id);
                 self.send_find_topic_nodes_response(
                     topic,
                     node_address.clone(),
@@ -2054,7 +2051,7 @@ impl Service {
             id: rpc_id,
             body: ResponseBody::RegisterConfirmation { topic },
         };
-        trace!(
+        debug!(
             "Sending REGCONFIRMATION response to: {}. Response: {} ",
             node_address,
             response
@@ -2206,6 +2203,7 @@ impl Service {
         req_type: &str,
         resp_body: ResponseBody,
     ) {
+        debug!("Sending NODES response to {} request {}", req_type, id);
         // if there are no nodes, send an empty response
         if nodes_to_send.is_empty() {
             let response = Response {
