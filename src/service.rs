@@ -212,6 +212,17 @@ const MAX_ADS_SUBNET: usize = 50;
 /// The time after a REGCONFIRMATION is sent that an ad is placed.
 const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
 
+/// The number of registration attempts that should be active per distance
+/// if there are sufficient peers.
+const MAX_REG_ATTEMPTS_DISTANCE: usize = 16;
+
+/// Registration of topics are paced to occur at intervals.
+const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
+
+/// To avoid a self-provoked DoS, registration attempts must be limited per
+/// registration interval.
+const MAX_REGTOPICS_REGISTER_INTERVAL: usize = 30;
+
 /// The max number of uncontacted peers to store before the kbuckets per topic.
 const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
 
@@ -553,7 +564,13 @@ impl Service {
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
         // In the case where not many peers populate the topic's kbuckets, ensure topics keep being republished.
-        let mut registration_interval = tokio::time::interval(AD_LIFETIME);
+        let mut registration_interval = tokio::time::interval(REGISTER_INTERVAL);
+        let mut topics_to_reg_iter = self
+            .registration_attempts
+            .keys()
+            .copied()
+            .collect::<Vec<TopicHash>>()
+            .into_iter();
 
         loop {
             tokio::select! {
@@ -867,8 +884,10 @@ impl Service {
                     ticket_pool.retain(|node_id, pool_ticket| self.ads.ticket_wait_time(topic, *node_id, *pool_ticket.ip()) == None);
                     // Select ticket with longest cummulative wait time.
                     if let Some(pool_ticket) = ticket_pool.values().max_by_key(|pool_ticket| pool_ticket.ticket().cum_wait()) {
-                        self.ads.insert(pool_ticket.node_record().clone(), topic).ok();
-                        NodeContact::try_from_enr(pool_ticket.node_record().clone(), self.config.ip_mode).map(|contact| {
+                        let enr = pool_ticket.node_record();
+                        let node_id = enr.node_id();
+                        let _ = self.ads.insert(enr.clone(), topic).map_err(|e| error!("Couldn't insert ad from node id {} into ads. Error {}", node_id, e));
+                        NodeContact::try_from_enr(enr.clone(), self.config.ip_mode).map(|contact| {
                             self.send_regconfirmation_response(contact.node_address(), pool_ticket.req_id().clone(), topic);
                         }).ok();
                         METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
@@ -891,10 +910,18 @@ impl Service {
                     }
                 }
                 _ = registration_interval.tick() => {
-                    let topics_to_reg = self.registration_attempts.keys().copied().collect::<Vec<TopicHash>>();
-                    for topic_hash in topics_to_reg {
+                    let mut sent_regtopics = 0;
+                    let mut topic_item = topics_to_reg_iter.next();
+                    while let Some(topic_hash) = topic_item {
                         trace!("Republishing topic hash {}", topic_hash);
-                        self.send_register_topics(topic_hash);
+                        sent_regtopics += self.send_register_topics(topic_hash);
+                        if sent_regtopics >= MAX_REGTOPICS_REGISTER_INTERVAL {
+                            break
+                        }
+                        topic_item = topics_to_reg_iter.next();
+                    }
+                    if topic_item.is_none() {
+                        topics_to_reg_iter = self.registration_attempts.keys().copied().collect::<Vec<TopicHash>>().into_iter();
                     }
                 }
             }
@@ -902,7 +929,7 @@ impl Service {
     }
 
     /// Internal function that starts a topic registration.
-    fn send_register_topics(&mut self, topic_hash: TopicHash) {
+    fn send_register_topics(&mut self, topic_hash: TopicHash) -> usize {
         trace!("Sending REGTOPICS");
         if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             trace!(
@@ -915,9 +942,10 @@ impl Service {
 
             // Ensure that max_reg_attempts_bucket registration attempts are alive per bucket if that many peers are
             // available at that distance.
-            let max_reg_attempts_bucket = self.config.max_nodes_response;
-
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
+                if new_peers.len() >= MAX_REGTOPICS_REGISTER_INTERVAL {
+                    break;
+                }
                 let distance = index as u64 + 1;
                 let mut active_reg_attempts_bucket = 0;
 
@@ -950,7 +978,7 @@ impl Service {
                 if let Some(peers) = self.discovered_peers_topic.get_mut(&topic_hash) {
                     if let Some(bucket) = peers.get_mut(&distance) {
                         bucket.retain(|node_id, enr | {
-                            if new_peers_bucket.len() + active_reg_attempts_bucket >= max_reg_attempts_bucket {
+                            if new_peers_bucket.len() + active_reg_attempts_bucket >= MAX_REG_ATTEMPTS_DISTANCE {
                                 true
                             } else if let Entry::Vacant(_) = registrations.reg_attempts.entry(*node_id) {
                                 debug!("Found new registration peer in uncontacted peers for topic {}. Peer: {:?}", topic_hash, node_id);
@@ -968,12 +996,12 @@ impl Service {
                 // The count of active registration attempts for a distance after expired ads have been
                 // removed is less than the max number of registration attempts that should be active
                 // per bucket and is not equal to the total number of peers available in that bucket.
-                if active_reg_attempts_bucket < self.config.max_nodes_response
+                if active_reg_attempts_bucket < MAX_REG_ATTEMPTS_DISTANCE
                     && registrations.reg_attempts.len() != bucket.num_entries()
                 {
                     for peer in bucket.iter() {
                         if new_peers_bucket.len() + active_reg_attempts_bucket
-                            >= self.config.max_nodes_response
+                            >= MAX_REG_ATTEMPTS_DISTANCE
                         {
                             break;
                         }
@@ -993,16 +1021,22 @@ impl Service {
                     new_peers.append(&mut new_peers_bucket);
                 }
             }
+            let mut sent_regtopics = 0;
+
             for peer in new_peers {
                 let local_enr = self.local_enr.read().clone();
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
                     .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
                 {
                     self.reg_topic_request(node_contact, topic_hash, local_enr.clone(), None);
+                    // If an uncontacted peer has a faulty enr, don't count the registration attempt.
+                    sent_regtopics += 1;
                 }
             }
+            sent_regtopics
         } else {
             debug_unreachable!("Broken invariant, a kbuckets table should exist for topic hash");
+            0
         }
     }
 
