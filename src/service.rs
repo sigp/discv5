@@ -221,7 +221,7 @@ const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
 
 /// To avoid a self-provoked DoS, registration attempts must be limited per
 /// registration interval.
-const MAX_REGTOPICS_REGISTER_INTERVAL: usize = 30;
+const MAX_REGTOPICS_REGISTER_INTERVAL: usize = 16;
 
 /// The max number of uncontacted peers to store before the kbuckets per topic.
 const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
