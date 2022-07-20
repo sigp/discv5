@@ -216,11 +216,10 @@ const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
 /// if there are sufficient peers.
 const MAX_REG_ATTEMPTS_DISTANCE: usize = 16;
 
-/// Registration of topics are paced to occur at intervals.
+/// Registration of topics are paced to occur at intervals t avoid a self-provoked DoS.
 const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
 
-/// To avoid a self-provoked DoS, registration attempts must be limited per
-/// registration interval.
+/// Registration attempts must be limited per registration interval.
 const MAX_REGTOPICS_REGISTER_INTERVAL: usize = 16;
 
 /// The max number of uncontacted peers to store before the kbuckets per topic.
@@ -698,8 +697,6 @@ impl Service {
                                 }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                                 METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
-
-                                self.send_register_topics(topic_hash);
                             }
                         }
                         ServiceRequest::ActiveTopics(callback) => {
@@ -928,7 +925,7 @@ impl Service {
         }
     }
 
-    /// Internal function that starts a topic registration.
+    /// Internal function that starts a topic registration. This function should not be called outside of [`REGISTER_INTERVAL`].
     fn send_register_topics(&mut self, topic_hash: TopicHash) -> usize {
         trace!("Sending REGTOPICS");
         if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
@@ -2550,12 +2547,6 @@ impl Service {
             // it hasn't timed out already.
             if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
                 query.dry = false;
-            }
-            // If a topic registration runs dry (not enough regsitration attempts per topic kbucket
-            // and no more peers to contact) any new peers to contact will come with a NODES response
-            // to a REGTOPIC request, or a TOPICQUERY if the same topic has also been looked up.
-            if self.registration_attempts.contains_key(&topic_hash) {
-                self.send_register_topics(topic_hash);
             }
             return;
         }
