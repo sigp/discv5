@@ -268,6 +268,14 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
+        // A node shows if it is behind a NAT by setting the enr field "nat" to 1, 0 if it is not
+        // or leaving empty in case of doubt.
+        let nat = b"";
+        let _ = local_enr
+            .write()
+            .insert("nat", nat, &enr_key.write())
+            .map_err(|e| error!("Failed to insert field 'nat' into local enr. Error {:?}", e));
+
         config
             .executor
             .clone()
@@ -1215,7 +1223,38 @@ impl Service {
             source != &enr.node_id()
         });
 
-        // if this is part of a query, update the query
+        let mut nat_enrs = Vec::new();
+        enrs.retain(|enr| {
+            let decoded_enr = enr.to_base64().parse::<Enr>();
+            if let Ok(decoded_enr) = decoded_enr {
+                if let Some(nat) = decoded_enr.get("nat") {
+                    if let Ok(is_behind_nat) = std::str::from_utf8(nat).map_err(|e| {
+                        error!("Failed to decode field 'nat' in discovered enr with node id {}. Error: {}. Blacklisting.", enr.node_id(), e);
+                        let ip_mode = self.config.ip_mode;
+                        if let Ok(node_contact) = NodeContact::try_from_enr(enr.clone(), ip_mode) {
+                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                            PERMIT_BAN_LIST.write().ban(node_contact.node_address(), ban_timeout);
+                        }
+                    }) {
+                        if is_behind_nat == "1" {
+                            nat_enrs.push(enr.clone());
+                            false
+                        } else {
+                            // Keeps enr if not behind a nat ("nat" = 0) or not sure if behind a nat (nat 
+                            // field is empty).
+                            true
+                        }
+                    } else { false }
+                } else {
+                    // Keeps enr if nat field is nonexistent.
+                    true
+                }
+            } else { false }
+        });
+
+        //self.send_relay_request(&nat_enrs);
+
+        // If this is part of a query, update the query
         if let Some(query_id) = query_id {
             if let Some(query) = self.queries.get_mut(query_id) {
                 let mut peer_count = 0;
