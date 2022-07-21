@@ -561,22 +561,19 @@ impl Discv5 {
             // await the response
             let ad_nodes = callback_recv.await.map_err(|e| {
                 RequestError::ChannelFailed(format!(
-                    "Failed to receive ad nodes from lookup of topic hash {}. Error {}",
-                    topic_hash, e
+                    "Failed to receive ad nodes from lookup of topic {} with topic hash {} {}. Error {}",
+                    topic, topic_hash, topic.hash_function_name(), e
                 ))
             })?;
-            if let Ok(ad_nodes) = ad_nodes {
+            if ad_nodes.is_ok() {
                 debug!(
-                    "Received {} ad nodes for topic {} with topic hash {} {}",
-                    ad_nodes.len(),
+                    "Received ad nodes for topic {} with topic hash {} {}",
                     topic,
                     topic_hash,
                     topic.hash_function_name()
                 );
-                Ok(ad_nodes)
-            } else {
-                Ok(Vec::new())
             }
+            ad_nodes
         }
     }
 
