@@ -603,6 +603,10 @@ impl Service {
             RequestBody::TopicQuery { .. } => {
                 debug!("Received TopicQuery request which is unimplemented");
             }
+            RequestBody::RelayRequest {
+                from_node_id: _,
+                to_node_id: _,
+            } => {}
         }
     }
 
@@ -883,6 +887,7 @@ impl Service {
                 ResponseBody::AdNodes { .. } => {
                     error!("Received an ADNODES response. This is unimplemented and should be unreachable.");
                 }
+                ResponseBody::RelayResponse { response: _ } => {}
             }
         } else {
             warn!(

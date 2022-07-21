@@ -1,4 +1,4 @@
-use enr::{CombinedKey, Enr};
+use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, RlpStream};
 use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
@@ -94,6 +94,14 @@ pub enum RequestBody {
         /// The hashed topic we want NODES response(s) for.
         topic: TopicHash,
     },
+    /// A RELAYREQUEST request, sent by the "initiator" to the "receiver" via the
+    /// "rendezvous".
+    RelayRequest {
+        /// The node id of the "initiator".
+        from_node_id: NodeId,
+        /// The node id of the "receiver".
+        to_node_id: NodeId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +149,13 @@ pub enum ResponseBody {
         /// A list of ENR's returned by the responder.
         nodes: Vec<Enr<CombinedKey>>,
     },
+    /// A RELAYRESPONSE response to a RELAYREQUEST, sent by the "receiver" to the
+    /// "initiator" via the "rendezvous".
+    RelayResponse {
+        /// The repsonse field set to true means the receiver has accepted the
+        /// RELAYREQUEST.
+        response: bool,
+    },
 }
 
 impl Request {
@@ -151,6 +166,7 @@ impl Request {
             RequestBody::Talk { .. } => 5,
             RequestBody::RegisterTopic { .. } => 7,
             RequestBody::TopicQuery { .. } => 10,
+            RequestBody::RelayRequest { .. } => 12,
         }
     }
 
@@ -191,6 +207,18 @@ impl Request {
             }
             RequestBody::RegisterTopic { .. } => buf,
             RequestBody::TopicQuery { .. } => buf,
+            RequestBody::RelayRequest {
+                from_node_id,
+                to_node_id,
+            } => {
+                let mut s = RlpStream::new();
+                s.begin_list(3);
+                s.append(&id.as_bytes());
+                s.append(&from_node_id.raw().to_vec());
+                s.append(&to_node_id.raw().to_vec());
+                buf.extend_from_slice(&s.out());
+                buf
+            }
         }
     }
 }
@@ -204,6 +232,7 @@ impl Response {
             ResponseBody::Ticket { .. } => 8,
             ResponseBody::RegisterConfirmation { .. } => 9,
             ResponseBody::AdNodes { .. } => 11,
+            ResponseBody::RelayResponse { .. } => 13,
         }
     }
 
@@ -225,6 +254,7 @@ impl Response {
                 matches!(req, RequestBody::RegisterTopic { .. })
             }
             ResponseBody::AdNodes { .. } => matches!(req, RequestBody::TopicQuery { .. }),
+            ResponseBody::RelayResponse { .. } => matches!(req, RequestBody::RelayRequest { .. }),
         }
     }
 
@@ -276,6 +306,14 @@ impl Response {
             ResponseBody::Ticket { .. } => buf,
             ResponseBody::RegisterConfirmation { .. } => buf,
             ResponseBody::AdNodes { .. } => buf,
+            ResponseBody::RelayResponse { response } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(&id.as_bytes());
+                s.append(&response);
+                buf.extend_from_slice(&s.out());
+                buf
+            }
         }
     }
 }
@@ -283,59 +321,6 @@ impl Response {
 impl std::fmt::Display for RequestId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
-    }
-}
-
-impl std::fmt::Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Message::Request(request) => write!(f, "{}", request),
-            Message::Response(response) => write!(f, "{}", response),
-        }
-    }
-}
-
-impl std::fmt::Display for Response {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Response: id: {}: {}", self.id, self.body)
-    }
-}
-
-impl std::fmt::Display for ResponseBody {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ResponseBody::Pong { enr_seq, ip, port } => write!(
-                f,
-                "PONG: Enr-seq: {}, Ip: {:?},  Port: {}",
-                enr_seq, ip, port
-            ),
-            ResponseBody::Nodes { total, nodes } => {
-                write!(f, "NODES: total: {}, Nodes: [", total)?;
-                let mut first = true;
-                for id in nodes {
-                    if !first {
-                        write!(f, ", {}", id)?;
-                    } else {
-                        write!(f, "{}", id)?;
-                    }
-                    first = false;
-                }
-
-                write!(f, "]")
-            }
-            ResponseBody::Talk { response } => {
-                write!(f, "Response: Response {}", hex::encode(response))
-            }
-            ResponseBody::Ticket { .. } => {
-                write!(f, "TICKET")
-            }
-            ResponseBody::RegisterConfirmation { .. } => {
-                write!(f, "REGTOPIC")
-            }
-            ResponseBody::AdNodes { .. } => {
-                write!(f, "ADNODES")
-            }
-        }
     }
 }
 
@@ -358,17 +343,76 @@ impl std::fmt::Display for RequestBody {
                 hex::encode(protocol),
                 hex::encode(request)
             ),
-            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
-            RequestBody::RegisterTopic { topic, enr, ticket } => write!(
+            RequestBody::TopicQuery { .. } => write!(f, "TOPICQUERY"),
+            RequestBody::RegisterTopic { .. } => write!(f, "REGTOPIC"),
+            RequestBody::RelayRequest {
+                from_node_id,
+                to_node_id,
+            } => write!(
                 f,
-                "RegisterTopic: topic: {}, enr: {}, ticket: {}",
-                hex::encode(topic),
-                enr.to_base64(),
-                hex::encode(ticket)
+                "RELAYREQUEST: from_node_id: {}, to_node_id: {}",
+                from_node_id, to_node_id
             ),
         }
     }
 }
+
+impl std::fmt::Display for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Response: id: {}: {}", self.id, self.body)
+    }
+}
+
+impl std::fmt::Display for ResponseBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseBody::Pong { enr_seq, ip, port } => write!(
+                f,
+                "PONG: enr-seq: {}, ip: {:?}, port: {}",
+                enr_seq, ip, port
+            ),
+            ResponseBody::Nodes { total, nodes } => {
+                write!(f, "NODES: total: {}, nodes: [", total)?;
+                let mut first = true;
+                for id in nodes {
+                    if !first {
+                        write!(f, ", {}", id)?;
+                    } else {
+                        write!(f, "{}", id)?;
+                    }
+                    first = false;
+                }
+
+                write!(f, "]")
+            }
+            ResponseBody::Talk { response } => {
+                write!(f, "Response: response {}", hex::encode(response))
+            }
+            ResponseBody::Ticket { .. } => {
+                write!(f, "TICKET")
+            }
+            ResponseBody::RegisterConfirmation { .. } => {
+                write!(f, "REGTOPIC")
+            }
+            ResponseBody::AdNodes { .. } => {
+                write!(f, "ADNODES")
+            }
+            ResponseBody::RelayResponse { response } => {
+                write!(f, "RELAYRESPONSE: response: {}", response)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Message::Request(request) => write!(f, "{}", request),
+            Message::Response(response) => write!(f, "{}", response),
+        }
+    }
+}
+
 #[allow(dead_code)]
 impl Message {
     pub fn encode(self) -> Vec<u8> {
@@ -547,9 +591,7 @@ impl Message {
                     body: ResponseBody::Talk { response },
                 })
             }
-            _ => {
-                return Err(DecoderError::Custom("Unknown RPC message type"));
-            } /*
+            /*
                * All other RPC messages are currently not supported as per the 5.1 specification.
 
               7 => {
@@ -561,7 +603,73 @@ impl Message {
               9 => {
                   // TopicQueryRequest
               }
-              */
+              10 => {
+                  // RegisterConfirmation
+              }
+              11 => {
+                  // AdNodes
+              }
+            */
+            12 => {
+                // RelayRequest
+                if list_len != 3 {
+                    debug!(
+                        "RelayRequest has an invalid RLP list length. Expected 3, found {}",
+                        list_len
+                    );
+                    return Err(DecoderError::RlpIncorrectListLen);
+                }
+
+                let from_node_id = {
+                    let node_id_bytes = rlp.val_at::<Vec<u8>>(1)?;
+                    if node_id_bytes.len() > 32 {
+                        debug!("NodeId greater than 32 bytes");
+                        return Err(DecoderError::RlpIsTooBig);
+                    }
+                    let mut node_id = [0u8; 32];
+                    node_id[32 - node_id_bytes.len()..].copy_from_slice(&node_id_bytes);
+                    NodeId::new(&node_id)
+                };
+
+                let to_node_id = {
+                    let node_id_bytes = rlp.val_at::<Vec<u8>>(2)?;
+                    if node_id_bytes.len() > 32 {
+                        debug!("NodeId greater than 32 bytes");
+                        return Err(DecoderError::RlpIsTooBig);
+                    }
+                    let mut node_id = [0u8; 32];
+                    node_id[32 - node_id_bytes.len()..].copy_from_slice(&node_id_bytes);
+                    NodeId::new(&node_id)
+                };
+
+                Message::Request(Request {
+                    id,
+                    body: RequestBody::RelayRequest {
+                        from_node_id,
+                        to_node_id,
+                    },
+                })
+            }
+            13 => {
+                // RelayResponse
+                if list_len != 2 {
+                    debug!(
+                        "RelayResponse has an invalid RLP list length. Expected 2, found {}",
+                        list_len
+                    );
+                    return Err(DecoderError::RlpIncorrectListLen);
+                }
+
+                let response = rlp.val_at::<bool>(1)?;
+
+                Message::Response(Response {
+                    id,
+                    body: ResponseBody::RelayResponse { response },
+                })
+            }
+            _ => {
+                return Err(DecoderError::Custom("Unknown RPC message type"));
+            }
         };
 
         Ok(message)
@@ -810,167 +918,34 @@ mod tests {
         assert_eq!(request, decoded);
     }
 
-    /*
-     * These RPC messages are not in use yet
-     *
     #[test]
-    fn ref_test_encode_request_ticket() {
-        // reference input
-        let id = 1;
-        let hash_bytes =
-            hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
-                .unwrap();
-
-        // expected hex output
-        let expected_output =
-            hex::decode("05e201a0fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
-                .unwrap();
-
-        let mut topic_hash = [0; 32];
-        topic_hash.copy_from_slice(&hash_bytes);
-
-        let message = Message::Request(Request {
-            id,
-            body: RequestBody::Ticket { topic: topic_hash },
-        });
-        assert_eq!(message.encode(), expected_output);
-    }
-
-    #[test]
-    fn ref_test_encode_request_register_topic() {
-        // reference input
-        let id = 1;
-        let ticket =
-            hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
-                .unwrap();
-
-        // expected hex output
-        let expected_output =
-            hex::decode("07e201a0fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
-                .unwrap();
-
-        let message = Message::Request(Request {
-            id,
-            body: RequestBody::RegisterTopic { ticket },
-        });
-        assert_eq!(message.encode(), expected_output);
-    }
-
-    #[test]
-    fn ref_test_encode_request_topic_query() {
-        // reference input
-        let id = 1;
-        let hash_bytes =
-            hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
-                .unwrap();
-
-        // expected hex output
-        let expected_output =
-            hex::decode("09e201a0fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
-                .unwrap();
-
-        let mut topic_hash = [0; 32];
-        topic_hash.copy_from_slice(&hash_bytes);
-
-        let message = Message::Request(Request {
-            id,
-            body: RequestBody::TopicQuery { topic: topic_hash },
-        });
-        assert_eq!(message.encode(), expected_output);
-    }
-
-    #[test]
-    fn ref_test_encode_response_register_topic() {
-        // reference input
-        let id = 1;
-        let registered = true;
-
-        // expected hex output
-        let expected_output = hex::decode("08c20101").unwrap();
-        let message = Message::Response(Response {
-            id,
-            body: ResponseBody::RegisterTopic { registered },
-        });
-        assert_eq!(message.encode(), expected_output);
-    }
-
-    #[test]
-    fn encode_decode_register_topic_request() {
+    fn encode_decode_relay_request() {
+        let id = RequestId(vec![1]);
         let request = Message::Request(Request {
-            id: 1,
-            body: RequestBody::RegisterTopic {
-                topic: vec![1,2,3],
-                ticket: vec![1, 2, 3, 4, 5],
+            id,
+            body: RequestBody::RelayRequest {
+                from_node_id: NodeId::random(),
+                to_node_id: NodeId::random(),
             },
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
-    fn encode_decode_register_topic_response() {
-        let request = Message::Response(Response {
-            id: 0,
-            body: ResponseBody::RegisterTopic { registered: true },
-        });
-
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
-
-        assert_eq!(request, decoded);
-    }
-
-    #[test]
-    fn encode_decode_topic_query_request() {
-        let request = Message::Request(Request {
-            id: 1,
-            body: RequestBody::TopicQuery { topic: [17u8; 32] },
-        });
-
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
-
-        assert_eq!(request, decoded);
-    }
-
-    #[test]
-    fn ref_test_encode_response_ticket() {
-        // reference input
-        let id = 1;
-        let ticket = [0; 32].to_vec(); // all 0's
-        let wait_time = 5;
-
-        // expected hex output
-        let expected_output = hex::decode(
-            "06e301a0000000000000000000000000000000000000000000000000000000000000000005",
-        )
-        .unwrap();
-
-        let message = Message::Response(Response {
+    fn encode_decode_relay_response() {
+        let id = RequestId(vec![1]);
+        let response = Message::Response(Response {
             id,
-            body: ResponseBody::Ticket { ticket, wait_time },
-        });
-        assert_eq!(message.encode(), expected_output);
-    }
-
-    #[test]
-    fn encode_decode_ticket_response() {
-        let request = Message::Response(Response {
-            id: 0,
-            body: ResponseBody::Ticket {
-                ticket: vec![1, 2, 3, 4, 5],
-                wait_time: 5,
-            },
+            body: ResponseBody::RelayResponse { response: true },
         });
 
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(encoded).unwrap();
+        let encoded = response.clone().encode();
+        let decoded = Message::decode(&encoded).unwrap();
 
-        assert_eq!(request, decoded);
+        assert_eq!(response, decoded);
     }
-
-    */
 }
