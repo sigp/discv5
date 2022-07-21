@@ -878,7 +878,10 @@ impl Service {
                     error!("Received a TICKET response. This is unimplemented and should be unreachable.");
                 }
                 ResponseBody::RegisterConfirmation { .. } => {
-                    error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
+                    error!("Received a REGCONFIRMATION response. This is unimplemented and should be unreachable.");
+                }
+                ResponseBody::AdNodes { .. } => {
+                    error!("Received an ADNODES response. This is unimplemented and should be unreachable.");
                 }
             }
         } else {

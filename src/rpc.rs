@@ -73,21 +73,27 @@ pub enum RequestBody {
         /// The distance(s) of peers we expect to be returned in the response.
         distances: Vec<u64>,
     },
-    /// A Talk request.
+    /// A TALKREQ request.
     Talk {
         /// The protocol requesting.
         protocol: Vec<u8>,
         /// The request.
         request: Vec<u8>,
     },
-    /// A REGISTERTOPIC request.
+    /// A REGTOPIC request.
     RegisterTopic {
-        topic: Vec<u8>,
+        /// The hashed topic we want to advertise at the node receiving this request.
+        topic: TopicHash,
+        // Current node record of sender.
         enr: crate::Enr,
+        // Ticket content of ticket from a previous registration attempt or empty.
         ticket: Vec<u8>,
     },
     /// A TOPICQUERY request.
-    TopicQuery { topic: TopicHash },
+    TopicQuery {
+        /// The hashed topic we want NODES response(s) for.
+        topic: TopicHash,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,24 +107,39 @@ pub enum ResponseBody {
         /// Our external UDP port as observed by the responder.
         port: u16,
     },
-    /// A NODES response.
+    /// A NODES response to a FINDNODE or TOPICQUERY request.
     Nodes {
         /// The total number of responses that make up this response.
         total: u64,
         /// A list of ENR's returned by the responder.
         nodes: Vec<Enr<CombinedKey>>,
     },
-    /// The TALK response.
+    /// The TALKRESP response.
     Talk {
-        /// The response for the talk.
+        /// The response for the TALKREQ request.
         response: Vec<u8>,
     },
+    /// The TICKET response.
     Ticket {
+        /// The response to a REGTOPIC request.
         ticket: Vec<u8>,
+        /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
+        /// The topic hash for which the opaque ticket is issued.
+        topic: TopicHash,
     },
+    /// The REGCONFIRMATION response.
     RegisterConfirmation {
-        topic: Vec<u8>,
+        /// The topic of a successful REGTOPIC request.
+        topic: TopicHash,
+    },
+    /// A NODES response to a TOPICQUERY which also receives a NODES response
+    /// with peers to add to topic kbuckets.
+    AdNodes {
+        /// The total number of responses that make up this response.
+        total: u64,
+        /// A list of ENR's returned by the responder.
+        nodes: Vec<Enr<CombinedKey>>,
     },
 }
 
@@ -168,24 +189,8 @@ impl Request {
                 buf.extend_from_slice(&s.out());
                 buf
             }
-            RequestBody::RegisterTopic { topic, enr, ticket } => {
-                let mut s = RlpStream::new();
-                s.begin_list(4);
-                s.append(&id.as_bytes());
-                s.append(&topic);
-                s.append(&enr);
-                s.append(&ticket);
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-            RequestBody::TopicQuery { topic } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
-                s.append(&(&topic as &[u8]));
-                buf.extend_from_slice(&s.out());
-                buf
-            }
+            RequestBody::RegisterTopic { .. } => buf,
+            RequestBody::TopicQuery { .. } => buf,
         }
     }
 }
@@ -198,6 +203,7 @@ impl Response {
             ResponseBody::Talk { .. } => 6,
             ResponseBody::Ticket { .. } => 8,
             ResponseBody::RegisterConfirmation { .. } => 9,
+            ResponseBody::AdNodes { .. } => 11,
         }
     }
 
@@ -208,7 +214,9 @@ impl Response {
             ResponseBody::Nodes { .. } => {
                 matches!(
                     req,
-                    RequestBody::FindNode { .. } | RequestBody::TopicQuery { .. }
+                    RequestBody::FindNode { .. }
+                        | RequestBody::TopicQuery { .. }
+                        | RequestBody::RegisterTopic { .. }
                 )
             }
             ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),
@@ -216,6 +224,7 @@ impl Response {
             ResponseBody::RegisterConfirmation { .. } => {
                 matches!(req, RequestBody::RegisterTopic { .. })
             }
+            ResponseBody::AdNodes { .. } => matches!(req, RequestBody::TopicQuery { .. }),
         }
     }
 
@@ -264,23 +273,9 @@ impl Response {
                 buf.extend_from_slice(&s.out());
                 buf
             }
-            ResponseBody::Ticket { ticket, wait_time } => {
-                let mut s = RlpStream::new();
-                s.begin_list(3);
-                s.append(&id.as_bytes());
-                s.append(&ticket);
-                s.append(&wait_time);
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-            ResponseBody::RegisterConfirmation { topic } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
-                s.append(&topic);
-                buf.extend_from_slice(&s.out());
-                buf
-            }
+            ResponseBody::Ticket { .. } => buf,
+            ResponseBody::RegisterConfirmation { .. } => buf,
+            ResponseBody::AdNodes { .. } => buf,
         }
     }
 }
@@ -331,11 +326,14 @@ impl std::fmt::Display for ResponseBody {
             ResponseBody::Talk { response } => {
                 write!(f, "Response: Response {}", hex::encode(response))
             }
-            ResponseBody::Ticket { ticket, wait_time } => {
-                write!(f, "TICKET: Ticket: {:?}, Wait time: {}", ticket, wait_time)
+            ResponseBody::Ticket { .. } => {
+                write!(f, "TICKET")
             }
-            ResponseBody::RegisterConfirmation { topic } => {
-                write!(f, "REGTOPIC: Registered: {}", hex::encode(topic))
+            ResponseBody::RegisterConfirmation { .. } => {
+                write!(f, "REGTOPIC")
+            }
+            ResponseBody::AdNodes { .. } => {
+                write!(f, "ADNODES")
             }
         }
     }
@@ -556,52 +554,12 @@ impl Message {
 
               7 => {
                   // RegisterTopicRequest
-                  if list_len != 2 {
-                      debug!("RegisterTopic Request has an invalid RLP list length. Expected 2, found {}", list_len);
-                      return Err(DecoderError::RlpIncorrectListLen);
-                  }
-                  let ticket = rlp.val_at::<Vec<u8>>(1)?;
-                  Message::Request(Request {
-                      id,
-                      body: RequestBody::RegisterTopic { ticket },
-                  })
               }
               8 => {
                   // RegisterTopicResponse
-                  if list_len != 2 {
-                      debug!("RegisterTopic Response has an invalid RLP list length. Expected 2, found {}", list_len);
-                      return Err(DecoderError::RlpIncorrectListLen);
-                  }
-                  Message::Response(Response {
-                      id,
-                      body: ResponseBody::RegisterTopic {
-                          registered: rlp.val_at::<bool>(1)?,
-                      },
-                  })
               }
               9 => {
                   // TopicQueryRequest
-                  if list_len != 2 {
-                      debug!(
-                          "TopicQuery Request has an invalid RLP list length. Expected 2, found {}",
-                          list_len
-                      );
-                      return Err(DecoderError::RlpIncorrectListLen);
-                  }
-                  let topic = {
-                      let topic_bytes = rlp.val_at::<Vec<u8>>(1)?;
-                      if topic_bytes.len() > 32 {
-                          debug!("Ticket Request has a topic greater than 32 bytes");
-                          return Err(DecoderError::RlpIsTooBig);
-                      }
-                      let mut topic = [0u8; 32];
-                      topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
-                      topic
-                  };
-                  Message::Request(Request {
-                      id,
-                      body: RequestBody::TopicQuery { topic },
-                  })
               }
               */
         };
