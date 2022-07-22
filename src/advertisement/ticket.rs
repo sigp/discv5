@@ -22,7 +22,7 @@ const REQUEST_TIMEOUT_IN_SECS: u64 = 15;
 /// a REGCONFIRMATION response.
 const MAX_RESPONSES_PER_REGTOPIC: u8 = 3;
 
-/// A topic is active when it associated with the node id from a node it is
+/// A topic is active when it's associated with the NodeId from a node it is
 /// published on.
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ActiveTopic {
