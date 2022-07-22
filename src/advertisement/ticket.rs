@@ -69,7 +69,7 @@ impl ActiveTicket {
     }
 }
 
-/// Tickets holds the tickets recieved in TICKET responses to locally
+/// Tickets hold the tickets received in TICKET responses to locally
 /// initiated REGTOPIC requests.
 pub struct Tickets {
     /// Tickets maps one ActiveTicket per ActiveTopic.
