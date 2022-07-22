@@ -12,11 +12,26 @@ use std::{
 };
 use tokio::time::Instant;
 use topic::TopicHash;
-use tracing::debug;
+use tracing::{debug, error};
 
 mod test;
 pub mod ticket;
 pub mod topic;
+
+/// The max nodes to adveritse for a topic.
+const MAX_ADS_TOPIC: usize = 100;
+
+/// The max nodes to advertise.
+const MAX_ADS: usize = 50000;
+
+/// The max ads per subnet per topic.
+const MAX_ADS_SUBNET_TOPIC: usize = 5;
+
+/// The max ads per subnet.
+const MAX_ADS_SUBNET: usize = 50;
+
+/// The time after a REGCONFIRMATION is sent that an ad is placed.
+pub const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
 
 /// An AdNode is a node that occupies an ad slot on another node.
 #[derive(Debug, Clone)]
@@ -77,7 +92,7 @@ pub struct Ads {
     ad_lifetime: Duration,
     /// The max_ads_per_topic limit is up to the user although recommnedations
     /// are given in the specs.
-    max_ads_per_topic: usize,
+    max_ads_topic: usize,
     /// The max_ads limit is up to the user although recommnedations are
     /// given in the specs.
     max_ads: usize,
@@ -92,25 +107,41 @@ pub struct Ads {
 impl Ads {
     pub fn new(
         ad_lifetime: Duration,
-        max_ads_per_topic: usize,
+        max_ads_topic: usize,
         max_ads: usize,
         max_ads_subnet: usize,
         max_ads_subnet_topic: usize,
-    ) -> Result<Self, &'static str> {
-        if max_ads_per_topic > max_ads || max_ads_subnet_topic > max_ads_subnet {
-            return Err("Ads per topic [per subnet] cannot be > max_ads [per subnet]");
-        }
+    ) -> Self {
+        let (max_ads_topic, max_ads, max_ads_subnet, max_ads_subnet_topic) =
+            if max_ads_topic > max_ads || max_ads_subnet_topic > max_ads_subnet {
+                error!(
+                "Ads per topic [per subnet] cannot be > max_ads [per subnet]. Using default values"
+            );
+                return Self::default();
+            } else {
+                (max_ads_topic, max_ads, max_ads_subnet, max_ads_subnet_topic)
+            };
 
-        Ok(Ads {
+        Ads {
             expirations: VecDeque::new(),
             ads: HashMap::new(),
             ad_lifetime,
-            max_ads_per_topic,
+            max_ads_topic,
             max_ads,
             max_ads_subnet,
             max_ads_subnet_topic,
             subnet_expirations: HashMap::new(),
-        })
+        }
+    }
+
+    pub fn default() -> Self {
+        Ads::new(
+            AD_LIFETIME,
+            MAX_ADS_TOPIC,
+            MAX_ADS,
+            MAX_ADS_SUBNET,
+            MAX_ADS_SUBNET_TOPIC,
+        )
     }
 
     /// Checks if there are currently any entries in the topics table.
@@ -210,7 +241,7 @@ impl Ads {
             }
 
             // Occupancy check to see if the ad slots for a certain topic are full.
-            if nodes.len() >= self.max_ads_per_topic {
+            if nodes.len() >= self.max_ads_topic {
                 return nodes.front().map(|ad| {
                     let elapsed_time = now.saturating_duration_since(ad.insert_time);
                     self.ad_lifetime.saturating_sub(elapsed_time)

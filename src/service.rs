@@ -18,10 +18,14 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{ActiveRegtopicRequests, TicketPools, Tickets},
+        ticket::{
+            ActiveRegtopicRequests, TicketPools, Tickets, MAX_WAIT_TIME_TICKET,
+            TICKET_LIMIT_DURATION,
+        },
         topic::TopicHash,
-        Ads,
+        Ads, AD_LIFETIME,
     },
+    discv5::PERMIT_BAN_LIST,
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -49,7 +53,7 @@ use parking_lot::RwLock;
 use rpc::*;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
-    io::{Error, ErrorKind},
+    io::Error,
     net::SocketAddr,
     pin::Pin,
     sync::{atomic::Ordering, Arc},
@@ -66,6 +70,19 @@ mod test;
 /// The number of distances (buckets) we simultaneously request from each peer.
 /// NOTE: This must not be larger than 127.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
+
+/// The number of registration attempts that should be active per distance
+/// if there are sufficient peers.
+const MAX_REG_ATTEMPTS_DISTANCE: usize = 16;
+
+/// Registration of topics are paced to occur at intervals t avoid a self-provoked DoS.
+const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Registration attempts must be limited per registration interval.
+const MAX_REGTOPICS_REGISTER_INTERVAL: usize = 16;
+
+/// The max number of uncontacted peers to store before the kbuckets per topic.
+const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -190,42 +207,6 @@ pub enum ServiceRequest {
         oneshot::Sender<Result<BTreeMap<u64, Vec<NodeId>>, RequestError>>,
     ),
 }
-
-/// The max wait time accpeted for tickets.
-const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
-
-/// The time window within in which the number of new tickets from a peer for a topic will be limitied.
-const TICKET_LIMITER_DURATION: Duration = Duration::from_secs(60 * 15);
-
-/// The max nodes to adveritse for a topic.
-const MAX_ADS_TOPIC: usize = 100;
-
-/// The max nodes to advertise.
-const MAX_ADS: usize = 50000;
-
-/// The max ads per subnet per topic.
-const MAX_ADS_SUBNET_TOPIC: usize = 5;
-
-/// The max ads per subnet.
-const MAX_ADS_SUBNET: usize = 50;
-
-/// The time after a REGCONFIRMATION is sent that an ad is placed.
-const AD_LIFETIME: Duration = Duration::from_secs(60 * 15);
-
-/// The number of registration attempts that should be active per distance
-/// if there are sufficient peers.
-const MAX_REG_ATTEMPTS_DISTANCE: usize = 16;
-
-/// Registration of topics are paced to occur at intervals t avoid a self-provoked DoS.
-const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
-
-/// Registration attempts must be limited per registration interval.
-const MAX_REGTOPICS_REGISTER_INTERVAL: usize = 16;
-
-/// The max number of uncontacted peers to store before the kbuckets per topic.
-const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
-
-use crate::discv5::PERMIT_BAN_LIST;
 
 pub struct Service {
     /// Configuration parameters.
@@ -503,19 +484,6 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
-        let ads = match Ads::new(
-            AD_LIFETIME,
-            MAX_ADS_TOPIC,
-            MAX_ADS,
-            MAX_ADS_SUBNET,
-            MAX_ADS_SUBNET_TOPIC,
-        ) {
-            Ok(ads) => ads,
-            Err(e) => {
-                return Err(Error::new(ErrorKind::InvalidInput, e));
-            }
-        };
-
         config
             .executor
             .clone()
@@ -538,12 +506,12 @@ impl Service {
                     peers_to_ping: HashSetDelay::new(config.ping_interval),
                     discv5_recv,
                     event_stream: None,
-                    ads,
+                    ads: Ads::default(),
                     registration_attempts: HashMap::new(),
                     topics_kbuckets: HashMap::new(),
                     discovered_peers_topic: HashMap::new(),
                     ticket_key: rand::random(),
-                    tickets: Tickets::new(TICKET_LIMITER_DURATION),
+                    tickets: Tickets::default(),
                     ticket_pools: TicketPools::default(),
                     active_topic_queries: ActiveTopicQueries::new(
                         config.topic_query_timeout,
@@ -713,7 +681,7 @@ impl Service {
                                                     false
                                                 }
                                             }
-                                            RegistrationState::TicketLimit(insert_time) => insert_time.elapsed() < TICKET_LIMITER_DURATION,
+                                            RegistrationState::TicketLimit(insert_time) => insert_time.elapsed() < TICKET_LIMIT_DURATION,
                                             RegistrationState::Ticket => true,
                                         }
                                     });
@@ -961,7 +929,7 @@ impl Service {
                                     false
                                 }
                             }
-                            RegistrationState::TicketLimit(insert_time) => insert_time.elapsed() < TICKET_LIMITER_DURATION,
+                            RegistrationState::TicketLimit(insert_time) => insert_time.elapsed() < TICKET_LIMIT_DURATION,
                             RegistrationState::Ticket => {
                                 active_reg_attempts_bucket += 1;
                                 true

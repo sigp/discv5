@@ -96,7 +96,7 @@ async fn build_service(
         peers_to_ping: HashSetDelay::new(config.ping_interval),
         discv5_recv,
         event_stream: None,
-        ads: Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3).unwrap(),
+        ads: Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3),
         ticket_key: rand::random(),
         tickets: Tickets::new(Duration::from_secs(60 * 15)),
         registration_attempts: HashMap::new(),

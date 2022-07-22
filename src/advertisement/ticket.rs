@@ -9,15 +9,25 @@ use more_asserts::debug_unreachable;
 use node_info::NodeContact;
 use std::{cmp::Eq, collections::hash_map::Entry};
 
+/// The max wait time accpeted for tickets.
+pub const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
+
+/// The time window within in which the number of new tickets from a peer for a topic will be limitied.
+pub const TICKET_LIMIT_DURATION: Duration = Duration::from_secs(60 * 15);
+
 /// Max tickets that are stored for an individual node for a topic (in the configured
 /// time period).
 const MAX_TICKETS_NODE_TOPIC: u8 = 3;
+
 /// The time window in which tickets are accepted for any given free ad slot.
 const REGISTRATION_WINDOW_IN_SECS: u64 = 10;
+
 /// Max nodes that are considered in the selection process for an ad slot.
 const MAX_REGISTRANTS_AD_SLOT: usize = 50;
+
 /// The duration for which requests are stored.
 const REQUEST_TIMEOUT_IN_SECS: u64 = 15;
+
 /// Each REGTOPIC request gets a TICKET response, NODES response and can get
 /// a REGCONFIRMATION response.
 const MAX_RESPONSES_REGTOPIC: u8 = 3;
@@ -94,6 +104,10 @@ impl Tickets {
             tickets: HashMapDelay::new(Duration::default()),
             ticket_history: TicketHistory::new(ticket_limiter_duration),
         }
+    }
+
+    pub fn default() -> Self {
+        Tickets::new(TICKET_LIMIT_DURATION)
     }
 
     /// Inserts a ticket into [`Tickets`] if the state of [`TicketHistory`] allows it.
