@@ -337,7 +337,7 @@ impl ActiveRegtopicRequest {
     }
 }
 
-/// The ActiveRegtopicRequests keeps ActiveRequests until the have matched
+/// The ActiveRegtopicRequests keeps ActiveRequests until they have matched
 /// with MAX_RESPONSES_PER_REGTOPIC repsonses.
 #[derive(Default)]
 pub struct ActiveRegtopicRequests {
