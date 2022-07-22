@@ -9,7 +9,7 @@ use more_asserts::debug_unreachable;
 use node_info::NodeContact;
 use std::{cmp::Eq, collections::hash_map::Entry};
 
-/// Max tickets that are stored from one node for a topic (in the configured
+/// Max tickets that are stored for an individual node for a topic (in the configured
 /// time period).
 const MAX_TICKETS_NODE_TOPIC: u8 = 3;
 /// The time window in which tickets are accepted for any given free ad slot.
@@ -22,13 +22,13 @@ const REQUEST_TIMEOUT_IN_SECS: u64 = 15;
 /// a REGCONFIRMATION response.
 const MAX_RESPONSES_REGTOPIC: u8 = 3;
 
-/// A topic is active when it associated with the node id from a node it is
+/// A topic is active when it's associated with the NodeId from a node it is
 /// published on.
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct ActiveTopic {
     /// NodeId of the sender of the TICKET response.
     node_id: NodeId,
-    /// The topic hash as it is sent in the TICKET response
+    /// The topic hash as it is sent in the TICKET response.
     topic: TopicHash,
 }
 
@@ -360,7 +360,7 @@ impl ActiveRegtopicRequest {
     }
 }
 
-/// The ActiveRegtopicRequests keeps ActiveRequests until the have matched
+/// The ActiveRegtopicRequests keeps ActiveRequests until they have matched
 /// with MAX_RESPONSES_PER_REGTOPIC repsonses.
 #[derive(Default)]
 pub struct ActiveRegtopicRequests {
