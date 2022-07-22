@@ -203,7 +203,7 @@ impl RequestCall {
 }
 
 /// TOPICQUERY requests receive 2 types of responses ADNODES and NODES, in an
-/// order which cannot be guranteed. If a peer sends the wrong combination of
+/// order which cannot be guaranteed. If a peer sends the wrong combination of
 /// responses the peer is blacklisted.
 #[derive(Default)]
 pub enum TopicQueryResponseState {
