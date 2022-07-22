@@ -308,7 +308,15 @@ impl Ads {
     }
 
     /// Inserts a unique node record - topic mapping into the topics table after removing expired entries.
-    pub fn insert(&mut self, node_record: Enr, topic: TopicHash) -> Result<(), &str> {
+    pub fn insert(
+        &mut self,
+        node_record: Enr,
+        topic: TopicHash,
+        ip: IpAddr,
+    ) -> Result<(), (Duration, &str)> {
+        if let Some(wait_time) = self.ticket_wait_time(topic, node_record.node_id(), ip) {
+            return Err((wait_time, "There is currently no ad slot free for this node - topic combination. Discarding registration attempt."));
+        }
         self.remove_expired();
         let now = Instant::now();
 
@@ -324,16 +332,9 @@ impl Ads {
                 .or_insert_with(VecDeque::new);
             subnet_expirires.push_back(now);
         }
-
         let nodes = self.ads.entry(topic).or_default();
+
         let ad_node = AdNode::new(node_record, now);
-        if nodes.contains(&ad_node) {
-            debug!(
-                "This node {} is already advertising this topic",
-                ad_node.node_record().node_id()
-            );
-            return Err("Node already advertising this topic");
-        }
         nodes.push_back(ad_node);
         self.expirations.push_back(AdTopic::new(topic, now));
         Ok(())

@@ -226,7 +226,7 @@ async fn encrypt_decrypt_ticket() {
         node_id,
         ip,
         TopicHash::from_raw([1u8; 32]),
-        tokio::time::Instant::now(),
+        //tokio::time::Instant::now(),
         tokio::time::Duration::from_secs(5),
         tokio::time::Duration::from_secs(25),
     );

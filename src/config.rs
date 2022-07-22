@@ -97,7 +97,7 @@ pub struct Discv5Config {
     pub ban_duration: Option<Duration>,
 
     /// A topic look up should time out after a set duration, after which no more TOPICQUERY requests should
-    /// be sent to peers regardless of the number of results found. This is in order to avoid starvation. The 
+    /// be sent to peers regardless of the number of results found. This is in order to avoid starvation. The
     /// default value is 60 seconds.
     pub topic_query_timeout: Duration,
 

@@ -2,11 +2,8 @@ use crate::advertisement::topic::TopicHash;
 use enr::{CombinedKey, Enr, NodeId};
 use more_asserts::debug_unreachable;
 use rlp::{DecoderError, Rlp, RlpStream};
-use std::{
-    net::{IpAddr, Ipv6Addr},
-    time::{SystemTime, UNIX_EPOCH},
-};
-use tokio::time::{Duration, Instant};
+use std::net::{IpAddr, Ipv6Addr};
+use tokio::time::Duration;
 use tracing::{debug, error, warn};
 
 /// Type to manage the request IDs.
@@ -736,7 +733,7 @@ pub struct Ticket {
     src_node_id: NodeId,
     src_ip: IpAddr,
     topic: TopicHash,
-    req_time: Instant,
+    //req_time: Instant,
     wait_time: Duration,
     cum_wait: Duration,
 }
@@ -750,11 +747,11 @@ impl rlp::Encodable for Ticket {
             IpAddr::V6(addr) => s.append(&(addr.octets().to_vec())),
         };
         s.append(&self.topic);
-        if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
+        /*if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
             let time_since_req = self.req_time.elapsed();
             let time_stamp = time_since_unix - time_since_req;
             s.append(&time_stamp.as_secs().to_be_bytes().to_vec());
-        }
+        }*/
         s.append(&self.wait_time.as_secs().to_be_bytes().to_vec());
         s.append(&self.wait_time.as_secs().to_be_bytes().to_vec());
     }
@@ -767,7 +764,7 @@ impl rlp::Decodable for Ticket {
             return Err(DecoderError::RlpExpectedToBeList);
         }
 
-        if rlp.item_count() != Ok(6) {
+        if rlp.item_count() != Ok(5) {
             error!(
                 "List has wrong item count, should be 5 but is {:?}",
                 rlp.item_count()
@@ -817,7 +814,7 @@ impl rlp::Decodable for Ticket {
 
         let topic = decoded_list.remove(0).as_val::<TopicHash>()?;
 
-        let req_time = {
+        /*let req_time = {
             if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
                 let secs_data = decoded_list.remove(0).data()?;
                 let mut secs_bytes = [0u8; 8];
@@ -835,7 +832,7 @@ impl rlp::Decodable for Ticket {
             } else {
                 return Err(DecoderError::Custom("SystemTime before UNIX EPOCH!"));
             }
-        };
+        };*/
 
         let wait_time = {
             let secs_data = decoded_list.remove(0).data()?;
@@ -857,7 +854,7 @@ impl rlp::Decodable for Ticket {
             src_node_id,
             src_ip,
             topic,
-            req_time,
+            //req_time,
             wait_time,
             cum_wait,
         })
@@ -879,16 +876,15 @@ impl Ticket {
         src_node_id: NodeId,
         src_ip: IpAddr,
         topic: TopicHash,
-        req_time: Instant,
+        //req_time: Instant,
         wait_time: Duration,
         cum_wait: Duration,
     ) -> Self {
         Ticket {
-            //nonce,
             src_node_id,
             src_ip,
             topic,
-            req_time,
+            //req_time,
             wait_time,
             cum_wait,
         }
@@ -898,9 +894,9 @@ impl Ticket {
         self.topic
     }
 
-    pub fn req_time(&self) -> Instant {
+    /*pub fn req_time(&self) -> Instant {
         self.req_time
-    }
+    }*/
 
     pub fn wait_time(&self) -> Duration {
         self.wait_time
@@ -1212,7 +1208,7 @@ mod tests {
             node_id,
             ip,
             TopicHash::from_raw([1u8; 32]),
-            Instant::now(),
+            //Instant::now(),
             Duration::from_secs(11),
             Duration::from_secs(25),
         );
@@ -1248,7 +1244,7 @@ mod tests {
             node_id,
             ip,
             TopicHash::from_raw([1u8; 32]),
-            Instant::now(),
+            //Instant::now(),
             Duration::from_secs(11),
             Duration::from_secs(25),
         );
@@ -1273,7 +1269,7 @@ mod tests {
             node_id,
             ip,
             TopicHash::from_raw([1u8; 32]),
-            Instant::now(),
+            //Instant::now(),
             Duration::from_secs(11),
             Duration::from_secs(25),
         );
@@ -1323,7 +1319,7 @@ mod tests {
             node_id,
             ip,
             TopicHash::from_raw([1u8; 32]),
-            Instant::now(),
+            //Instant::now(),
             Duration::from_secs(11),
             Duration::from_secs(25),
         );

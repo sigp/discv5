@@ -18,16 +18,13 @@ async fn insert_same_node() {
 
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
 
-    ads.insert(enr.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic, ip).unwrap();
 
     // Since 2 seconds haven't passed
-    assert_eq!(
-        ads.insert(enr.clone(), topic),
-        Err("Node already advertising this topic")
-    );
+    assert_ne!(ads.insert(enr.clone(), topic, ip), Ok(()));
 
     tokio::time::sleep(Duration::from_secs(2)).await;
-    ads.insert(enr.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic, ip).unwrap();
 }
 
 #[tokio::test]
@@ -38,10 +35,14 @@ async fn insert_ad_and_get_nodes() {
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
-    let port = 5000;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
-    let key = CombinedKey::generate_secp256k1();
-    let enr_2 = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
+    let port_2 = 5000;
+    let ip_2: IpAddr = "192.168.0.2".parse().unwrap();
+    let key_2 = CombinedKey::generate_secp256k1();
+    let enr_2 = EnrBuilder::new("v4")
+        .ip(ip_2)
+        .udp4(port_2)
+        .build(&key_2)
+        .unwrap();
 
     let mut ads = Ads::new(Duration::from_secs(2), 10, 50, 100, 100);
 
@@ -49,19 +50,16 @@ async fn insert_ad_and_get_nodes() {
     let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
 
     // Add an ad for topic from enr
-    ads.insert(enr.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic, ip).unwrap();
 
     // The ad hasn't expired and duplicates are not allowed
-    assert_eq!(
-        ads.insert(enr.clone(), topic),
-        Err("Node already advertising this topic")
-    );
+    assert_ne!(ads.insert(enr.clone(), topic, ip), Ok(()));
 
     // Add an ad for topic from enr_2
-    ads.insert(enr_2.clone(), topic).unwrap();
+    ads.insert(enr_2.clone(), topic, ip_2).unwrap();
 
     // Add an ad for topic_2 from enr
-    ads.insert(enr.clone(), topic_2).unwrap();
+    ads.insert(enr.clone(), topic_2, ip).unwrap();
 
     let nodes: Vec<&Enr> = ads
         .get_ad_nodes(topic)
@@ -102,7 +100,7 @@ async fn ticket_wait_time_duration() {
     let topic = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
 
     // Add an add for topic
-    ads.insert(enr.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic, ip).unwrap();
 
     assert_gt!(
         ads.ticket_wait_time(topic, enr.node_id(), ip),
@@ -137,13 +135,13 @@ async fn ticket_wait_time_full_table() {
     let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
 
     // Add 2 ads for topic
-    ads.insert(enr.clone(), topic).unwrap();
-    ads.insert(enr_2.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic, ip).unwrap();
+    ads.insert(enr_2.clone(), topic, ip_2).unwrap();
 
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Add an ad for topic_2
-    ads.insert(enr.clone(), topic_2).unwrap();
+    ads.insert(enr.clone(), topic_2, ip).unwrap();
 
     // Now max_ads in table is reached so the second ad for topic_2 has to wait
     assert_ne!(ads.ticket_wait_time(topic_2, enr.node_id(), ip), None);
@@ -188,14 +186,14 @@ async fn ticket_wait_time_full_topic() {
     let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
 
     // Add 2 ads for topic
-    ads.insert(enr.clone(), topic).unwrap();
-    ads.insert(enr_2.clone(), topic).unwrap();
+    ads.insert(enr.clone(), topic, ip).unwrap();
+    ads.insert(enr_2.clone(), topic, ip_2).unwrap();
 
     // Now max_ads_per_topic is reached for topic
     assert_ne!(ads.ticket_wait_time(topic, enr_3.node_id(), ip_3), None);
 
     // Add a topic_2 ad
-    ads.insert(enr.clone(), topic_2).unwrap();
+    ads.insert(enr.clone(), topic_2, ip).unwrap();
 
     // The table isn't full so topic_2 ads don't have to wait
     assert_eq!(ads.ticket_wait_time(topic_2, enr_2.node_id(), ip_2), None);
@@ -225,8 +223,8 @@ async fn ticket_wait_time_full_subnet() {
     let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
     let topic_3 = Topic::new(std::str::from_utf8(&[3u8; 32]).unwrap()).hash();
 
-    ads.insert(enr.clone(), topic_1).unwrap();
-    ads.insert(enr_2, topic_2).unwrap();
+    ads.insert(enr.clone(), topic_1, ip).unwrap();
+    ads.insert(enr_2, topic_2, ip_2).unwrap();
 
     assert_ne!(ads.ticket_wait_time(topic_3, enr.node_id(), ip), None);
 }
@@ -251,7 +249,7 @@ async fn ticket_wait_time_full_subnet_topic() {
     let topic_1 = Topic::new(std::str::from_utf8(&[1u8; 32]).unwrap()).hash();
     let topic_2 = Topic::new(std::str::from_utf8(&[2u8; 32]).unwrap()).hash();
 
-    ads.insert(enr.clone(), topic_1).unwrap();
+    ads.insert(enr.clone(), topic_1, ip).unwrap();
 
     assert_ne!(ads.ticket_wait_time(topic_1, enr_2.node_id(), ip), None);
     assert_eq!(ads.ticket_wait_time(topic_2, enr.node_id(), ip), None);

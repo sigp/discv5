@@ -850,12 +850,17 @@ impl Service {
                     // Select ticket with longest cummulative wait time.
                     if let Some(pool_ticket) = ticket_pool.values().max_by_key(|pool_ticket| pool_ticket.ticket().cum_wait()) {
                         let enr = pool_ticket.node_record();
-                        let node_id = enr.node_id();
-                        let _ = self.ads.insert(enr.clone(), topic).map_err(|e| error!("Couldn't insert ad from node id {} into ads. Error {}", node_id, e));
-                        NodeContact::try_from_enr(enr.clone(), self.config.ip_mode).map(|contact| {
-                            self.send_regconfirmation_response(contact.node_address(), pool_ticket.req_id().clone(), topic);
-                        }).ok();
-                        METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
+                        if let Ok(node_contact) = NodeContact::try_from_enr(enr.clone(), self.config.ip_mode) {
+                            let node_id = enr.node_id();
+                            if let Err((wait_time, e)) = self.ads.insert(enr.clone(), topic, node_contact.socket_addr().ip()) {
+                                error!("Couldn't insert ad from node id {} into ads. Error {}", node_id, e);
+                                let new_ticket = Ticket::new(node_id, *pool_ticket.ip(), topic, wait_time, pool_ticket.ticket().cum_wait() + wait_time);
+                                self.send_ticket_response(node_contact.node_address(), pool_ticket.req_id().clone(), new_ticket, wait_time);
+                            } else {
+                                self.send_regconfirmation_response(node_contact.node_address(), pool_ticket.req_id().clone(), topic);
+                                METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
+                            }
+                        }
                     }
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
@@ -1314,7 +1319,7 @@ impl Service {
                     node_address.node_id,
                     node_address.socket_addr.ip(),
                     topic,
-                    tokio::time::Instant::now(),
+                    //tokio::time::Instant::now(),
                     wait_time,
                     wait_time,
                 );

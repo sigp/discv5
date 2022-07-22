@@ -23,7 +23,7 @@ const MAX_TICKETS_NODE_TOPIC: u8 = 3;
 const REGISTRATION_WINDOW_IN_SECS: u64 = 10;
 
 /// Max nodes that are considered in the selection process for an ad slot.
-const MAX_REGISTRANTS_AD_SLOT: usize = 50;
+//const MAX_REGISTRANTS_AD_SLOT: usize = 50;
 
 /// The duration for which requests are stored.
 const REQUEST_TIMEOUT_IN_SECS: u64 = 15;
@@ -298,8 +298,8 @@ pub struct TicketPools {
 }
 
 impl TicketPools {
-    pub fn insert(&mut self, node_record: Enr, req_id: RequestId, ticket: Ticket, ip: IpAddr) {
-        if let Some(open_time) = ticket.req_time().checked_add(ticket.wait_time()) {
+    pub fn insert(&mut self, _node_record: Enr, _req_id: RequestId, _ticket: Ticket, _ip: IpAddr) {
+        /*if let Some(open_time) = ticket.req_time().checked_add(ticket.wait_time()) {
             if open_time.elapsed() <= Duration::from_secs(REGISTRATION_WINDOW_IN_SECS) {
                 let pool = self.ticket_pools.entry(ticket.topic()).or_default();
                 // Drop request if pool contains 50 nodes, these nodes are out of luck and
@@ -317,7 +317,7 @@ impl TicketPools {
                     );
                 }
             }
-        }
+        }*/
     }
 }
 
