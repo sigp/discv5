@@ -28,7 +28,7 @@ const MAX_RESPONSES_PER_REGTOPIC: u8 = 3;
 pub struct ActiveTopic {
     /// NodeId of the sender of the TICKET response.
     node_id: NodeId,
-    /// The topic hash as it is sent in the TICKET response
+    /// The topic hash as it is sent in the TICKET response.
     topic: TopicHash,
 }
 
