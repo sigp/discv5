@@ -361,7 +361,7 @@ impl ActiveRegtopicRequest {
 }
 
 /// The ActiveRegtopicRequests keeps ActiveRequests until they have matched
-/// with MAX_RESPONSES_PER_REGTOPIC repsonses.
+/// with MAX_RESPONSES_PER_REGTOPIC responses.
 #[derive(Default)]
 pub struct ActiveRegtopicRequests {
     requests: HashMap<RequestId, ActiveRequest>,
