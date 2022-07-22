@@ -181,10 +181,13 @@ impl Ads {
         let wait_time_max_ads_subnet =
             if let Some(expirations) = self.subnet_expirations.get_mut(&subnet) {
                 if expirations.len() >= self.max_ads_subnet {
-                    expirations.pop_front().map(|insert_time| {
+                    if let Some(insert_time) = expirations.pop_front() {
+                        expirations.push_front(insert_time);
                         let elapsed_time = now.saturating_duration_since(insert_time);
-                        self.ad_lifetime.saturating_sub(elapsed_time)
-                    })
+                        Some(self.ad_lifetime.saturating_sub(elapsed_time))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
