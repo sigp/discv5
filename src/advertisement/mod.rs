@@ -63,8 +63,8 @@ impl AdTopic {
     }
 }
 
-/// The Ads struct contains adveritsed AdNodes. Table is used to refer to all
-/// the ads, and the table stores ads by topic.
+/// The Ads struct contains adveritsed AdNodes. Topics table is used to refer to
+/// all the ads, and the table stores ads by topic.
 #[derive(Clone, Debug)]
 pub struct Ads {
     /// The expirations makes sure that AdNodes are advertised only for the
@@ -113,19 +113,25 @@ impl Ads {
         })
     }
 
+    /// Checks if there are currently any entries in the topics table.
     pub fn is_empty(&self) -> bool {
         self.expirations.is_empty()
     }
 
+    /// Returns the amount of ads currently in the topics table.
     pub fn len(&self) -> usize {
         self.expirations.len()
     }
 
+    /// Returns an iterator over the ads currently in the topics table for a given topic
+    /// if any.
     pub fn get_ad_nodes(&self, topic: TopicHash) -> impl Iterator<Item = &AdNode> + '_ {
         self.ads.get(&topic).into_iter().flatten()
     }
 
-    /// Ticket wait time enforces diversity among adveritsed nodes.
+    /// Ticket wait time enforces diversity among adveritsed nodes. The ticket wait time is
+    /// calculated after removing expired entries based on the current state of the topics
+    /// table (ads).
     pub fn ticket_wait_time(
         &mut self,
         topic: TopicHash,
@@ -227,6 +233,7 @@ impl Ads {
         }
     }
 
+    /// Removes ads that have been in the topics table for at least the ad lifetime specified in [`Ads`].
     fn remove_expired(&mut self) {
         let mut to_remove_ads: HashMap<TopicHash, usize> = HashMap::new();
 
@@ -269,6 +276,7 @@ impl Ads {
         });
     }
 
+    /// Inserts a unique node record - topic mapping into the topics table after removing expired entries.
     pub fn insert(&mut self, node_record: Enr, topic: TopicHash) -> Result<(), &str> {
         self.remove_expired();
         let now = Instant::now();

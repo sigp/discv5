@@ -46,6 +46,7 @@ impl Hasher for IdentityHash {
 
 #[derive(Debug, Clone)]
 pub struct Sha256Hash {}
+
 impl Hasher for Sha256Hash {
     /// Creates a [`TopicHash`] by SHA256 hashing the topic then base64 encoding the
     /// hash.
@@ -56,6 +57,7 @@ impl Hasher for Sha256Hash {
         TopicHash { hash }
     }
 
+    /// Returns the name of the hashing algorithm this [`Hasher`] implements.
     fn hash_function_name() -> String {
         "Sha256".to_owned()
     }
@@ -71,10 +73,12 @@ pub struct TopicHash {
 }
 
 impl TopicHash {
+    /// Returns a topic hash wrapping the given 32 bytes.
     pub fn from_raw(hash: [u8; 32]) -> TopicHash {
         TopicHash { hash }
     }
 
+    /// Returns the raw 32 bytes inside a topic hash.
     pub fn as_bytes(&self) -> [u8; 32] {
         self.hash
     }
@@ -108,10 +112,12 @@ impl fmt::Display for TopicHash {
     }
 }
 
-/// A topic, as in sigpi/rust-libp2p/protocols/gossipsub
+/// A topic, as in sigpi/rust-libp2p/protocols/gossipsub.
 #[derive(Debug, Clone)]
 pub struct Topic<H: Hasher> {
+    /// The topic string passed to the topic upon instantiation.
     topic: String,
+    /// The configured [`Hasher`] is stored within the topic.
     phantom_data: std::marker::PhantomData<H>,
 }
 
@@ -122,6 +128,7 @@ impl<H: Hasher> From<Topic<H>> for TopicHash {
 }
 
 impl<H: Hasher> Topic<H> {
+    /// Returns a new topic.
     pub fn new(topic: impl Into<String>) -> Self {
         Topic {
             topic: topic.into(),
@@ -129,22 +136,26 @@ impl<H: Hasher> Topic<H> {
         }
     }
 
+    /// Returns a hash of the topic using the [`Hasher`] configured for the topic.
     pub fn hash(&self) -> TopicHash {
         H::hash(self.topic.clone())
     }
 
+    /// Returns the name of the [`Hasher`] configured for the topic.
     pub fn hash_function_name(&self) -> String {
         H::hash_function_name()
     }
 
+    /// Returns the string passed to the topic upon instantiation.
     pub fn topic(&self) -> String {
         self.topic.clone()
     }
 }
 
-// Each hash algortihm chosen to publish a topic with (as XOR
-// metric key) is its own Topic.
 impl<H: Hasher> PartialEq for Topic<H> {
+    /// Each hash algortihm used to publish a hashed topic (as XOR metric key) is in
+    /// discv5 seen as its own [`Topic<H>`] upon comparison. That means a topic string
+    /// can be published/registered more than once using different [`Hasher`]s.
     fn eq(&self, other: &Topic<H>) -> bool {
         self.hash() == other.hash()
     }
