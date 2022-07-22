@@ -9,7 +9,7 @@ use more_asserts::debug_unreachable;
 use node_info::NodeContact;
 use std::{cmp::Eq, collections::hash_map::Entry};
 
-/// Max tickets that are stored from one node for a topic (in the configured
+/// Max tickets that are stored for an individual node for a topic (in the configured
 /// time period).
 const MAX_TICKETS_PER_NODE_TOPIC: u8 = 3;
 /// The time window in which tickets are accepted for any given free ad slot.
