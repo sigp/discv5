@@ -794,7 +794,7 @@ impl Handler {
                 self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
-                let kbucket_addition = match request_call.request.body {
+                let event = match request_call.request.body {
                     RequestBody::RegisterTopic {
                         topic,
                         enr: _,
@@ -808,7 +808,7 @@ impl Handler {
                     }
                 };
                 self.service_send
-                    .send(kbucket_addition)
+                    .send(event)
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }

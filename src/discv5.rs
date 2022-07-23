@@ -435,11 +435,6 @@ impl Discv5 {
             .collect()
     }
 
-    pub fn hashes(topic: &'static str) -> Vec<(TopicHash, String)> {
-        let sha256_topic = Topic::new(topic);
-        vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
-    }
-
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
     ///
     /// Only `ed25519` and `secp256k1` key types are currently supported.
@@ -687,7 +682,7 @@ impl Discv5 {
         }
     }
 
-    /// Get the ads advertised for other nodes for a given topic.
+    /// Returns the enrs of ads currently advertised locally on behalf of other nodes for a given topic.
     pub fn ads(
         &self,
         topic: &'static str,
@@ -836,4 +831,12 @@ impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// Helper function that returns a labeled list of hashes of the given topic string according to 
+/// all implemented hashing algorithms. Currently only one, Sha256, is implemented. 
+#[allow(dead_code)]
+pub fn hashes(topic: &'static str) -> Vec<(TopicHash, String)> {
+    let sha256_topic = Topic::new(topic);
+    vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
 }
