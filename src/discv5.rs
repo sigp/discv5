@@ -511,7 +511,7 @@ impl Discv5 {
         }
     }
 
-    /// Returns an iterator over all ENR node IDs of nodes currently contained in the routing table.
+    /// Returns an iterator over all ENR node IDs of nodes currently contained in the kbuckets of a given topic.
     pub fn table_entries_id_topic(
         &self,
         topic: &'static str,
@@ -536,6 +536,9 @@ impl Discv5 {
         }
     }
 
+    /// Looks up a given topic on other nodes that, if currently advertising the given topic, return the
+    /// enrs of those ads. The query keeps going through the given topic's kbuckets until a certain number
+    /// of results are obtained or the query times out.
     pub fn topic_query_req(
         &self,
         topic: &'static str,
@@ -577,8 +580,9 @@ impl Discv5 {
         }
     }
 
-    /// Removes a topic we do not wish to keep advertising on other nodes, effective
-    /// from the next interval on.
+    /// Removes a topic we do not wish to keep advertising on other nodes. This does not tell any nodes
+    /// we are currently adveritsed on to remove us as advertisements, however in the next registration
+    /// interval no registration attempts will be made for the topic.
     pub fn remove_topic(
         &self,
         topic_hash: TopicHash,
@@ -602,7 +606,10 @@ impl Discv5 {
         }
     }
 
-    /// Add a topic to keep registering on other nodes.
+    /// Add a topic to register on other nodes. A topic is continuously re-registered when it is
+    /// its turn in the registration interval. To avoid bottlenecks, not necessarily all topics
+    /// nor all distances of a topic's kbuckets are covered in each registration interval. To stop
+    /// registering a topic it must be removed by calling remove_topic.
     pub fn register_topic(
         &self,
         topic: &'static str,
@@ -628,6 +635,10 @@ impl Discv5 {
         }
     }
 
+    /// Retrieves the registration attempts for a given topic, either confirmed registrations that
+    /// are still active on other nodes or regsitration attempts that returned tickets we are
+    /// currently waiting on to expire (ticket wait time) before re-attempting registration at that
+    /// same node. Caution! The returned map will also contain
     pub fn reg_attempts(
         &self,
         topic: &'static str,
