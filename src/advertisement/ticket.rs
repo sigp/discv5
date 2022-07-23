@@ -17,7 +17,7 @@ pub const TICKET_LIMIT_DURATION: Duration = Duration::from_secs(60 * 15);
 
 /// Max tickets that are stored for an individual node for a topic (in the configured
 /// time period).
-const MAX_TICKETS_NODE_TOPIC: u8 = 3;
+pub const MAX_TICKETS_NODE_TOPIC: u8 = 3;
 
 /// The time window in which tickets are accepted for any given free ad slot.
 const REGISTRATION_WINDOW_IN_SECS: u64 = 10;
@@ -160,7 +160,7 @@ struct PendingTicket {
 /// an ActiveTopic within the time limit given by ticket_limiter_duration
 /// and limits it to MAX_TICKETS_PER_NODE_TOPIC times.
 #[derive(Default)]
-struct TicketHistory {
+pub struct TicketHistory {
     /// The ticket_count keeps track of how many tickets are stored for the
     /// ActiveTopic.
     ticket_count: HashMap<ActiveTopic, u8>,

@@ -20,7 +20,7 @@ use crate::{
         NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
-    service::{QueryKind, RegAttempts, Service, ServiceRequest, TalkRequest},
+    service::{ActiveTopicQueries, QueryKind, RegAttempts, Service, ServiceRequest, TalkRequest},
     Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
@@ -540,7 +540,7 @@ impl Discv5 {
 
     /// Looks up a given topic on other nodes that, if currently advertising the given topic, return the enrs of
     /// those ads. The query keeps going through the given topic's kbuckets until a certain number (passed to
-    /// [`Service::ActiveTopicQueries`] upon instantiation) of results are obtained or the query times out.
+    /// [`ActiveTopicQueries`] upon instantiation) of results are obtained or the query times out.
     pub fn topic_query_req(
         &self,
         topic: &'static str,

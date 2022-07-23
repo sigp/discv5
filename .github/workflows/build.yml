@@ -50,4 +50,4 @@ jobs:
       - name: Get latest version of stable rust
         run: rustup update stable
       - name: Check rustdoc links
-        run: RUSTDOCFLAGS="--deny broken_intra_doc_links" cargo doc --verbose --workspace --no-deps --document-private-items
+        run: RUSTDOCFLAGS="--deny rustdoc::broken_intra_doc_links" cargo doc --verbose --workspace --no-deps --document-private-items
