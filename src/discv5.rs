@@ -43,6 +43,13 @@ use crate::metrics::{Metrics, METRICS};
 lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
+
+    /// Helper function that returns a labeled list of hashes of the given topic string according to
+    /// all implemented hashing algorithms. Currently only one, Sha256, is implemented.
+    pub static ref HASHES: fn(topic: &'static str) -> Vec<(TopicHash, String)> = |topic| {
+        let sha256_topic = Topic::new(topic);
+        vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
+    };
 }
 
 mod test;
@@ -532,7 +539,7 @@ impl Discv5 {
     }
 
     /// Looks up a given topic on other nodes that, if currently advertising the given topic, return the enrs of
-    /// those ads. The query keeps going through the given topic's kbuckets until a certain number (passed to 
+    /// those ads. The query keeps going through the given topic's kbuckets until a certain number (passed to
     /// [`Service::ActiveTopicQueries`] upon instantiation) of results are obtained or the query times out.
     pub fn topic_query_req(
         &self,
@@ -831,12 +838,4 @@ impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
     }
-}
-
-/// Helper function that returns a labeled list of hashes of the given topic string according to 
-/// all implemented hashing algorithms. Currently only one, Sha256, is implemented. 
-#[allow(dead_code)]
-pub fn hashes(topic: &'static str) -> Vec<(TopicHash, String)> {
-    let sha256_topic = Topic::new(topic);
-    vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
 }
