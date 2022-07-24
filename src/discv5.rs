@@ -47,7 +47,7 @@ lazy_static! {
 
 /// Helper function that returns a labeled list of hashes of the given topic string according to
 /// all implemented hashing algorithms. Currently only one, Sha256, is implemented.
-pub static HASHES: fn(topic: &'static str) -> Vec<(TopicHash, String)> = |topic| {
+pub static HASHES: for<'a> fn(topic: &'a str) -> Vec<(TopicHash, String)> = |topic| {
     let sha256_topic = Topic::new(topic);
     vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
 };
