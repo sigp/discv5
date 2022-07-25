@@ -1,4 +1,4 @@
-use enr::{CombinedKey, Enr, NodeId};
+use crate::{enr::NodeId, Enr};
 use rlp::{DecoderError, RlpStream};
 use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
@@ -98,7 +98,7 @@ pub enum RequestBody {
     /// "rendezvous".
     RelayRequest {
         /// The node id of the "initiator".
-        from_node_id: NodeId,
+        from_node_enr: Enr,
         /// The node id of the "receiver".
         to_node_id: NodeId,
     },
@@ -120,7 +120,7 @@ pub enum ResponseBody {
         /// The total number of responses that make up this response.
         total: u64,
         /// A list of ENR's returned by the responder.
-        nodes: Vec<Enr<CombinedKey>>,
+        nodes: Vec<Enr>,
     },
     /// The TALKRESP response.
     Talk {
@@ -147,7 +147,7 @@ pub enum ResponseBody {
         /// The total number of responses that make up this response.
         total: u64,
         /// A list of ENR's returned by the responder.
-        nodes: Vec<Enr<CombinedKey>>,
+        nodes: Vec<Enr>,
     },
     /// A RELAYRESPONSE response to a RELAYREQUEST, sent by the "receiver" to the
     /// "initiator" via the "rendezvous".
@@ -208,13 +208,13 @@ impl Request {
             RequestBody::RegisterTopic { .. } => buf,
             RequestBody::TopicQuery { .. } => buf,
             RequestBody::RelayRequest {
-                from_node_id,
+                from_node_enr,
                 to_node_id,
             } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
                 s.append(&id.as_bytes());
-                s.append(&from_node_id.raw().to_vec());
+                s.append(&from_node_enr);
                 s.append(&to_node_id.raw().to_vec());
                 buf.extend_from_slice(&s.out());
                 buf
@@ -346,12 +346,13 @@ impl std::fmt::Display for RequestBody {
             RequestBody::TopicQuery { .. } => write!(f, "TOPICQUERY"),
             RequestBody::RegisterTopic { .. } => write!(f, "REGTOPIC"),
             RequestBody::RelayRequest {
-                from_node_id,
+                from_node_enr,
                 to_node_id,
             } => write!(
                 f,
                 "RELAYREQUEST: from_node_id: {}, to_node_id: {}",
-                from_node_id, to_node_id
+                from_node_enr.node_id(),
+                to_node_id
             ),
         }
     }
@@ -549,7 +550,7 @@ impl Message {
                         // no records
                         vec![]
                     } else {
-                        enr_list_rlp.as_list::<Enr<CombinedKey>>()?
+                        enr_list_rlp.as_list::<Enr>()?
                     }
                 };
                 Message::Response(Response {
@@ -620,16 +621,7 @@ impl Message {
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
 
-                let from_node_id = {
-                    let node_id_bytes = rlp.val_at::<Vec<u8>>(1)?;
-                    if node_id_bytes.len() > 32 {
-                        debug!("NodeId greater than 32 bytes");
-                        return Err(DecoderError::RlpIsTooBig);
-                    }
-                    let mut node_id = [0u8; 32];
-                    node_id[32 - node_id_bytes.len()..].copy_from_slice(&node_id_bytes);
-                    NodeId::new(&node_id)
-                };
+                let from_node_enr = rlp.val_at::<Enr>(1)?;
 
                 let to_node_id = {
                     let node_id_bytes = rlp.val_at::<Vec<u8>>(2)?;
@@ -645,7 +637,7 @@ impl Message {
                 Message::Request(Request {
                     id,
                     body: RequestBody::RelayRequest {
-                        from_node_id,
+                        from_node_enr,
                         to_node_id,
                     },
                 })
@@ -759,7 +751,7 @@ mod tests {
         let id = RequestId(vec![1]);
         let total = 1;
 
-        let enr = "-HW4QCjfjuCfSmIJHxqLYfGKrSz-Pq3G81DVJwd_muvFYJiIOkf0bGtJu7kZVCOPnhSTMneyvR4MRbF3G5TNB4wy2ssBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
+        let enr = "-HW4QCjfjuCfSmIJHxqLYfGKrSz-Pq3G81DVJwd_muvFYJiIOkf0bGtJu7kZVCOPnhSTMneyvR4MRbF3G5TNB4wy2ssBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
         // expected hex output
         let expected_output = hex::decode("04f87b0101f877f875b84028df8ee09f4a62091f1a8b61f18aad2cfe3eadc6f350d527077f9aebc56098883a47f46c6b49bbb91954238f9e14933277b2bd1e0c45b1771b94cd078c32dacb0182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138").unwrap();
 
@@ -779,9 +771,9 @@ mod tests {
         // reference input
         let id = RequestId(vec![1]);
         let total = 1;
-        let enr = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
+        let enr = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
 
-        let enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
+        let enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr>().unwrap();
 
         // expected hex output
         let expected_output = hex::decode("04f8f20101f8eef875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138f875b840d7f1c39e376297f81d7297758c64cb37dcc5c3beea9f57f7ce9695d7d5a67553417d719539d6ae4b445946de4d99e680eb8063f29485b555d45b7df16a1850130182696482763489736563703235366b31a1030e2cb74241c0c4fc8e8166f1a79a05d5b0dd95813a74b094529f317d5c39d235").unwrap();
@@ -801,8 +793,8 @@ mod tests {
     fn ref_decode_response_nodes_multiple() {
         let input = hex::decode("04f8f20101f8eef875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138f875b840d7f1c39e376297f81d7297758c64cb37dcc5c3beea9f57f7ce9695d7d5a67553417d719539d6ae4b445946de4d99e680eb8063f29485b555d45b7df16a1850130182696482763489736563703235366b31a1030e2cb74241c0c4fc8e8166f1a79a05d5b0dd95813a74b094529f317d5c39d235").unwrap();
 
-        let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
-        let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
+        let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
+        let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr>().unwrap();
 
         let decoded = Message::decode(&input).unwrap();
 
@@ -869,7 +861,7 @@ mod tests {
 
     #[test]
     fn encode_decode_nodes_response() {
-        let key = CombinedKey::generate_secp256k1();
+        let key = enr::CombinedKey::generate_secp256k1();
         let enr1 = EnrBuilder::new("v4")
             .ip4("127.0.0.1".parse().unwrap())
             .udp4(500)
@@ -921,10 +913,16 @@ mod tests {
     #[test]
     fn encode_decode_relay_request() {
         let id = RequestId(vec![1]);
+        let key = enr::CombinedKey::generate_secp256k1();
+        let from_node_enr = EnrBuilder::new("v4")
+            .ip4("127.0.0.1".parse().unwrap())
+            .udp4(500)
+            .build(&key)
+            .unwrap();
         let request = Message::Request(Request {
             id,
             body: RequestBody::RelayRequest {
-                from_node_id: NodeId::random(),
+                from_node_enr,
                 to_node_id: NodeId::random(),
             },
         });

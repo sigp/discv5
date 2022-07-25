@@ -93,6 +93,7 @@ async fn build_service(
         event_stream: None,
         exit,
         config,
+        relays: HashMap::new(),
     }
 }
 

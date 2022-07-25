@@ -192,6 +192,9 @@ pub struct Service {
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
+
+    /// Nodes behind a NAT mapped to their potential relays.
+    relays: HashMap<NodeId, Vec<NodeContact>>,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -297,6 +300,7 @@ impl Service {
                     event_stream: None,
                     exit,
                     config: config.clone(),
+                    relays: HashMap::new(),
                 };
 
                 info!("Discv5 Service started");
@@ -612,9 +616,36 @@ impl Service {
                 debug!("Received TopicQuery request which is unimplemented");
             }
             RequestBody::RelayRequest {
-                from_node_id: _,
-                to_node_id: _,
-            } => {}
+                from_node_enr,
+                to_node_id,
+            } => {
+                let local_node_id = self.local_enr.read().node_id();
+                if to_node_id == local_node_id {
+                    // Relay request coming from rendezvous
+                    // Accept relay request
+                    trace!("Receiver node sending PING to initiator node");
+                    self.send_ping(from_node_enr);
+                    trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
+                    //self.send_relay_repsonse(node_address);
+                } else if from_node_enr.node_id() != local_node_id {
+                    // This node is the rendezvous
+                    if let Some(receiver) = self.find_enr(&to_node_id) {
+                        match NodeContact::try_from_enr(receiver, self.config.ip_mode) {
+                            Ok(contact) => {
+                                trace!("Rendezvous node sending RELAYREQUEST to receiver node");
+                                self.send_relay_request(contact, to_node_id);
+                            }
+                            Err(NonContactable { enr }) => {
+                                debug_unreachable!("Failed to send RELAYREQUEST to receiver. Stored ENR is not contactable. {}", enr);
+                                error!(
+                                    "Stored ENR is not contactable! This should never happen {}",
+                                    enr
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -624,14 +655,15 @@ impl Service {
         let id = response.id.clone();
 
         if let Some(mut active_request) = self.active_requests.remove(&id) {
+            let node_contact = active_request.contact.clone();
             debug!(
                 "Received RPC response: {} to request: {} from: {}",
-                response.body, active_request.request_body, active_request.contact
+                response.body, active_request.request_body, node_contact
             );
 
             // Check that the responder matches the expected request
 
-            let expected_node_address = active_request.contact.node_address();
+            let expected_node_address = node_contact.node_address();
             if expected_node_address != node_address {
                 debug_unreachable!("Handler returned a response not matching the used socket addr");
                 return error!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
@@ -678,7 +710,7 @@ impl Service {
                         if nodes.len() > 1 {
                             warn!(
                                 "Peer returned more than one ENR for itself. {}",
-                                active_request.contact
+                                node_contact
                             );
                         }
                         let response = nodes
@@ -719,10 +751,7 @@ impl Service {
 
                         if nodes.len() < before_len {
                             // Peer sent invalid ENRs. Blacklist the Node
-                            warn!(
-                                "Peer sent invalid ENR. Blacklisting {}",
-                                active_request.contact
-                            );
+                            warn!("Peer sent invalid ENR. Blacklisting {}", node_contact);
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         }
@@ -766,7 +795,7 @@ impl Service {
                         "Received a nodes response of len: {}, total: {}, from: {}",
                         nodes.len(),
                         total,
-                        active_request.contact
+                        node_contact
                     );
                     // note: If a peer sends an initial NODES response with a total > 1 then
                     // in a later response sends a response with a total of 1, all previous nodes
@@ -774,7 +803,7 @@ impl Service {
                     // ensure any mapping is removed in this rare case
                     self.active_nodes_responses.remove(&node_id);
 
-                    self.discovered(&node_id, nodes, active_request.query_id);
+                    self.discovered(&node_contact, nodes, active_request.query_id);
                 }
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
@@ -862,10 +891,10 @@ impl Service {
                     if let Some(enr) = self.find_enr(&node_id) {
                         if enr.seq() < enr_seq {
                             // request an ENR update
-                            debug!("Requesting an ENR update from: {}", active_request.contact);
+                            debug!("Requesting an ENR update from: {}", node_contact);
                             let request_body = RequestBody::FindNode { distances: vec![0] };
                             let active_request = ActiveRequest {
-                                contact: active_request.contact,
+                                contact: node_contact,
                                 request_body,
                                 query_id: None,
                                 callback: None,
@@ -979,6 +1008,20 @@ impl Service {
             request_body,
             query_id: None,
             callback: Some(CallbackResponse::Talk(callback)),
+        };
+        self.send_rpc_request(active_request);
+    }
+
+    /// Requests a rendezvous node to help establish a connection to a node behind a nat.
+    fn send_relay_request(&mut self, contact: NodeContact, receiver: NodeId) {
+        let active_request = ActiveRequest {
+            contact,
+            request_body: RequestBody::RelayRequest {
+                from_node_enr: self.local_enr.read().clone(),
+                to_node_id: receiver,
+            },
+            query_id: None,
+            callback: None,
         };
         self.send_rpc_request(active_request);
     }
@@ -1173,7 +1216,7 @@ impl Service {
     }
 
     /// Processes discovered peers from a query.
-    fn discovered(&mut self, source: &NodeId, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
+    fn discovered(&mut self, source: &NodeContact, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
         let local_id = self.local_enr.read().node_id();
         enrs.retain(|enr| {
             if enr.node_id() == local_id {
@@ -1220,10 +1263,11 @@ impl Service {
             // requesting the target of the query, this ENR could be the result of requesting the
             // target-nodes own id. We don't want to add this as a "new" discovered peer in the
             // query, so we remove it from the discovered list here.
-            source != &enr.node_id()
+            source.node_id() != enr.node_id()
         });
 
-        let mut nat_enrs = Vec::new();
+        // If a discovered node flags that it is behind a NAT, send it a relay request instead of adding it to a query.
+        let mut nat_node_ids = Vec::new();
         enrs.retain(|enr| {
             let decoded_enr = enr.to_base64().parse::<Enr>();
             if let Ok(decoded_enr) = decoded_enr {
@@ -1237,7 +1281,7 @@ impl Service {
                         }
                     }) {
                         if is_behind_nat == "1" {
-                            nat_enrs.push(enr.clone());
+                            nat_node_ids.push(enr.node_id());
                             false
                         } else {
                             // Keeps enr if not behind a nat ("nat" = 0) or not sure if behind a nat (nat 
@@ -1252,7 +1296,11 @@ impl Service {
             } else { false }
         });
 
-        //self.send_relay_request(&nat_enrs);
+        for node_id in nat_node_ids {
+            let relays = self.relays.entry(node_id).or_default();
+            relays.push(source.clone());
+            self.send_relay_request(source.clone(), node_id);
+        }
 
         // If this is part of a query, update the query
         if let Some(query_id) = query_id {
@@ -1270,7 +1318,7 @@ impl Service {
                     peer_count += 1;
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(source, &enrs)
+                query.on_success(&source.node_id(), &enrs)
             } else {
                 debug!("Response returned for ended query {:?}", query_id)
             }
@@ -1447,7 +1495,7 @@ impl Service {
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
-                                &node_id,
+                                &active_request.contact,
                                 nodes_response.received_nodes,
                                 active_request.query_id,
                             );
