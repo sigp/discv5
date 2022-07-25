@@ -136,9 +136,15 @@ impl Stream for Tickets {
                 Poll::Ready(Some(Ok((active_topic, ticket))))
             }
             Poll::Ready(Some(Err(e))) => {
-                debug!("{}", e);
-                Poll::Pending
+                error!(
+                    "Failed to fetch next ticket with expired wait time. Error {}",
+                    e
+                );
+                Poll::Ready(Some(Err(e)))
             }
+            // When the hashmap delay holding tickets is empty, as we poll this tickets stream in a
+            // select! statement, to avoid re-polling the stream till it fills up again with new
+            // tickets pending a re-attempt at registration we return Poll::Pending.
             Poll::Ready(None) => Poll::Pending,
             Poll::Pending => Poll::Pending,
         }
