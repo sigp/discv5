@@ -38,7 +38,13 @@ use futures::prelude::*;
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rpc::*;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, task::Poll, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    sync::Arc,
+    task::Poll,
+    time::Instant,
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
@@ -193,8 +199,11 @@ pub struct Service {
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 
+    /// The enrs of nodes behind NAT.
+    peers_behind_nat: HashMap<NodeId, Enr>,
+
     /// Nodes behind a NAT mapped to their potential relays.
-    relays: HashMap<NodeId, Vec<NodeContact>>,
+    relays: HashMap<NodeId, HashSet<NodeContact>>,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -301,6 +310,7 @@ impl Service {
                     exit,
                     config: config.clone(),
                     relays: HashMap::new(),
+                    peers_behind_nat: HashMap::new(),
                 };
 
                 info!("Discv5 Service started");
@@ -621,19 +631,19 @@ impl Service {
             } => {
                 let local_node_id = self.local_enr.read().node_id();
                 if to_node_id == local_node_id {
-                    // Relay request coming from rendezvous
+                    // This node is the receiver
                     // Accept relay request
                     trace!("Receiver node sending PING to initiator node");
                     self.send_ping(from_node_enr);
                     trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
-                    //self.send_relay_repsonse(node_address);
+                    self.send_relay_response(node_address, id, true);
                 } else if from_node_enr.node_id() != local_node_id {
                     // This node is the rendezvous
                     if let Some(receiver) = self.find_enr(&to_node_id) {
                         match NodeContact::try_from_enr(receiver, self.config.ip_mode) {
                             Ok(contact) => {
                                 trace!("Rendezvous node sending RELAYREQUEST to receiver node");
-                                self.send_relay_request(contact, to_node_id);
+                                self.send_relay_request(contact, from_node_enr, to_node_id);
                             }
                             Err(NonContactable { enr }) => {
                                 debug_unreachable!("Failed to send RELAYREQUEST to receiver. Stored ENR is not contactable. {}", enr);
@@ -924,7 +934,26 @@ impl Service {
                 ResponseBody::AdNodes { .. } => {
                     error!("Received an ADNODES response. This is unimplemented and should be unreachable.");
                 }
-                ResponseBody::RelayResponse { response: _ } => {}
+                ResponseBody::RelayResponse { response } => {
+                    if let RequestBody::RelayRequest {
+                        from_node_enr,
+                        to_node_id,
+                    } = active_request.request_body
+                    {
+                        let local_node_id = self.local_enr.read().node_id();
+                        if from_node_enr.node_id() == local_node_id {
+                            // This node is the initiator
+                            if response {
+                                if let Some(receiver_enr) = self.peers_behind_nat.get(&to_node_id) {
+                                    self.send_ping(receiver_enr.clone());
+                                }
+                            }
+                        } else if to_node_id != local_node_id {
+                            // This node is the rendezvous
+                            self.send_relay_response(node_address, id, response);
+                        }
+                    }
+                }
             }
         } else {
             warn!(
@@ -1012,18 +1041,40 @@ impl Service {
         self.send_rpc_request(active_request);
     }
 
-    /// Requests a rendezvous node to help establish a connection to a node behind a nat.
-    fn send_relay_request(&mut self, contact: NodeContact, receiver: NodeId) {
+    /// An initiator node sends a RELAYREQUEST request to a rendezvous node requesting it to help
+    /// establish a connection to a receiver node behind a nat. The rendezvous node relays the
+    /// RELAYREQUEST request on to the receiver.
+    fn send_relay_request(&mut self, contact: NodeContact, initiator: Enr, receiver: NodeId) {
         let active_request = ActiveRequest {
             contact,
             request_body: RequestBody::RelayRequest {
-                from_node_enr: self.local_enr.read().clone(),
+                from_node_enr: initiator,
                 to_node_id: receiver,
             },
             query_id: None,
             callback: None,
         };
         self.send_rpc_request(active_request);
+    }
+
+    /// A receiver node sends a RELAYRESPONSE in response to a RELAYREQUEST to a rendezvous node,
+    /// the rendezvous node relays the RELAYRESPONSE response to the initiator.
+    fn send_relay_response(&mut self, node_address: NodeAddress, id: RequestId, response: bool) {
+        let response = Response {
+            id,
+            body: ResponseBody::RelayResponse { response },
+        };
+        trace!(
+            "Sending RELAYRESPONSE response to: {}. Response: {} ",
+            node_address,
+            response
+        );
+        if let Err(e) = self
+            .handler_send
+            .send(HandlerIn::Response(node_address, Box::new(response)))
+        {
+            warn!("Failed to send RELAYRESPONSE response {}", e)
+        }
     }
 
     /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
@@ -1266,8 +1317,6 @@ impl Service {
             source.node_id() != enr.node_id()
         });
 
-        // If a discovered node flags that it is behind a NAT, send it a relay request instead of adding it to a query.
-        let mut nat_node_ids = Vec::new();
         enrs.retain(|enr| {
             let decoded_enr = enr.to_base64().parse::<Enr>();
             if let Ok(decoded_enr) = decoded_enr {
@@ -1280,14 +1329,27 @@ impl Service {
                             PERMIT_BAN_LIST.write().ban(node_contact.node_address(), ban_timeout);
                         }
                     }) {
+                        // If a discovered node flags that it is behind a NAT, send it a relay request instead of adding 
+                        // it to a query.
                         if is_behind_nat == "1" {
-                            nat_node_ids.push(enr.node_id());
-                            false
-                        } else {
-                            // Keeps enr if not behind a nat ("nat" = 0) or not sure if behind a nat (nat 
-                            // field is empty).
-                            true
-                        }
+                            let nat_node_id = enr.node_id();
+                            self.peers_behind_nat.insert(enr.node_id(), enr.clone());
+
+                            let relays = self.relays.entry(nat_node_id).or_default();
+                            relays.insert(source.clone());
+
+                            let key = kbucket::Key::from(enr.node_id());
+                            let is_new_entry = matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Absent(_));
+                            if is_new_entry {
+                                let local_enr = self.local_enr.read().clone();
+                                self.send_relay_request(source.clone(), local_enr, nat_node_id);
+                            }
+                                false
+                            } else {
+                                // Keeps enr if not behind a nat ("nat" = 0) or not sure if behind a nat (nat 
+                                // field is empty).
+                                true
+                            }
                     } else { false }
                 } else {
                     // Keeps enr if nat field is nonexistent.
@@ -1295,12 +1357,6 @@ impl Service {
                 }
             } else { false }
         });
-
-        for node_id in nat_node_ids {
-            let relays = self.relays.entry(node_id).or_default();
-            relays.push(source.clone());
-            self.send_relay_request(source.clone(), node_id);
-        }
 
         // If this is part of a query, update the query
         if let Some(query_id) = query_id {

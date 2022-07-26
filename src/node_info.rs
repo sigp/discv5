@@ -1,14 +1,17 @@
 use super::*;
 use crate::Enr;
 use enr::{CombinedPublicKey, NodeId};
-use std::net::SocketAddr;
+use std::{
+    hash::{Hash, Hasher},
+    net::SocketAddr,
+};
 
 #[cfg(feature = "libp2p")]
 use libp2p_core::{identity::PublicKey, multiaddr::Protocol, multihash, Multiaddr};
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct NodeContact {
     /// Key to use for communications with this node.
     public_key: CombinedPublicKey,
@@ -138,6 +141,23 @@ impl From<Enr> for NodeContact {
         NodeContact::try_from_enr(enr, IpMode::default()).unwrap()
     }
 }
+
+impl Hash for NodeContact {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.socket_addr.hash(state);
+        if let Some(enr) = &self.enr {
+            enr.node_id().hash(state);
+        }
+    }
+}
+
+impl PartialEq for NodeContact {
+    fn eq(&self, other: &Self) -> bool {
+        self.socket_addr == other.socket_addr && self.enr == other.enr
+    }
+}
+
+impl Eq for NodeContact {}
 
 impl std::fmt::Display for NodeContact {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
