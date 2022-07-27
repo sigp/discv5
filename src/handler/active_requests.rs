@@ -21,7 +21,7 @@ impl ActiveRequests {
     }
 
     pub(crate) fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
-        let nonce = *request_call.packet.message_nonce();
+        let nonce = *request_call.packet().message_nonce();
         self.active_requests_mapping
             .insert(node_address.clone(), request_call);
         self.active_requests_nonce_mapping
@@ -55,7 +55,7 @@ impl ActiveRequests {
                 // Remove the associated nonce mapping.
                 match self
                     .active_requests_nonce_mapping
-                    .remove(request_call.packet.message_nonce())
+                    .remove(request_call.packet().message_nonce())
                 {
                     Some(_) => Some(request_call),
                     None => {
@@ -84,7 +84,7 @@ impl ActiveRequests {
         }
 
         for (address, request) in self.active_requests_mapping.iter() {
-            let nonce = request.packet.message_nonce();
+            let nonce = request.packet().message_nonce();
             if !self.active_requests_nonce_mapping.contains_key(nonce) {
                 panic!("Address {} maps to request with nonce {:?}, which does not exist in `active_requests_nonce_mapping`", address, nonce);
             }
@@ -99,7 +99,7 @@ impl Stream for ActiveRequests {
             Poll::Ready(Some(Ok((node_address, request_call)))) => {
                 // Remove the associated nonce mapping.
                 self.active_requests_nonce_mapping
-                    .remove(request_call.packet.message_nonce());
+                    .remove(request_call.packet().message_nonce());
                 Poll::Ready(Some(Ok((node_address, request_call))))
             }
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
