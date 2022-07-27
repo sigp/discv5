@@ -231,7 +231,7 @@ pub struct Service {
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
-    /// Keeps track of the number of responses received from a NODES response.
+    /// Keeps track of the number of responses received from a NODES response containing ads.
     active_adnodes_responses: HashMap<NodeId, NodesResponse>,
 
     /// Keeps track of the 2 expected responses, NODES and ADNODES that should be received from a
@@ -1620,83 +1620,6 @@ impl Service {
                         self.discovered(&node_id, nodes, active_request.query_id, None)
                     }
                 }
-                ResponseBody::AdNodes { total, mut nodes } => {
-                    // handle the case that there is more than one response
-                    if total > 1 {
-                        let mut current_response = self
-                            .active_adnodes_responses
-                            .remove(&node_id)
-                            .unwrap_or_default();
-
-                        debug!(
-                            "ADNODES Response: {} of {} received",
-                            current_response.count, total
-                        );
-                        // if there are more responses coming, store the nodes and wait for
-                        // another response
-                        // We allow for implementations to send at a minimum 3 nodes per response.
-                        // We allow for the number of nodes to be returned as the maximum we emit.
-                        if current_response.count < self.config.max_nodes_response / 3 + 1
-                            && (current_response.count as u64) < total
-                        {
-                            current_response.count += 1;
-
-                            current_response.received_nodes.append(&mut nodes);
-                            self.active_adnodes_responses
-                                .insert(node_id, current_response);
-                            self.active_requests.insert(id, active_request);
-                            return;
-                        }
-
-                        // have received all the Nodes responses we are willing to accept
-                        // ignore duplicates here as they will be handled when adding
-                        // to the DHT
-                        current_response.received_nodes.append(&mut nodes);
-                        nodes = current_response.received_nodes;
-                    }
-
-                    debug!(
-                        "Received a ADNODES response of len: {}, total: {}, from: {}",
-                        nodes.len(),
-                        total,
-                        active_request.contact
-                    );
-                    // note: If a peer sends an initial NODES response with a total > 1 then
-                    // in a later response sends a response with a total of 1, all previous nodes
-                    // will be ignored.
-                    // ensure any mapping is removed in this rare case
-                    self.active_adnodes_responses.remove(&node_id);
-
-                    if let RequestBody::TopicQuery { topic } = active_request.request_body {
-                        nodes.retain(|enr| (self.config.table_filter)(enr));
-                        if let Some(query) = self.active_topic_queries.queries.get_mut(&topic) {
-                            nodes.into_iter().for_each(|enr| {
-                                trace!(
-                                    "Inserting node {} into query for topic hash {}",
-                                    enr.node_id(),
-                                    topic
-                                );
-                                query.results.insert(enr.node_id(), enr);
-                            });
-                            *query.queried_peers.entry(node_id).or_default() = true;
-                        }
-                        let response_state = self.topic_query_responses.entry(node_id).or_default();
-
-                        match response_state {
-                            TopicQueryResponseState::Start => {
-                                *response_state = TopicQueryResponseState::AdNodes;
-                                self.active_requests.insert(id, active_request);
-                            }
-                            TopicQueryResponseState::Nodes => {
-                                trace!("TOPICQUERY has received expected responses");
-                                self.topic_query_responses.remove(&node_id);
-                            }
-                            TopicQueryResponseState::AdNodes => {
-                                debug_unreachable!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.")
-                            }
-                        }
-                    }
-                }
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
@@ -2082,7 +2005,7 @@ impl Service {
             node_address,
             rpc_id,
             "TOPICQUERY",
-            ResponseBody::AdNodes {
+            ResponseBody::Nodes {
                 total: 1u64,
                 nodes: Vec::new(),
             },
@@ -2267,15 +2190,9 @@ impl Service {
             let responses: Vec<Response> = to_send_nodes
                 .into_iter()
                 .map(|nodes| {
-                    let body = match resp_body {
-                        ResponseBody::AdNodes { .. } => ResponseBody::AdNodes {
-                            total: (rpc_index + 1) as u64,
-                            nodes,
-                        },
-                        _ => ResponseBody::Nodes {
-                            total: (rpc_index + 1) as u64,
-                            nodes,
-                        },
+                    let body = ResponseBody::Nodes {
+                        total: (rpc_index + 1) as u64,
+                        nodes,
                     };
                     Response {
                         id: rpc_id.clone(),

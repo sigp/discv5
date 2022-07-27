@@ -1,6 +1,5 @@
 use crate::advertisement::topic::TopicHash;
 use enr::{CombinedKey, Enr, NodeId};
-use more_asserts::debug_unreachable;
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::net::{IpAddr, Ipv6Addr};
 use tokio::time::Duration;
@@ -134,14 +133,6 @@ pub enum ResponseBody {
         /// The topic of a successful REGTOPIC request.
         topic: TopicHash,
     },
-    /// A NODES response to a TOPICQUERY which also receives a NODES response
-    /// with peers to add to topic kbuckets.
-    AdNodes {
-        /// The total number of responses that make up this response.
-        total: u64,
-        /// A list of ENR's returned by the responder.
-        nodes: Vec<Enr<CombinedKey>>,
-    },
 }
 
 impl Request {
@@ -220,7 +211,6 @@ impl Response {
             ResponseBody::Talk { .. } => 6,
             ResponseBody::Ticket { .. } => 8,
             ResponseBody::RegisterConfirmation { .. } => 9,
-            ResponseBody::AdNodes { .. } => 11,
         }
     }
 
@@ -241,7 +231,6 @@ impl Response {
             ResponseBody::RegisterConfirmation { .. } => {
                 matches!(req, RequestBody::RegisterTopic { .. })
             }
-            ResponseBody::AdNodes { .. } => matches!(req, RequestBody::TopicQuery { .. }),
         }
     }
 
@@ -265,7 +254,7 @@ impl Response {
                 buf.extend_from_slice(&s.out());
                 buf
             }
-            ResponseBody::Nodes { total, nodes } | ResponseBody::AdNodes { total, nodes } => {
+            ResponseBody::Nodes { total, nodes } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
                 s.append(&id.as_bytes());
@@ -345,16 +334,8 @@ impl std::fmt::Display for ResponseBody {
                 "PONG: Enr-seq: {}, Ip: {:?},  Port: {}",
                 enr_seq, ip, port
             ),
-            ResponseBody::Nodes { total, nodes } | ResponseBody::AdNodes { total, nodes } => {
-                let response_type = match self {
-                    ResponseBody::Nodes { .. } => "NODES",
-                    ResponseBody::AdNodes { .. } => "ADNODES",
-                    _ => {
-                        debug_unreachable!("Only NODES and ADNODES");
-                        ""
-                    }
-                };
-                write!(f, "{}: total: {}, Nodes: [", response_type, total)?;
+            ResponseBody::Nodes { total, nodes } => {
+                write!(f, "NODES: total: {}, Nodes: [", total)?;
                 let mut first = true;
                 for id in nodes {
                     if !first {
@@ -689,33 +670,6 @@ impl Message {
                 Message::Request(Request {
                     id,
                     body: RequestBody::TopicQuery { topic },
-                })
-            }
-            11 => {
-                // AdNodesResponse
-                if list_len != 3 {
-                    debug!(
-                        "AdNodes Response has an invalid RLP list length. Expected 3, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-
-                let nodes = {
-                    let enr_list_rlp = rlp.at(2)?;
-                    if enr_list_rlp.is_empty() {
-                        // no records
-                        vec![]
-                    } else {
-                        enr_list_rlp.as_list::<Enr<CombinedKey>>()?
-                    }
-                };
-                Message::Response(Response {
-                    id,
-                    body: ResponseBody::AdNodes {
-                        total: rlp.val_at::<u64>(1)?,
-                        nodes,
-                    },
                 })
             }
             _ => {

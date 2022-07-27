@@ -1020,10 +1020,8 @@ impl Handler {
                         return;
                     }
                 }
-                ResponseBody::Pong { .. }
-                | ResponseBody::Talk { .. }
-                | ResponseBody::AdNodes { .. } => {
-                    // These are all associated with a single response
+                ResponseBody::Pong { .. } | ResponseBody::Talk { .. } => {
+                    // These are both associated with a single response
                 }
             }
 
@@ -1070,7 +1068,6 @@ impl Handler {
         {
             warn!("Failed to inform of response {}", e)
         }
-        return;
     }
 
     /// Inserts a request and associated auth_tag mapping.
