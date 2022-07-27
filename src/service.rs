@@ -18,10 +18,7 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{
-            ActiveRegtopicRequests, TicketPools, Tickets, MAX_WAIT_TIME_TICKET,
-            TICKET_LIMIT_DURATION,
-        },
+        ticket::{ActiveRegtopicRequests, Tickets, MAX_WAIT_TIME_TICKET, TICKET_LIMIT_DURATION},
         topic::{Sha256Topic as Topic, TopicHash},
         Ads, AD_LIFETIME,
     },
@@ -289,9 +286,6 @@ pub struct Service {
     /// Tickets received by other nodes.
     tickets: Tickets,
 
-    /// Locally issued tickets returned by nodes pending registration for free local ad slots.
-    ticket_pools: TicketPools,
-
     /// Locally initiated topic query requests in process.
     active_topic_queries: ActiveTopicQueries,
 }
@@ -513,7 +507,6 @@ impl Service {
                     discovered_peers_topic: HashMap::new(),
                     ticket_key: rand::random(),
                     tickets: Tickets::default(),
-                    ticket_pools: TicketPools::default(),
                     active_topic_queries: ActiveTopicQueries::new(
                         config.topic_query_timeout,
                         config.max_nodes_response,
@@ -860,37 +853,10 @@ impl Service {
                 }
                 Some(Ok((active_topic, active_ticket))) = self.tickets.next() => {
                     let enr = self.local_enr.read().clone();
-                    // When the ticket time expires a new regtopic request is automatically sent
-                    // to the ticket issuer and the registration state for the given topic is
-                    // updated.
-                    if let Some(reg_attempts) = self.registration_attempts.get_mut(&active_topic.topic()) {
-                        for kbucket_reg_attempts in reg_attempts.values_mut() {
-                            let reg_state = kbucket_reg_attempts.reg_attempts.remove(active_topic.node_id());
-                            if reg_state.is_some() {
-                                break;
-                            }
-                        }
-                    }
+                    // When the ticket time expires a new REGTOPIC request is automatically sent to the
+                    // ticket issuer and the registration attempt stays in the [`RegistrationState::Ticket`]
+                    // from sending the first REGTOPIC request to this contact for this topic.
                     self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
-                }
-                Some(Ok((topic, mut ticket_pool))) = self.ticket_pools.next() => {
-                    // Remove any tickets which don't have a current wait time of None.
-                    ticket_pool.retain(|node_id, pool_ticket| self.ads.ticket_wait_time(topic, *node_id, *pool_ticket.ip()) == None);
-                    // Select ticket with longest cummulative wait time.
-                    if let Some(pool_ticket) = ticket_pool.values().max_by_key(|pool_ticket| pool_ticket.ticket().cum_wait()) {
-                        let enr = pool_ticket.node_record();
-                        if let Ok(node_contact) = NodeContact::try_from_enr(enr.clone(), self.config.ip_mode) {
-                            let node_id = enr.node_id();
-                            if let Err((wait_time, e)) = self.ads.insert(enr.clone(), topic, node_contact.socket_addr().ip()) {
-                                error!("Couldn't insert ad from node id {} into ads. Error {}", node_id, e);
-                                let new_ticket = Ticket::new(node_id, *pool_ticket.ip(), topic, wait_time, pool_ticket.ticket().cum_wait() + wait_time);
-                                self.send_ticket_response(node_contact.node_address(), pool_ticket.req_id().clone(), new_ticket, wait_time);
-                            } else {
-                                self.send_regconfirmation_response(node_contact.node_address(), pool_ticket.req_id().clone(), topic);
-                                METRICS.hosted_ads.store(self.ads.len(), Ordering::Relaxed);
-                            }
-                        }
-                    }
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
                     match topic_query_progress {
@@ -1312,45 +1278,40 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
-                // Drop if request tries to advertise another node than sender
+                // Blacklist if request tries to advertise another node than the sender
                 if enr.node_id() != node_address.node_id {
-                    debug!("The enr node id in REGTOPIC request body does not match sender's. Nodes can only register themselves.");
+                    warn!("The enr node id in REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
+                    let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                    self.rpc_failure(id, RequestError::RegistrationOtherNode);
                     return;
                 }
                 match self.config.ip_mode {
                     IpMode::Ip4 => {
                         if enr.udp4_socket().map(SocketAddr::V4) != Some(node_address.socket_addr) {
-                            debug!("The enr ip in REGTOPIC request body does not match sender's. Nodes can only register themselves.");
+                            warn!("The enr ip in REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
+                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                            self.rpc_failure(id, RequestError::RegistrationOtherNode);
                             return;
                         }
                     }
                     IpMode::Ip6 { .. } => {
                         if enr.udp6_socket().map(SocketAddr::V6) != Some(node_address.socket_addr) {
-                            debug!("The enr ip in REGTOPIC request body does not match sender's. Nodes can only register themselves.");
+                            warn!("The enr ip in REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
+                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                            self.rpc_failure(id, RequestError::RegistrationOtherNode);
                             return;
                         }
                     }
                 }
+
                 self.send_find_topic_nodes_response(
                     topic,
                     node_address.clone(),
                     id.clone(),
                     "REGTOPIC",
-                );
-
-                // The current wait time for a given topic.
-                let wait_time = self
-                    .ads
-                    .ticket_wait_time(topic, node_address.node_id, node_address.socket_addr.ip())
-                    .unwrap_or(Duration::from_secs(0));
-
-                let mut new_ticket = Ticket::new(
-                    node_address.node_id,
-                    node_address.socket_addr.ip(),
-                    topic,
-                    //tokio::time::Instant::now(),
-                    wait_time,
-                    wait_time,
                 );
 
                 if !ticket.is_empty() {
@@ -1366,65 +1327,54 @@ impl Service {
                             })
                     };
                     if let Ok(decrypted_ticket) = decrypted_ticket {
-                        Ticket::decode(&decrypted_ticket)
-                            .map_err(|e| {
-                                error!("Failed to decode ticket in REGTOPIC request. Error: {}", e)
-                            })
-                            .map(|ticket| {
-                                if let Some(ticket) = ticket {
-                                    // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
-                                    // wait time for the ad slot. See discv5 spec. This node will not store tickets received
-                                    // with wait time 0.
-                                    new_ticket.set_cum_wait(ticket.cum_wait());
-                                    self.send_ticket_response(
-                                        node_address.clone(),
-                                        id.clone(),
-                                        new_ticket.clone(),
-                                        wait_time,
-                                    );
-                                    // If current wait time is 0, the ticket is added to the matching ticket pool.
-                                    if wait_time <= Duration::from_secs(0) {
-                                        // Drop if src_node_id, src_ip and topic derived from node_address and request
-                                        // don't match those in ticket. For example if a malicious node tries to use
-                                        // another ticket issued by us.
-                                        if ticket == new_ticket {
-                                            self.ticket_pools.insert(
-                                                enr,
-                                                id,
-                                                ticket,
-                                                node_address.socket_addr.ip(),
-                                            );
-                                        }
-                                    }
-                                }
-                            })
-                            .ok();
+                        if let Ok(Some(ticket)) = Ticket::decode(&decrypted_ticket).map_err(|e| {
+                            error!("Failed to decode ticket in REGTOPIC request. Error: {}", e)
+                        }) {
+                            // If the node has not respected the wait time and arrives before the wait time has
+                            // expired or more than 5 seconds later than it has expired, the peer is blacklisted
+                            let waited_time = ticket.req_time().elapsed();
+                            let wait_time = ticket.wait_time();
+                            if waited_time < wait_time
+                                || waited_time >= wait_time + Duration::from_secs(5)
+                            {
+                                warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
+                                let ban_timeout =
+                                    self.config.ban_duration.map(|v| Instant::now() + v);
+                                PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                self.rpc_failure(id, RequestError::InvalidWaitTime);
+                                return;
+                            }
+                        }
                     } else {
-                        warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting: {}", node_address.node_id);
+                        warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting peer {}", node_address.node_id);
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                         PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         self.rpc_failure(id, RequestError::InvalidTicket);
-                    }
-                } else {
-                    // A ticket is always be issued upon receiving a REGTOPIC request, even if there is no
-                    // wait time for the ad slot. See discv5 spec. This node will not store tickets received
-                    // with wait time 0.
-                    self.send_ticket_response(
-                        node_address.clone(),
-                        id.clone(),
-                        new_ticket.clone(),
-                        wait_time,
-                    );
-                    // If current wait time is 0, the ticket is added to the matching ticket pool.
-                    if wait_time == Duration::from_secs(0) {
-                        self.ticket_pools.insert(
-                            enr,
-                            id,
-                            new_ticket,
-                            node_address.socket_addr.ip(),
-                        );
+                        return;
                     }
                 }
+
+                let mut new_ticket = Ticket::new(
+                    node_address.node_id,
+                    node_address.socket_addr.ip(),
+                    topic,
+                    tokio::time::Instant::now(),
+                    Duration::default(),
+                );
+
+                // If there is no wait time and the ad is successfuly registered as an ad, the new ticket is sent
+                // with wait time set to zero indicating successful registration.
+                if let Err((wait_time, e)) =
+                    self.ads
+                        .insert(enr.clone(), topic, node_address.socket_addr.ip())
+                {
+                    // If there is wait time for the requesting node for this topic to register as an ad, due to the
+                    // current state of the topic table, the wait time on the new ticket to send is updated.
+                    new_ticket.set_wait_time(wait_time);
+                }
+
+                let wait_time = new_ticket.wait_time();
+                self.send_ticket_response(node_address.clone(), id.clone(), new_ticket, wait_time);
             }
             RequestBody::TopicQuery { topic } => {
                 self.send_find_topic_nodes_response(
@@ -1782,54 +1732,41 @@ impl Service {
                     wait_time,
                     topic,
                 } => {
-                    if wait_time <= MAX_WAIT_TIME_TICKET && wait_time > 0 {
-                        if let Err(e) = self.tickets.insert(
-                            active_request.contact,
-                            ticket,
-                            Duration::from_secs(wait_time),
-                            topic,
-                        ) {
-                            error!(
-                                "Failed storing ticket from node id {}. Error {}",
-                                node_id, e
-                            );
-                            if let Some(reg_attempts_by_distance) =
-                                self.registration_attempts.get_mut(&topic)
+                    if wait_time <= MAX_WAIT_TIME_TICKET {
+                        let now = Instant::now();
+                        let peer_key: kbucket::Key<NodeId> = node_id.into();
+                        let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                        if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                            let registration_attempts =
+                                self.registration_attempts.entry(topic).or_default();
+                            if let Some(reg_state) = registration_attempts
+                                .entry(distance)
+                                .or_default()
+                                .reg_attempts
+                                .get_mut(&node_id)
                             {
-                                let now = Instant::now();
-                                let peer_key: kbucket::Key<NodeId> = node_id.into();
-                                let topic_key: kbucket::Key<NodeId> =
-                                    NodeId::new(&topic.as_bytes()).into();
-                                if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                                    reg_attempts_by_distance.get_mut(&distance).map(|bucket| {
-                                        bucket.reg_attempts.get_mut(&node_id).map(|reg_state| {
-                                            *reg_state = RegistrationState::TicketLimit(now)
-                                        })
-                                    });
+                                if wait_time > 0 {
+                                    if let Err(e) = self.tickets.insert(
+                                        active_request.contact,
+                                        ticket,
+                                        Duration::from_secs(wait_time),
+                                        topic,
+                                    ) {
+                                        error!(
+                                            "Failed storing ticket from node id {}. Error {}",
+                                            node_id, e
+                                        );
+                                        *reg_state = RegistrationState::TicketLimit(now);
+                                    }
+                                } else {
+                                    *reg_state = RegistrationState::Confirmed(now);
+                                    METRICS.active_regtopic_req.store(
+                                        self.active_regtopic_requests.len(),
+                                        Ordering::Relaxed,
+                                    );
                                 }
                             }
                         }
-                    }
-                }
-                ResponseBody::RegisterConfirmation { topic } => {
-                    let now = Instant::now();
-                    let peer_key: kbucket::Key<NodeId> = node_id.into();
-                    let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
-                    if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                        let registration_attempts =
-                            self.registration_attempts.entry(topic).or_default();
-                        if let Some(reg_state) = registration_attempts
-                            .entry(distance)
-                            .or_default()
-                            .reg_attempts
-                            .get_mut(&node_id)
-                        {
-                            *reg_state = RegistrationState::Confirmed(now);
-                        }
-
-                        METRICS
-                            .active_regtopic_req
-                            .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
                     }
                 }
             }
@@ -1993,27 +1930,6 @@ impl Service {
                     .handler_send
                     .send(HandlerIn::Response(node_address, Box::new(response)));
             });
-    }
-
-    /// The response sent to a node which is selected out of a ticket pool of registrants
-    /// for a free ad slot.
-    fn send_regconfirmation_response(
-        &mut self,
-        node_address: NodeAddress,
-        rpc_id: RequestId,
-        topic: TopicHash,
-    ) {
-        let response = Response {
-            id: rpc_id,
-            body: ResponseBody::RegisterConfirmation { topic },
-        };
-        debug!(
-            "Sending REGCONFIRMATION response to: {}. Response: {} ",
-            node_address, response
-        );
-        let _ = self
-            .handler_send
-            .send(HandlerIn::Response(node_address, Box::new(response)));
     }
 
     /// Response to a topic query containing the nodes currently advertised for the

@@ -1012,14 +1012,6 @@ impl Handler {
                         return;
                     }
                 }
-                ResponseBody::RegisterConfirmation { .. } => {
-                    if request_call.register_confirmation() {
-                        trace!("Reinserting active request");
-                        self.reinsert_request(node_address, request_call, response)
-                            .await;
-                        return;
-                    }
-                }
                 ResponseBody::Pong { .. } | ResponseBody::Talk { .. } => {
                     // These are both associated with a single response
                 }

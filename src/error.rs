@@ -116,9 +116,14 @@ pub enum RequestError {
     /// A request that is responded with multiple respones
     /// gets the wrong combination of responses.
     InvalidResponseCombo(String),
-    /// A REGTOPIC requerst has sent a ticket that was not
+    /// A REGTOPIC request has sent a ticket that was not
     /// issued by us.
     InvalidTicket,
+    /// A REGTOPIC request is trying to register another node
+    /// than itself.
+    RegistrationOtherNode,
+    /// A REGTOPIC is not respecting the assigned wait time.
+    InvalidWaitTime,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -102,7 +102,6 @@ async fn build_service(
         registration_attempts: HashMap::new(),
         topics_kbuckets: HashMap::new(),
         discovered_peers_topic: HashMap::new(),
-        ticket_pools: TicketPools::default(),
         active_topic_queries: ActiveTopicQueries::new(
             config.topic_query_timeout,
             config.max_nodes_response,
@@ -226,9 +225,9 @@ async fn encrypt_decrypt_ticket() {
         node_id,
         ip,
         TopicHash::from_raw([1u8; 32]),
-        //tokio::time::Instant::now(),
+        tokio::time::Instant::now(),
         tokio::time::Duration::from_secs(5),
-        tokio::time::Duration::from_secs(25),
+        //tokio::time::Duration::from_secs(25),
     );
 
     let ticket_key = decoded_enr.get("ticket_key").unwrap();

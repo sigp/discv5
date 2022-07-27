@@ -1,8 +1,11 @@
 use crate::advertisement::topic::TopicHash;
 use enr::{CombinedKey, Enr, NodeId};
 use rlp::{DecoderError, Rlp, RlpStream};
-use std::net::{IpAddr, Ipv6Addr};
-use tokio::time::Duration;
+use std::{
+    net::{IpAddr, Ipv6Addr},
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::time::{Duration, Instant};
 use tracing::{debug, error, warn};
 
 /// Type to manage the request IDs.
@@ -128,11 +131,6 @@ pub enum ResponseBody {
         /// The topic hash for which the opaque ticket is issued.
         topic: TopicHash,
     },
-    /// The REGCONFIRMATION response.
-    RegisterConfirmation {
-        /// The topic of a successful REGTOPIC request.
-        topic: TopicHash,
-    },
 }
 
 impl Request {
@@ -142,7 +140,7 @@ impl Request {
             RequestBody::FindNode { .. } => 3,
             RequestBody::Talk { .. } => 5,
             RequestBody::RegisterTopic { .. } => 7,
-            RequestBody::TopicQuery { .. } => 10,
+            RequestBody::TopicQuery { .. } => 9,
         }
     }
 
@@ -210,7 +208,6 @@ impl Response {
             ResponseBody::Nodes { .. } => 4,
             ResponseBody::Talk { .. } => 6,
             ResponseBody::Ticket { .. } => 8,
-            ResponseBody::RegisterConfirmation { .. } => 9,
         }
     }
 
@@ -228,9 +225,6 @@ impl Response {
             }
             ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),
             ResponseBody::Ticket { .. } => matches!(req, RequestBody::RegisterTopic { .. }),
-            ResponseBody::RegisterConfirmation { .. } => {
-                matches!(req, RequestBody::RegisterTopic { .. })
-            }
         }
     }
 
@@ -289,14 +283,6 @@ impl Response {
                 s.append(&id.as_bytes());
                 s.append(&ticket);
                 s.append(&wait_time);
-                s.append(&topic);
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-            ResponseBody::RegisterConfirmation { topic } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
                 s.append(&topic);
                 buf.extend_from_slice(&s.out());
                 buf
@@ -363,9 +349,6 @@ impl std::fmt::Display for ResponseBody {
                     wait_time,
                     topic
                 )
-            }
-            ResponseBody::RegisterConfirmation { topic } => {
-                write!(f, "REGCONFIRMATION: Registered: {}", topic)
             }
         }
     }
@@ -625,30 +608,6 @@ impl Message {
                 })
             }
             9 => {
-                // RegisterConfirmationResponse
-                if list_len != 2 {
-                    debug!(
-                        "RegisterConfirmation response has an invalid RLP list length. Expected 2, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-                let topic = {
-                    let topic_bytes = rlp.val_at::<Vec<u8>>(1)?;
-                    if topic_bytes.len() > 32 {
-                        debug!("RegisterConfirmation Request has a topic greater than 32 bytes");
-                        return Err(DecoderError::RlpIsTooBig);
-                    }
-                    let mut topic = [0u8; 32];
-                    topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
-                    TopicHash::from_raw(topic)
-                };
-                Message::Response(Response {
-                    id,
-                    body: ResponseBody::RegisterConfirmation { topic },
-                })
-            }
-            10 => {
                 // TopicQueryRequest
                 if list_len != 2 {
                     debug!(
@@ -687,9 +646,9 @@ pub struct Ticket {
     src_node_id: NodeId,
     src_ip: IpAddr,
     topic: TopicHash,
-    //req_time: Instant,
+    req_time: Instant,
     wait_time: Duration,
-    cum_wait: Duration,
+    //cum_wait: Duration,
 }
 
 impl rlp::Encodable for Ticket {
@@ -701,13 +660,13 @@ impl rlp::Encodable for Ticket {
             IpAddr::V6(addr) => s.append(&(addr.octets().to_vec())),
         };
         s.append(&self.topic);
-        /*if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
+        if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
             let time_since_req = self.req_time.elapsed();
             let time_stamp = time_since_unix - time_since_req;
             s.append(&time_stamp.as_secs().to_be_bytes().to_vec());
-        }*/
+        }
         s.append(&self.wait_time.as_secs().to_be_bytes().to_vec());
-        s.append(&self.wait_time.as_secs().to_be_bytes().to_vec());
+        //s.append(&self.cum_wait.as_secs().to_be_bytes().to_vec());
     }
 }
 
@@ -768,7 +727,7 @@ impl rlp::Decodable for Ticket {
 
         let topic = decoded_list.remove(0).as_val::<TopicHash>()?;
 
-        /*let req_time = {
+        let req_time = {
             if let Ok(time_since_unix) = SystemTime::now().duration_since(UNIX_EPOCH) {
                 let secs_data = decoded_list.remove(0).data()?;
                 let mut secs_bytes = [0u8; 8];
@@ -786,7 +745,7 @@ impl rlp::Decodable for Ticket {
             } else {
                 return Err(DecoderError::Custom("SystemTime before UNIX EPOCH!"));
             }
-        };*/
+        };
 
         let wait_time = {
             let secs_data = decoded_list.remove(0).data()?;
@@ -796,21 +755,21 @@ impl rlp::Decodable for Ticket {
             Duration::from_secs(secs)
         };
 
-        let cum_wait = {
+        /*let cum_wait = {
             let secs_data = decoded_list.remove(0).data()?;
             let mut secs_bytes = [0u8; 8];
             secs_bytes.copy_from_slice(secs_data);
             let secs = u64::from_be_bytes(secs_bytes);
             Duration::from_secs(secs)
-        };
+        };*/
 
         Ok(Self {
             src_node_id,
             src_ip,
             topic,
-            //req_time,
+            req_time,
             wait_time,
-            cum_wait,
+            //cum_wait,
         })
     }
 }
@@ -830,17 +789,17 @@ impl Ticket {
         src_node_id: NodeId,
         src_ip: IpAddr,
         topic: TopicHash,
-        //req_time: Instant,
+        req_time: Instant,
         wait_time: Duration,
-        cum_wait: Duration,
+        //cum_wait: Duration,
     ) -> Self {
         Ticket {
             src_node_id,
             src_ip,
             topic,
-            //req_time,
+            req_time,
             wait_time,
-            cum_wait,
+            //cum_wait,
         }
     }
 
@@ -848,21 +807,25 @@ impl Ticket {
         self.topic
     }
 
-    /*pub fn req_time(&self) -> Instant {
+    pub fn req_time(&self) -> Instant {
         self.req_time
-    }*/
+    }
 
     pub fn wait_time(&self) -> Duration {
         self.wait_time
     }
 
-    pub fn cum_wait(&self) -> Duration {
+    pub fn set_wait_time(&mut self, wait_time: Duration) {
+        self.wait_time = wait_time;
+    }
+
+    /*pub fn cum_wait(&self) -> Duration {
         self.cum_wait
     }
 
-    pub fn set_cum_wait(&mut self, prev_cum_wait: Duration) {
-        self.cum_wait = prev_cum_wait + self.wait_time;
-    }
+    pub fn update_cum_wait(&mut self) {
+        self.cum_wait = self.cum_wait + self.wait_time;
+    }*/
 
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -1162,9 +1125,9 @@ mod tests {
             node_id,
             ip,
             TopicHash::from_raw([1u8; 32]),
-            //Instant::now(),
+            Instant::now(),
             Duration::from_secs(11),
-            Duration::from_secs(25),
+            //Duration::from_secs(25),
         );
 
         let ticket = ticket.encode();
@@ -1198,9 +1161,9 @@ mod tests {
             node_id,
             ip,
             TopicHash::from_raw([1u8; 32]),
-            //Instant::now(),
+            Instant::now(),
             Duration::from_secs(11),
-            Duration::from_secs(25),
+            //Duration::from_secs(25),
         );
 
         let encoded = ticket.encode();
@@ -1223,9 +1186,9 @@ mod tests {
             node_id,
             ip,
             TopicHash::from_raw([1u8; 32]),
-            //Instant::now(),
+            Instant::now(),
             Duration::from_secs(11),
-            Duration::from_secs(25),
+            //Duration::from_secs(25),
         );
 
         let ticket_key: [u8; 16] = rand::random();
@@ -1273,9 +1236,9 @@ mod tests {
             node_id,
             ip,
             TopicHash::from_raw([1u8; 32]),
-            //Instant::now(),
+            Instant::now(),
             Duration::from_secs(11),
-            Duration::from_secs(25),
+            //Duration::from_secs(25),
         );
 
         let ticket = ticket.encode();
@@ -1284,21 +1247,6 @@ mod tests {
             body: ResponseBody::Ticket {
                 ticket,
                 wait_time: 1u64,
-                topic: TopicHash::from_raw([1u8; 32]),
-            },
-        });
-
-        let encoded = response.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
-
-        assert_eq!(response, decoded);
-    }
-
-    #[test]
-    fn encode_decode_register_confirmation_response() {
-        let response = Message::Response(Response {
-            id: RequestId(vec![1]),
-            body: ResponseBody::RegisterConfirmation {
                 topic: TopicHash::from_raw([1u8; 32]),
             },
         });
