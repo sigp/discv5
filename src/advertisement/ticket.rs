@@ -1,11 +1,7 @@
 use super::*;
-use crate::{
-    rpc::{RequestId, Ticket},
-    service::ActiveRequest,
-};
+use crate::{rpc::RequestId, service::ActiveRequest};
 use delay_map::HashMapDelay;
 use enr::NodeId;
-use more_asserts::debug_unreachable;
 use node_info::NodeContact;
 use std::{cmp::Eq, collections::hash_map::Entry};
 
@@ -18,12 +14,6 @@ pub const TICKET_LIMIT_DURATION: Duration = Duration::from_secs(60 * 15);
 /// Max tickets that are stored for an individual node for a topic (in the configured
 /// time period).
 pub const MAX_TICKETS_NODE_TOPIC: u8 = 3;
-
-/// The time window in which tickets are accepted for any given free ad slot.
-const REGISTRATION_WINDOW_IN_SECS: u64 = 10;
-
-/// Max nodes that are considered in the selection process for an ad slot.
-//const MAX_REGISTRANTS_AD_SLOT: usize = 50;
 
 /// The duration for which requests are stored.
 const REQUEST_TIMEOUT_IN_SECS: u64 = 15;
@@ -238,123 +228,6 @@ impl TicketHistory {
         for _ in 0..total_to_remove {
             self.expirations.pop_front();
         }
-    }
-}
-
-/// The RegistrationWindow is the time from when an ad slot becomes free until no more
-/// registration attempts are accepted for the ad slot.
-#[derive(Clone)]
-struct RegistrationWindow {
-    /// The RegistrationWindow exists for a specific ad slot, so for a specific topic.
-    topic: TopicHash,
-    /// The open_time is used to make sure the RegistrationWindow closes after
-    /// REGISTRATION_WINDOW_IN_SECS.
-    open_time: Instant,
-}
-
-/// The tickets that will be considered for an ad slot.
-pub struct PoolTicket {
-    /// The node record of the node that returned the ticket.
-    enr: Enr,
-    /// The request id of the REGTOPIC that the ticket was returned in.
-    req_id: RequestId,
-    /// The returned ticket.
-    ticket: Ticket,
-    /// The ip address of the node that returned the ticket.
-    ip: IpAddr,
-}
-
-impl PoolTicket {
-    pub fn new(enr: Enr, req_id: RequestId, ticket: Ticket, ip: IpAddr) -> Self {
-        PoolTicket {
-            enr,
-            req_id,
-            ticket,
-            ip,
-        }
-    }
-
-    pub fn node_record(&self) -> &Enr {
-        &self.enr
-    }
-
-    pub fn req_id(&self) -> &RequestId {
-        &self.req_id
-    }
-
-    pub fn ticket(&self) -> &Ticket {
-        &self.ticket
-    }
-
-    pub fn ip(&self) -> &IpAddr {
-        &self.ip
-    }
-}
-
-/// The TicketPools collects all the registration attempts for a free ad slot.
-#[derive(Default)]
-pub struct TicketPools {
-    /// The ticket_pools keeps track of all the registrants and their Tickets. One
-    /// ticket pool per TopicHash can be open at a time. A ticket pool collects the
-    /// valid tickets received within the registration window for a topic.
-    ticket_pools: HashMap<TopicHash, HashMap<NodeId, PoolTicket>>,
-    /// The expirations keeps track of when to close a ticket pool so the next one
-    /// can be opened.
-    expirations: VecDeque<RegistrationWindow>,
-}
-
-impl TicketPools {
-    pub fn insert(&mut self, _node_record: Enr, _req_id: RequestId, _ticket: Ticket, _ip: IpAddr) {
-        /*if let Some(open_time) = ticket.req_time().checked_add(ticket.wait_time()) {
-            if open_time.elapsed() <= Duration::from_secs(REGISTRATION_WINDOW_IN_SECS) {
-                let pool = self.ticket_pools.entry(ticket.topic()).or_default();
-                // Drop request if pool contains 50 nodes, these nodes are out of luck and
-                // won't be automatically included in next registration window for this topic
-                if pool.len() < MAX_REGISTRANTS_AD_SLOT {
-                    if pool.is_empty() {
-                        self.expirations.push_back(RegistrationWindow {
-                            topic: ticket.topic(),
-                            open_time,
-                        });
-                    }
-                    pool.insert(
-                        node_record.node_id(),
-                        PoolTicket::new(node_record, req_id, ticket, ip),
-                    );
-                }
-            }
-        }*/
-    }
-}
-
-impl Stream for TicketPools {
-    type Item = Result<(TopicHash, HashMap<NodeId, PoolTicket>), String>;
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let ticket_pool = self.expirations.front();
-        if let Some(reg_window) = ticket_pool {
-            if reg_window.open_time.elapsed() < Duration::from_secs(REGISTRATION_WINDOW_IN_SECS) {
-                return Poll::Pending;
-            }
-        } else {
-            return Poll::Pending;
-        }
-        self.expirations
-            .pop_front()
-            .map(|reg_window| {
-                self.ticket_pools
-                    .remove_entry(&reg_window.topic)
-                    .map(|(topic, ticket_pool)| {
-                        self.expirations.pop_front();
-                        Poll::Ready(Some(Ok((topic, ticket_pool))))
-                    })
-                    .unwrap_or_else(|| {
-                        debug_unreachable!(
-                            "Mismatched mapping between ticket_pools and expirations invariant"
-                        );
-                        Poll::Pending
-                    })
-            })
-            .unwrap_or(Poll::Pending)
     }
 }
 

@@ -82,6 +82,9 @@ const MAX_REGTOPICS_REGISTER_INTERVAL: usize = 16;
 /// The max number of uncontacted peers to store before the kbuckets per topic.
 const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
 
+/// The duration in seconds which a node can come late to an assigned wait time.
+const WAIT_TIME_MARGINAL: Duration = Duration::from_secs(5);
+
 /// Request type for Protocols using `TalkReq` message.
 ///
 /// Automatically responds with an empty body on drop if
@@ -1335,7 +1338,7 @@ impl Service {
                             let waited_time = ticket.req_time().elapsed();
                             let wait_time = ticket.wait_time();
                             if waited_time < wait_time
-                                || waited_time >= wait_time + Duration::from_secs(5)
+                                || waited_time >= wait_time + WAIT_TIME_MARGINAL
                             {
                                 warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
                                 let ban_timeout =
@@ -1366,15 +1369,19 @@ impl Service {
                 // with wait time set to zero indicating successful registration.
                 if let Err((wait_time, e)) =
                     self.ads
-                        .insert(enr.clone(), topic, node_address.socket_addr.ip())
+                        .insert(enr, topic, node_address.socket_addr.ip())
                 {
-                    // If there is wait time for the requesting node for this topic to register as an ad, due to the
-                    // current state of the topic table, the wait time on the new ticket to send is updated.
+                    // The wait time on the new ticket to send is updated if there is wait time for the requesting
+                    // node for this topic to register as an ad due to the current state of the topic table.
+                    error!(
+                        "Registration attempt from peer {} for topic hash {} failed. Error: {}",
+                        node_address.node_id, topic, e
+                    );
                     new_ticket.set_wait_time(wait_time);
                 }
 
                 let wait_time = new_ticket.wait_time();
-                self.send_ticket_response(node_address.clone(), id.clone(), new_ticket, wait_time);
+                self.send_ticket_response(node_address, id, new_ticket, wait_time);
             }
             RequestBody::TopicQuery { topic } => {
                 self.send_find_topic_nodes_response(

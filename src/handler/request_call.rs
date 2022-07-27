@@ -116,13 +116,6 @@ impl RequestCall {
         false
     }
 
-    // We have received a Register Confirmation. Returns true if we are still expecting more
-    // responses.
-    pub fn register_confirmation(&mut self) -> bool {
-        // If there are more NODES responses to come, wait for these.
-        self.awaiting_nodes.is_some()
-    }
-
     /// Returns the request ID associated with the [`RequestCall`].
     pub fn id(&self) -> &RequestId {
         &self.request.id
