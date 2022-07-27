@@ -1318,14 +1318,12 @@ impl Service {
         });
 
         enrs.retain(|enr| {
-            let decoded_enr = enr.to_base64().parse::<Enr>();
-            if let Ok(decoded_enr) = decoded_enr {
-                if let Some(nat) = decoded_enr.get("nat") {
-                    if let Ok(is_behind_nat) = std::str::from_utf8(nat).map_err(|e| {
-                        error!("Failed to decode field 'nat' in discovered enr with node id {}. Error: {}. Blacklisting.", enr.node_id(), e);
-                        let ip_mode = self.config.ip_mode;
-                        if let Ok(node_contact) = NodeContact::try_from_enr(enr.clone(), ip_mode) {
-                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+            if let Some(nat) = enr.get("nat") {
+                if let Ok(is_behind_nat) = std::str::from_utf8(nat).map_err(|e| {
+                    error!("Failed to decode field 'nat' in discovered enr with node id {}. Error: {}. Blacklisting.", enr.node_id(), e);
+                    let ip_mode = self.config.ip_mode;
+                    if let Ok(node_contact) = NodeContact::try_from_enr(enr.clone(), ip_mode) {
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(node_contact.node_address(), ban_timeout);
                         }
                     }) {
@@ -1355,7 +1353,6 @@ impl Service {
                     // Keeps enr if nat field is nonexistent.
                     true
                 }
-            } else { false }
         });
 
         // If this is part of a query, update the query
