@@ -22,7 +22,7 @@ use crate::{
             ActiveRegtopicRequests, TicketPools, Tickets, MAX_WAIT_TIME_TICKET,
             TICKET_LIMIT_DURATION,
         },
-        topic::TopicHash,
+        topic::{Sha256Topic as Topic, TopicHash},
         Ads, AD_LIFETIME,
     },
     discv5::PERMIT_BAN_LIST,
@@ -50,6 +50,7 @@ use fnv::FnvHashMap;
 use futures::{future::select_all, prelude::*};
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
+use rlp::{Rlp, RlpStream};
 use rpc::*;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
@@ -189,7 +190,7 @@ pub enum ServiceRequest {
     TopicQuery(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
     /// RegisterTopic publishes this node as an advertiser for a topic in a discv5 network
     /// until removed.
-    RegisterTopic(TopicHash),
+    RegisterTopic(Topic),
     /// Stops publishing this node as an advetiser for a topic.
     RemoveTopic(TopicHash, oneshot::Sender<Result<String, RequestError>>),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
@@ -621,50 +622,78 @@ impl Service {
                             }
                             self.send_topic_queries(topic_hash, Some(callback));
                         }
-                        ServiceRequest::RegisterTopic(topic_hash) => {
+                        ServiceRequest::RegisterTopic(topic) => {
+                            let topic_hash = topic.hash();
                             if self.registration_attempts.insert(topic_hash, BTreeMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
                             } else {
-                                // NOTE: Currently we don't expose custom filter support in the configuration. Users can
-                                // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
-                                // may expose this functionality to the users if there is demand for it.
-                                let (table_filter, bucket_filter) = if self.config.ip_limit {
-                                    (
-                                        Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-                                        Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
-                                    )
+                                let topics_field = if let Some(topics) = self.local_enr.read().get("topics") {
+                                    let rlp = Rlp::new(topics);
+                                    let item_count = rlp.iter().count();
+                                    let mut rlp_stream = RlpStream::new_list(item_count + 1);
+                                    for item in rlp.iter() {
+                                        if let Ok(data) = item.data().map_err(|e| debug_unreachable!("Topic item which was previously encoded in enr, cannot be decoded into data. Error {}", e)) {
+                                            rlp_stream.append(&data);
+                                        }
+                                    }
+                                    rlp_stream.append(&topic.topic().as_bytes());
+                                    rlp_stream.out()
                                 } else {
-                                    (None, None)
+                                    let mut rlp_stream = RlpStream::new_list(1);
+                                    rlp_stream.append(&topic.topic().as_bytes());
+                                    rlp_stream.out()
                                 };
 
-                                trace!("Initiating kbuckets for topic hash {}", topic_hash);
-                                let mut kbuckets = KBucketsTable::new(
-                                    NodeId::new(&topic_hash.as_bytes()).into(),
-                                    Duration::from_secs(60),
-                                    self.config.incoming_bucket_limit,
-                                    table_filter,
-                                    bucket_filter,
-                                );
-
-                                debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
-
-                                for entry in self.kbuckets.write().iter() {
-                                    match kbuckets.insert_or_update(entry.node.key, entry.node.value.clone(), entry.status) {
-                                        InsertResult::Inserted
-                                        | InsertResult::Pending { .. }
-                                        | InsertResult::StatusUpdated { .. }
-                                        | InsertResult::ValueUpdated
-                                        | InsertResult::Updated { .. }
-                                        | InsertResult::UpdatedPending => trace!(
-                                            "Added node id {} to kbucket of topic hash {}",
-                                            entry.node.value.node_id(),
-                                            topic_hash
-                                        ),
-                                        InsertResult::Failed(f) => error!("Failed to insert ENR for topic hash {}. Failure reason: {:?}", topic_hash, f),
-                                    }
+                                let enr_size = self.local_enr.read().size() + topics_field.len();
+                                if enr_size >= 300 {
+                                    error!("Failed to register topic {}. The ENR would be a total of {} bytes if this topic was registered, the maximum size is 300 bytes", topic.topic(), enr_size);
                                 }
-                                self.topics_kbuckets.insert(topic_hash, kbuckets);
-                                METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
+
+                                if self.local_enr
+                                    .write()
+                                    .insert("topics", &topics_field, &self.enr_key.write())
+                                    .map_err(|e| error!("Failed to insert field 'topics' into local enr. Error {:?}", e)).is_ok() {
+                                    // NOTE: Currently we don't expose custom filter support in the configuration. Users can
+                                    // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
+                                    // may expose this functionality to the users if there is demand for it.
+                                    let (table_filter, bucket_filter) = if self.config.ip_limit {
+                                        (
+                                            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+                                            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+                                        )
+                                    } else {
+                                        (None, None)
+                                    };
+
+                                    trace!("Initiating kbuckets for topic hash {}", topic_hash);
+                                    let mut kbuckets = KBucketsTable::new(
+                                        NodeId::new(&topic_hash.as_bytes()).into(),
+                                        Duration::from_secs(60),
+                                        self.config.incoming_bucket_limit,
+                                        table_filter,
+                                        bucket_filter,
+                                    );
+
+                                    debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
+
+                                    for entry in self.kbuckets.write().iter() {
+                                        match kbuckets.insert_or_update(entry.node.key, entry.node.value.clone(), entry.status) {
+                                            InsertResult::Inserted
+                                            | InsertResult::Pending { .. }
+                                            | InsertResult::StatusUpdated { .. }
+                                            | InsertResult::ValueUpdated
+                                            | InsertResult::Updated { .. }
+                                            | InsertResult::UpdatedPending => trace!(
+                                                "Added node id {} to kbucket of topic hash {}",
+                                                entry.node.value.node_id(),
+                                                topic_hash
+                                            ),
+                                            InsertResult::Failed(f) => error!("Failed to insert ENR for topic hash {}. Failure reason: {:?}", topic_hash, f),
+                                        }
+                                    }
+                                    self.topics_kbuckets.insert(topic_hash, kbuckets);
+                                    METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
+                                }
                             }
                         }
                         ServiceRequest::ActiveTopics(callback) => {

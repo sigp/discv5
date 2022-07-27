@@ -622,12 +622,14 @@ impl Discv5 {
             let channel = channel
                 .as_ref()
                 .map_err(|_| RequestError::ServiceNotStarted)?;
-            let topic_hash = Topic::new(topic).hash();
-            let event = ServiceRequest::RegisterTopic(topic_hash);
+            let topic = Topic::new(topic);
             debug!(
-                "Registering topic {} with Sha256 hash {}",
-                topic, topic_hash
+                "Registering topic {} with topic hash {} {}",
+                topic,
+                topic.hash(),
+                topic.hash_function_name(),
             );
+            let event = ServiceRequest::RegisterTopic(topic);
             // send the request
             channel
                 .send(event)
