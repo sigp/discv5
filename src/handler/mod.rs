@@ -42,7 +42,7 @@ use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     convert::TryFrom,
     default::Default,
     net::SocketAddr,
@@ -56,6 +56,7 @@ use tracing::{debug, error, trace, warn};
 
 mod active_requests;
 mod crypto;
+mod request_call;
 mod session;
 mod tests;
 
@@ -65,6 +66,7 @@ use crate::metrics::METRICS;
 
 use crate::lru_time_cache::LruTimeCache;
 use active_requests::ActiveRequests;
+use request_call::RequestCall;
 use session::Session;
 
 // The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
@@ -155,97 +157,10 @@ pub struct Challenge {
     remote_enr: Option<Enr>,
 }
 
-/// A request to a node that we are waiting for a response.
-#[derive(Debug, Clone)]
-pub(crate) struct RequestCall {
-    contact: NodeContact,
-    /// The raw discv5 packet sent.
-    packet: Packet,
-    /// The unencrypted message. Required if need to re-encrypt and re-send.
-    request: Request,
-    /// Handshakes attempted.
-    handshake_sent: bool,
-    /// The number of times this request has been re-sent.
-    retries: u8,
-    /// If we receive a Nodes Response with a total greater than 1. This keeps track of the
-    /// remaining responses expected.
-    remaining_responses: Option<u64>,
-    /// If we receive a AdNodes Response with a total greater than 1. This keeps track of the
-    /// remaining responses expected.
-    remaining_adnode_responses: Option<u64>,
-    /// Signifies if we are initiating the session with a random packet. This is only used to
-    /// determine the connection direction of the session.
-    initiating_session: bool,
-}
-
-impl RequestCall {
-    fn new(
-        contact: NodeContact,
-        packet: Packet,
-        request: Request,
-        initiating_session: bool,
-    ) -> Self {
-        RequestCall {
-            contact,
-            packet,
-            request,
-            handshake_sent: false,
-            retries: 1,
-            remaining_responses: None,
-            remaining_adnode_responses: None,
-            initiating_session,
-        }
-    }
-
-    fn id(&self) -> &RequestId {
-        &self.request.id
-    }
-}
-
-/// TOPICQUERY requests receive 2 types of responses ADNODES and NODES, in an
-/// order which cannot be guaranteed. If a peer sends the wrong combination of
-/// responses the peer is blacklisted.
-#[derive(Default)]
-pub enum TopicQueryResponseState {
-    /// The Start state is intermediary upon receving the first response to the
-    /// TOPICQUERY request, either a NODES or ADNODES response.
-    #[default]
-    Start,
-    /// A NODES response has been completely received.
-    Nodes,
-    /// An ADNODES response has been completely received.
-    AdNodes,
-}
-
-/// REGTOPIC requests receive 3 types of responses TICKET, NODES and possibly
-/// a REGCONFIRMATION. The order of the ticket and nodes is non-determinsitic
-/// but the regconf, if it comes, always come up to 10 seconds (depending on
-/// when in the registration window the request comes) + latency later. If a
-/// peer sends the wrong permutation of responses the peer is blacklisted.
-#[derive(Default)]
-pub enum RegTopicResponseState {
-    /// The Start state is intermediary upon receving the first response to the
-    /// REGTOPIC request, either a NODES or TICKET response.
-    #[default]
-    Start,
-    /// A NODES response has been completely received.
-    Nodes,
-    /// A TICKET response has been received.
-    Ticket,
-    /// A REGISTERCONFIRMATION response has been received.
-    RegisterConfirmation,
-}
-
-/// The time out for awaiting REGCONFIRMATION responses is the registration window (10 seconds)
-/// plus some seconds for processing.
-const TIMEOUT_REGCONFIRMATION: Duration = Duration::from_secs(15);
-
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
-    /// Configuration for the discv5 service of duration for which nodes are banned.
-    ban_duration: Option<Duration>,
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
     /// during the operation of the server.
     node_id: NodeId,
@@ -255,16 +170,8 @@ pub struct Handler {
     key: Arc<RwLock<CombinedKey>>,
     /// Pending raw requests.
     active_requests: ActiveRequests,
-    /// Pending raw REGTOPIC requests awaiting a REGCONFIRMATION response that may come.
-    active_requests_regconf: ActiveRequests,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
-    /// Keeps track of the 2 expected responses, NODES and ADNODES that should be received from a
-    /// TOPICQUERY request.
-    topic_query_responses: HashMap<NodeAddress, TopicQueryResponseState>,
-    /// Keeps track of the 3 expected responses, NODES and TICKET that should be received from a
-    /// REGTOPIC request, and REGCONFIRMATION that may be recieved.
-    reg_topic_responses: HashMap<NodeAddress, RegTopicResponseState>,
     /// Requests awaiting a handshake completion.
     pending_requests: HashMap<NodeAddress, Vec<(NodeContact, Request)>>,
     /// Currently in-progress outbound handshakes (WHOAREYOU packets) with peers.
@@ -345,18 +252,12 @@ impl Handler {
 
                 let mut handler = Handler {
                     request_retries: config.request_retries,
-                    ban_duration: config.ban_duration,
                     node_id,
                     enr,
                     key,
                     active_requests: ActiveRequests::new(config.request_timeout),
-                    active_requests_regconf: ActiveRequests::new(
-                        TIMEOUT_REGCONFIRMATION + config.request_timeout,
-                    ),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
-                    topic_query_responses: HashMap::new(),
-                    reg_topic_responses: HashMap::new(),
                     sessions: LruTimeCache::new(
                         config.session_timeout,
                         Some(config.session_cache_capacity),
@@ -400,7 +301,7 @@ impl Handler {
                     self.process_inbound_packet(inbound_packet).await;
                 }
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
-                    trace!("Discarding request {} with timeout", pending_request.request.body);
+                    trace!("Discarding request {} with timeout", pending_request.kind());
                     self.handle_request_timeout(node_address, pending_request).await;
                 }
                 Some(Ok((node_address, _challenge))) = self.active_challenges.next() => {
@@ -495,47 +396,10 @@ impl Handler {
         node_address: NodeAddress,
         mut request_call: RequestCall,
     ) {
-        if let RequestBody::RegisterTopic { .. } = request_call.request.body {
-            if let Entry::Occupied(entry) = self.reg_topic_responses.entry(node_address.clone()) {
-                let response_state = entry.get();
-                if let RegTopicResponseState::RegisterConfirmation = response_state {
-                    // There is no guarantee that a REGCONFIRMATION responses should come to a REGTOPIC
-                    // request. A timeout while awaiting a REGCONFIRMATION is not a failure.
-                    self.reg_topic_responses.remove(&node_address);
-                    self.remove_expected_response(node_address.socket_addr);
-                    self.send_next_request(node_address).await;
-                    return;
-                } else if let RegTopicResponseState::Ticket | RegTopicResponseState::Nodes =
-                    response_state
-                {
-                    self.reg_topic_responses.remove(&node_address);
-                    trace!("Request timed out with {}", node_address);
-                    // Remove the request from the awaiting packet_filter
-                    self.remove_expected_response(node_address.socket_addr);
-                    // The request has timed out. We keep any established session for future use.
-                    self.fail_request(request_call, RequestError::Timeout, false)
-                        .await;
-                    return;
-                }
-            }
-        } else if let RequestBody::TopicQuery { .. } = request_call.request.body {
-            if let Entry::Occupied(entry) = self.topic_query_responses.entry(node_address.clone()) {
-                let response_state = entry.get();
-                if let TopicQueryResponseState::AdNodes | TopicQueryResponseState::Nodes =
-                    response_state
-                {
-                    self.topic_query_responses.remove(&node_address);
-                    trace!("Request timed out with {}", node_address);
-                    // Remove the request from the awaiting packet_filter
-                    self.remove_expected_response(node_address.socket_addr);
-                    // The request has timed out. We keep any established session for future use.
-                    self.fail_request(request_call, RequestError::Timeout, false)
-                        .await;
-                }
-            }
-            return;
-        }
-        if request_call.retries >= self.request_retries {
+        // NOTE: We consider it a node fault if we are waiting for a REGCONFIRMATION and we receive
+        // a timeout. We should only be waiting for a REGCONFIRMATION if we know one should be
+        // coming.
+        if request_call.retries() >= self.request_retries {
             trace!("Request timed out with {}", node_address);
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);
@@ -546,12 +410,12 @@ impl Handler {
             // increment the request retry count and restart the timeout
             trace!(
                 "Resending message: {} to {}",
-                request_call.request,
+                request_call.raw_request(),
                 node_address
             );
-            self.send(node_address.clone(), request_call.packet.clone())
+            self.send(node_address.clone(), request_call.packet().clone())
                 .await;
-            request_call.retries += 1;
+            request_call.retry();
             self.active_requests.insert(node_address, request_call);
         }
     }
@@ -702,26 +566,26 @@ impl Handler {
         };
 
         // double check the message nonces match
-        if request_call.packet.message_nonce() != &request_nonce {
+        if request_call.packet().message_nonce() != &request_nonce {
             // This could theoretically happen if a peer uses the same node id across
             // different connections.
-            warn!("Received a WHOAREYOU from a non expected source. Source: {}, message_nonce {} , expected_nonce: {}", request_call.contact, hex::encode(request_call.packet.message_nonce()), hex::encode(request_nonce));
+            warn!("Received a WHOAREYOU from a non expected source. Source: {}, message_nonce {} , expected_nonce: {}", request_call.contact(), hex::encode(request_call.packet().message_nonce()), hex::encode(request_nonce));
             // NOTE: Both mappings are removed in this case.
             return;
         }
 
         trace!(
             "Received a WHOAREYOU packet response. Source: {}",
-            request_call.contact
+            request_call.contact()
         );
 
         // We do not allow multiple WHOAREYOU packets for a single challenge request. If we have
         // already sent a WHOAREYOU ourselves, we drop sessions who send us a WHOAREYOU in
         // response.
-        if request_call.handshake_sent {
+        if request_call.handshake_sent() {
             warn!(
                 "Authentication response already sent. Dropping session. Node: {}",
-                request_call.contact
+                request_call.contact()
             );
             self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                 .await;
@@ -739,12 +603,12 @@ impl Handler {
 
         // Generate a new session and authentication packet
         let (auth_packet, mut session) = match Session::encrypt_with_header(
-            &request_call.contact,
+            request_call.contact(),
             self.key.clone(),
             updated_enr,
             &self.node_id,
             &challenge_data,
-            &(request_call.request.clone().encode()),
+            &(request_call.raw_request().clone().encode()),
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -768,45 +632,45 @@ impl Handler {
         //
         // All sent requests must have an associated node_id. Therefore the following
         // must not panic.
-        let node_address = request_call.contact.node_address();
-        match request_call.contact.enr() {
+        let node_address = request_call.contact().node_address();
+        match request_call.contact().enr() {
             Some(enr) => {
                 // NOTE: Here we decide if the session is outgoing or ingoing. The condition for an
                 // outgoing session is that we originally sent a RANDOM packet (signifying we did
                 // not have a session for a request) and the packet is not a PING (we are not
                 // trying to update an old session that may have expired.
                 let connection_direction = {
-                    match (&request_call.initiating_session, &request_call.request.body) {
+                    match (request_call.initiating_session(), request_call.kind()) {
                         (true, RequestBody::Ping { .. }) => ConnectionDirection::Incoming,
                         (true, _) => ConnectionDirection::Outgoing,
                         (false, _) => ConnectionDirection::Incoming,
                     }
                 };
 
-                // We already know the ENR. Send the handshake response packet
-                trace!("Sending Authentication response to node: {}", node_address);
-                request_call.packet = auth_packet.clone();
-                request_call.handshake_sent = true;
-                request_call.initiating_session = false;
-                // Reinsert the request_call
-                self.insert_active_request(request_call.clone());
-                // Send the actual packet to the send task.
-                self.send(node_address.clone(), auth_packet).await;
-
                 // Notify the application that the session has been established
-                let event = match request_call.request.body {
+                let event = match request_call.kind() {
                     RequestBody::RegisterTopic {
                         topic,
                         enr: _,
                         ticket: _,
                     }
                     | RequestBody::TopicQuery { topic } => {
-                        HandlerOut::EstablishedTopic(enr, connection_direction, topic)
+                        HandlerOut::EstablishedTopic(enr, connection_direction, *topic)
                     }
                     _ => {
                         HandlerOut::Established(enr, node_address.socket_addr, connection_direction)
                     }
                 };
+
+                // We already know the ENR. Send the handshake response packet
+                trace!("Sending Authentication response to node: {}", node_address);
+                request_call.upgrade_to_auth_packet(auth_packet.clone());
+                request_call.set_initiating_session(false);
+                // Reinsert the request_call
+                self.insert_active_request(request_call);
+                // Send the actual packet to the send task.
+                self.send(node_address.clone(), auth_packet).await;
+
                 self.service_send
                     .send(event)
                     .await
@@ -814,12 +678,10 @@ impl Handler {
             }
             None => {
                 // Don't know the ENR. Establish the session, but request an ENR also
-
                 // Send the Auth response
-                let contact = request_call.contact.clone();
+                let contact = request_call.contact().clone();
                 trace!("Sending Authentication response to node: {}", node_address);
-                request_call.packet = auth_packet.clone();
-                request_call.handshake_sent = true;
+                request_call.upgrade_to_auth_packet(auth_packet.clone());
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
                 self.send(node_address.clone(), auth_packet).await;
@@ -1113,319 +975,56 @@ impl Handler {
         // Find a matching request, if any
         trace!("Received {} response", response.body);
 
-        let (request_call, is_regconf) =
-            if let Some(request_call) = self.active_requests_regconf.remove(&node_address) {
-                (Some(request_call), true)
-            } else {
-                (self.active_requests.remove(&node_address), false)
-            };
-
-        if let Some(mut request_call) = request_call {
+        if let Some(mut request_call) = self.active_requests.remove(&node_address) {
             if request_call.id() != &response.id {
                 // add the request back and reset the timer
-                if is_regconf {
-                    trace!(
-                        "Received an RPC Response from a node we are also waiting for a REGISTERCONFIRMATION from. {}",
-                        node_address
-                    );
-                    self.active_requests_regconf
-                        .insert(node_address, request_call);
-                } else {
-                    trace!(
-                        "Received an RPC Response to an unknown request. Likely late response. {}",
-                        node_address
-                    );
-                    self.active_requests.insert(node_address, request_call);
-                }
+                trace!(
+                    "Received an RPC Response to an unknown request. Likely late response. {}",
+                    node_address
+                );
+                self.active_requests.insert(node_address, request_call);
                 return;
             }
 
-            let blacklist_peer = |handler: &mut Handler| {
-                // Remove the expected response
-                handler.remove_expected_response(node_address.socket_addr);
-                let ban_timeout = handler.ban_duration.map(|v| Instant::now() + v);
-                PERMIT_BAN_LIST
-                    .write()
-                    .ban(node_address.clone(), ban_timeout);
-            };
-
             // The response matches a request
 
-            // Check to see if this is a Nodes response, in which case we may require to wait for
-            // extra responses
-            if let ResponseBody::Nodes { total, .. } = response.body {
-                if total > 1 {
-                    // This is a multi-response Nodes response
-                    if let Some(remaining_responses) = request_call.remaining_responses.as_mut() {
-                        *remaining_responses -= 1;
-                        if remaining_responses != &0 {
-                            trace!("Reinserting active request");
-                            // more responses remaining, add back the request and send the response
-                            // add back the request and send the response
-                            self.active_requests
-                                .insert(node_address.clone(), request_call);
-                            if let Err(e) = self
-                                .service_send
-                                .send(HandlerOut::Response(node_address, Box::new(response)))
-                                .await
-                            {
-                                warn!("Failed to inform of response {}", e)
-                            }
-                            return;
-                        }
-                    } else {
-                        // This is the first instance
-                        request_call.remaining_responses = Some(total - 1);
-                        // add back the request and send the response
-                        self.active_requests
-                            .insert(node_address.clone(), request_call);
-                        if let Err(e) = self
-                            .service_send
-                            .send(HandlerOut::Response(node_address, Box::new(response)))
-                            .await
-                        {
-                            warn!("Failed to inform of response {}", e)
-                        }
+            // Check to see if the matching request requires us to wait for extra responses.
+            match response.body {
+                ResponseBody::Nodes { total, .. } => {
+                    // Update the request call state and if there are no more messages expected, remove
+                    // the request
+                    if request_call.register_nodes_response(total) {
+                        // This is a multi-response Nodes response
+                        trace!("Reinserting active request");
+                        self.reinsert_request(node_address, request_call, response)
+                            .await;
                         return;
                     }
                 }
-                // If the total number of NODES responses arrived and it is for a REGTOPIC or a
-                // TOPICQUERY the active request might be waiting for more types of responses.
-                match request_call.request.body {
-                    RequestBody::RegisterTopic { .. } => {
-                        trace!("Received a NODES reponse for a REGTOPIC request");
-                        let response_state = self
-                            .reg_topic_responses
-                            .entry(node_address.clone())
-                            .or_default();
-
-                        match response_state {
-                            RegTopicResponseState::Start => {
-                                *response_state = RegTopicResponseState::Nodes;
-                                self.active_requests
-                                    .insert(node_address.clone(), request_call);
-                                if let Err(e) = self
-                                    .service_send
-                                    .send(HandlerOut::Response(
-                                        node_address.clone(),
-                                        Box::new(response),
-                                    ))
-                                    .await
-                                {
-                                    warn!("Failed to inform of response {}", e)
-                                }
-                                return;
-                            }
-                            RegTopicResponseState::Ticket => {
-                                *response_state = RegTopicResponseState::RegisterConfirmation;
-                                // Still a REGCONFIRMATION may come hence request call is reinserted, in a separate
-                                // struct to avoid blocking further requests to the node address during the request timeout.
-                                self.active_requests_regconf
-                                    .insert(node_address.clone(), request_call);
-                                if let Err(e) = self
-                                    .service_send
-                                    .send(HandlerOut::Response(
-                                        node_address.clone(),
-                                        Box::new(response),
-                                    ))
-                                    .await
-                                {
-                                    warn!("Failed to inform of response {}", e)
-                                }
-                                return;
-                            }
-                            RegTopicResponseState::Nodes
-                            | RegTopicResponseState::RegisterConfirmation => {
-                                debug!("No more NODES responses should be received if REGTOPIC response is in Nodes or RegisterConfirmation state.");
-                                warn!(
-                                    "Peer returned more than one set of NODES responses for REGTOPIC request. Blacklisting {}",
-                                    node_address
-                                );
-                                self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a REGTOPIC request".into()), true).await;
-                                blacklist_peer(self);
-                                return;
-                            }
-                        }
-                    }
-                    RequestBody::TopicQuery { .. } => {
-                        trace!("Received a NODES reponse for a TOPICQUERY request");
-                        let response_state = self
-                            .topic_query_responses
-                            .entry(node_address.clone())
-                            .or_default();
-
-                        match response_state {
-                            TopicQueryResponseState::Start => {
-                                *response_state = TopicQueryResponseState::Nodes;
-                                self.active_requests
-                                    .insert(node_address.clone(), request_call);
-                                if let Err(e) = self
-                                    .service_send
-                                    .send(HandlerOut::Response(
-                                        node_address.clone(),
-                                        Box::new(response),
-                                    ))
-                                    .await
-                                {
-                                    warn!("Failed to inform of response {}", e)
-                                }
-                                return;
-                            }
-                            TopicQueryResponseState::AdNodes => {
-                                self.topic_query_responses.remove(&node_address);
-                            }
-                            TopicQueryResponseState::Nodes => {
-                                debug!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.");
-                                warn!(
-                                    "Peer returned more than one set of NODES responses for TOPICQUERY request. Blacklisting {}",
-                                    node_address
-                                );
-                                self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of NODES responses for a TOPICQUERY request".into()), true).await;
-                                blacklist_peer(self);
-                                return;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            } else if let ResponseBody::AdNodes { total, .. } = response.body {
-                if total > 1 {
-                    // This is a multi-response Nodes response
-                    if let Some(ref mut remaining_adnode_responses) =
-                        request_call.remaining_adnode_responses
-                    {
-                        *remaining_adnode_responses -= 1;
-                        if remaining_adnode_responses != &0 {
-                            trace!("Reinserting active TOPICQUERY request");
-                            // more responses remaining, add back the request and send the response
-                            // add back the request and send the response
-                            self.active_requests
-                                .insert(node_address.clone(), request_call);
-                            if let Err(e) = self
-                                .service_send
-                                .send(HandlerOut::Response(node_address, Box::new(response)))
-                                .await
-                            {
-                                warn!("Failed to inform of response {}", e)
-                            }
-                            return;
-                        }
-                    } else {
-                        // This is the first instance
-                        request_call.remaining_responses = Some(total - 1);
-                        // add back the request and send the response
-                        self.active_requests
-                            .insert(node_address.clone(), request_call);
-                        if let Err(e) = self
-                            .service_send
-                            .send(HandlerOut::Response(node_address, Box::new(response)))
-                            .await
-                        {
-                            warn!("Failed to inform of response {}", e)
-                        }
+                ResponseBody::Ticket { wait_time, .. } => {
+                    // We may want to keep the request alive if further nodes responses are due, or if
+                    // a REGCONFIRMATION is expected.
+                    if request_call.register_ticket(wait_time) {
+                        trace!("Reinserting active request");
+                        // There are more responses remaining, add back the request and send the response
+                        self.reinsert_request(node_address, request_call, response)
+                            .await;
                         return;
                     }
                 }
-                let response_state = self
-                    .topic_query_responses
-                    .entry(node_address.clone())
-                    .or_default();
-
-                match response_state {
-                    TopicQueryResponseState::Start => {
-                        *response_state = TopicQueryResponseState::AdNodes;
-                        self.active_requests
-                            .insert(node_address.clone(), request_call);
-                        if let Err(e) = self
-                            .service_send
-                            .send(HandlerOut::Response(
-                                node_address.clone(),
-                                Box::new(response),
-                            ))
-                            .await
-                        {
-                            warn!("Failed to inform of response {}", e)
-                        }
-                        return;
-                    }
-                    TopicQueryResponseState::Nodes => {
-                        self.topic_query_responses.remove(&node_address);
-                    }
-                    TopicQueryResponseState::AdNodes => {
-                        debug!("No more ADNODES responses should be received if TOPICQUERY response is in AdNodes state.");
-                        warn!(
-                            "Peer returned more than one set of ADNODES responses for TOPICQUERY request. Blacklisting {}",
-                            node_address
-                        );
-                        self.fail_request(request_call, RequestError::InvalidResponseCombo("Received more than one set of ADNODES responses for a TOPICQUERY request".into()), true).await;
-                        blacklist_peer(self);
+                ResponseBody::RegisterConfirmation { .. } => {
+                    if request_call.register_confirmation() {
+                        trace!("Reinserting active request");
+                        self.reinsert_request(node_address, request_call, response)
+                            .await;
                         return;
                     }
                 }
-            } else if let ResponseBody::Ticket { .. } = response.body {
-                // The request is reinserted for either a NODES response or a potential REGCONFIRMATION
-                // response that may come.
-                let response_state = self
-                    .reg_topic_responses
-                    .entry(node_address.clone())
-                    .or_default();
-
-                match response_state {
-                    RegTopicResponseState::Start => {
-                        *response_state = RegTopicResponseState::Ticket;
-                        self.active_requests
-                            .insert(node_address.clone(), request_call.clone());
-                        if let Err(e) = self
-                            .service_send
-                            .send(HandlerOut::Response(
-                                node_address.clone(),
-                                Box::new(response),
-                            ))
-                            .await
-                        {
-                            warn!("Failed to inform of response {}", e)
-                        }
-                        return;
-                    }
-                    RegTopicResponseState::Nodes => {
-                        *response_state = RegTopicResponseState::RegisterConfirmation;
-                        // Still a REGCONFIRMATION may come hence request call is reinserted, in a separate
-                        // struct to avoid blocking further requests to the node address during the request timeout.
-                        self.active_requests_regconf
-                            .insert(node_address.clone(), request_call);
-                        if let Err(e) = self
-                            .service_send
-                            .send(HandlerOut::Response(
-                                node_address.clone(),
-                                Box::new(response),
-                            ))
-                            .await
-                        {
-                            warn!("Failed to inform of response {}", e)
-                        }
-                        return;
-                    }
-                    RegTopicResponseState::Ticket | RegTopicResponseState::RegisterConfirmation => {
-                        debug!("No more TICKET responses should be received if REGTOPIC response is in Ticket or RegisterConfirmation state.");
-                        warn!(
-                            "Peer returned more than one TICKET responses for REGTOPIC request. Blacklisting {}",
-                            node_address
-                        );
-                        self.fail_request(
-                            request_call,
-                            RequestError::InvalidResponseCombo(
-                                "Received more than one TICKET response for a REGTOPIC request"
-                                    .into(),
-                            ),
-                            true,
-                        )
-                        .await;
-                        blacklist_peer(self);
-                        return;
-                    }
+                ResponseBody::Pong { .. }
+                | ResponseBody::Talk { .. }
+                | ResponseBody::AdNodes { .. } => {
+                    // These are all associated with a single response
                 }
-            } else if let ResponseBody::RegisterConfirmation { .. } = response.body {
-                self.reg_topic_responses.remove(&node_address);
             }
 
             // Remove the expected response
@@ -1450,9 +1049,33 @@ impl Handler {
         }
     }
 
+    /// A helper function used in `handle_response` to re-insert a request_call and await another
+    /// response, whilst sending the response back to the service.
+    async fn reinsert_request(
+        &mut self,
+        node_address: NodeAddress,
+        request_call: RequestCall,
+        response: Response,
+    ) {
+        // There are more messages to be received
+        trace!("Reinserting active request");
+        // more responses remaining, add back the request and send the response
+        // add back the request and send the response
+        self.active_requests
+            .insert(node_address.clone(), request_call);
+        if let Err(e) = self
+            .service_send
+            .send(HandlerOut::Response(node_address, Box::new(response)))
+            .await
+        {
+            warn!("Failed to inform of response {}", e)
+        }
+        return;
+    }
+
     /// Inserts a request and associated auth_tag mapping.
     fn insert_active_request(&mut self, request_call: RequestCall) {
-        let node_address = request_call.contact.node_address();
+        let node_address = request_call.contact().node_address();
 
         // adds the mapping of message nonce to node address
         self.active_requests.insert(node_address, request_call);
@@ -1478,16 +1101,16 @@ impl Handler {
     ) {
         // The Request has expired, remove the session.
         // Fail the current request
-        let request_id = request_call.request.id;
+        let request_id = request_call.id();
         if let Err(e) = self
             .service_send
-            .send(HandlerOut::RequestFailed(request_id, error.clone()))
+            .send(HandlerOut::RequestFailed(request_id.clone(), error.clone()))
             .await
         {
             warn!("Failed to inform request failure {}", e)
         }
 
-        let node_address = request_call.contact.node_address();
+        let node_address = request_call.contact().node_address();
         self.fail_session(&node_address, error, remove_session)
             .await;
     }
