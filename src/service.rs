@@ -1281,13 +1281,6 @@ impl Service {
                     }
                 }
 
-                self.send_find_topic_nodes_response(
-                    topic,
-                    node_address.clone(),
-                    id.clone(),
-                    "REGTOPIC",
-                );
-
                 if !ticket.is_empty() {
                     let decrypted_ticket = {
                         let aead = Aes128Gcm::new(GenericArray::from_slice(&self.ticket_key));
@@ -1354,13 +1347,6 @@ impl Service {
                 self.send_ticket_response(node_address, id, new_ticket, wait_time);
             }
             RequestBody::TopicQuery { topic } => {
-                self.send_find_topic_nodes_response(
-                    topic,
-                    node_address.clone(),
-                    id.clone(),
-                    "TOPICQUERY",
-                );
-                trace!("Sending ADNODES response");
                 self.send_topic_query_adnodes_response(node_address, id, topic);
             }
         }
@@ -1897,7 +1883,12 @@ impl Service {
             .ads
             .get_ad_nodes(topic)
             .map(|ad| ad.node_record().clone())
-            .collect();
+            .collect::<Vec<Enr>>();
+        trace!(
+            "Sending NODES response(s) containing all together {} ads for topic hash {}",
+            nodes_to_send.len(),
+            topic
+        );
         self.send_nodes_response(
             nodes_to_send,
             node_address,
@@ -1905,64 +1896,7 @@ impl Service {
             "TOPICQUERY",
             ResponseBody::Nodes {
                 total: 1u64,
-                nodes: Vec::new(),
-            },
-        );
-    }
-
-    /// Finds a list of ENRs in the local routing table's kbucktets at the distance ±1 that
-    /// the topic hash would be placed in, to send in a NODES response to a TOPICQUERY or
-    /// REGTOPIC request.
-    fn send_find_topic_nodes_response(
-        &mut self,
-        topic: TopicHash,
-        node_address: NodeAddress,
-        id: RequestId,
-        req_type: &str,
-    ) {
-        let local_key: kbucket::Key<NodeId> = self.local_enr.read().node_id().into();
-        let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
-        let distance_to_topic = local_key.log2_distance(&topic_key);
-
-        let mut closest_peers: Vec<Enr> = Vec::new();
-        if let Some(distance) = distance_to_topic {
-            self.kbuckets
-                .write()
-                .nodes_by_distances(&[distance], self.config.max_nodes_response)
-                .iter()
-                .for_each(|entry| {
-                    if entry.node.key.preimage() != &node_address.node_id {
-                        closest_peers.push(entry.node.value.clone())
-                    }
-                });
-
-            if closest_peers.len() < self.config.max_nodes_response {
-                for entry in self
-                    .kbuckets
-                    .write()
-                    .nodes_by_distances(
-                        &[distance - 1, distance + 1],
-                        self.config.max_nodes_response - closest_peers.len(),
-                    )
-                    .iter()
-                {
-                    if closest_peers.len() > self.config.max_nodes_response {
-                        break;
-                    }
-                    if entry.node.key.preimage() != &node_address.node_id {
-                        closest_peers.push(entry.node.value.clone())
-                    }
-                }
-            }
-        }
-        self.send_nodes_response(
-            closest_peers,
-            node_address,
-            id,
-            req_type,
-            ResponseBody::Nodes {
-                total: 1u64,
-                nodes: Vec::new(),
+                nodes: Vec::new(), // `send_nodes_response` handles dividing `nodes_to_send` into multiple NODES responses
             },
         );
     }
@@ -2012,7 +1946,7 @@ impl Service {
             "FINDNODE",
             ResponseBody::Nodes {
                 total: 1u64,
-                nodes: Vec::new(),
+                nodes: Vec::new(), // `send_nodes_response` handles dividing `nodes_to_send` into multiple NODES responses
             },
         );
     }
