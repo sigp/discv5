@@ -1411,24 +1411,11 @@ impl Service {
                     // These are sanitized and ordered
                     let distances_requested: Vec<u64> = match &active_request.request_body {
                         RequestBody::FindNode { distances } => distances.clone(),
-                        RequestBody::TopicQuery { topic }
-                        | RequestBody::RegisterTopic { topic, .. } => {
-                            let peer_key: kbucket::Key<NodeId> = node_address.node_id.into();
-                            let topic_key: kbucket::Key<NodeId> =
-                                NodeId::new(&topic.as_bytes()).into();
-                            let distance_to_topic = peer_key.log2_distance(&topic_key);
-                            if let Some(distance) = distance_to_topic {
-                                [distance - 1, distance, distance + 1].into()
-                            } else {
-                                warn!("The node id of this peer is the requested topic hash. Blacklisting peer with node id {}", node_id);
-                                let ban_timeout =
-                                    self.config.ban_duration.map(|v| Instant::now() + v);
-                                PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                                self.rpc_failure(id, RequestError::InvalidTicket);
-                                return;
-                            }
+                        RequestBody::TopicQuery { .. } => 
+                        _ => {
+                            debug_unreachable!("Only FINDNODE and TOPICQUERY requests get NODES responses");
+                            vec![]
                         }
-                        _ => unreachable!(),
                     };
 
                     // This could be an ENR request from the outer service. If so respond to the
@@ -2146,7 +2133,7 @@ impl Service {
         let request_body = active_request.request_body.clone();
         let request: Request = Request {
             id: id.clone(),
-            body: request_body.clone(),
+            body: request_body,
         };
         let contact = active_request.contact.clone();
 
