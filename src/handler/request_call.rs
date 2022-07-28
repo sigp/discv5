@@ -18,9 +18,6 @@ pub(crate) struct RequestCall {
     /// A NODES response can span multiple datagrams. If we are receiving multiple NODES responses,
     /// this tracks the number of datagrams we are still expecting.
     awaiting_nodes: Option<u64>,
-    /// For topic registrations we expect to receive a ticket. We keep the request alive until we
-    /// receive a ticket.
-    ticket_received: bool,
     /// Signifies if we are initiating the session with a random packet. This is only used to
     /// determine the connection direction of the session.
     initiating_session: bool,
@@ -40,7 +37,6 @@ impl RequestCall {
             handshake_sent: false,
             retries: 1,
             awaiting_nodes: None,
-            ticket_received: false,
             initiating_session,
         }
     }
@@ -82,38 +78,7 @@ impl RequestCall {
                 return true; // still waiting for more messages
             }
         }
-
-        // This is either a single message, the node is faulty, or we have the final NODES response
-        // we were waiting for.
-        // We are not waiting for more messages, unless we are still waiting for a ticket.
-        if matches!(self.kind(), RequestBody::RegisterTopic { .. }) {
-            !self.ticket_received // We are still waiting for a Ticket
-        } else {
-            false // This was a single NODES response and we have no interest in waiting for more messages.
-        }
-    }
-
-    /// A TICKET response has been received.
-    /// This updates the state of the request and returns true if we should wait for more
-    /// responses.
-    pub fn register_ticket(&mut self, wait_time: u64) -> bool {
-        if self.ticket_received {
-            // We have already received a ticket, do not wait for anything further.
-            return false;
-        }
-
-        self.ticket_received = true;
-
-        // If the ticket is confirmed, we expect an immediate confirmation
-        if wait_time == 0 {
-            return true;
-        }
-
-        // If we are still expecting more NODES to be returned, wait for these also.
-        if self.awaiting_nodes.is_some() {
-            return true;
-        }
-        false
+        false // This was a single NODES response and we have no interest in waiting for more messages.
     }
 
     /// Returns the request ID associated with the [`RequestCall`].

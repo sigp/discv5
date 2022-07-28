@@ -1001,19 +1001,10 @@ impl Handler {
                         return;
                     }
                 }
-                ResponseBody::Ticket { wait_time, .. } => {
-                    // We may want to keep the request alive if further nodes responses are due, or if
-                    // a REGCONFIRMATION is expected.
-                    if request_call.register_ticket(wait_time) {
-                        trace!("Reinserting active request");
-                        // There are more responses remaining, add back the request and send the response
-                        self.reinsert_request(node_address, request_call, response)
-                            .await;
-                        return;
-                    }
-                }
-                ResponseBody::Pong { .. } | ResponseBody::Talk { .. } => {
-                    // These are both associated with a single response
+                ResponseBody::Pong { .. }
+                | ResponseBody::Talk { .. }
+                | ResponseBody::Ticket { .. } => {
+                    // These are all associated with a single response
                 }
             }
 
