@@ -18,7 +18,7 @@ use self::{
 };
 use crate::{
     advertisement::{
-        ticket::{ActiveRegtopicRequests, Tickets, MAX_WAIT_TIME_TICKET, TICKET_LIMIT_DURATION},
+        ticket::{Tickets, MAX_WAIT_TIME_TICKET, TICKET_LIMIT_DURATION},
         topic::{Sha256Topic as Topic, TopicHash},
         Ads, AD_LIFETIME,
     },
@@ -232,18 +232,6 @@ pub struct Service {
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
-    /// Keeps track of the number of responses received from a NODES response containing ads.
-    active_adnodes_responses: HashMap<NodeId, NodesResponse>,
-
-    /// Keeps track of the 2 expected responses, NODES and ADNODES that should be received from a
-    /// TOPICQUERY request.
-    topic_query_responses: HashMap<NodeId, TopicQueryResponseState>,
-
-    /// Keeps track of the 3 expected responses, TICKET and NODES that should be received from a
-    /// REGTOPIC request and REGCONFIRMATION that may be received if there is a free ad slot and
-    /// the node is selected by the remote node for the free ad slot.
-    active_regtopic_requests: ActiveRegtopicRequests,
-
     /// A map of votes nodes have made about our external IP address. We accept the majority.
     ip_votes: Option<IpVote>,
 
@@ -305,20 +293,6 @@ pub enum TopicQueryState {
     /// Not enough ads have been returned from the first round of sending TOPICQUERY
     /// requests, new peers in the topic's kbucktes should be queried.
     Unsatisfied(TopicHash),
-}
-
-/// The state of a response to a single TOPICQUERY request. A topic lookup/query is
-/// made up of several TOPICQUERYs each being sent to a different peer.
-#[derive(Default)]
-pub enum TopicQueryResponseState {
-    /// The Start state is intermediary upon receving the first response to the
-    /// TOPICQUERY request, either a NODES or ADNODES response.
-    #[default]
-    Start,
-    /// A NODES response has been completely received.
-    Nodes,
-    /// An ADNODES response has been completely received.
-    AdNodes,
 }
 
 /// At any given time, a set number of registrations should be active per topic hash to
@@ -494,9 +468,6 @@ impl Service {
                     queries: QueryPool::new(config.query_timeout),
                     active_requests: Default::default(),
                     active_nodes_responses: HashMap::new(),
-                    active_adnodes_responses: HashMap::new(),
-                    topic_query_responses: HashMap::new(),
-                    active_regtopic_requests: ActiveRegtopicRequests::default(),
                     ip_votes,
                     handler_send,
                     handler_recv,
@@ -1368,8 +1339,7 @@ impl Service {
                 // If there is no wait time and the ad is successfuly registered as an ad, the new ticket is sent
                 // with wait time set to zero indicating successful registration.
                 if let Err((wait_time, e)) =
-                    self.ads
-                        .insert(enr, topic, node_address.socket_addr.ip())
+                    self.ads.insert(enr, topic, node_address.socket_addr.ip())
                 {
                     // The wait time on the new ticket to send is updated if there is wait time for the requesting
                     // node for this topic to register as an ad due to the current state of the topic table.
@@ -1401,12 +1371,7 @@ impl Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        let active_request = self
-            .active_requests
-            .remove(&id)
-            .or_else(|| self.active_regtopic_requests.remove(&id));
-
-        if let Some(mut active_request) = active_request {
+        if let Some(mut active_request) = self.active_requests.remove(&id) {
             debug!(
                 "Received RPC response: {} to request: {} from: {}",
                 response.body, active_request.request_body, active_request.contact
@@ -1551,14 +1516,7 @@ impl Service {
                             current_response.received_nodes.append(&mut nodes);
                             self.active_nodes_responses
                                 .insert(node_id, current_response);
-                            match active_request.request_body {
-                                RequestBody::RegisterTopic { .. } => {
-                                    self.active_regtopic_requests.reinsert(id);
-                                }
-                                _ => {
-                                    self.active_requests.insert(id, active_request);
-                                }
-                            }
+                            self.active_requests.insert(id, active_request);
                             return;
                         }
 
@@ -1581,30 +1539,7 @@ impl Service {
                     // ensure any mapping is removed in this rare case
                     self.active_nodes_responses.remove(&node_id);
 
-                    if let RequestBody::TopicQuery { topic } = active_request.request_body {
-                        self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
-
-                        let response_state = self.topic_query_responses.entry(node_id).or_default();
-
-                        match response_state {
-                            TopicQueryResponseState::Start => {
-                                *response_state = TopicQueryResponseState::Nodes;
-                                self.active_requests.insert(id, active_request);
-                            }
-                            TopicQueryResponseState::AdNodes => {
-                                self.topic_query_responses.remove(&node_id);
-                            }
-                            TopicQueryResponseState::Nodes => {
-                                debug_unreachable!("No more NODES responses should be received if TOPICQUERY response is in Nodes state.")
-                            }
-                        }
-                    } else if let RequestBody::RegisterTopic { topic, .. } =
-                        active_request.request_body
-                    {
-                        self.discovered(&node_id, nodes, active_request.query_id, Some(topic));
-                    } else if let RequestBody::FindNode { .. } = active_request.request_body {
-                        self.discovered(&node_id, nodes, active_request.query_id, None)
-                    }
+                    self.discovered(&node_id, nodes, active_request.query_id, None);
                 }
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
@@ -1767,10 +1702,6 @@ impl Service {
                                     }
                                 } else {
                                     *reg_state = RegistrationState::Confirmed(now);
-                                    METRICS.active_regtopic_req.store(
-                                        self.active_regtopic_requests.len(),
-                                        Ordering::Relaxed,
-                                    );
                                 }
                             }
                         }
@@ -2225,18 +2156,7 @@ impl Service {
             .send(HandlerIn::Request(contact, Box::new(request)))
             .is_ok()
         {
-            match request_body {
-                RequestBody::RegisterTopic { .. } => {
-                    self.active_regtopic_requests
-                        .insert(id.clone(), active_request);
-                    METRICS
-                        .active_regtopic_req
-                        .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
-                }
-                _ => {
-                    self.active_requests.insert(id.clone(), active_request);
-                }
-            }
+            self.active_requests.insert(id.clone(), active_request);
         }
         id
     }
@@ -2610,11 +2530,7 @@ impl Service {
     /// specified).
     fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
         trace!("RPC Error removing request. Reason: {:?}, id {}", error, id);
-        if let Some(active_request) = self
-            .active_requests
-            .remove(&id)
-            .or_else(|| self.active_regtopic_requests.remove(&id))
-        {
+        if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
             match active_request.callback {
@@ -2698,10 +2614,6 @@ impl Service {
                         if let Some(bucket) = registration_attempts.get_mut(&distance) {
                             bucket.reg_attempts.remove(&node_id);
                         }
-
-                        METRICS
-                            .active_regtopic_req
-                            .store(self.active_regtopic_requests.len(), Ordering::Relaxed);
                     }
                     self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic));
                     return;

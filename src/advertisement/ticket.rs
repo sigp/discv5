@@ -1,9 +1,8 @@
 use super::*;
-use crate::{rpc::RequestId, service::ActiveRequest};
 use delay_map::HashMapDelay;
 use enr::NodeId;
 use node_info::NodeContact;
-use std::{cmp::Eq, collections::hash_map::Entry};
+use std::cmp::Eq;
 
 /// The max wait time accpeted for tickets.
 pub const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
@@ -14,13 +13,6 @@ pub const TICKET_LIMIT_DURATION: Duration = Duration::from_secs(60 * 15);
 /// Max tickets that are stored for an individual node for a topic (in the configured
 /// time period).
 pub const MAX_TICKETS_NODE_TOPIC: u8 = 3;
-
-/// The duration for which requests are stored.
-const REQUEST_TIMEOUT_IN_SECS: u64 = 15;
-
-/// Each REGTOPIC request gets a TICKET response, NODES response and can get
-/// a REGCONFIRMATION response.
-const MAX_RESPONSES_REGTOPIC: u8 = 3;
 
 /// A topic is active when it's associated with the NodeId from a node it is
 /// published on.
@@ -228,109 +220,5 @@ impl TicketHistory {
         for _ in 0..total_to_remove {
             self.expirations.pop_front();
         }
-    }
-}
-
-/// Since according to spec, a REGTOPIC request can receive both a TICKET and
-/// then REGISTRATION_WINDOW_IN_SECS seconds later optionally also a
-/// REGCONFIRMATION response, ActiveRegtopicRequests need to be handled separate
-/// from ActiveRequests in Service.
-#[derive(Clone)]
-pub struct ActiveRegtopicRequest {
-    /// The RequestId identifies an ActiveRequest.
-    req_id: RequestId,
-    /// The insert_time is used to make sure an ActiveRegtopicRequest persists
-    /// no longer than REQUEST_TIMEOUT_IN_SECS.
-    insert_time: Instant,
-}
-
-impl ActiveRegtopicRequest {
-    fn new(req_id: RequestId, insert_time: Instant) -> Self {
-        ActiveRegtopicRequest {
-            insert_time,
-            req_id,
-        }
-    }
-}
-
-/// The ActiveRegtopicRequests keeps ActiveRequests until they have matched
-/// with MAX_RESPONSES_PER_REGTOPIC responses.
-#[derive(Default)]
-pub struct ActiveRegtopicRequests {
-    requests: HashMap<RequestId, ActiveRequest>,
-    request_history: HashMap<RequestId, u8>,
-    expirations: VecDeque<ActiveRegtopicRequest>,
-}
-
-impl ActiveRegtopicRequests {
-    /// Checks if there are currently any active REGTOPIC requests.
-    pub fn is_empty(&self) -> bool {
-        self.expirations.is_empty()
-    }
-
-    /// Returns the total amount of REGTOPIC requests currently active.
-    pub fn len(&self) -> usize {
-        self.expirations.len()
-    }
-
-    /// Removes a specific REGTOPIC request if it exists.
-    pub fn remove(&mut self, req_id: &RequestId) -> Option<ActiveRequest> {
-        if let Some(seen_count) = self.request_history.get_mut(req_id) {
-            *seen_count += 1;
-            if *seen_count == 0 {
-                self.request_history.remove(req_id);
-                self.requests.remove(req_id)
-            } else {
-                self.requests.get(req_id).map(|req| ActiveRequest {
-                    contact: req.contact.clone(),
-                    request_body: req.request_body.clone(),
-                    query_id: req.query_id,
-                    callback: None,
-                })
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Caution! Reinsert should only be called if a NODES response to a REGTOPIC needs to be divided
-    /// into multiple NODES responses, the request must be reinserted.
-    pub fn reinsert(&mut self, req_id: RequestId) {
-        self.remove_expired();
-        if let Entry::Occupied(ref mut entry) = self.request_history.entry(req_id) {
-            *entry.get_mut() += 1;
-        }
-    }
-
-    /// Inserts a REGTOPIC request into [`ActiveRegtopicRequests`] after removing timed out [`ActiveRegtopicRequest`]s.
-    pub fn insert(&mut self, req_id: RequestId, req: ActiveRequest) {
-        self.remove_expired();
-        let now = Instant::now();
-
-        self.requests.insert(req_id.clone(), req);
-        self.request_history
-            .insert(req_id.clone(), MAX_RESPONSES_REGTOPIC);
-        self.expirations
-            .push_back(ActiveRegtopicRequest::new(req_id, now));
-    }
-
-    /// If a REGTOPIC request doesn't receive the expected responses it times out, and calling this
-    /// function will remove timed out entries.
-    fn remove_expired(&mut self) {
-        let mut expired = Vec::new();
-        self.expirations
-            .iter()
-            .take_while(|req| {
-                req.insert_time.elapsed() >= Duration::from_secs(REQUEST_TIMEOUT_IN_SECS)
-            })
-            .for_each(|req| {
-                expired.push(req.clone());
-            });
-
-        expired.into_iter().for_each(|req| {
-            self.requests.remove(&req.req_id);
-            self.request_history.remove(&req.req_id);
-            self.expirations.pop_front();
-        });
     }
 }
