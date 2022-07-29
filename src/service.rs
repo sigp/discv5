@@ -229,6 +229,11 @@ pub struct Service {
     /// query.
     active_requests: FnvHashMap<RequestId, ActiveRequest>,
 
+    /// To fill a topic's kbuckets, FINDNODE requests are sent using the topic hash as a node id (key).
+    /// With XOR metrics the buckets closest to topic hash will be filled this way. The request will
+    /// always time out.
+    find_node_topic_requests: HashMap<RequestId, TopicHash>,
+
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<NodeId, NodesResponse>,
 
@@ -467,6 +472,7 @@ impl Service {
                     kbuckets,
                     queries: QueryPool::new(config.query_timeout),
                     active_requests: Default::default(),
+                    find_node_topic_requests: Default::default(),
                     active_nodes_responses: HashMap::new(),
                     ip_votes,
                     handler_send,
@@ -588,6 +594,11 @@ impl Service {
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
                             self.send_topic_queries(topic_hash, Some(callback));
+
+                            // To fill the kbuckets closest to the topic hash, start a find node query searching
+                            // for the topic hash's bytes wrapped in a NodeId.
+                            let topic_key = NodeId::new(&topic_hash.as_bytes());
+                            self.start_findnode_query(topic_key, None);
                         }
                         ServiceRequest::RegisterTopic(topic) => {
                             let topic_hash = topic.hash();
@@ -660,6 +671,11 @@ impl Service {
                                     }
                                     self.topics_kbuckets.insert(topic_hash, kbuckets);
                                     METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
+
+                                    // To fill the kbuckets closest to the topic hash, start a find node query searching
+                                    // for the topic hash's bytes wrapped in a NodeId.
+                                    let topic_key = NodeId::new(&topic_hash.as_bytes());
+                                    self.start_findnode_query(topic_key, None);
                                 }
                             }
                         }
@@ -1519,7 +1535,9 @@ impl Service {
                     self.active_nodes_responses.remove(&node_id);
 
                     if let RequestBody::FindNode { .. } = &active_request.request_body {
-                        self.discovered(&node_id, nodes, active_request.query_id, None);
+                        // In the case that it is a FINDNODE request using a topic hash as key, remove the mapping.
+                        let topic = self.find_node_topic_requests.remove(&id);
+                        self.discovered(&node_id, nodes, active_request.query_id, topic);
                     } else if let RequestBody::TopicQuery { topic } = &active_request.request_body {
                         nodes.retain(|enr| {
                             if enr.node_id() == self.local_enr.read().node_id() {
@@ -2125,106 +2143,113 @@ impl Service {
         source: &NodeId,
         mut enrs: Vec<Enr>,
         query_id: Option<QueryId>,
-        topic_hash: Option<TopicHash>,
+        topic: Option<TopicHash>,
     ) {
         let local_id = self.local_enr.read().node_id();
 
-        enrs.retain(|enr| {
-            if enr.node_id() == local_id {
-                return false;
+        if let Some(topic_hash) = topic {
+            enrs.retain(|enr| enr.node_id() != local_id);
+            for enr in enrs.iter() {
+                // If there is an event stream send the DiscoveredPeerTopic event.
+                if self.config.report_discovered_peers {
+                    self.send_event(Discv5Event::DiscoveredPeerTopic(enr.clone(), topic_hash));
+                }
             }
+            let mut discovered_new_peer = false;
+            if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
+                for enr in enrs {
+                    // If the node sends its own id we don't count it
+                    if source != &enr.node_id() {
+                        continue;
+                    }
+                    // ignore peers that don't pass the table filter
+                    if (self.config.table_filter)(&enr) {
+                        let key = kbucket::Key::from(enr.node_id());
 
-            let mut new_or_updated_peer = false;
+                        // If the ENR exists in the routing table and the discovered ENR has a greater
+                        // sequence number, perform some filter checks before updating the enr.
 
-            // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
-            // If there is an event stream send the Discovered event
-            if self.config.report_discovered_peers && topic_hash.is_none() {
-                self.send_event(Discv5Event::Discovered(enr.clone()));
-            }
-
-            // ignore peers that don't pass the table filter
-            if (self.config.table_filter)(enr) {
-                let kbuckets_topic = topic_hash.and_then(|topic_hash| {
-                    self.topics_kbuckets
-                        .get_mut(&topic_hash)
-                        .and_then(|kbuckets| {
-                            Some(kbuckets).or_else(|| {
-                                debug_unreachable!("A kbuckets table should exist for topic hash");
-                                None
-                            })
-                        })
-                });
-
-                let key = kbucket::Key::from(enr.node_id());
-
-                // If the ENR exists in the routing table and the discovered ENR has a greater
-                // sequence number, perform some filter checks before updating the enr.
-
-                if let Some(kbuckets_topic) = kbuckets_topic {
-                    match kbuckets_topic.entry(&key) {
-                        kbucket::Entry::Present(entry, _) => {
-                            if entry.value().seq() < enr.seq() {
-                                if let UpdateResult::Failed(reason) =
-                                kbuckets_topic.update_node(&key, enr.clone(), None) {
-                                    self.peers_to_ping.remove(&enr.node_id());
-                                    debug!(
-                                        "Failed to update discovered ENR for kbucket of topic hash {:?}. Node: {}, Reason: {:?}",
-                                        topic_hash, source, reason
-                                    );
-                                    return false; // Remove this peer from the discovered list if the update failed
-                                }
-                                new_or_updated_peer = true;
+                        let must_update_enr = match kbuckets_topic.entry(&key) {
+                            kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
+                            kbucket::Entry::Pending(mut entry, _) => {
+                                entry.value().seq() < enr.seq()
                             }
-                        },
-                        kbucket::Entry::Pending(mut entry, _) => {
-                            if entry.value().seq() < enr.seq() {
-                                if let UpdateResult::Failed(reason) =
-                                kbuckets_topic.update_node(&key, enr.clone(), None) {
-                                    self.peers_to_ping.remove(&enr.node_id());
-                                    debug!(
-                                        "Failed to update discovered ENR for kbucket of topic hash {:?}. Node: {}, Reason: {:?}",
-                                        topic_hash, source, reason
-                                    );
-                                    return false; // Remove this peer from the discovered list if the update failed
-                                }
-                                new_or_updated_peer = true;
-                            }
-                        }
-                        kbucket::Entry::Absent(_) => {
-                            if let Some(topic_hash) = topic_hash {
-                                if self.config.report_discovered_peers {
-                                    self.send_event(Discv5Event::DiscoveredNewPeerTopic(enr.clone(), topic_hash));
-                                }
-                                trace!("Discovered new peer {} for topic hash {}", enr.node_id(), topic_hash);
+                            kbucket::Entry::Absent(_) => {
+                                trace!(
+                                    "Discovered new peer {} for topic hash {}",
+                                    enr.node_id(),
+                                    topic_hash
+                                );
                                 let discovered_peers =
                                     self.discovered_peers_topic.entry(topic_hash).or_default();
-                                // If the intermediary storage before the topic's kbucktes is at bounds, discard the
-                                // uncontacted peers.
                                 let node_id = enr.node_id();
                                 let peer_key: kbucket::Key<NodeId> = node_id.into();
-                                let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic_hash.as_bytes()).into();
+                                let topic_key: kbucket::Key<NodeId> =
+                                    NodeId::new(&topic_hash.as_bytes()).into();
                                 if let Some(distance) = peer_key.log2_distance(&topic_key) {
                                     let bucket = discovered_peers.entry(distance).or_default();
+                                    // If the intermediary storage before the topic's kbucktes is at bounds, discard the
+                                    // uncontacted peers.
                                     if bucket.len() < MAX_UNCONTACTED_PEERS_TOPIC_BUCKET {
                                         bucket.insert(node_id, enr.clone());
+                                        discovered_new_peer = true;
                                     } else {
                                         warn!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
                                     }
                                 }
+                                false
                             }
-                            new_or_updated_peer = true;
+                            _ => false,
+                        };
+                        if must_update_enr {
+                            if let UpdateResult::Failed(reason) =
+                                kbuckets_topic.update_node(&key, enr.clone(), None)
+                            {
+                                self.peers_to_ping.remove(&enr.node_id());
+                                debug!(
+                                    "Failed to update discovered ENR for kbucket of topic hash {:?}. Node: {}, Reason: {:?}",
+                                    topic_hash, source, reason
+                                );
+                            }
                         }
-                        _ => {}
                     }
-                } else {
+                }
+                if discovered_new_peer {
+                    // If a topic lookup has dried up (no more peers to query), and we now have found new peers or updated enrs for
+                    // known peers to that topic, the query can now proceed as long as it hasn't timed out already.
+                    if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
+                        query.dry = false;
+                    }
+                }
+            }
+        } else {
+            enrs.retain(|enr| {
+                if enr.node_id() == local_id {
+                    return false;
+                }
+
+                // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
+                // If there is an event stream send the Discovered event
+                if self.config.report_discovered_peers {
+                    self.send_event(Discv5Event::Discovered(enr.clone()));
+                }
+
+                // ignore peers that don't pass the table filter
+                if (self.config.table_filter)(enr) {
+                    let key = kbucket::Key::from(enr.node_id());
+
+                    // If the ENR exists in the routing table and the discovered ENR has a greater
+                    // sequence number, perform some filter checks before updating the enr.
+
                     let must_update_enr = match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
                         kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
                         _ => false,
                     };
                     if must_update_enr {
-                    if let UpdateResult::Failed(reason) =
-                        self.kbuckets.write().update_node(&key, enr.clone(), None) {
+                        if let UpdateResult::Failed(reason) =
+                            self.kbuckets.write().update_node(&key, enr.clone(), None)
+                        {
                             self.peers_to_ping.remove(&enr.node_id());
                             debug!(
                                 "Failed to update discovered ENR. Node: {}, Reason: {:?}",
@@ -2233,54 +2258,37 @@ impl Service {
                             return false; // Remove this peer from the discovered list if the update failed
                         }
                     }
+                } else {
+                    return false; // Didn't pass the table filter remove the peer
                 }
-            } else {
-                return false; // Didn't pass the table filter remove the peer
-            }
 
-            // The remaining ENRs are used if this request was part of a query. If we are
-            // requesting the target of the query, this ENR could be the result of requesting the
-            // target-nodes own id. We don't want to add this as a "new" discovered peer in the
-            // query, so we remove it from the discovered list here.
-            if topic_hash.is_some() {
-                // For a topic lookup or registration only new or updated peers are retained.
-                new_or_updated_peer && source != &enr.node_id()
-            } else {
+                // The remaining ENRs are used if this request was part of a query. If we are
+                // requesting the target of the query, this ENR could be the result of requesting the
+                // target-nodes own id. We don't want to add this as a "new" discovered peer in the
+                // query, so we remove it from the discovered list here.
                 source != &enr.node_id()
-            }
-        });
+            });
 
-        if let Some(topic_hash) = topic_hash {
-            if enrs.is_empty() {
-                return;
-            }
-            // If a topic lookup has dried up (no more peers to query), the query can now proceed as long as
-            // it hasn't timed out already.
-            if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
-                query.dry = false;
-            }
-            return;
-        }
-
-        // if this is part of a query, update the query
-        if let Some(query_id) = query_id {
-            if let Some(query) = self.queries.get_mut(query_id) {
-                let mut peer_count = 0;
-                for enr_ref in enrs.iter() {
-                    if !query
-                        .target_mut()
-                        .untrusted_enrs
-                        .iter()
-                        .any(|e| e.node_id() == enr_ref.node_id())
-                    {
-                        query.target_mut().untrusted_enrs.push(enr_ref.clone());
+            // if this is part of a query, update the query
+            if let Some(query_id) = query_id {
+                if let Some(query) = self.queries.get_mut(query_id) {
+                    let mut peer_count = 0;
+                    for enr_ref in enrs.iter() {
+                        if !query
+                            .target_mut()
+                            .untrusted_enrs
+                            .iter()
+                            .any(|e| e.node_id() == enr_ref.node_id())
+                        {
+                            query.target_mut().untrusted_enrs.push(enr_ref.clone());
+                        }
+                        peer_count += 1;
                     }
-                    peer_count += 1;
+                    debug!("{} peers found for query id {:?}", peer_count, query_id);
+                    query.on_success(source, &enrs)
+                } else {
+                    debug!("Response returned for ended query {:?}", query_id)
                 }
-                debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(source, &enrs)
-            } else {
-                debug!("Response returned for ended query {:?}", query_id)
             }
         }
     }
@@ -2512,13 +2520,15 @@ impl Service {
                                 "NODES Response failed, but was partially processed from: {}",
                                 active_request.contact
                             );
+                            // In the case that it is a FINDNODE request using a topic hash as key, remove the mapping.
+                            let topic = self.find_node_topic_requests.remove(&id);
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
                                 &node_id,
                                 nodes_response.received_nodes,
                                 active_request.query_id,
-                                None,
+                                topic,
                             );
                         }
                     } else {
