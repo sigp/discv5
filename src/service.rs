@@ -1270,32 +1270,44 @@ impl Service {
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
                 // Blacklist if request tries to advertise another node than the sender
-                if enr.node_id() != node_address.node_id {
-                    warn!("The enr node id in REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
+                let registration_of_other_node = enr.node_id() != node_address.node_id
+                    || match self.config.ip_mode {
+                        IpMode::Ip4 => {
+                            enr.udp4_socket().map(SocketAddr::V4) != Some(node_address.socket_addr)
+                        }
+                        IpMode::Ip6 { .. } => {
+                            enr.udp6_socket().map(SocketAddr::V6) != Some(node_address.socket_addr)
+                        }
+                    };
+                if registration_of_other_node {
+                    warn!("The enr in the REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
                     let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                     PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                     self.rpc_failure(id, RequestError::RegistrationOtherNode);
                     return;
                 }
-                match self.config.ip_mode {
-                    IpMode::Ip4 => {
-                        if enr.udp4_socket().map(SocketAddr::V4) != Some(node_address.socket_addr) {
-                            warn!("The enr ip in REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
-                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                            self.rpc_failure(id, RequestError::RegistrationOtherNode);
-                            return;
+
+                // Blacklist if node doesn't contain the given topic in its enr 'topics' field
+                let mut topic_in_enr = false;
+                if let Some(topics) = enr.get("topics") {
+                    let rlp = Rlp::new(topics);
+                    for item in rlp.iter() {
+                        if let Ok(data) = item.data().map_err(|e| error!("Could not decode a topic in topics field in enr of peer {}. Error {}", enr.node_id(), e)) {
+                            if let Ok(topic_string) = std::str::from_utf8(data).map_err(|e| error!("Could not decode topic in topics field into utf8, in enr of peer {}. Error {}", enr.node_id(), e)) {
+                                let topic_hash = Topic::new(topic_string).hash();
+                                if topic_hash == topic {
+                                    topic_in_enr = true;
+                                }
+                            }
                         }
                     }
-                    IpMode::Ip6 { .. } => {
-                        if enr.udp6_socket().map(SocketAddr::V6) != Some(node_address.socket_addr) {
-                            warn!("The enr ip in REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
-                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                            self.rpc_failure(id, RequestError::RegistrationOtherNode);
-                            return;
-                        }
-                    }
+                }
+                if !topic_in_enr {
+                    warn!("The topic given in the REGTOPIC request body cannot be found in sender's 'topics' enr field. Blacklisting peer {}.", node_address.node_id);
+                    let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                    self.rpc_failure(id, RequestError::InvalidTopicsEnr);
+                    return;
                 }
 
                 if !ticket.is_empty() {

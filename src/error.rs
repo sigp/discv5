@@ -124,6 +124,9 @@ pub enum RequestError {
     RegistrationOtherNode,
     /// A REGTOPIC is not respecting the assigned wait time.
     InvalidWaitTime,
+    /// A REGTOPIC tries to advertise a topic it does not
+    /// list in its enr.
+    InvalidTopicsEnr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
