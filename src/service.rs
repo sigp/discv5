@@ -1411,80 +1411,73 @@ impl Service {
                         );
                     }
 
-                    // These are sanitized and ordered
-                    let distances_requested: Vec<u64> = match &active_request.request_body {
-                        RequestBody::FindNode { distances } => distances.clone(),
-                        RequestBody::TopicQuery { .. } => vec![], // Any distance is allowed for ads
-                        _ => {
-                            debug_unreachable!(
-                                "Only FINDNODE and TOPICQUERY requests get NODES responses"
-                            );
-                            vec![]
-                        }
-                    };
-
-                    // This could be an ENR request from the outer service. If so respond to the
-                    // callback and End.
-                    if let Some(CallbackResponse::Enr(callback)) = active_request.callback.take() {
-                        // Currently only support requesting for ENR's. Verify this is the case.
-                        if !distances_requested.is_empty() && distances_requested[0] != 0 {
-                            error!("Retrieved a callback request that wasn't for a peer's ENR");
-                            return;
-                        }
-                        // This must be for asking for an ENR
-                        if nodes.len() > 1 {
-                            warn!(
-                                "Peer returned more than one ENR for itself. {}",
-                                active_request.contact
-                            );
-                        }
-                        let response = nodes
-                            .pop()
-                            .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"));
-                        if let Err(e) = callback.send(response) {
-                            warn!("Failed to send response in callback {:?}", e)
-                        }
-                        return;
-                    } else if !distances_requested.is_empty() {
-                        // This is a repsonse to a FINDNODE request with specifically request distances
-                        // Filter out any nodes that are not of the correct distance
-
-                        let peer_key: kbucket::Key<NodeId> = node_id.into();
-
-                        // The distances we send are sanitized an ordered.
-                        // We never send an ENR request in combination of other requests.
-                        if distances_requested.len() == 1 && distances_requested[0] == 0 {
-                            // we requested an ENR update
+                    // Distances are sanitized and ordered
+                    if let RequestBody::FindNode { distances } = &active_request.request_body {
+                        // This could be an ENR request from the outer service. If so respond to the
+                        // callback and End.
+                        if let Some(CallbackResponse::Enr(callback)) =
+                            active_request.callback.take()
+                        {
+                            // Currently only support requesting for ENR's. Verify this is the case.
+                            if !distances.is_empty() && distances[0] != 0 {
+                                error!("Retrieved a callback request that wasn't for a peer's ENR");
+                                return;
+                            }
+                            // This must be for asking for an ENR
                             if nodes.len() > 1 {
                                 warn!(
+                                    "Peer returned more than one ENR for itself. {}",
+                                    active_request.contact
+                                );
+                            }
+                            let response = nodes
+                                .pop()
+                                .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"));
+                            if let Err(e) = callback.send(response) {
+                                warn!("Failed to send response in callback {:?}", e)
+                            }
+                            return;
+                        } else if !distances.is_empty() {
+                            // This is a repsonse to a FINDNODE request with specifically request distances
+                            // Filter out any nodes that are not of the correct distance
+
+                            let peer_key: kbucket::Key<NodeId> = node_id.into();
+
+                            // The distances we send are sanitized an ordered.
+                            // We never send an ENR request in combination of other requests.
+                            if distances.len() == 1 && distances[0] == 0 {
+                                // we requested an ENR update
+                                if nodes.len() > 1 {
+                                    warn!(
                                     "Peer returned more than one ENR for itself. Blacklisting {}",
                                     node_address
                                 );
-                                let ban_timeout =
-                                    self.config.ban_duration.map(|v| Instant::now() + v);
-                                PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                    let ban_timeout =
+                                        self.config.ban_duration.map(|v| Instant::now() + v);
+                                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                    nodes.retain(|enr| {
+                                        peer_key.log2_distance(&enr.node_id().into()).is_none()
+                                    });
+                                }
+                            } else {
+                                let before_len = nodes.len();
                                 nodes.retain(|enr| {
-                                    peer_key.log2_distance(&enr.node_id().into()).is_none()
+                                    peer_key
+                                        .log2_distance(&enr.node_id().into())
+                                        .map(|distance| distances.contains(&distance))
+                                        .unwrap_or_else(|| false)
                                 });
-                            }
-                        } else {
-                            let before_len = nodes.len();
-                            nodes.retain(|enr| {
-                                peer_key
-                                    .log2_distance(&enr.node_id().into())
-                                    .map(|distance| distances_requested.contains(&distance))
-                                    .unwrap_or_else(|| false)
-                            });
 
-                            if nodes.len() < before_len {
-                                // Peer sent invalid ENRs. Blacklist the Node
-                                warn!(
-                                    "Peer sent invalid ENR. Blacklisting {}",
-                                    active_request.contact
-                                );
-                                let ban_timeout =
-                                    self.config.ban_duration.map(|v| Instant::now() + v);
-                                PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                if nodes.len() < before_len {
+                                    // Peer sent invalid ENRs. Blacklist the Node
+                                    warn!(
+                                        "Peer sent invalid ENR. Blacklisting {}",
+                                        active_request.contact
+                                    );
+                                    let ban_timeout =
+                                        self.config.ban_duration.map(|v| Instant::now() + v);
+                                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                }
                             }
                         }
                     }
@@ -1524,7 +1517,7 @@ impl Service {
                     }
 
                     debug!(
-                        "Received a nodes response of len: {}, total: {}, from: {}",
+                        "Received a NODES response of len: {}, total: {}, from: {}",
                         nodes.len(),
                         total,
                         active_request.contact
@@ -1546,7 +1539,24 @@ impl Service {
                                 // the topic and was returned as an ad in the NODES response.
                                 return false;
                             }
-                            (self.config.table_filter)(enr)
+                            if !(self.config.table_filter)(enr) {
+                                return false;
+                            }
+                            // Ads are checked for validity, if they do not contain the topic in their enr, they are discarded
+                            if let Some(topics) = enr.get("topics") {
+                                let rlp = Rlp::new(topics);
+                                for item in rlp.iter() {
+                                    if let Ok(data) = item.data().map_err(|e| error!("Could not decode a topic in topics field in enr of peer {}. Error {}", enr.node_id(), e)) {
+                                        if let Ok(topic_string) = std::str::from_utf8(data).map_err(|e| error!("Could not decode topic in topics field into utf8, in enr of peer {}. Error {}", enr.node_id(), e)) {
+                                            let topic_hash = Topic::new(topic_string).hash();
+                                            if &topic_hash == topic {
+                                                return true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            false
                         });
                         if let Some(query) = self.active_topic_queries.queries.get_mut(topic) {
                             nodes.into_iter().for_each(|enr| {
