@@ -298,6 +298,9 @@ pub enum TopicQueryState {
     /// Not enough ads have been returned from the first round of sending TOPICQUERY
     /// requests, new peers in the topic's kbucktes should be queried.
     Unsatisfied(TopicHash),
+    /// Not enough results were found and not enough new peers where found to send
+    /// TOPICQUERYs to.
+    Dry(TopicHash),
 }
 
 /// At any given time, a set number of registrations should be active per topic hash to
@@ -360,9 +363,7 @@ impl Stream for ActiveTopicQueries {
     type Item = TopicQueryState;
     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         for (topic_hash, query) in self.queries.iter() {
-            if query.dry {
-                return Poll::Pending;
-            } else if query.results.len() >= self.num_results {
+            if query.results.len() >= self.num_results {
                 return Poll::Ready(Some(TopicQueryState::Finished(*topic_hash)));
             } else if query.start.elapsed() >= self.time_out {
                 warn!(
@@ -370,6 +371,8 @@ impl Stream for ActiveTopicQueries {
                     query.results.len()
                 );
                 return Poll::Ready(Some(TopicQueryState::TimedOut(*topic_hash)));
+            } else if query.dry {
+                return Poll::Ready(Some(TopicQueryState::Dry(*topic_hash)));
             } else {
                 let exhausted_peers = query
                     .queried_peers
@@ -593,12 +596,14 @@ impl Service {
                                 }
                                 self.topics_kbuckets.insert(topic_hash, kbuckets);
                             }
-                            self.send_topic_queries(topic_hash, Some(callback));
 
-                            // To fill the kbuckets closest to the topic hash, start a find node query searching
-                            // for the topic hash's bytes wrapped in a NodeId.
+                            // To fill the kbuckets closest to the topic hash as well as those further away
+                            // (itertively getting closer to node ids to the topic hash) start a find node
+                            // query searching for the topic hash's bytes wrapped in a NodeId.
                             let topic_key = NodeId::new(&topic_hash.as_bytes());
                             self.start_findnode_query(topic_key, None);
+
+                            self.send_topic_queries(topic_hash, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic) => {
                             let topic_hash = topic.hash();
@@ -672,8 +677,9 @@ impl Service {
                                     self.topics_kbuckets.insert(topic_hash, kbuckets);
                                     METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
 
-                                    // To fill the kbuckets closest to the topic hash, start a find node query searching
-                                    // for the topic hash's bytes wrapped in a NodeId.
+                                    // To fill the kbuckets closest to the topic hash as well as those further away
+                                    // (itertively getting closer to node ids to the topic hash) start a find node
+                                    // query searching for the topic hash's bytes wrapped in a NodeId.
                                     let topic_key = NodeId::new(&topic_hash.as_bytes());
                                     self.start_findnode_query(topic_key, None);
                                 }
@@ -858,10 +864,15 @@ impl Service {
                                     }
                                 }
                             }
-                        },
-                        TopicQueryState::Unsatisfied(topic_hash) => {
-                            self.send_topic_queries(topic_hash, None);
-                        },
+                        }
+                        TopicQueryState::Dry(topic_hash) => {
+                            // To fill the kbuckets closest to the topic hash as well as those further away
+                            // (itertively getting closer to node ids to the topic hash) start a find node
+                            // query searching for the topic hash's bytes wrapped in a NodeId.
+                            let topic_key = NodeId::new(&topic_hash.as_bytes());
+                            self.start_findnode_query(topic_key, None);
+                        }
+                        TopicQueryState::Unsatisfied(topic_hash) => self.send_topic_queries(topic_hash, None),
                     }
                 }
                 _ = registration_interval.tick() => {
@@ -2218,6 +2229,7 @@ impl Service {
                     // If a topic lookup has dried up (no more peers to query), and we now have found new peers or updated enrs for
                     // known peers to that topic, the query can now proceed as long as it hasn't timed out already.
                     if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
+                        debug!("Found new peers to send TOPICQUERY to, unsetting query status dry");
                         query.dry = false;
                     }
                 }
