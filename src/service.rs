@@ -2338,12 +2338,6 @@ impl Service {
         let kbuckets_topic = topic_hash.and_then(|topic_hash| {
             self.topics_kbuckets
                 .get_mut(&topic_hash)
-                .and_then(|kbuckets| {
-                    Some(kbuckets).or_else(|| {
-                        debug_unreachable!("A kbuckets table should exist for topic hash");
-                        None
-                    })
-                })
         });
 
         let key = kbucket::Key::from(node_id);
