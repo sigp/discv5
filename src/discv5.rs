@@ -45,11 +45,11 @@ lazy_static! {
         RwLock::new(crate::PermitBanList::default());
 }
 
-/// Helper function that returns a labeled list of hashes of the given topic string according to
-/// all implemented hashing algorithms. Currently only one, Sha256, is implemented.
-pub static HASHES: for<'a> fn(topic: &'a str) -> Vec<(TopicHash, String)> = |topic| {
+/// Helper function that returns the hash of the given topic string according to the
+/// implemented hashing algorithm.
+pub static HASH: for<'a> fn(topic: &'a str) -> TopicHash = |topic| {
     let sha256_topic = Topic::new(topic);
-    vec![(sha256_topic.hash(), sha256_topic.hash_function_name())]
+    sha256_topic.hash()
 };
 
 mod test;
@@ -535,7 +535,7 @@ impl Discv5 {
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
 
-            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive table entries' ids for topic {} with topic hash {} {}. Error {}", topic, topic_hash, topic.hash_function_name(), e)))?
+            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive table entries' ids for topic {} with topic hash {}. Error {}", topic, topic_hash, e)))?
         }
     }
 
@@ -567,16 +567,15 @@ impl Discv5 {
             // await the response
             let ad_nodes = callback_recv.await.map_err(|e| {
                 RequestError::ChannelFailed(format!(
-                    "Failed to receive ad nodes from lookup of topic {} with topic hash {} {}. Error {}",
-                    topic, topic_hash, topic.hash_function_name(), e
+                    "Failed to receive ad nodes from lookup of topic {} with topic hash {}. Error {}",
+                    topic, topic_hash, e
                 ))
             })?;
             if ad_nodes.is_ok() {
                 debug!(
-                    "Received ad nodes for topic {} with topic hash {} {}",
+                    "Received ad nodes for topic {} with topic hash {}",
                     topic,
-                    topic_hash,
-                    topic.hash_function_name()
+                    topic_hash
                 );
             }
             ad_nodes
@@ -625,10 +624,9 @@ impl Discv5 {
                 .map_err(|_| RequestError::ServiceNotStarted)?;
             let topic = Topic::new(topic);
             debug!(
-                "Registering topic {} with topic hash {} {}",
+                "Registering topic {} with topic hash {}",
                 topic,
                 topic.hash(),
-                topic.hash_function_name(),
             );
             let event = ServiceRequest::RegisterTopic(topic);
             // send the request
@@ -663,7 +661,7 @@ impl Discv5 {
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ServiceNotStarted)?;
-            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive regsitration attempts for topic {} with topic hash {} {}. Error {}", topic, topic_hash, topic.hash_function_name(), e)))?
+            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive regsitration attempts for topic {} with topic hash {}. Error {}", topic, topic_hash, e)))?
         }
     }
     /// Retrieves the topics that we have published on other nodes.
@@ -716,10 +714,9 @@ impl Discv5 {
             // await the response
             callback_recv.await.map_err(|e| {
                 RequestError::ChannelFailed(format!(
-                    "Failed to receive ads for topic {} with topic hash {} {}. Error {}",
+                    "Failed to receive ads for topic {} with topic hash {}. Error {}",
                     topic,
                     topic_hash,
-                    topic.hash_function_name(),
                     e
                 ))
             })?
