@@ -19,7 +19,7 @@ use self::{
 use crate::{
     advertisement::{
         ticket::{Tickets, MAX_WAIT_TIME_TICKET, TICKET_LIMIT_DURATION},
-        topic::{Sha256Topic as Topic, TopicHash},
+        topic::TopicHash,
         Ads, AD_LIFETIME,
     },
     discv5::PERMIT_BAN_LIST,
@@ -35,7 +35,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr, IpMode,
+    rpc, Discv5Config, Discv5Event, Enr, IpMode, Topic,
 };
 use aes_gcm::{
     aead::{generic_array::GenericArray, Aead, NewAead, Payload},
@@ -192,14 +192,14 @@ pub enum ServiceRequest {
     /// until removed.
     RegisterTopic(Topic),
     /// Stops publishing this node as an advetiser for a topic.
-    RemoveTopic(TopicHash, oneshot::Sender<Result<String, RequestError>>),
+    RemoveTopic(Topic, oneshot::Sender<Result<String, RequestError>>),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
     /// Retrieves the ads adveritsed for other nodes for a given topic.
     Ads(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
     /// Retrieves the registration attempts acitve for a given topic.
     RegistrationAttempts(
-        TopicHash,
+        Topic,
         oneshot::Sender<Result<BTreeMap<u64, RegAttempts>, RequestError>>,
     ),
     /// Retrieves the node id of entries in a given topic's kbuckets by distance.
@@ -266,7 +266,7 @@ pub struct Service {
 
     /// Topics tracks registration attempts of the topic hashes to advertise on
     /// other nodes.
-    registration_attempts: HashMap<TopicHash, BTreeMap<u64, RegAttempts>>,
+    registration_attempts: HashMap<Topic, BTreeMap<u64, RegAttempts>>,
 
     /// KBuckets per topic hash.
     topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
@@ -509,8 +509,8 @@ impl Service {
         let mut topics_to_reg_iter = self
             .registration_attempts
             .keys()
-            .copied()
-            .collect::<Vec<TopicHash>>()
+            .cloned()
+            .collect::<Vec<Topic>>()
             .into_iter();
 
         loop {
@@ -604,7 +604,7 @@ impl Service {
                         }
                         ServiceRequest::RegisterTopic(topic) => {
                             let topic_hash = topic.hash();
-                            if self.registration_attempts.insert(topic_hash, BTreeMap::new()).is_some() {
+                            if self.registration_attempts.insert(topic.clone(), BTreeMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
                             } else {
                                 let topics_field = if let Some(topics) = self.local_enr.read().get("topics") {
@@ -684,13 +684,13 @@ impl Service {
                         }
                         ServiceRequest::ActiveTopics(callback) => {
                             let mut active_topics = HashMap::<TopicHash, Vec<NodeId>>::new();
-                            self.registration_attempts.iter_mut().for_each(|(topic_hash, reg_attempts_by_distance)| {
+                            self.registration_attempts.iter_mut().for_each(|(topic, reg_attempts_by_distance)| {
                                 for reg_attempts in reg_attempts_by_distance.values_mut() {
                                     reg_attempts.reg_attempts.retain(|node_id, reg_state| {
                                         match reg_state {
                                             RegistrationState::Confirmed(insert_time) => {
                                                 if insert_time.elapsed() < AD_LIFETIME {
-                                                    active_topics.entry(*topic_hash).or_default().push(*node_id);
+                                                    active_topics.entry(topic.hash()).or_default().push(*node_id);
                                                     true
                                                 } else {
                                                     false
@@ -707,11 +707,11 @@ impl Service {
                                 error!("Failed to return active topics");
                             }
                         }
-                        ServiceRequest::RemoveTopic(topic_hash, callback) => {
-                            if self.registration_attempts.remove(&topic_hash).is_some() {
+                        ServiceRequest::RemoveTopic(topic, callback) => {
+                            if self.registration_attempts.remove(&topic).is_some() {
                                 METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
-                                if callback.send(Ok(base64::encode(topic_hash.as_bytes()))).is_err() {
-                                    error!("Failed to return the removed topic {}", topic_hash);
+                                if callback.send(Ok(topic.topic())).is_err() {
+                                    error!("Failed to return the removed topic {}", topic.topic());
                                 }
                             }
                         }
@@ -849,7 +849,7 @@ impl Service {
                     // When the ticket time expires a new REGTOPIC request is automatically sent to the
                     // ticket issuer and the registration attempt stays in the [`RegistrationState::Ticket`]
                     // from sending the first REGTOPIC request to this contact for this topic.
-                    self.reg_topic_request(active_ticket.contact(), active_topic.topic(), enr, Some(active_ticket.ticket()));
+                    self.reg_topic_request(active_ticket.contact(), active_topic.topic().clone(), enr, Some(active_ticket.ticket()));
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
                     match topic_query_progress {
@@ -868,16 +868,22 @@ impl Service {
                 _ = registration_interval.tick() => {
                     let mut sent_regtopics = 0;
                     let mut topic_item = topics_to_reg_iter.next();
-                    while let Some(topic_hash) = topic_item {
-                        trace!("Republishing topic hash {}", topic_hash);
-                        sent_regtopics += self.send_register_topics(topic_hash);
+                    let mut restart_iteration = false;
+                    while let Some(topic) = topic_item {
+                        trace!("Republishing topic {} with hash {}", topic.topic(), topic.hash());
+                        sent_regtopics += self.send_register_topics(topic);
                         if sent_regtopics >= MAX_REGTOPICS_REGISTER_INTERVAL {
                             break
                         }
-                        topic_item = topics_to_reg_iter.next();
+                        topic_item = if let Some(item) = topics_to_reg_iter.next() {
+                            Some(item)
+                        } else {
+                            restart_iteration = true;
+                            None
+                        }
                     }
-                    if topic_item.is_none() {
-                        topics_to_reg_iter = self.registration_attempts.keys().copied().collect::<Vec<TopicHash>>().into_iter();
+                    if restart_iteration {
+                        topics_to_reg_iter = self.registration_attempts.keys().cloned().collect::<Vec<Topic>>().into_iter();
                     }
                 }
             }
@@ -885,15 +891,16 @@ impl Service {
     }
 
     /// Internal function that starts a topic registration. This function should not be called outside of [`REGISTER_INTERVAL`].
-    fn send_register_topics(&mut self, topic_hash: TopicHash) -> usize {
+    fn send_register_topics(&mut self, topic: Topic) -> usize {
         trace!("Sending REGTOPICS");
+        let topic_hash = topic.hash();
         if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             trace!(
                 "Found {} entries in kbuckets of topic hash {}",
                 kbuckets.get_mut().iter().count(),
                 topic_hash
             );
-            let reg_attempts = self.registration_attempts.entry(topic_hash).or_default();
+            let reg_attempts = self.registration_attempts.entry(topic.clone()).or_default();
             let mut new_peers = Vec::new();
 
             // Ensure that max_reg_attempts_bucket registration attempts are alive per bucket if that many peers are
@@ -984,7 +991,7 @@ impl Service {
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
                     .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
                 {
-                    self.reg_topic_request(node_contact, topic_hash, local_enr.clone(), None);
+                    self.reg_topic_request(node_contact, topic.clone(), local_enr.clone(), None);
                     // If an uncontacted peer has a faulty enr, don't count the registration attempt.
                     sent_regtopics += 1;
                 }
@@ -1269,6 +1276,7 @@ impl Service {
                 self.send_event(Discv5Event::TalkRequest(req));
             }
             RequestBody::RegisterTopic { topic, enr, ticket } => {
+                let topic = Topic::new(topic);
                 // Blacklist if request tries to advertise another node than the sender
                 let registration_of_other_node = enr.node_id() != node_address.node_id
                     || match self.config.ip_mode {
@@ -1295,7 +1303,7 @@ impl Service {
                         if let Ok(data) = item.data().map_err(|e| error!("Could not decode a topic in topics field in enr of peer {}. Error {}", enr.node_id(), e)) {
                             if let Ok(topic_string) = std::str::from_utf8(data).map_err(|e| error!("Could not decode topic in topics field into utf8, in enr of peer {}. Error {}", enr.node_id(), e)) {
                                 let topic_hash = Topic::new(topic_string).hash();
-                                if topic_hash == topic {
+                                if topic_hash == topic.hash() {
                                     topic_in_enr = true;
                                 }
                             }
@@ -1353,7 +1361,7 @@ impl Service {
                 let mut new_ticket = Ticket::new(
                     node_address.node_id,
                     node_address.socket_addr.ip(),
-                    topic,
+                    topic.hash(),
                     tokio::time::Instant::now(),
                     Duration::default(),
                 );
@@ -1361,7 +1369,8 @@ impl Service {
                 // If there is no wait time and the ad is successfuly registered as an ad, the new ticket is sent
                 // with wait time set to zero indicating successful registration.
                 if let Err((wait_time, e)) =
-                    self.ads.insert(enr, topic, node_address.socket_addr.ip())
+                    self.ads
+                        .insert(enr, topic.hash(), node_address.socket_addr.ip())
                 {
                     // The wait time on the new ticket to send is updated if there is wait time for the requesting
                     // node for this topic to register as an ad due to the current state of the topic table.
@@ -1373,7 +1382,7 @@ impl Service {
                 }
 
                 let wait_time = new_ticket.wait_time();
-                self.send_ticket_response(node_address, id, new_ticket, wait_time);
+                self.send_ticket_response(node_address, id, topic, new_ticket, wait_time);
             }
             RequestBody::TopicQuery { topic } => {
                 self.send_topic_query_adnodes_response(node_address, id, topic);
@@ -1719,10 +1728,12 @@ impl Service {
                     if wait_time <= MAX_WAIT_TIME_TICKET {
                         let now = Instant::now();
                         let peer_key: kbucket::Key<NodeId> = node_id.into();
-                        let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                        let topic = Topic::new(topic);
+                        let topic_key: kbucket::Key<NodeId> =
+                            NodeId::new(&topic.hash().as_bytes()).into();
                         if let Some(distance) = peer_key.log2_distance(&topic_key) {
                             let registration_attempts =
-                                self.registration_attempts.entry(topic).or_default();
+                                self.registration_attempts.entry(topic.clone()).or_default();
                             if let Some(reg_state) = registration_attempts
                                 .entry(distance)
                                 .or_default()
@@ -1840,7 +1851,7 @@ impl Service {
     fn reg_topic_request(
         &mut self,
         contact: NodeContact,
-        topic: TopicHash,
+        topic: Topic,
         enr: Enr,
         ticket: Option<Vec<u8>>,
     ) {
@@ -1850,7 +1861,7 @@ impl Service {
             Vec::new()
         };
         let request_body = RequestBody::RegisterTopic {
-            topic,
+            topic: topic.topic(),
             enr,
             ticket: ticket_bytes,
         };
@@ -1881,6 +1892,7 @@ impl Service {
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
+        topic: Topic,
         ticket: Ticket,
         wait_time: Duration,
     ) {
@@ -1898,7 +1910,7 @@ impl Service {
                     body: ResponseBody::Ticket {
                         ticket: encrypted_ticket,
                         wait_time: wait_time.as_secs(),
-                        topic: ticket.topic(),
+                        topic: topic.topic(),
                     },
                 };
                 trace!(
@@ -2581,7 +2593,10 @@ impl Service {
                     ticket: _,
                 } => {
                     let peer_key: kbucket::Key<NodeId> = node_id.into();
-                    let topic_key: kbucket::Key<NodeId> = NodeId::new(&topic.as_bytes()).into();
+                    let topic = Topic::new(topic);
+                    let topic_hash = topic.hash();
+                    let topic_key: kbucket::Key<NodeId> =
+                        NodeId::new(&topic_hash.as_bytes()).into();
                     if let Some(distance) = peer_key.log2_distance(&topic_key) {
                         // Remove the registration attempt before disconnecting the peer.
                         let registration_attempts =
@@ -2590,7 +2605,11 @@ impl Service {
                             bucket.reg_attempts.remove(&node_id);
                         }
                     }
-                    self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic));
+                    self.connection_updated(
+                        node_id,
+                        ConnectionStatus::Disconnected,
+                        Some(topic_hash),
+                    );
                     return;
                 }
                 // for all other requests, if any are queries, mark them as failures.

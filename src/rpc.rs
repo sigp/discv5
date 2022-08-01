@@ -85,8 +85,8 @@ pub enum RequestBody {
     },
     /// A REGTOPIC request.
     RegisterTopic {
-        /// The hashed topic we want to advertise at the node receiving this request.
-        topic: TopicHash,
+        /// The topic string we want to advertise at the node receiving this request.
+        topic: String,
         // Current node record of sender.
         enr: crate::Enr,
         // Ticket content of ticket from a previous registration attempt or empty.
@@ -129,7 +129,7 @@ pub enum ResponseBody {
         /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
         /// The topic hash for which the opaque ticket is issued.
-        topic: TopicHash,
+        topic: String,
     },
 }
 
@@ -566,16 +566,7 @@ impl Message {
                     debug!("RegisterTopic request has an invalid RLP list length. Expected 4, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                let topic = {
-                    let topic_bytes = rlp.val_at::<Vec<u8>>(1)?;
-                    if topic_bytes.len() > 32 {
-                        debug!("RegisterTopic request has a topic greater than 32 bytes");
-                        return Err(DecoderError::RlpIsTooBig);
-                    }
-                    let mut topic = [0u8; 32];
-                    topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
-                    TopicHash::from_raw(topic)
-                };
+                let topic = rlp.val_at::<String>(1)?;
                 let enr_rlp = rlp.at(2)?;
                 let enr = enr_rlp.as_val::<Enr<CombinedKey>>()?;
                 let ticket = rlp.val_at::<Vec<u8>>(3)?;
@@ -595,7 +586,7 @@ impl Message {
                 }
                 let ticket = rlp.val_at::<Vec<u8>>(1)?;
                 let wait_time = rlp.val_at::<u64>(2)?;
-                let topic = rlp.val_at::<TopicHash>(3)?;
+                let topic = rlp.val_at::<String>(3)?;
                 Message::Response(Response {
                     id,
                     body: ResponseBody::Ticket {
@@ -1099,7 +1090,7 @@ mod tests {
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::RegisterTopic {
-                topic: TopicHash::from_raw([1u8; 32]),
+                topic: "lighthouse".to_string(),
                 enr,
                 ticket: Vec::new(),
             },
@@ -1133,7 +1124,7 @@ mod tests {
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::RegisterTopic {
-                topic: TopicHash::from_raw([1u8; 32]),
+                topic: "lighthouse".to_string(),
                 enr,
                 ticket,
             },
@@ -1245,7 +1236,7 @@ mod tests {
             body: ResponseBody::Ticket {
                 ticket,
                 wait_time: 1u64,
-                topic: TopicHash::from_raw([1u8; 32]),
+                topic: "lighthouse".to_string(),
             },
         });
 

@@ -13,7 +13,7 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
-    advertisement::topic::{Sha256Topic as Topic, TopicHash},
+    advertisement::topic::TopicHash,
     error::{Discv5Error, QueryError, RequestError},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
@@ -21,7 +21,7 @@ use crate::{
     },
     node_info::NodeContact,
     service::{QueryKind, RegAttempts, Service, ServiceRequest, TalkRequest},
-    Discv5Config, Enr,
+    Discv5Config, Enr, Topic,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
@@ -574,8 +574,7 @@ impl Discv5 {
             if ad_nodes.is_ok() {
                 debug!(
                     "Received ad nodes for topic {} with topic hash {}",
-                    topic,
-                    topic_hash
+                    topic, topic_hash
                 );
             }
             ad_nodes
@@ -587,22 +586,23 @@ impl Discv5 {
     /// interval no registration attempts will be made for the topic.
     pub fn remove_topic(
         &self,
-        topic_hash: TopicHash,
+        topic_str: &'static str,
     ) -> impl Future<Output = Result<String, RequestError>> + 'static {
         let channel = self.clone_channel();
 
         async move {
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
             let (callback_send, callback_recv) = oneshot::channel();
-            let event = ServiceRequest::RemoveTopic(topic_hash, callback_send);
+            let topic = Topic::new(topic_str);
+            let event = ServiceRequest::RemoveTopic(topic, callback_send);
             channel
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             callback_recv.await.map_err(|e| {
                 RequestError::ChannelFailed(format!(
-                    "Failed to receive removed topic hash {}. Error {}",
-                    topic_hash, e
+                    "Failed to receive removed topic {}. Error {}",
+                    topic_str, e
                 ))
             })?
         }
@@ -644,7 +644,7 @@ impl Discv5 {
     /// same node. Caution! The returned map will also contain
     pub fn reg_attempts(
         &self,
-        topic: &'static str,
+        topic_str: &'static str,
     ) -> impl Future<Output = Result<BTreeMap<u64, RegAttempts>, RequestError>> + 'static {
         let channel = self.clone_channel();
         let (callback_send, callback_recv) = oneshot::channel();
@@ -653,15 +653,15 @@ impl Discv5 {
             let channel = channel
                 .as_ref()
                 .map_err(|_| RequestError::ServiceNotStarted)?;
-            let topic = Topic::new(topic);
+            let topic = Topic::new(topic_str);
             let topic_hash = topic.hash();
-            let event = ServiceRequest::RegistrationAttempts(topic_hash, callback_send);
+            let event = ServiceRequest::RegistrationAttempts(topic, callback_send);
 
             channel
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ServiceNotStarted)?;
-            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive regsitration attempts for topic {} with topic hash {}. Error {}", topic, topic_hash, e)))?
+            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive regsitration attempts for topic {} with topic hash {}. Error {}", topic_str, topic_hash, e)))?
         }
     }
     /// Retrieves the topics that we have published on other nodes.
@@ -715,9 +715,7 @@ impl Discv5 {
             callback_recv.await.map_err(|e| {
                 RequestError::ChannelFailed(format!(
                     "Failed to receive ads for topic {} with topic hash {}. Error {}",
-                    topic,
-                    topic_hash,
-                    e
+                    topic, topic_hash, e
                 ))
             })?
         }

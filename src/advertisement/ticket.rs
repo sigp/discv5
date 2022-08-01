@@ -1,8 +1,9 @@
 use super::*;
+use crate::Topic;
 use delay_map::HashMapDelay;
 use enr::NodeId;
 use node_info::NodeContact;
-use std::cmp::Eq;
+use std::{cmp::Eq, hash::Hash};
 
 /// The max wait time accpeted for tickets.
 pub const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
@@ -16,24 +17,24 @@ pub const MAX_TICKETS_NODE_TOPIC: u8 = 3;
 
 /// A topic is active when it's associated with the NodeId from a node it is
 /// published on.
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Clone, Hash)]
 pub struct ActiveTopic {
     /// NodeId of the sender of the TICKET response.
     node_id: NodeId,
     /// The topic hash as it is sent in the TICKET response.
-    topic: TopicHash,
+    topic: Topic,
 }
 
 impl ActiveTopic {
     /// Makes a topic active (currently associated with an ad slot or a ticket) by
     /// associating it with a node id.
-    pub fn new(node_id: NodeId, topic: TopicHash) -> Self {
+    pub fn new(node_id: NodeId, topic: Topic) -> Self {
         ActiveTopic { node_id, topic }
     }
 
     /// Returns the topic of a topic that is active.
-    pub fn topic(&self) -> TopicHash {
-        self.topic
+    pub fn topic(&self) -> &Topic {
+        &self.topic
     }
 
     /// Returns the node id of a topic that is active.
@@ -98,7 +99,7 @@ impl Tickets {
         contact: NodeContact,
         ticket: Vec<u8>,
         wait_time: Duration,
-        topic: TopicHash,
+        topic: Topic,
     ) -> Result<(), &str> {
         let active_topic = ActiveTopic::new(contact.node_id(), topic);
 

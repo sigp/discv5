@@ -134,10 +134,16 @@ impl<H: Hasher> Topic<H> {
     pub fn hash(&self) -> TopicHash {
         H::hash(self.topic.clone())
     }
-    
+
     /// Returns the string passed to the topic upon instantiation.
     pub fn topic(&self) -> String {
         self.topic.clone()
+    }
+}
+
+impl<H: Hasher> Hash for Topic<H> {
+    fn hash<T: std::hash::Hasher>(&self, state: &mut T) {
+        self.hash().hash(state)
     }
 }
 

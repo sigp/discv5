@@ -124,6 +124,7 @@ pub mod socket;
 extern crate lazy_static;
 
 pub type Enr = enr::Enr<enr::CombinedKey>;
+pub type Topic = crate::advertisement::topic::Sha256Topic;
 
 pub use crate::discv5::{Discv5, Discv5Event, HASH};
 pub use config::{Discv5Config, Discv5ConfigBuilder};

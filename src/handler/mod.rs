@@ -35,7 +35,7 @@ use crate::{
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
     socket::{FilterConfig, Socket},
-    Enr,
+    Enr, Topic,
 };
 use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
@@ -653,8 +653,11 @@ impl Handler {
                         topic,
                         enr: _,
                         ticket: _,
+                    } => {
+                        let topic_hash = Topic::new(topic).hash();
+                        HandlerOut::EstablishedTopic(enr, connection_direction, topic_hash)
                     }
-                    | RequestBody::TopicQuery { topic } => {
+                    RequestBody::TopicQuery { topic } => {
                         HandlerOut::EstablishedTopic(enr, connection_direction, *topic)
                     }
                     _ => {
