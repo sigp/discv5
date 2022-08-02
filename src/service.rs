@@ -866,11 +866,12 @@ impl Service {
                     }
                 }
                 _ = registration_interval.tick() => {
+                    trace!("New registration interval");
                     let mut sent_regtopics = 0;
                     let mut topic_item = topics_to_reg_iter.next();
                     let mut restart_iteration = false;
                     while let Some(topic) = topic_item {
-                        trace!("Republishing topic {} with hash {}", topic.topic(), topic.hash());
+                        trace!("Publishing topic {} with hash {}", topic.topic(), topic.hash());
                         sent_regtopics += self.send_register_topics(topic);
                         if sent_regtopics >= MAX_REGTOPICS_REGISTER_INTERVAL {
                             break
