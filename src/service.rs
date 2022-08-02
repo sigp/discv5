@@ -509,8 +509,8 @@ impl Service {
         let mut topics_to_reg_iter = self
             .registration_attempts
             .keys()
-            .cloned()
-            .collect::<Vec<Topic>>()
+            .map(|topic| (topic.clone(), topic.hash()))
+            .collect::<Vec<(Topic, TopicHash)>>()
             .into_iter();
 
         loop {
@@ -869,22 +869,16 @@ impl Service {
                     trace!("New registration interval, {}/{} topics to publish", topics_to_reg_iter.clone().count(), self.registration_attempts.len());
                     let mut sent_regtopics = 0;
                     let mut topic_item = topics_to_reg_iter.next();
-                    let mut restart_iteration = false;
-                    while let Some(topic) = topic_item {
+                    while let Some((topic, _topic_hash)) = topic_item {
                         trace!("Publishing topic {} with hash {}", topic.topic(), topic.hash());
-                        sent_regtopics += self.send_register_topics(topic);
+                        sent_regtopics += self.send_register_topics(topic.clone());
                         if sent_regtopics >= MAX_REGTOPICS_REGISTER_INTERVAL {
                             break
                         }
-                        topic_item = if let Some(item) = topics_to_reg_iter.next() {
-                            Some(item)
-                        } else {
-                            restart_iteration = true;
-                            None
-                        }
+                        topic_item = topics_to_reg_iter.next();
                     }
-                    if restart_iteration {
-                        topics_to_reg_iter = self.registration_attempts.keys().cloned().collect::<Vec<Topic>>().into_iter();
+                    if topics_to_reg_iter.next().is_none() {
+                        topics_to_reg_iter = self.registration_attempts.keys().map(|topic| (topic.clone(), topic.hash())).collect::<Vec<(Topic, TopicHash)>>().into_iter();
                     }
                 }
             }
