@@ -85,7 +85,6 @@ async fn build_service(
         kbuckets,
         queries: QueryPool::new(config.query_timeout),
         active_requests: Default::default(),
-        find_node_topic_requests: Default::default(),
         active_nodes_responses: HashMap::new(),
         ip_votes: None,
         handler_send,

@@ -26,13 +26,16 @@ pub struct QueryInfo {
 pub enum QueryType {
     /// The user requested a `FIND_NODE` query to be performed. It should be reported when finished.
     FindNode(NodeId),
+    /// The user requested a `FIND_NODE` query to be performed to find the nodes closest to a topic
+    /// key. It should be reported when finished.
+    FindTopic(NodeId),
 }
 
 impl QueryInfo {
     /// Builds an RPC Request, given the QueryInfo
     pub(crate) fn rpc_request(&self, peer: NodeId) -> RequestBody {
         match self.query_type {
-            QueryType::FindNode(node_id) => {
+            QueryType::FindNode(node_id) | QueryType::FindTopic(node_id) => {
                 let distances = findnode_log2distance(node_id, peer, self.distances_to_request)
                     .unwrap_or_else(|| vec![0]);
                 RequestBody::FindNode { distances }
@@ -44,7 +47,7 @@ impl QueryInfo {
 impl crate::query_pool::TargetKey<NodeId> for QueryInfo {
     fn key(&self) -> Key<NodeId> {
         match self.query_type {
-            QueryType::FindNode(ref node_id) => {
+            QueryType::FindNode(ref node_id) | QueryType::FindTopic(ref node_id) => {
                 Key::new_raw(*node_id, *GenericArray::from_slice(&node_id.raw()))
             }
         }
