@@ -866,7 +866,7 @@ impl Service {
                     }
                 }
                 _ = registration_interval.tick() => {
-                    trace!("New registration interval");
+                    trace!("New registration interval, {}/{} topics to publish", topics_to_reg_iter.clone().count(), self.registration_attempts.len());
                     let mut sent_regtopics = 0;
                     let mut topic_item = topics_to_reg_iter.next();
                     let mut restart_iteration = false;
