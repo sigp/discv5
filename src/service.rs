@@ -1114,6 +1114,7 @@ impl Service {
             debug!("Found no new peers to send TOPICQUERY to, setting query status to dry");
             if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
                 query.dry = true;
+                let topic_key = NodeId::new(&topic_hash.as_bytes());
                 self.start_findnode_query(QueryType::FindTopic(topic_key), None);
             }
             return;
