@@ -22,7 +22,7 @@ use crate::{
         topic::TopicHash,
         Ads, AD_LIFETIME,
     },
-    discv5::PERMIT_BAN_LIST,
+    discv5::{CHECK_VERSION, NAT, PERMIT_BAN_LIST, TOPICS},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -45,14 +45,13 @@ use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::{future::select_all, prelude::*};
-use iota::iota;
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rlp::{Rlp, RlpStream};
 use rpc::*;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
-    io::{Error, ErrorKind},
+    io::Error,
     net::SocketAddr,
     pin::Pin,
     sync::{atomic::Ordering, Arc},
@@ -85,31 +84,6 @@ const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
 
 /// The duration in seconds which a node can come late to an assigned wait time.
 const WAIT_TIME_MARGINAL: Duration = Duration::from_secs(5);
-
-// Discv5 versions.
-iota! {
-    const TOPICS: u8 = 1 << iota;
-        , NAT
-}
-
-/// Check if a given peer supports one or more versions of the Discv5 protocol.
-const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
-    |peer, supported_versions| {
-        if let Some(version) = peer.get("version") {
-            if let Some(v) = version.get(0) {
-                // Only add nodes which support the topics version
-                return supported_versions.contains(v);
-            } else {
-                error!("Version field in enr of peer {} is empty", peer.node_id());
-                return false;
-            }
-        }
-        error!(
-            "Enr of peer {} doesn't contain filed 'version'",
-            peer.node_id()
-        );
-        false
-    };
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -468,20 +442,6 @@ impl Service {
         } else {
             None
         };
-
-        // This node supports topic requests REGTOPIC and TOPICQUERY, and their responses.
-        local_enr
-            .write()
-            .insert("version", &[TOPICS], &enr_key.write())
-            .map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "Failed to insert field 'version' into local enr. Error {:?}",
-                        e
-                    ),
-                )
-            })?;
 
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(

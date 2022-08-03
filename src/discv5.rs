@@ -24,6 +24,7 @@ use crate::{
     Discv5Config, Enr, Topic,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
+use iota::iota;
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -33,7 +34,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 #[cfg(feature = "libp2p")]
 use libp2p_core::Multiaddr;
@@ -51,6 +52,31 @@ pub static HASH: for<'a> fn(topic: &'a str) -> TopicHash = |topic| {
     let sha256_topic = Topic::new(topic);
     sha256_topic.hash()
 };
+
+// Discv5 versions.
+iota! {
+    pub const TOPICS: u8 = 1 << iota;
+        , NAT
+}
+
+/// Check if a given peer supports one or more versions of the Discv5 protocol.
+pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
+    |peer, supported_versions| {
+        if let Some(version) = peer.get("version") {
+            if let Some(v) = version.get(0) {
+                // Only add nodes which support the topics version
+                return supported_versions.contains(v);
+            } else {
+                error!("Version field in enr of peer {} is empty", peer.node_id());
+                return false;
+            }
+        }
+        error!(
+            "Enr of peer {} doesn't contain field 'version'",
+            peer.node_id()
+        );
+        false
+    };
 
 mod test;
 
@@ -140,6 +166,15 @@ impl Discv5 {
             table_filter,
             bucket_filter,
         )));
+
+        // This node supports topic requests REGTOPIC and TOPICQUERY, and their responses.
+        if let Err(e) = local_enr
+            .write()
+            .insert("version", &[TOPICS], &enr_key.write())
+        {
+            error!("Failed writing to enr. Error {:?}", e);
+            return Err("Failed to insert field 'version' into local enr");
+        }
 
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
