@@ -45,6 +45,7 @@ use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
 use futures::{future::select_all, prelude::*};
+use iota::iota;
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rlp::{Rlp, RlpStream};
@@ -84,6 +85,31 @@ const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
 
 /// The duration in seconds which a node can come late to an assigned wait time.
 const WAIT_TIME_MARGINAL: Duration = Duration::from_secs(5);
+
+// Discv5 versions.
+iota! {
+    const TOPICS: u8 = 1 << iota;
+        , NAT
+}
+
+/// Check if a given peer supports one or more versions of the Discv5 protocol.
+const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
+    |peer, supported_versions| {
+        if let Some(version) = peer.get("version") {
+            if let Some(v) = version.get(0) {
+                // Only add nodes which support the topics version
+                return supported_versions.contains(v);
+            } else {
+                error!("Version field in enr of peer {} is empty", peer.node_id());
+                return false;
+            }
+        }
+        error!(
+            "Enr of peer {} doesn't contain filed 'version'",
+            peer.node_id()
+        );
+        false
+    };
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -548,53 +574,13 @@ impl Service {
                         ServiceRequest::TopicQuery(topic_hash, callback) => {
                             // If we look up the topic hash for the first time we initialise its kbuckets.
                             if let Entry::Vacant(_) = self.topics_kbuckets.entry(topic_hash) {
-                                // NOTE: Currently we don't expose custom filter support in the configuration. Users can
-                                // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
-                                // may expose this functionality to the users if there is demand for it.
-                                let (table_filter, bucket_filter) = if self.config.ip_limit {
-                                    (
-                                        Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-                                        Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
-                                    )
-                                } else {
-                                    (None, None)
-                                };
-
-                                trace!("Initiating kbuckets for topic hash {}", topic_hash);
-                                let mut kbuckets = KBucketsTable::new(
-                                    NodeId::new(&topic_hash.as_bytes()).into(),
-                                    Duration::from_secs(60),
-                                    self.config.incoming_bucket_limit,
-                                    table_filter,
-                                    bucket_filter,
-                                );
-
-                                debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
-
-                                for entry in self.kbuckets.write().iter() {
-                                    match kbuckets.insert_or_update(entry.node.key, entry.node.value.clone(), entry.status) {
-                                        InsertResult::Inserted
-                                        | InsertResult::Pending { .. }
-                                        | InsertResult::StatusUpdated { .. }
-                                        | InsertResult::ValueUpdated
-                                        | InsertResult::Updated { .. }
-                                        | InsertResult::UpdatedPending => trace!(
-                                            "Added node id {} to kbucket of topic hash {}",
-                                            entry.node.value.node_id(),
-                                            topic_hash
-                                        ),
-                                        InsertResult::Failed(f) => error!("Failed to insert ENR for topic hash {}. Failure reason: {:?}", topic_hash, f),
-                                    }
-                                }
-                                self.topics_kbuckets.insert(topic_hash, kbuckets);
+                                self.init_topic_kbuckets(topic_hash);
                             }
-
                             // To fill the kbuckets closest to the topic hash as well as those further away
                             // (itertively getting closer to node ids to the topic hash) start a find node
                             // query searching for the topic hash's bytes wrapped in a NodeId.
                             let topic_key = NodeId::new(&topic_hash.as_bytes());
-                            let query_type = QueryType::FindTopic(topic_key);
-                            self.start_findnode_query(query_type, None);
+                            self.start_findnode_query(QueryType::FindTopic(topic_key), None);
 
                             self.send_topic_queries(topic_hash, Some(callback));
                         }
@@ -629,53 +615,15 @@ impl Service {
                                     .write()
                                     .insert("topics", &topics_field, &self.enr_key.write())
                                     .map_err(|e| error!("Failed to insert field 'topics' into local enr. Error {:?}", e)).is_ok() {
-                                    // NOTE: Currently we don't expose custom filter support in the configuration. Users can
-                                    // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
-                                    // may expose this functionality to the users if there is demand for it.
-                                    let (table_filter, bucket_filter) = if self.config.ip_limit {
-                                        (
-                                            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-                                            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
-                                        )
-                                    } else {
-                                        (None, None)
-                                    };
 
-                                    trace!("Initiating kbuckets for topic hash {}", topic_hash);
-                                    let mut kbuckets = KBucketsTable::new(
-                                        NodeId::new(&topic_hash.as_bytes()).into(),
-                                        Duration::from_secs(60),
-                                        self.config.incoming_bucket_limit,
-                                        table_filter,
-                                        bucket_filter,
-                                    );
-
-                                    debug!("Adding {} entries from local routing table to topic's kbuckets", self.kbuckets.write().iter().count());
-
-                                    for entry in self.kbuckets.write().iter() {
-                                        match kbuckets.insert_or_update(entry.node.key, entry.node.value.clone(), entry.status) {
-                                            InsertResult::Inserted
-                                            | InsertResult::Pending { .. }
-                                            | InsertResult::StatusUpdated { .. }
-                                            | InsertResult::ValueUpdated
-                                            | InsertResult::Updated { .. }
-                                            | InsertResult::UpdatedPending => trace!(
-                                                "Added node id {} to kbucket of topic hash {}",
-                                                entry.node.value.node_id(),
-                                                topic_hash
-                                            ),
-                                            InsertResult::Failed(f) => error!("Failed to insert ENR for topic hash {}. Failure reason: {:?}", topic_hash, f),
-                                        }
-                                    }
-                                    self.topics_kbuckets.insert(topic_hash, kbuckets);
+                                    self.init_topic_kbuckets(topic_hash);
                                     METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
 
                                     // To fill the kbuckets closest to the topic hash as well as those further away
                                     // (itertively getting closer to node ids to the topic hash) start a find node
                                     // query searching for the topic hash's bytes wrapped in a NodeId.
                                     let topic_key = NodeId::new(&topic_hash.as_bytes());
-                                    let query_type = QueryType::FindTopic(topic_key);
-                                    self.start_findnode_query(query_type, None);
+                                    self.start_findnode_query(QueryType::FindTopic(topic_key), None);
                                 }
                             }
                         }
@@ -828,6 +776,9 @@ impl Service {
                                 let mut discovered_new_peer = false;
                                 if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
                                     for enr in found_enrs {
+                                        if !CHECK_VERSION(&enr, vec![TOPICS, TOPICS|NAT]) {
+                                            continue;
+                                        }
                                         trace!("Found new peer {} for topic {}", enr, topic_hash);
                                         let key = kbucket::Key::from(enr.node_id());
 
@@ -946,6 +897,59 @@ impl Service {
                 }
             }
         }
+    }
+
+    fn init_topic_kbuckets(&mut self, topic_hash: TopicHash) {
+        trace!("Initiating kbuckets for topic hash {}", topic_hash);
+
+        // NOTE: Currently we don't expose custom filter support in the configuration. Users can
+        // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
+        // may expose this functionality to the users if there is demand for it.
+        let (table_filter, bucket_filter) = if self.config.ip_limit {
+            (
+                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            )
+        } else {
+            (None, None)
+        };
+
+        let mut kbuckets = KBucketsTable::new(
+            NodeId::new(&topic_hash.as_bytes()).into(),
+            Duration::from_secs(60),
+            self.config.incoming_bucket_limit,
+            table_filter,
+            bucket_filter,
+        );
+
+        debug!(
+            "Adding {} entries from local routing table to topic's kbuckets",
+            self.kbuckets.write().iter().count()
+        );
+
+        for entry in self.kbuckets.write().iter() {
+            let enr = entry.node.value.clone();
+            if !CHECK_VERSION(&enr, vec![TOPICS, TOPICS | NAT]) {
+                continue;
+            }
+            match kbuckets.insert_or_update(entry.node.key, enr, entry.status) {
+                InsertResult::Inserted
+                | InsertResult::Pending { .. }
+                | InsertResult::StatusUpdated { .. }
+                | InsertResult::ValueUpdated
+                | InsertResult::Updated { .. }
+                | InsertResult::UpdatedPending => trace!(
+                    "Added node id {} to kbucket of topic hash {}",
+                    entry.node.value.node_id(),
+                    topic_hash
+                ),
+                InsertResult::Failed(f) => error!(
+                    "Failed to insert ENR for topic hash {}. Failure reason: {:?}",
+                    topic_hash, f
+                ),
+            }
+        }
+        self.topics_kbuckets.insert(topic_hash, kbuckets);
     }
 
     /// Internal function that starts a topic registration. This function should not be called outside of [`REGISTER_INTERVAL`].

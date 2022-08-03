@@ -252,5 +252,19 @@ async fn encrypt_decrypt_ticket() {
     assert_eq!(decoded_ticket, ticket);
 }
 
-#[tokio::test]
-async fn test_ticketing() {}
+#[test]
+fn test_version_check() {
+    // Create the test values needed
+    let port = 6666;
+    let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+    let key = CombinedKey::generate_secp256k1();
+    let mut enr = crate::enr::EnrBuilder::new("v4")
+        .ip(ip)
+        .udp4(port)
+        .build(&key)
+        .unwrap();
+    let supported_versions = TOPICS | NAT;
+    enr.insert("version", &[supported_versions], &key).unwrap();
+
+    assert!(CHECK_VERSION(&enr, vec!(supported_versions)));
+}
