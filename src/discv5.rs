@@ -55,8 +55,8 @@ pub static HASH: for<'a> fn(topic: &'a str) -> TopicHash = |topic| {
 
 // Discv5 versions.
 iota! {
-    pub const TOPICS: u8 = 1 << iota;
-        , NAT
+    pub const NAT: u8 = 1 << iota;
+        , TOPICS
 }
 
 /// Check if a given peer supports one or more versions of the Discv5 protocol.
@@ -65,17 +65,18 @@ pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
         if let Some(version) = peer.get("version") {
             if let Some(v) = version.get(0) {
                 // Only add nodes which support the topics version
-                return supported_versions.contains(v);
+                supported_versions.contains(v)
             } else {
                 error!("Version field in enr of peer {} is empty", peer.node_id());
-                return false;
+                false
             }
+        } else {
+            error!(
+                "Enr of peer {} doesn't contain field 'version'",
+                peer.node_id()
+            );
+            false
         }
-        error!(
-            "Enr of peer {} doesn't contain field 'version'",
-            peer.node_id()
-        );
-        false
     };
 
 mod test;
@@ -175,6 +176,8 @@ impl Discv5 {
             error!("Failed writing to enr. Error {:?}", e);
             return Err("Failed to insert field 'version' into local enr");
         }
+
+        println!("{:?}", local_enr.read().get("version").unwrap());
 
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
