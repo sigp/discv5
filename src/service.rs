@@ -470,7 +470,18 @@ impl Service {
         };
 
         // This node supports topic requests REGTOPIC and TOPICQUERY, and their responses.
-        local_enr.write().insert("version", &[TOPICS], &enr_key.write()).map_err(|e| Error::new(ErrorKind::Other, format!("Failed to insert field 'version' into local enr. Error {:?}", e)))?;
+        local_enr
+            .write()
+            .insert("version", &[TOPICS], &enr_key.write())
+            .map_err(|e| {
+                Error::new(
+                    ErrorKind::Other,
+                    format!(
+                        "Failed to insert field 'version' into local enr. Error {:?}",
+                        e
+                    ),
+                )
+            })?;
 
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
