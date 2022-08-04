@@ -1,7 +1,6 @@
 //! Provides a trait that can be implemented to apply a filter to a table or bucket.
 
 use crate::Enr;
-
 pub trait Filter<TVal: Eq>: FilterClone<TVal> + Send + Sync {
     fn filter(
         &self,
@@ -81,7 +80,6 @@ fn ip_filter(
             if enr == value_to_be_inserted {
                 continue;
             }
-
             // Count the same /24 subnet
             if let Some(other_ip) = enr.ip4() {
                 if other_ip.octets()[0..3] == ip.octets()[0..3] {
@@ -127,6 +125,7 @@ fn nat_filter(
         }
         // Count nodes which are behind a nat
         if let Some(is_behind_nat) = enr.get("nat") {
+            println!("Nat field");
             if is_behind_nat.to_vec().is_empty() || *is_behind_nat == [1u8] {
                 count += 1;
             }

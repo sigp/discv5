@@ -54,7 +54,7 @@ pub struct Discv5Config {
 
     /// If the NAT version of Discv5 is enabled, this limits the number of nodes behind a NAT
     /// in the kbuckets table as these nodes run a higher risk of being uncontactable.
-    pub nat_limit: Option<bool>,
+    pub nat_limit: bool,
 
     /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
     /// than the bucket size (16). By default this is disabled (set to the maximum bucket size, 16).
@@ -131,7 +131,7 @@ impl Default for Discv5Config {
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
-            nat_limit: Some(true),
+            nat_limit: false,
             incoming_bucket_limit: MAX_NODES_PER_BUCKET,
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
@@ -241,6 +241,13 @@ impl Discv5ConfigBuilder {
     /// /24 subnet in the kbuckets table. This is to mitigate eclipse attacks.
     pub fn ip_limit(&mut self) -> &mut Self {
         self.config.ip_limit = true;
+        self
+    }
+
+    /// Limits the number of nodes behind a NAT per bucket. Only makes sense to set if this node
+    /// supports NAT traversal.
+    pub fn nat_limit(&mut self) -> &mut Self {
+        self.config.nat_limit = true;
         self
     }
 

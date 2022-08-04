@@ -280,14 +280,6 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
-        // A node shows if it is behind a NAT by setting the enr field "nat" to 1, 0 if it is not
-        // or leaving empty in case of doubt.
-        let nat = b"";
-        let _ = local_enr
-            .write()
-            .insert("nat", nat, &enr_key.write())
-            .map_err(|e| error!("Failed to insert field 'nat' into local enr. Error {:?}", e));
-
         config
             .executor
             .clone()

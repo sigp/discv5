@@ -31,7 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 #[cfg(feature = "libp2p")]
 use libp2p_core::Multiaddr;
@@ -110,25 +110,15 @@ impl Discv5 {
             None
         };
 
-        let mut bucket_filter = if let Some(nat_limit) = config.nat_limit {
-            if nat_limit {
-                Some(Box::new(kbucket::NATBucketFilter) as Box<dyn kbucket::Filter<Enr>>)
-            } else {
-                None
-            }
+        let bucket_filter = if config.nat_limit && config.ip_limit {
+            Some(Box::new(kbucket::IpAndNATBucketFilter) as Box<dyn kbucket::Filter<Enr>>)
+        } else if config.nat_limit {
+            Some(Box::new(kbucket::NATBucketFilter) as Box<dyn kbucket::Filter<Enr>>)
+        } else if config.ip_limit {
+            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>)
         } else {
             None
         };
-
-        if config.ip_limit {
-            if bucket_filter.is_some() {
-                bucket_filter =
-                    Some(Box::new(kbucket::IpAndNATBucketFilter) as Box<dyn kbucket::Filter<Enr>>);
-            } else {
-                bucket_filter =
-                    Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>);
-            }
-        }
 
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));
@@ -139,6 +129,13 @@ impl Discv5 {
             table_filter,
             bucket_filter,
         )));
+
+        // A node shows if it is behind a NAT by setting the enr field "nat" to 1, 0 if it is not
+        // or leaving empty in case of doubt.
+        if let Err(e) = local_enr.write().insert("nat", &[], &enr_key.write()) {
+            error!("Failed writing to enr. Error {:?}", e);
+            return Err("Failed to insert field 'nat' into local enr");
+        }
 
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
