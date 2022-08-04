@@ -125,8 +125,9 @@ fn nat_filter(
         if enr == value_to_be_inserted {
             continue;
         }
+        // Count nodes which are behind a nat
         if let Some(is_behind_nat) = enr.get("nat") {
-            if *is_behind_nat == [1u8] {
+            if is_behind_nat.to_vec().is_empty() || *is_behind_nat == [1u8] {
                 count += 1;
             }
         }

@@ -1337,7 +1337,7 @@ impl Service {
                     }
                     false
                 } else {
-                    // Keeps enr if not behind a nat ("nat" = 0) or not sure if behind a nat (nat
+                    // Keeps enr if not behind a nat (nat field set to 0) or not sure if behind a nat (nat
                     // field is empty).
                     true
                 }
