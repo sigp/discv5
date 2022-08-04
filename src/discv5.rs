@@ -104,14 +104,31 @@ impl Discv5 {
         // NOTE: Currently we don't expose custom filter support in the configuration. Users can
         // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
         // may expose this functionality to the users if there is demand for it.
-        let (table_filter, bucket_filter) = if config.ip_limit {
-            (
-                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-                Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
-            )
+        let table_filter = if config.ip_limit {
+            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>)
         } else {
-            (None, None)
+            None
         };
+
+        let mut bucket_filter = if let Some(nat_limit) = config.nat_limit {
+            if nat_limit {
+                Some(Box::new(kbucket::NATBucketFilter) as Box<dyn kbucket::Filter<Enr>>)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if config.ip_limit {
+            if bucket_filter.is_some() {
+                bucket_filter =
+                    Some(Box::new(kbucket::IpAndNATBucketFilter) as Box<dyn kbucket::Filter<Enr>>);
+            } else {
+                bucket_filter =
+                    Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>);
+            }
+        }
 
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));

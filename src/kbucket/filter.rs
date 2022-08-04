@@ -36,6 +36,8 @@ impl<TVal: Eq> Clone for Box<dyn Filter<TVal>> {
 const MAX_NODES_PER_SUBNET_TABLE: usize = 10;
 /// The number of nodes permitted in the same /24 subnet per bucket.
 const MAX_NODES_PER_SUBNET_BUCKET: usize = 2;
+/// Number of permitted nodes behind a NAT per subnet per bucket.
+const MAX_NODES_BEHIND_NAT_PER_SUBNET_BUCKET: usize = 2;
 
 #[derive(Clone)]
 pub struct IpTableFilter;
@@ -93,4 +95,65 @@ fn ip_filter(
     }
     // No IP, so no restrictions
     true
+}
+
+#[derive(Clone)]
+pub struct NATBucketFilter;
+
+impl Filter<Enr> for NATBucketFilter {
+    fn filter(
+        &self,
+        value_to_be_inserted: &Enr,
+        other_vals: &mut dyn Iterator<Item = &Enr>,
+    ) -> bool {
+        nat_filter(
+            value_to_be_inserted,
+            other_vals,
+            MAX_NODES_BEHIND_NAT_PER_SUBNET_BUCKET,
+        )
+    }
+}
+
+fn nat_filter(
+    value_to_be_inserted: &Enr,
+    other_vals: &mut dyn Iterator<Item = &Enr>,
+    limit: usize,
+) -> bool {
+    let mut count = 0;
+    for enr in other_vals {
+        // Ignore duplicates
+        if enr == value_to_be_inserted {
+            continue;
+        }
+        if let Some(is_behind_nat) = enr.get("nat") {
+            if *is_behind_nat == [1u8] {
+                count += 1;
+            }
+        }
+        if count >= limit {
+            return false;
+        }
+    }
+    true // No nat field, so no restrictions
+}
+
+#[derive(Clone)]
+pub struct IpAndNATBucketFilter;
+
+impl Filter<Enr> for IpAndNATBucketFilter {
+    fn filter(
+        &self,
+        value_to_be_inserted: &Enr,
+        other_vals: &mut dyn Iterator<Item = &Enr>,
+    ) -> bool {
+        ip_filter(
+            value_to_be_inserted,
+            other_vals,
+            MAX_NODES_PER_SUBNET_BUCKET,
+        ) && nat_filter(
+            value_to_be_inserted,
+            other_vals,
+            MAX_NODES_BEHIND_NAT_PER_SUBNET_BUCKET,
+        )
+    }
 }

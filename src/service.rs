@@ -1318,41 +1318,33 @@ impl Service {
         });
 
         enrs.retain(|enr| {
-            if let Some(nat) = enr.get("nat") {
-                if let Ok(is_behind_nat) = std::str::from_utf8(nat).map_err(|e| {
-                    error!("Failed to decode field 'nat' in discovered enr with node id {}. Error: {}. Blacklisting.", enr.node_id(), e);
-                    let ip_mode = self.config.ip_mode;
-                    if let Ok(node_contact) = NodeContact::try_from_enr(enr.clone(), ip_mode) {
-                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(node_contact.node_address(), ban_timeout);
-                        }
-                    }) {
-                        // If a discovered node flags that it is behind a NAT, send it a relay request instead of adding 
-                        // it to a query.
-                        if is_behind_nat == "1" {
-                            let nat_node_id = enr.node_id();
-                            self.peers_behind_nat.insert(enr.node_id(), enr.clone());
+            if let Some(is_behind_nat) = enr.get("nat") {
+                // If a discovered node flags that it is behind a NAT, send it a relay request instead of adding
+                // it to a query.
+                if *is_behind_nat == [1u8] {
+                    let nat_node_id = enr.node_id();
+                    self.peers_behind_nat.insert(enr.node_id(), enr.clone());
 
-                            let relays = self.relays.entry(nat_node_id).or_default();
-                            relays.insert(source.clone());
+                    let relays = self.relays.entry(nat_node_id).or_default();
+                    relays.insert(source.clone());
 
-                            let key = kbucket::Key::from(enr.node_id());
-                            let is_new_entry = matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Absent(_));
-                            if is_new_entry {
-                                let local_enr = self.local_enr.read().clone();
-                                self.send_relay_request(source.clone(), local_enr, nat_node_id);
-                            }
-                                false
-                            } else {
-                                // Keeps enr if not behind a nat ("nat" = 0) or not sure if behind a nat (nat 
-                                // field is empty).
-                                true
-                            }
-                    } else { false }
+                    let key = kbucket::Key::from(enr.node_id());
+                    let is_new_entry =
+                        matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Absent(_));
+                    if is_new_entry {
+                        let local_enr = self.local_enr.read().clone();
+                        self.send_relay_request(source.clone(), local_enr, nat_node_id);
+                    }
+                    false
                 } else {
-                    // Keeps enr if nat field is nonexistent.
+                    // Keeps enr if not behind a nat ("nat" = 0) or not sure if behind a nat (nat
+                    // field is empty).
                     true
                 }
+            } else {
+                // Keeps enr if nat field is nonexistent.
+                true
+            }
         });
 
         // If this is part of a query, update the query
