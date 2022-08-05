@@ -23,10 +23,11 @@ use crate::{
     Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
+use iota::iota;
 use parking_lot::RwLock;
 use std::{
     future::Future,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -42,6 +43,33 @@ lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
 }
+
+// Discv5 versions.
+iota! {
+    pub const NAT: u8 = 1 << iota;
+        , TOPICS
+}
+
+/// Check if a given peer supports one or more versions of the Discv5 protocol.
+/// Returns true if any of the given versions are supported.
+pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
+    |peer, supported_versions| {
+        if let Some(version) = peer.get("version") {
+            if let Some(v) = version.get(0) {
+                // Only add nodes which support the topics version
+                supported_versions.contains(v)
+            } else {
+                error!("Version field in enr of peer {} is empty", peer.node_id());
+                false
+            }
+        } else {
+            warn!(
+                "Enr of peer {} doesn't contain field 'version'",
+                peer.node_id()
+            );
+            false
+        }
+    };
 
 mod test;
 
@@ -65,6 +93,9 @@ pub enum Discv5Event {
     SessionEstablished(Enr, SocketAddr),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
+    /// Our local ENR NAT IP address has been updated indicating this node is behind a NAT
+    /// and externally reachable on this address.
+    NATUpdated(IpAddr),
     /// A node has initiated a talk request.
     TalkRequest(TalkRequest),
 }
@@ -130,11 +161,23 @@ impl Discv5 {
             bucket_filter,
         )));
 
-        // A node shows if it is behind a NAT by setting the enr field "nat" to 1, 0 if it is not
-        // or leaving empty in case of doubt.
-        if let Err(e) = local_enr.write().insert("nat", &[], &enr_key.write()) {
+        // This node supports NAT traversal request RELAYREQUEST, and its response RELAYRESPONSE.
+        if let Err(e) = local_enr
+            .write()
+            .insert("version", &[NAT], &enr_key.write())
+        {
             error!("Failed writing to enr. Error {:?}", e);
-            return Err("Failed to insert field 'nat' into local enr");
+            return Err("Failed to insert field 'version' into local enr");
+        }
+
+        // A node shows if it is behind a NAT by setting the enr field "nat" to its externally reachable ip.
+        if let Err(e) = local_enr.write().insert("nat4", &[], &enr_key.write()) {
+            error!("Failed writing to enr. Error {:?}", e);
+            return Err("Failed to insert field 'nat4' into local enr");
+        }
+        if let Err(e) = local_enr.write().insert("nat6", &[], &enr_key.write()) {
+            error!("Failed writing to enr. Error {:?}", e);
+            return Err("Failed to insert field 'nat6' into local enr");
         }
 
         // Update the PermitBan list based on initial configuration

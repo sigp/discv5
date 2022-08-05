@@ -14,10 +14,11 @@
 //! secp256k1 keys are supported currently.
 
 use self::{
-    ip_vote::IpVote,
+    ip_vote::{IpVote, ReachableAddress},
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
+    discv5::{CHECK_VERSION, NAT},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -32,7 +33,7 @@ use crate::{
     rpc, Discv5Config, Discv5Event, Enr,
 };
 use delay_map::HashSetDelay;
-use enr::{CombinedKey, NodeId};
+use enr::{CombinedKey, EnrError, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
 use more_asserts::debug_unreachable;
@@ -259,9 +260,11 @@ impl Service {
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
+            let include_peers_behind_nat = CHECK_VERSION(&local_enr.read(), vec![NAT]);
             Some(IpVote::new(
                 config.enr_peer_update_min,
                 config.vote_duration,
+                include_peers_behind_nat,
             ))
         } else {
             None
@@ -819,72 +822,164 @@ impl Service {
                             if status.is_connected() && !status.is_incoming());
 
                     if should_count {
-                        // get the advertised local addresses
-                        let (local_ip4_socket, local_ip6_socket) = {
-                            let local_enr = self.local_enr.read();
-                            (local_enr.udp4_socket(), local_enr.udp6_socket())
-                        };
-
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
-                            let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
+                            let contactable_address = ip_votes.majority();
 
-                            let new_ip4 = maybe_ip4_majority.and_then(|majority| {
-                                if Some(majority) != local_ip4_socket {
-                                    Some(majority)
-                                } else {
-                                    None
-                                }
-                            });
-                            let new_ip6 = maybe_ip6_majority.and_then(|majority| {
-                                if Some(majority) != local_ip6_socket {
-                                    Some(majority)
-                                } else {
-                                    None
-                                }
-                            });
+                            let mut updated = false;
 
-                            if new_ip4.is_some() || new_ip6.is_some() {
-                                let mut updated = false;
-
-                                // Check if our advertised IPV6 address needs to be updated.
-                                if let Some(new_ip6) = new_ip6 {
-                                    let new_ip6: SocketAddr = new_ip6.into();
-                                    let result = self
-                                        .local_enr
-                                        .write()
-                                        .set_udp_socket(new_ip6, &self.enr_key.read());
-                                    match result {
-                                        Ok(_) => {
-                                            updated = true;
-                                            info!("Local UDP ip6 socket updated to: {}", new_ip6);
-                                            self.send_event(Discv5Event::SocketUpdated(new_ip6));
+                            match contactable_address {
+                                Some(ReachableAddress::Wan { socket4, socket6 }) => {
+                                    // get the advertised local addresses
+                                    let (local_ip4_socket, local_ip6_socket) = {
+                                        let local_enr = self.local_enr.read();
+                                        (local_enr.udp4_socket(), local_enr.udp6_socket())
+                                    };
+                                    if let Some(majority) = socket4 {
+                                        if Some(majority) != local_ip4_socket {
+                                            let new_ip4: SocketAddr = majority.into();
+                                            let result = self
+                                                .local_enr
+                                                .write()
+                                                .set_udp_socket(new_ip4, &self.enr_key.read());
+                                            match result {
+                                                Ok(_) => {
+                                                    updated = true;
+                                                    info!(
+                                                        "Local UDP socket updated to: {}",
+                                                        new_ip4
+                                                    );
+                                                    self.send_event(Discv5Event::SocketUpdated(
+                                                        new_ip4,
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    warn!("Failed to update local UDP socket. ip: {}, error: {:?}", new_ip4, e);
+                                                }
+                                            }
                                         }
-                                        Err(e) => {
-                                            warn!("Failed to update local UDP ip6 socket. ip6: {}, error: {:?}", new_ip6, e);
+                                    }
+                                    if let Some(majority) = socket6 {
+                                        if Some(majority) != local_ip6_socket {
+                                            let new_ip6: SocketAddr = majority.into();
+                                            let result = self
+                                                .local_enr
+                                                .write()
+                                                .set_udp_socket(new_ip6, &self.enr_key.read());
+                                            match result {
+                                                Ok(_) => {
+                                                    updated = true;
+                                                    info!(
+                                                        "Local UDP ip6 socket updated to: {}",
+                                                        new_ip6
+                                                    );
+                                                    self.send_event(Discv5Event::SocketUpdated(
+                                                        new_ip6,
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    warn!("Failed to update local UDP ip6 socket. ip6: {}, error: {:?}", new_ip6, e);
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                                if let Some(new_ip4) = new_ip4 {
-                                    let new_ip4: SocketAddr = new_ip4.into();
-                                    let result = self
-                                        .local_enr
-                                        .write()
-                                        .set_udp_socket(new_ip4, &self.enr_key.read());
-                                    match result {
-                                        Ok(_) => {
-                                            updated = true;
-                                            info!("Local UDP socket updated to: {}", new_ip4);
-                                            self.send_event(Discv5Event::SocketUpdated(new_ip4));
+                                Some(ReachableAddress::Nat { ip4, ip6 }) => {
+                                    // get the advertised local addresses
+                                    let (local_nat4_ip, local_nat6_ip) = {
+                                        let local_enr = self.local_enr.read();
+                                        let local_nat4_ip = local_enr.get("nat4").map(|bytes| {
+                                            let mut buf = [0u8; 4];
+                                            buf.copy_from_slice(bytes);
+                                            buf
+                                        });
+                                        let local_nat6_ip = local_enr.get("nat6").map(|bytes| {
+                                            let mut buf = [0u8; 16];
+                                            buf.copy_from_slice(bytes);
+                                            buf
+                                        });
+                                        (local_nat4_ip, local_nat6_ip)
+                                    };
+                                    // Check if our advertised external IP address needs to be updated.
+                                    if let Some(majority) = ip4 {
+                                        let majority_ip_bytes = majority.octets();
+                                        if Some(majority_ip_bytes) != local_nat4_ip {
+                                            let update_successful = || -> Result<(), EnrError> {
+                                                let mut local_enr = self.local_enr.write();
+                                                let res = local_enr.insert(
+                                                    "nat4",
+                                                    &majority_ip_bytes,
+                                                    &self.enr_key.read(),
+                                                );
+                                                if let Err(e) = res {
+                                                    return Err(e);
+                                                }
+                                                let res =
+                                                    local_enr.set_udp4(53, &self.enr_key.read());
+                                                if let Err(e) = res {
+                                                    return Err(e);
+                                                }
+                                                Ok(())
+                                            };
+                                            match update_successful() {
+                                                Ok(_) => {
+                                                    updated = true;
+                                                    info!(
+                                                        "Local NAT ip address updated to: {}",
+                                                        majority
+                                                    );
+                                                    self.send_event(Discv5Event::NATUpdated(
+                                                        majority.into(),
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    warn!("Failed to update local NAT ip address. ip: {}, error: {:?}", majority, e);
+                                                }
+                                            }
                                         }
-                                        Err(e) => {
-                                            warn!("Failed to update local UDP socket. ip: {}, error: {:?}", new_ip4, e);
+                                    }
+                                    if let Some(majority) = ip6 {
+                                        let majority_ip_bytes = majority.octets();
+                                        if Some(majority_ip_bytes) != local_nat6_ip {
+                                            let update_successful = || -> Result<(), EnrError> {
+                                                let mut local_enr = self.local_enr.write();
+                                                let res = local_enr.insert(
+                                                    "nat6",
+                                                    &majority_ip_bytes,
+                                                    &self.enr_key.read(),
+                                                );
+                                                if let Err(e) = res {
+                                                    return Err(e);
+                                                }
+                                                let res =
+                                                    local_enr.set_udp6(53, &self.enr_key.read());
+                                                if let Err(e) = res {
+                                                    return Err(e);
+                                                }
+                                                Ok(())
+                                            };
+                                            match update_successful() {
+                                                Ok(_) => {
+                                                    updated = true;
+                                                    info!(
+                                                        "Local NAT ip address updated to: {}",
+                                                        majority
+                                                    );
+                                                    self.send_event(Discv5Event::NATUpdated(
+                                                        majority.into(),
+                                                    ));
+                                                }
+                                                Err(e) => {
+                                                    warn!("Failed to update local NAT ip address. ip: {}, error: {:?}", majority, e);
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                                if updated {
-                                    self.ping_connected_peers();
-                                }
+                                None => {}
+                            }
+                            if updated {
+                                self.ping_connected_peers();
                             }
                         }
                     }
@@ -1310,33 +1405,34 @@ impl Service {
         });
 
         enrs.retain(|enr| {
-            if let Some(is_behind_nat) = enr.get("nat") {
-                // If a discovered node flags that it is behind a NAT, send it a relay request instead of adding
-                // it to a query.
-                if *is_behind_nat == [1u8] {
-                    let nat_node_id = enr.node_id();
-                    self.peers_behind_nat.insert(enr.node_id(), enr.clone());
-
-                    let relays = self.relays.entry(nat_node_id).or_default();
-                    relays.insert(source.clone());
-
-                    let key = kbucket::Key::from(enr.node_id());
-                    let is_new_entry =
-                        matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Absent(_));
-                    if is_new_entry {
-                        let local_enr = self.local_enr.read().clone();
-                        self.send_relay_request(source.clone(), local_enr, nat_node_id);
-                    }
-                    false
-                } else {
-                    // Keeps enr if not behind a nat (nat field set to 0) or not sure if behind a nat (nat
-                    // field is empty).
-                    true
-                }
+            let is_behind_nat = if let Some(nat4) = enr.get("nat4") {
+                nat4.len() == 4
+            } else if let Some(nat6) = enr.get("nat6") {
+                nat6.len() == 16
             } else {
-                // Keeps enr if nat field is nonexistent.
-                true
+                false
+            };
+            // If a discovered node flags that it is behind a NAT, or is not sure if it is behind a NAT,
+            // and it is not already in our kbuckets, send it a relay request directly instead of adding
+            // it to a query (avoid waiting for a request to the new peer to timeout).
+            if is_behind_nat {
+                let nat_node_id = enr.node_id();
+                self.peers_behind_nat.insert(enr.node_id(), enr.clone());
+
+                // Add the source of the NODES response to the potential relays for this new NAT:ed peer.
+                let relays = self.relays.entry(nat_node_id).or_default();
+                relays.insert(source.clone());
+
+                let key = kbucket::Key::from(enr.node_id());
+                if matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Absent(_)) {
+                    let local_enr = self.local_enr.read().clone();
+                    self.send_relay_request(source.clone(), local_enr, nat_node_id);
+                    return false;
+                }
             }
+            // Keep enr and pass on to query if it flags it is not behind a NAT, or is not sure if it is
+            // bheind a NAT or it is behind a NAT but has been previously contacted.
+            true
         });
 
         // If this is part of a query, update the query
