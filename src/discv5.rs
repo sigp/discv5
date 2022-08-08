@@ -59,7 +59,7 @@ pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
                 // Only add nodes which support the topics version
                 supported_versions.contains(v)
             } else {
-                error!("Version field in enr of peer {} is empty", peer.node_id());
+                warn!("Version field in enr of peer {} is empty", peer.node_id());
                 false
             }
         } else {
