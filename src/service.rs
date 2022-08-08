@@ -889,16 +889,26 @@ impl Service {
                                     // get the advertised local addresses
                                     let (local_nat4_ip, local_nat6_ip) = {
                                         let local_enr = self.local_enr.read();
-                                        let local_nat4_ip = local_enr.get("nat4").map(|bytes| {
-                                            let mut buf = [0u8; 4];
-                                            buf.copy_from_slice(bytes);
-                                            buf
-                                        });
-                                        let local_nat6_ip = local_enr.get("nat6").map(|bytes| {
-                                            let mut buf = [0u8; 16];
-                                            buf.copy_from_slice(bytes);
-                                            buf
-                                        });
+                                        let local_nat4_ip =
+                                            local_enr.get("nat4").and_then(|bytes| {
+                                                if bytes.len() == 4 {
+                                                    let mut buf = [0u8; 4];
+                                                    buf.copy_from_slice(bytes);
+                                                    Some(buf)
+                                                } else {
+                                                    None
+                                                }
+                                            });
+                                        let local_nat6_ip =
+                                            local_enr.get("nat6").and_then(|bytes| {
+                                                if bytes.len() == 16 {
+                                                    let mut buf = [0u8; 16];
+                                                    buf.copy_from_slice(bytes);
+                                                    Some(buf)
+                                                } else {
+                                                    None
+                                                }
+                                            });
                                         (local_nat4_ip, local_nat6_ip)
                                     };
                                     // Check if our advertised external IP address needs to be updated.
