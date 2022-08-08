@@ -1,5 +1,5 @@
 use crate::Enr;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 ///! A set of configuration parameters to tune the discovery protocol.
 
 /// Sets the socket type to be established and also determines the type of ENRs that we will store
@@ -30,6 +30,19 @@ impl IpMode {
 
     /// Get the contactable Socket address of an Enr under current configuration.
     pub fn get_contactable_addr(&self, enr: &Enr) -> Option<SocketAddr> {
+        if let Some(nat4) = enr.get("nat4") {
+            if nat4.len() == 4 {
+                let mut buf = [0u8; 4];
+                buf.copy_from_slice(nat4);
+                return Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::from(buf)), 53));
+            }
+        } else if let Some(nat6) = enr.get("nat6") {
+            if nat6.len() == 16 {
+                let mut buf = [0u8; 16];
+                buf.copy_from_slice(nat6);
+                return Some(SocketAddr::new(IpAddr::V6(Ipv6Addr::from(buf)), 53));
+            }
+        }
         match self {
             IpMode::Ip4 => enr.udp4_socket().map(SocketAddr::V4),
             IpMode::Ip6 {

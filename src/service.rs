@@ -730,7 +730,7 @@ impl Service {
                     // Filter out any nodes that are not of the correct distance
                     let peer_key: kbucket::Key<NodeId> = node_id.into();
 
-                    // The distances we send are sanitized an ordered.
+                    // The distances we send are sanitized and ordered.
                     // We never send an ENR request in combination of other requests.
                     if distances_requested.len() == 1 && distances_requested[0] == 0 {
                         // we requested an ENR update
@@ -814,7 +814,7 @@ impl Service {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
 
-                    // Only count votes that from peers we have contacted.
+                    // Only count votes that are from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
                     let should_count = matches!(
                         self.kbuckets.write().entry(&key),
@@ -885,6 +885,7 @@ impl Service {
                                     }
                                 }
                                 Some(ReachableAddress::Nat { ip4, ip6 }) => {
+                                    trace!("Reachable address found for node behind NAT");
                                     // get the advertised local addresses
                                     let (local_nat4_ip, local_nat6_ip) = {
                                         let local_enr = self.local_enr.read();
@@ -902,10 +903,12 @@ impl Service {
                                     };
                                     // Check if our advertised external IP address needs to be updated.
                                     if let Some(majority) = ip4 {
+                                        trace!("IP voting has found a majority for reachable address {} of node behind NAT", majority);
                                         let majority_ip_bytes = majority.octets();
                                         if Some(majority_ip_bytes) != local_nat4_ip {
                                             let update_successful = || -> Result<(), EnrError> {
                                                 let mut local_enr = self.local_enr.write();
+                                                trace!("Inserting reachable address {} for node behind NAT into loal enr's 'nat' field", majority);
                                                 let res = local_enr.insert(
                                                     "nat4",
                                                     &majority_ip_bytes,
@@ -914,6 +917,7 @@ impl Service {
                                                 if let Err(e) = res {
                                                     return Err(e);
                                                 }
+                                                trace!("Successfully inserted reachable address {} for node behind NAT into loal enr's 'nat' field", majority);
                                                 let res =
                                                     local_enr.set_udp4(53, &self.enr_key.read());
                                                 if let Err(e) = res {
