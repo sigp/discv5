@@ -1,5 +1,5 @@
 use super::*;
-use crate::Enr;
+use crate::{service::NatPorts, Enr};
 use enr::{CombinedPublicKey, NodeId};
 use std::{
     hash::{Hash, Hasher},
@@ -22,8 +22,8 @@ pub struct NodeContact {
 }
 
 #[derive(Debug, Clone)]
-pub struct NonContactable {
-    pub enr: Enr,
+pub struct NonContactable<'a> {
+    pub enr: &'a Enr,
 }
 
 impl NodeContact {
@@ -69,8 +69,12 @@ impl NodeContact {
         )
     }
 
-    pub fn try_from_enr(enr: Enr, ip_mode: IpMode) -> Result<Self, NonContactable> {
-        let socket_addr = match ip_mode.get_contactable_addr(&enr) {
+    pub fn try_from_enr_nat(
+        enr: &Enr,
+        ports: NatPorts,
+        ip_mode: IpMode,
+    ) -> Result<Self, NonContactable<'_>> {
+        let socket_addr = match ip_mode.get_contactable_addr_nat(enr, ports) {
             Some(socket_addr) => socket_addr,
             None => return Err(NonContactable { enr }),
         };
@@ -78,7 +82,20 @@ impl NodeContact {
         Ok(NodeContact {
             public_key: enr.public_key(),
             socket_addr,
-            enr: Some(enr),
+            enr: Some(enr.clone()),
+        })
+    }
+
+    pub fn try_from_enr(enr: &Enr, ip_mode: IpMode) -> Result<Self, NonContactable<'_>> {
+        let socket_addr = match ip_mode.get_contactable_addr(enr) {
+            Some(socket_addr) => socket_addr,
+            None => return Err(NonContactable { enr }),
+        };
+
+        Ok(NodeContact {
+            public_key: enr.public_key(),
+            socket_addr,
+            enr: Some(enr.clone()),
         })
     }
 
@@ -138,7 +155,7 @@ impl NodeContact {
 impl From<Enr> for NodeContact {
     #[track_caller]
     fn from(enr: Enr) -> Self {
-        NodeContact::try_from_enr(enr, IpMode::default()).unwrap()
+        NodeContact::try_from_enr(&enr, IpMode::default()).unwrap()
     }
 }
 

@@ -151,6 +151,23 @@ pub enum ServiceRequest {
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
+/// The ports used between this node and a node behind NAT.
+#[derive(Default, Clone)]
+pub struct NatPorts {
+    udp4: Option<u16>,
+    udp6: Option<u16>,
+}
+
+impl NatPorts {
+    pub fn udp4(&self) -> Option<u16> {
+        self.udp4
+    }
+
+    pub fn udp6(&self) -> Option<u16> {
+        self.udp4
+    }
+}
+
 use crate::discv5::PERMIT_BAN_LIST;
 
 pub struct Service {
@@ -202,6 +219,13 @@ pub struct Service {
 
     /// The enrs of nodes behind NAT.
     peers_behind_nat: HashMap<NodeId, Enr>,
+
+    /// The port that a node behind a NAT uses to connect to a peer is different
+    /// from connetion to connection and not chosen by the node, rather by the
+    /// router it is behind. Therefore the externally reachable port for a node
+    /// behind NAT cannot be advertised in its ENR and must be stored by the node
+    /// receiving the connection.
+    nat_peers_ports: HashMap<NodeId, NatPorts>,
 
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
@@ -306,6 +330,7 @@ impl Service {
                     config: config.clone(),
                     relays: HashMap::new(),
                     peers_behind_nat: HashMap::new(),
+                    nat_peers_ports: Default::default(),
                 };
 
                 info!("Discv5 Service started");
@@ -362,6 +387,20 @@ impl Service {
                         HandlerOut::Established(enr, socket_addr, direction) => {
                             self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
                             self.inject_session_established(enr, direction);
+                        }
+                        HandlerOut::EstablishedNat(enr, socket_addr, direction) => {
+                            self.send_event(Discv5Event::SessionEstablishedNat(enr.clone(), socket_addr));
+                            // If IpMode is v6, an ipv6 address is favoured, nevertheless ipv4 addreses are
+                            // supported as fallback.
+                            let nat_ports = {
+                                let nat_ports = self.nat_peers_ports.entry(enr.node_id()).or_default();
+                            match socket_addr {
+                                SocketAddr::V4(socket4) => nat_ports.udp4 = Some(socket4.port()),
+                                SocketAddr::V6(socket6) => nat_ports.udp6 = Some(socket6.port()),
+                            }
+                            nat_ports.clone()
+                        };
+                            self.inject_session_established_nat(enr, direction, nat_ports);
                         }
                         HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
@@ -429,14 +468,13 @@ impl Service {
                 Some(Ok(node_id)) = self.peers_to_ping.next() => {
                     // If the node is in the routing table, Ping it and re-queue the node.
                     let key = kbucket::Key::from(node_id);
-                    let enr =  {
+                    let enr = {
                         if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
                         // The peer is in the routing table, ping it and re-queue the ping
                         self.peers_to_ping.insert(node_id);
                         Some(entry.value().clone())
                         } else { None }
                     };
-
                     if let Some(enr) = enr {
                         self.send_ping(enr);
                     }
@@ -571,16 +609,32 @@ impl Service {
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    match NodeContact::try_from_enr(enr, self.config.ip_mode) {
-                        Ok(contact) => {
-                            self.request_enr(contact, None);
+                    if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
+                        self.request_enr(contact, None);
+                    } else {
+                        let nat_ports = self
+                            .nat_peers_ports
+                            .entry(node_address.node_id)
+                            .or_default();
+                        match node_address.socket_addr {
+                            SocketAddr::V4(socket4) => nat_ports.udp4 = Some(socket4.port()),
+                            SocketAddr::V6(socket6) => nat_ports.udp6 = Some(socket6.port()),
                         }
-                        Err(NonContactable { enr }) => {
-                            debug_unreachable!("Stored ENR is not contactable. {}", enr);
-                            error!(
-                                "Stored ENR is not contactable! This should never happen {}",
-                                enr
-                            );
+                        match NodeContact::try_from_enr_nat(
+                            &enr,
+                            nat_ports.clone(),
+                            self.config.ip_mode,
+                        ) {
+                            Ok(contact) => {
+                                self.request_enr(contact, None);
+                            }
+                            Err(NonContactable { enr }) => {
+                                debug_unreachable!("Stored ENR is not contactable. {}", enr);
+                                error!(
+                                    "Stored ENR is not contactable! This should never happen {}",
+                                    enr
+                                );
+                            }
                         }
                     }
                 }
@@ -635,7 +689,7 @@ impl Service {
                 } else if from_node_enr.node_id() != local_node_id {
                     // This node is the rendezvous
                     if let Some(receiver) = self.find_enr(&to_node_id) {
-                        match NodeContact::try_from_enr(receiver, self.config.ip_mode) {
+                        match NodeContact::try_from_enr(&receiver, self.config.ip_mode) {
                             Ok(contact) => {
                                 trace!("Rendezvous node sending RELAYREQUEST to receiver node");
                                 self.send_relay_request(contact, from_node_enr, to_node_id);
@@ -885,7 +939,7 @@ impl Service {
                                     }
                                 }
                                 Some(ReachableAddress::Nat { ip4, ip6 }) => {
-                                    trace!("Reachable address found for node behind NAT");
+                                    trace!("A new WAN reachable address found for this node which appears to be behind a NAT");
                                     // get the advertised local addresses
                                     let (local_nat4_ip, local_nat6_ip) = {
                                         let local_enr = self.local_enr.read();
@@ -913,12 +967,12 @@ impl Service {
                                     };
                                     // Check if our advertised external IP address needs to be updated.
                                     if let Some(majority) = ip4 {
-                                        trace!("IP voting has found a majority for reachable address {} of node behind NAT", majority);
+                                        trace!("IP voting has found a majority for WAN reachable address {} of node behind NAT", majority);
                                         let majority_ip_bytes = majority.octets();
                                         if Some(majority_ip_bytes) != local_nat4_ip {
                                             let update_successful = || -> Result<(), EnrError> {
                                                 let mut local_enr = self.local_enr.write();
-                                                trace!("Inserting reachable address {} for node behind NAT into loal enr's 'nat' field", majority);
+                                                trace!("Inserting reachable address {} for node behind NAT into loal enr's 'nat4' field", majority);
                                                 let res = local_enr.insert(
                                                     "nat4",
                                                     &majority_ip_bytes,
@@ -927,7 +981,7 @@ impl Service {
                                                 if let Err(e) = res {
                                                     return Err(e);
                                                 }
-                                                trace!("Successfully inserted reachable address {} for node behind NAT into loal enr's 'nat' field", majority);
+                                                trace!("Successfully inserted reachable ipv6 address {} for node behind NAT into loal enr's 'nat6' field", majority);
                                                 let res =
                                                     local_enr.set_udp4(53, &self.enr_key.read());
                                                 if let Err(e) = res {
@@ -1068,20 +1122,28 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr) {
-        match NodeContact::try_from_enr(enr, self.config.ip_mode) {
-            Ok(contact) => {
-                let request_body = RequestBody::Ping {
-                    enr_seq: self.local_enr.read().seq(),
-                };
-                let active_request = ActiveRequest {
-                    contact,
-                    request_body,
-                    query_id: None,
-                    callback: None,
-                };
-                self.send_rpc_request(active_request);
+        let ping: fn(service: &mut Service, contact: NodeContact) = |service, contact| {
+            let request_body = RequestBody::Ping {
+                enr_seq: service.local_enr.read().seq(),
+            };
+            let active_request = ActiveRequest {
+                contact,
+                request_body,
+                query_id: None,
+                callback: None,
+            };
+            service.send_rpc_request(active_request);
+        };
+
+        if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
+            ping(self, contact);
+        } else if let Some(ports) = self.nat_peers_ports.get(&enr.node_id()) {
+            match NodeContact::try_from_enr_nat(&enr, ports.clone(), self.config.ip_mode) {
+                Ok(contact) => ping(self, contact),
+                Err(NonContactable { enr }) => {
+                    error!("Trying to ping a non-contactable peer {}", enr)
+                }
             }
-            Err(NonContactable { enr }) => error!("Trying to ping a non-contactable peer {}", enr),
         }
     }
 
@@ -1309,7 +1371,7 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
-            match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+            match NodeContact::try_from_enr(&enr, self.config.ip_mode) {
                 Ok(contact) => {
                     let active_request = ActiveRequest {
                         contact,
@@ -1591,6 +1653,30 @@ impl Service {
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
+            return;
+        }
+
+        let node_id = enr.node_id();
+        debug!(
+            "Session established with Node: {}, direction: {}",
+            node_id, direction
+        );
+        self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
+    }
+
+    fn inject_session_established_nat(
+        &mut self,
+        enr: Enr,
+        direction: ConnectionDirection,
+        ports: NatPorts,
+    ) {
+        // Ignore sessions with non-contactable ENRs
+        if self
+            .config
+            .ip_mode
+            .get_contactable_addr_nat(&enr, ports)
+            .is_none()
+        {
             return;
         }
 

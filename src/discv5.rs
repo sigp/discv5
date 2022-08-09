@@ -91,6 +91,8 @@ pub enum Discv5Event {
     },
     /// A new session has been established with a node.
     SessionEstablished(Enr, SocketAddr),
+    /// A new NAT session has been established with a node behind a NAT.
+    SessionEstablishedNat(Enr, SocketAddr),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
     /// Our local ENR NAT IP address has been updated indicating this node is behind a NAT
@@ -523,7 +525,7 @@ impl Discv5 {
     /// Request a TALK message from a node, identified via the ENR.
     pub fn talk_req(
         &self,
-        enr: Enr,
+        enr: &'static Enr,
         protocol: Vec<u8>,
         request: Vec<u8>,
     ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static {

@@ -145,8 +145,8 @@ impl fmt::Display for QueryError {
     }
 }
 
-impl From<NonContactable> for RequestError {
-    fn from(_: NonContactable) -> Self {
+impl From<NonContactable<'_>> for RequestError {
+    fn from(_: NonContactable<'_>) -> Self {
         RequestError::InvalidEnr("ENR is not contactable")
     }
 }

@@ -197,6 +197,7 @@ async fn main() {
                     Discv5Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
                     Discv5Event::TalkRequest(_) => info!("Talk request received"),
                     Discv5Event::NATUpdated(addr) => info!("Node is behind NAT, externally reachable address updated {}", addr),
+                    Discv5Event::SessionEstablishedNat(enr, _) => info!("NAT session established with node behind NAT {}", enr),
                 };
             }
         }
