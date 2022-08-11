@@ -1682,7 +1682,7 @@ impl Service {
 
         let node_id = enr.node_id();
         debug!(
-            "Session established with Node: {}, direction: {}",
+            "Session established with node behind NAT: {}, direction: {}",
             node_id, direction
         );
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
