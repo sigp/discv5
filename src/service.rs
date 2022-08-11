@@ -394,12 +394,12 @@ impl Service {
                             // supported as fallback.
                             let nat_ports = {
                                 let nat_ports = self.nat_peers_ports.entry(enr.node_id()).or_default();
-                            match socket_addr {
-                                SocketAddr::V4(socket4) => nat_ports.udp4 = Some(socket4.port()),
-                                SocketAddr::V6(socket6) => nat_ports.udp6 = Some(socket6.port()),
-                            }
-                            nat_ports.clone()
-                        };
+                                match socket_addr {
+                                    SocketAddr::V4(socket4) => nat_ports.udp4 = Some(socket4.port()),
+                                    SocketAddr::V6(socket6) => nat_ports.udp6 = Some(socket6.port()),
+                                }
+                                nat_ports.clone()
+                            };
                             self.inject_session_established_nat(enr, direction, nat_ports);
                         }
                         HandlerOut::Request(node_address, request) => {
@@ -876,6 +876,7 @@ impl Service {
                             if status.is_connected() && !status.is_incoming());
 
                     if should_count {
+                        trace!("Counting ip vote from peer {}", node_id);
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
                             let contactable_address = ip_votes.majority();

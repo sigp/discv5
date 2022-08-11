@@ -769,6 +769,7 @@ impl Handler {
                 match node_address.socket_addr.ip() {
                     IpAddr::V4(ip_addr) => {
                         if let Some(advertised_addr) = enr.get("nat4") {
+                            trace!("Verifying address of node {} behind NAT", node_address);
                             if advertised_addr.len() == 4 {
                                 return ip_addr.octets() == advertised_addr;
                             }
@@ -776,6 +777,7 @@ impl Handler {
                     }
                     IpAddr::V6(ip_addr) => {
                         if let Some(advertised_addr) = enr.get("nat6") {
+                            trace!("Verifying ipv6 address of node {} behind NAT", node_address);
                             if advertised_addr.len() == 16 {
                                 return ip_addr.octets() == advertised_addr;
                             }
