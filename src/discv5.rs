@@ -153,6 +153,14 @@ impl Discv5 {
             None
         };
 
+        let mut local_enr = local_enr;
+
+        // This node supports NAT traversal request RELAYREQUEST, and its response RELAYRESPONSE.
+        if let Err(e) = local_enr.insert("version", &[NAT], &enr_key) {
+            error!("Failed writing to enr. Error {:?}", e);
+            return Err("Failed to insert field 'version' into local enr");
+        }
+
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));
         let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
@@ -162,25 +170,6 @@ impl Discv5 {
             table_filter,
             bucket_filter,
         )));
-
-        // This node supports NAT traversal request RELAYREQUEST, and its response RELAYRESPONSE.
-        if let Err(e) = local_enr
-            .write()
-            .insert("version", &[NAT], &enr_key.write())
-        {
-            error!("Failed writing to enr. Error {:?}", e);
-            return Err("Failed to insert field 'version' into local enr");
-        }
-
-        // A node shows if it is behind a NAT by setting the enr field "nat" to its externally reachable ip.
-        if let Err(e) = local_enr.write().insert("nat4", &[], &enr_key.write()) {
-            error!("Failed writing to enr. Error {:?}", e);
-            return Err("Failed to insert field 'nat4' into local enr");
-        }
-        if let Err(e) = local_enr.write().insert("nat6", &[], &enr_key.write()) {
-            error!("Failed writing to enr. Error {:?}", e);
-            return Err("Failed to insert field 'nat6' into local enr");
-        }
 
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
@@ -200,6 +189,62 @@ impl Discv5 {
         if self.service_channel.is_some() {
             warn!("Service is already started");
             return Err(Discv5Error::ServiceAlreadyStarted);
+        }
+
+        if self.local_enr.read().ip4().is_none() && self.local_enr.read().ip6().is_none() {
+            // A node shows if it is behind a NAT by setting the enr field(s) "nat4"/"nat6" to its
+            // externally reachable ip, or by leaving the nat4/nat6 field(s) empty if it is not sure
+            // (or ip4/ip6 field(s) empty).
+
+            if let Err(e) = self
+                .local_enr
+                .write()
+                .insert("nat4", &[], &self.enr_key.write())
+            {
+                error!(
+                    "Failed to insert field 'nat4' into local enr. Error {:?}",
+                    e
+                );
+                return Err(Discv5Error::InvalidEnr);
+            }
+            if let Err(e) = self
+                .local_enr
+                .write()
+                .insert("nat6", &[], &self.enr_key.write())
+            {
+                error!(
+                    "Failed to insert field 'nat6' into local enr. Error {:?}",
+                    e
+                );
+                return Err(Discv5Error::InvalidEnr);
+            }
+
+            // This NAT traversal protocol will only work for routers that set up the same port
+            // externally (WAN facing) as this machine is configured to use for discv5 on LAN.
+            // The protocol does not cover routers that choose a random external port to map to
+            // this machine's listen port.
+            match listen_socket {
+                SocketAddr::V4(socket4) => {
+                    if let Err(e) = self
+                        .local_enr
+                        .write()
+                        .set_udp4(socket4.port(), &self.enr_key.write())
+                    {
+                        error!("Failed to set 'udp4' field in local enr. Error {:?}", e);
+                        return Err(Discv5Error::InvalidEnr);
+                    }
+                }
+                SocketAddr::V6(socket6) => {
+                    if let Err(e) = self
+                        .local_enr
+                        .write()
+                        .set_udp6(socket6.port(), &self.enr_key.write())
+                    {
+                        error!("Failed to set 'udp6' field in local enr. Error {:?}", e);
+                        return Err(Discv5Error::InvalidEnr);
+                    }
+                }
+            }
         }
 
         // create the main service

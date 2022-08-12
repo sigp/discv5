@@ -95,7 +95,6 @@ async fn build_service(
         config,
         relays: HashMap::new(),
         peers_behind_nat: HashMap::new(),
-        nat_peers_ports: Default::default(),
     }
 }
 

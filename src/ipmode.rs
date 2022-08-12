@@ -1,4 +1,4 @@
-use crate::{service::NatPorts, Enr};
+use crate::Enr;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 ///! A set of configuration parameters to tune the discovery protocol.
 
@@ -29,7 +29,7 @@ impl IpMode {
     }
 
     /// Get the contactable Socket address of an Enr under current configuration.
-    pub fn get_contactable_addr_nat(&self, enr: &Enr, ports: NatPorts) -> Option<SocketAddr> {
+    pub fn get_contactable_addr_nat(&self, enr: &Enr) -> Option<SocketAddr> {
         let nat4: fn(enr: &Enr, port: u16) -> Option<SocketAddr> = |enr, port| {
             if let Some(nat4) = enr.get("nat4") {
                 if nat4.len() == 4 {
@@ -42,7 +42,7 @@ impl IpMode {
         };
 
         match self {
-            IpMode::Ip4 => ports.udp4().and_then(|port| nat4(enr, port)),
+            IpMode::Ip4 => enr.udp4().and_then(|port| nat4(enr, port)),
             IpMode::Ip6 {
                 enable_mapped_addresses,
             } => {
@@ -59,8 +59,7 @@ impl IpMode {
                         if to_ipv4_mapped(&ipv6).is_some() {
                             None
                         } else {
-                            ports
-                                .udp6()
+                            enr.udp6()
                                 .map(|port| SocketAddr::new(IpAddr::V6(ipv6), port))
                         }
                     } else {
@@ -70,8 +69,7 @@ impl IpMode {
                 if *enable_mapped_addresses {
                     // If mapped addresses are enabled we can use the Ipv4 address of the node in
                     // case it doesn't have an ipv6 one
-                    ports
-                        .udp4()
+                    enr.udp4()
                         .and_then(|port| maybe_ipv6_addr.or_else(|| nat4(enr, port)))
                 } else {
                     maybe_ipv6_addr

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{service::NatPorts, Enr};
+use crate::Enr;
 use enr::{CombinedPublicKey, NodeId};
 use std::{
     hash::{Hash, Hasher},
@@ -69,12 +69,8 @@ impl NodeContact {
         )
     }
 
-    pub fn try_from_enr_nat(
-        enr: &Enr,
-        ports: NatPorts,
-        ip_mode: IpMode,
-    ) -> Result<Self, NonContactable<'_>> {
-        let socket_addr = match ip_mode.get_contactable_addr_nat(enr, ports) {
+    pub fn try_from_enr_nat(enr: &Enr, ip_mode: IpMode) -> Result<Self, NonContactable<'_>> {
+        let socket_addr = match ip_mode.get_contactable_addr_nat(enr) {
             Some(socket_addr) => socket_addr,
             None => return Err(NonContactable { enr }),
         };

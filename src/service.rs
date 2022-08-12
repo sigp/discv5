@@ -151,23 +151,6 @@ pub enum ServiceRequest {
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
-/// The ports used between this node and a node behind NAT.
-#[derive(Default, Clone)]
-pub struct NatPorts {
-    udp4: Option<u16>,
-    udp6: Option<u16>,
-}
-
-impl NatPorts {
-    pub fn udp4(&self) -> Option<u16> {
-        self.udp4
-    }
-
-    pub fn udp6(&self) -> Option<u16> {
-        self.udp4
-    }
-}
-
 use crate::discv5::PERMIT_BAN_LIST;
 
 pub struct Service {
@@ -219,13 +202,6 @@ pub struct Service {
 
     /// The enrs of nodes behind NAT.
     peers_behind_nat: HashMap<NodeId, Enr>,
-
-    /// The port that a node behind a NAT uses to connect to a peer is different
-    /// from connetion to connection and not chosen by the node, rather by the
-    /// router it is behind. Therefore the externally reachable port for a node
-    /// behind NAT cannot be advertised in its ENR and must be stored by the node
-    /// receiving the connection.
-    nat_peers_ports: HashMap<NodeId, NatPorts>,
 
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
@@ -330,7 +306,6 @@ impl Service {
                     config: config.clone(),
                     relays: HashMap::new(),
                     peers_behind_nat: HashMap::new(),
-                    nat_peers_ports: Default::default(),
                 };
 
                 info!("Discv5 Service started");
@@ -390,17 +365,7 @@ impl Service {
                         }
                         HandlerOut::EstablishedNat(enr, socket_addr, direction) => {
                             self.send_event(Discv5Event::SessionEstablishedNat(enr.clone(), socket_addr));
-                            // If IpMode is v6, an ipv6 address is favoured, nevertheless ipv4 addreses are
-                            // supported as fallback.
-                            let nat_ports = {
-                                let nat_ports = self.nat_peers_ports.entry(enr.node_id()).or_default();
-                                match socket_addr {
-                                    SocketAddr::V4(socket4) => nat_ports.udp4 = Some(socket4.port()),
-                                    SocketAddr::V6(socket6) => nat_ports.udp6 = Some(socket6.port()),
-                                }
-                                nat_ports.clone()
-                            };
-                            self.inject_session_established_nat(enr, direction, nat_ports);
+                            self.inject_session_established_nat(enr, direction);
                         }
                         HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
@@ -612,19 +577,7 @@ impl Service {
                     if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
                         self.request_enr(contact, None);
                     } else {
-                        let nat_ports = self
-                            .nat_peers_ports
-                            .entry(node_address.node_id)
-                            .or_default();
-                        match node_address.socket_addr {
-                            SocketAddr::V4(socket4) => nat_ports.udp4 = Some(socket4.port()),
-                            SocketAddr::V6(socket6) => nat_ports.udp6 = Some(socket6.port()),
-                        }
-                        match NodeContact::try_from_enr_nat(
-                            &enr,
-                            nat_ports.clone(),
-                            self.config.ip_mode,
-                        ) {
+                        match NodeContact::try_from_enr_nat(&enr, self.config.ip_mode) {
                             Ok(contact) => {
                                 self.request_enr(contact, None);
                             }
@@ -1138,8 +1091,8 @@ impl Service {
 
         if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
             ping(self, contact);
-        } else if let Some(ports) = self.nat_peers_ports.get(&enr.node_id()) {
-            match NodeContact::try_from_enr_nat(&enr, ports.clone(), self.config.ip_mode) {
+        } else {
+            match NodeContact::try_from_enr_nat(&enr, self.config.ip_mode) {
                 Ok(contact) => ping(self, contact),
                 Err(NonContactable { enr }) => {
                     error!("Trying to ping a non-contactable peer {}", enr)
@@ -1665,19 +1618,9 @@ impl Service {
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
     }
 
-    fn inject_session_established_nat(
-        &mut self,
-        enr: Enr,
-        direction: ConnectionDirection,
-        ports: NatPorts,
-    ) {
+    fn inject_session_established_nat(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
-        if self
-            .config
-            .ip_mode
-            .get_contactable_addr_nat(&enr, ports)
-            .is_none()
-        {
+        if self.config.ip_mode.get_contactable_addr_nat(&enr).is_none() {
             return;
         }
 
