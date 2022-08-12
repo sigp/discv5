@@ -202,6 +202,10 @@ pub struct Service {
     /// The enrs of nodes behind NAT.
     peers_behind_nat: HashMap<NodeId, Enr>,
 
+    /// The listening socket to tell the difference between ip votes for nodes
+    /// behind NATs and nodes not behind NATs (directly WAN reachable).
+    listen_socket: SocketAddr,
+
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
 }
@@ -303,6 +307,7 @@ impl Service {
                     config: config.clone(),
                     relays: HashMap::new(),
                     peers_behind_nat: HashMap::new(),
+                    listen_socket,
                 };
 
                 info!("Discv5 Service started");
@@ -833,9 +838,10 @@ impl Service {
 
                             let mut updated = false;
 
-                            if self.local_enr.read().get("nat4").is_some()
-                                || self.local_enr.read().get("nat6").is_some()
-                            {
+                            // If the IP address in the PONG response body is different to that of the
+                            // service's listen socket then this node is behind a NAT and the NAT traversal
+                            // protocol should be used.
+                            if socket != self.listen_socket {
                                 trace!("A new WAN reachable address found for this node which appears to be behind a NAT");
                                 // get the advertised local addresses
                                 let (local_nat4, local_nat6) = {
