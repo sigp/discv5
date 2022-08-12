@@ -44,7 +44,7 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     default::Default,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::{atomic::Ordering, Arc},
     task::{Context, Poll},
@@ -770,16 +770,22 @@ impl Handler {
                     IpAddr::V4(ip_addr) => {
                         if let Some(advertised_addr) = enr.get("nat4") {
                             if advertised_addr.len() == 4 {
-                                trace!("Verifying address of node {} behind NAT", node_address);
-                                return ip_addr.octets() == advertised_addr;
+                                let mut buf = [0u8; 4];
+                                buf.copy_from_slice(advertised_addr);
+                                let advertised_addr = Ipv4Addr::from(buf);
+                                trace!("Verifying address of node {} behind NAT. Advertised externally reachable IP bytes {}", node_address, advertised_addr);
+                                return ip_addr == advertised_addr;
                             }
                         }
                     }
                     IpAddr::V6(ip_addr) => {
                         if let Some(advertised_addr) = enr.get("nat6") {
                             if advertised_addr.len() == 16 {
-                                trace!("Verifying ipv6 address of node {} behind NAT", node_address);
-                                return ip_addr.octets() == advertised_addr;
+                                let mut buf = [0u8; 16];
+                                buf.copy_from_slice(advertised_addr);
+                                let advertised_addr = Ipv6Addr::from(buf);
+                                trace!("Verifying address of node {} behind NAT. Advertised externally reachable IP bytes {}", node_address, advertised_addr);
+                                return ip_addr == advertised_addr;
                             }
                         }
                     }
