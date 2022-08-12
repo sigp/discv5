@@ -27,7 +27,7 @@ use iota::iota;
 use parking_lot::RwLock;
 use std::{
     future::Future,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -95,9 +95,9 @@ pub enum Discv5Event {
     SessionEstablishedNat(Enr, SocketAddr),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
-    /// Our local ENR NAT IP address has been updated indicating this node is behind a NAT
-    /// and externally reachable on this address.
-    NATUpdated(IpAddr),
+    /// Our local ENR NAT address and udp port has been updated indicating
+    /// this node is behind a NAT and is externally reachable on this address.
+    NATUpdated(SocketAddr),
     /// A node has initiated a talk request.
     TalkRequest(TalkRequest),
 }
@@ -191,7 +191,10 @@ impl Discv5 {
             return Err(Discv5Error::ServiceAlreadyStarted);
         }
 
-        if self.local_enr.read().ip4().is_none() && self.local_enr.read().ip6().is_none() {
+        if CHECK_VERSION(&self.local_enr.read(), vec![NAT])
+            && self.local_enr.read().ip4().is_none()
+            && self.local_enr.read().ip6().is_none()
+        {
             // A node shows if it is behind a NAT by setting the enr field(s) "nat4"/"nat6" to its
             // externally reachable ip, or by leaving the nat4/nat6 field(s) empty if it is not sure
             // (or ip4/ip6 field(s) empty).
@@ -199,7 +202,7 @@ impl Discv5 {
             if let Err(e) = self
                 .local_enr
                 .write()
-                .insert("nat4", &[], &self.enr_key.write())
+                .insert("nat4", &[], &self.enr_key.read())
             {
                 error!(
                     "Failed to insert field 'nat4' into local enr. Error {:?}",
@@ -210,7 +213,7 @@ impl Discv5 {
             if let Err(e) = self
                 .local_enr
                 .write()
-                .insert("nat6", &[], &self.enr_key.write())
+                .insert("nat6", &[], &self.enr_key.read())
             {
                 error!(
                     "Failed to insert field 'nat6' into local enr. Error {:?}",
@@ -228,7 +231,7 @@ impl Discv5 {
                     if let Err(e) = self
                         .local_enr
                         .write()
-                        .set_udp4(socket4.port(), &self.enr_key.write())
+                        .set_udp4(socket4.port(), &self.enr_key.read())
                     {
                         error!("Failed to set 'udp4' field in local enr. Error {:?}", e);
                         return Err(Discv5Error::InvalidEnr);
@@ -238,7 +241,7 @@ impl Discv5 {
                     if let Err(e) = self
                         .local_enr
                         .write()
-                        .set_udp6(socket6.port(), &self.enr_key.write())
+                        .set_udp6(socket6.port(), &self.enr_key.read())
                     {
                         error!("Failed to set 'udp6' field in local enr. Error {:?}", e);
                         return Err(Discv5Error::InvalidEnr);
