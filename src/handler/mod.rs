@@ -71,7 +71,7 @@ use session::Session;
 const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
 /// Messages sent from the application layer to `Handler`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum HandlerIn {
     /// A Request to send to a `NodeContact` has been received from the application layer. A

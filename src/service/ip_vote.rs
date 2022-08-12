@@ -9,7 +9,7 @@ use std::{
 /// A node behind a NAT will have an external IP but no fixed external port mapping
 /// for outgoing connections. A node reachable on the WAN facing interface will have
 /// a fixed port mapping for outgoing connections.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ReachableAddress {
     Wan {
         socket4: Option<SocketAddrV4>,
