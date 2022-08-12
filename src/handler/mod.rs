@@ -769,16 +769,16 @@ impl Handler {
                 match node_address.socket_addr.ip() {
                     IpAddr::V4(ip_addr) => {
                         if let Some(advertised_addr) = enr.get("nat4") {
-                            trace!("Verifying address of node {} behind NAT", node_address);
                             if advertised_addr.len() == 4 {
+                                trace!("Verifying address of node {} behind NAT", node_address);
                                 return ip_addr.octets() == advertised_addr;
                             }
                         }
                     }
                     IpAddr::V6(ip_addr) => {
                         if let Some(advertised_addr) = enr.get("nat6") {
-                            trace!("Verifying ipv6 address of node {} behind NAT", node_address);
                             if advertised_addr.len() == 16 {
+                                trace!("Verifying ipv6 address of node {} behind NAT", node_address);
                                 return ip_addr.octets() == advertised_addr;
                             }
                         }
@@ -827,6 +827,7 @@ impl Handler {
                     // WAN reachable socket for all peers) session or a NAT session (node behind
                     // NAT listens on different WAN reachable ports for each peer).
                     if self.verify_enr_nat(&enr, &node_address) {
+                        trace!("Node {} is behind NAT", node_address);
                         // NAT Session is valid
                         // Notify the application
                         // The session established here are from WHOAREYOU packets that we sent.
