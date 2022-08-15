@@ -58,13 +58,13 @@ pub struct Discv5Config {
 
     /// If the NAT version of Discv5 is enabled, this includes nodes that are behind a symmetric
     /// NAT, i.e. ones that use a new port mapping for each connection. These nodes can only
-    /// connect to nodes behind an asymmetric NAT or nodes that are not behind a NAT. By the
-    /// discv5 NAT traversal protocol they are triggered to make connections to these peers as they
-    /// cannot listen for incoming connections from new peers.
+    /// connect to nodes that are not behind a NAT as they cannot supply a whole address (only ip)
+    /// to attempt hole punching them through.
     pub include_symmetric_nat: bool,
 
-    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
-    /// than the bucket size (16). By default this is disabled (set to the maximum bucket size, 16).
+    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist 
+    /// per-bucket. This cannot be larger than the bucket size (16). By default this is disabled 
+    /// (set to the maximum bucket size, 16).
     pub incoming_bucket_limit: usize,
 
     /// A filter used to decide whether to insert nodes into our local routing table. Nodes can be
