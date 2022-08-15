@@ -52,9 +52,16 @@ pub struct Discv5Config {
     /// /24 subnet in the kbuckets table. This is to mitigate eclipse attacks. Default: false.
     pub ip_limit: bool,
 
-    /// If the NAT version of Discv5 is enabled, this limits the number of nodes behind a NAT
-    /// in the kbuckets table as these nodes run a higher risk of being uncontactable.
+    /// If the NAT version of Discv5 is enabled, if set to true this limits the number of nodes
+    /// behind a NAT in the kbuckets table as these nodes run a higher risk of being uncontactable.
     pub nat_limit: bool,
+
+    /// If the NAT version of Discv5 is enabled, this includes nodes that are behind a symmetric
+    /// NAT, i.e. ones that use a new port mapping for each connection. These nodes can only
+    /// connect to nodes behind an asymmetric NAT or nodes that are not behind a NAT. By the
+    /// discv5 NAT traversal protocol they are triggered to make connections to these peers as they
+    /// cannot listen for incoming connections from new peers.
+    pub include_symmetric_nat: bool,
 
     /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
     /// than the bucket size (16). By default this is disabled (set to the maximum bucket size, 16).
@@ -132,6 +139,7 @@ impl Default for Discv5Config {
             query_parallelism: 3,
             ip_limit: false,
             nat_limit: false,
+            include_symmetric_nat: false,
             incoming_bucket_limit: MAX_NODES_PER_BUCKET,
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),

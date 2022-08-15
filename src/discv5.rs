@@ -27,7 +27,7 @@ use iota::iota;
 use parking_lot::RwLock;
 use std::{
     future::Future,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -98,6 +98,9 @@ pub enum Discv5Event {
     /// Our local ENR NAT address and udp port has been updated indicating
     /// this node is behind a NAT and is externally reachable on this address.
     NATUpdated(SocketAddr),
+    /// Our local ENR NAT address has been updated, no single port could be found by ip voting
+    /// indicating this node is behind a symmetirc NAT and is externally reachable on this address.
+    NATSymmetricUpdated(IpAddr),
     /// A node has initiated a talk request.
     TalkRequest(TalkRequest),
 }
