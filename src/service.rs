@@ -202,6 +202,11 @@ pub struct Service {
     /// The enrs of nodes behind NAT.
     peers_behind_nat: HashMap<NodeId, Enr>,
 
+    /// The peers behind NAT that haven't yet published their reachable address
+    /// in their enr (probably because they are awaiting enough connections to
+    /// ip vote on their externally reachable address).
+    awaiting_reachable_address: HashMap<NodeId, Enr>,
+
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
 }
@@ -304,6 +309,7 @@ impl Service {
                     config: config.clone(),
                     relays: HashMap::new(),
                     peers_behind_nat: HashMap::new(),
+                    awaiting_reachable_address: Default::default(),
                 };
 
                 info!("Discv5 Service started");
@@ -568,26 +574,32 @@ impl Service {
                             to_request_enr = Some(enr);
                         }
                     }
-                    // don't know of the ENR, request the update
+                    kbucket::Entry::Absent(_) => {
+                        // If this is a node behind a NAT that is pinging us because it has discovered its externally
+                        // reachable address via ip-voting (and has updated its enr accordingly), then request its enr.
+                        if let Some(nat_peer) = self
+                            .awaiting_reachable_address
+                            .remove(&node_address.node_id)
+                        {
+                            to_request_enr = Some(nat_peer);
+                        }
+                    }
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
-                        self.request_enr(contact, None);
-                    } else {
-                        match NodeContact::try_from_enr_nat(&enr, self.config.ip_mode) {
-                            Ok(contact) => {
-                                self.request_enr(contact, None);
+                    let contact =
+                        if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
+                            contact
+                        } else {
+                            match NodeContact::try_from_enr_nat(&enr, self.config.ip_mode) {
+                                Ok(contact) => contact,
+                                Err(NonContactable { enr: _ }) => NodeContact::new_without_enr(
+                                    enr.public_key(),
+                                    node_address.socket_addr,
+                                ),
                             }
-                            Err(NonContactable { enr }) => {
-                                debug_unreachable!("Stored ENR is not contactable. {}", enr);
-                                error!(
-                                    "Stored ENR is not contactable! This should never happen {}",
-                                    enr
-                                );
-                            }
-                        }
-                    }
+                        };
+                    self.request_enr(contact, None);
                 }
 
                 // build the PONG response
@@ -1615,6 +1627,7 @@ impl Service {
     fn inject_session_established_nat(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr_nat(&enr).is_none() {
+            self.awaiting_reachable_address.insert(enr.node_id(), enr);
             return;
         }
 

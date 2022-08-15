@@ -95,6 +95,7 @@ async fn build_service(
         config,
         relays: HashMap::new(),
         peers_behind_nat: HashMap::new(),
+        awaiting_reachable_address: Default::default(),
     }
 }
 

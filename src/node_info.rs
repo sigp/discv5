@@ -69,6 +69,14 @@ impl NodeContact {
         )
     }
 
+    pub fn new_without_enr(public_key: CombinedPublicKey, socket_addr: SocketAddr) -> Self {
+        NodeContact {
+            public_key,
+            socket_addr,
+            enr: None,
+        }
+    }
+
     pub fn try_from_enr_nat(enr: &Enr, ip_mode: IpMode) -> Result<Self, NonContactable<'_>> {
         let socket_addr = match ip_mode.get_contactable_addr_nat(enr) {
             Some(socket_addr) => socket_addr,
