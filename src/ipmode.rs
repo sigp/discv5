@@ -1,5 +1,5 @@
 use crate::Enr;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 ///! A set of configuration parameters to tune the discovery protocol.
 
 /// Sets the socket type to be established and also determines the type of ENRs that we will store
@@ -29,6 +29,54 @@ impl IpMode {
     }
 
     /// Get the contactable Socket address of an Enr under current configuration.
+    pub fn get_contactable_addr_nat_symmetric(&self, enr: &Enr, port: u16) -> Option<SocketAddr> {
+        let nat4: fn(enr: &Enr, port: u16) -> Option<SocketAddr> = |enr, port| {
+            if let Some(nat4) = enr.get("nat4") {
+                if nat4.len() == 4 {
+                    let mut buf = [0u8; 4];
+                    buf.copy_from_slice(nat4);
+                    return Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(buf), port)));
+                }
+            }
+            None
+        };
+
+        match self {
+            IpMode::Ip4 => nat4(enr, port),
+            IpMode::Ip6 {
+                enable_mapped_addresses,
+            } => {
+                // NOTE: general consensus is that ipv6 addresses should be preferred.
+                let maybe_ipv6_addr = enr.get("nat6").and_then(|nat6| {
+                    if nat6.len() == 16 {
+                        let mut buf = [0u8; 16];
+                        buf.copy_from_slice(nat6);
+                        // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
+                        // transmited in the ENR. Here we choose to enforce canonical addresses since
+                        // it simplies the logic of matching socket_addr verification. For this we prevent
+                        // communications with Ipv4 addresses advertized in the Ipv6 field.
+                        let ipv6 = Ipv6Addr::from(buf);
+                        if to_ipv4_mapped(&ipv6).is_some() {
+                            None
+                        } else {
+                            Some(SocketAddr::V6(SocketAddrV6::new(ipv6, port, 0, 0)))
+                        }
+                    } else {
+                        None
+                    }
+                });
+                if *enable_mapped_addresses {
+                    // If mapped addresses are enabled we can use the Ipv4 address of the node in
+                    // case it doesn't have an ipv6 one
+                    nat4(enr, port)
+                } else {
+                    maybe_ipv6_addr
+                }
+            }
+        }
+    }
+
+    /// Get the contactable Socket address of an Enr under current configuration.
     pub fn get_contactable_addr_nat(&self, enr: &Enr) -> Option<SocketAddr> {
         let nat4: fn(enr: &Enr, port: u16) -> Option<SocketAddr> = |enr, port| {
             if let Some(nat4) = enr.get("nat4") {
@@ -42,7 +90,13 @@ impl IpMode {
         };
 
         match self {
-            IpMode::Ip4 => enr.udp4().and_then(|port| nat4(enr, port)),
+            IpMode::Ip4 => {
+                if let Some(port) = enr.udp4() {
+                    nat4(enr, port)
+                } else {
+                    None
+                }
+            }
             IpMode::Ip6 {
                 enable_mapped_addresses,
             } => {

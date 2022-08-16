@@ -259,6 +259,13 @@ impl Discv5ConfigBuilder {
         self
     }
 
+    /// Allows nodes behind symmetric NATs in kbuckets. These nodes are only connected to nodes they contact
+    /// and will not be included in nodes responses.
+    pub fn include_symmetric_nat(&mut self) -> &mut Self {
+        self.config.include_symmetric_nat = true;
+        self
+    }
+
     /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
     /// than the bucket size (16). By default, half of every bucket (8 positions) is the largest number of nodes that we accept that dial us.
     pub fn incoming_bucket_limit(&mut self, limit: usize) -> &mut Self {

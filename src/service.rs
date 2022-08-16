@@ -207,6 +207,11 @@ pub struct Service {
     /// ip vote on their externally reachable address).
     awaiting_reachable_address: HashMap<NodeId, Enr>,
 
+    /// If this Dsicv5 instance is configured to allow peers behind symmetric NATs
+    /// (peers that requests will be sent to but that will not be inlcuded in NODES
+    /// responses to other peers) then connection dependent port mapping is stored.
+    symmetric_nat_peers_ports: HashMap<NodeId, u16>,
+
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
 }
@@ -310,6 +315,7 @@ impl Service {
                     relays: HashMap::new(),
                     peers_behind_nat: HashMap::new(),
                     awaiting_reachable_address: Default::default(),
+                    symmetric_nat_peers_ports: Default::default(),
                 };
 
                 info!("Discv5 Service started");
@@ -370,6 +376,10 @@ impl Service {
                         HandlerOut::EstablishedNat(enr, socket_addr, direction) => {
                             self.send_event(Discv5Event::SessionEstablishedNat(enr.clone(), socket_addr));
                             self.inject_session_established_nat(enr, direction);
+                        }
+                        HandlerOut::EstablishedNatSymmetric(enr, socket_addr) => {
+                            self.send_event(Discv5Event::SessionEstablishedNatSymmetric(enr.clone(), socket_addr.ip(), socket_addr.port()));
+                            self.inject_session_established_nat_symmetric(enr, socket_addr.port());
                         }
                         HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
@@ -1228,11 +1238,20 @@ impl Service {
                 .nodes_by_distances(distances.as_slice(), self.config.max_nodes_response)
                 .into_iter()
                 .filter_map(|entry| {
-                    if entry.node.key.preimage() != &node_address.node_id {
-                        Some(entry.node.value.clone())
-                    } else {
-                        None
+                    if let Some(ip) = entry.node.value.get("nat4") {
+                        if ip.len() == 4 && entry.node.value.udp4().is_none() {
+                            // Don't send nodes behind a symmetric NAT
+                            return None;
+                        }
+                    } else if let Some(ip) = entry.node.value.get("nat6") {
+                        if ip.len() == 16 && entry.node.value.udp6().is_none() {
+                            // Don't send nodes behind a symmetric NAT
+                            return None;
+                        }
+                    } else if entry.node.key.preimage() != &node_address.node_id {
+                        return Some(entry.node.value.clone());
                     }
+                    None
                 })
             {
                 nodes_to_send.push(node);
@@ -1441,17 +1460,10 @@ impl Service {
         });
 
         enrs.retain(|enr| {
-            let is_behind_nat = if let Some(nat4) = enr.get("nat4") {
-                nat4.len() == 4
-            } else if let Some(nat6) = enr.get("nat6") {
-                nat6.len() == 16
-            } else {
-                false
-            };
-            // If a discovered node flags that it is behind a NAT, or is not sure if it is behind a NAT,
-            // and it is not already in our kbuckets, send it a relay request directly instead of adding
-            // it to a query (avoid waiting for a request to the new peer to timeout).
-            if is_behind_nat {
+            // If a discovered node flags that it is behind an assymetric NAT, send it a relay
+            // request directly instead of adding it to a query (avoid waiting for a request to
+            // the new peer to timeout).
+            if self.config.ip_mode.get_contactable_addr_nat(enr).is_some() {
                 let nat_node_id = enr.node_id();
                 self.peers_behind_nat.insert(enr.node_id(), enr.clone());
 
@@ -1465,10 +1477,12 @@ impl Service {
                     self.send_relay_request(source.clone(), local_enr, nat_node_id);
                     return false;
                 }
+            } else if self.config.ip_mode.get_contactable_addr(enr).is_some() {
+                // Keep enr and pass on to query if it flags it is not behind a NAT, or is not sure if it is
+                // bheind a NAT or it is behind a NAT but has been previously contacted.
+                return true;
             }
-            // Keep enr and pass on to query if it flags it is not behind a NAT, or is not sure if it is
-            // bheind a NAT or it is behind a NAT but has been previously contacted.
-            true
+            false // Don't pass nodes we cannot make an outgoing connection to (including nodes behind a symmetric NAT) to the query
         });
 
         // If this is part of a query, update the query
@@ -1637,6 +1651,31 @@ impl Service {
             node_id, direction
         );
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
+    }
+
+    fn inject_session_established_nat_symmetric(&mut self, enr: Enr, port: u16) {
+        // Ignore sessions with non-contactable ENRs
+        if self
+            .config
+            .ip_mode
+            .get_contactable_addr_nat_symmetric(&enr, port)
+            .is_none()
+        {
+            self.awaiting_reachable_address.insert(enr.node_id(), enr);
+            return;
+        }
+
+        self.symmetric_nat_peers_ports.insert(enr.node_id(), port);
+
+        let node_id = enr.node_id();
+        debug!(
+            "Session established with node behind symmetric NAT: {}, direction: Incoming (always)",
+            node_id
+        );
+        self.connection_updated(
+            node_id,
+            ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
+        );
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if

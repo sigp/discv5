@@ -116,8 +116,17 @@ pub enum HandlerOut {
     ///
     /// A NAT session is only considered established once we have received a signed ENR from the
     /// node and the observed `IpAddr` matches the one declared in the 'nat4' and/or 'nat6' field
-    /// of the ENR.
+    /// of the ENR, and the relative observed port matches the 'udp4'/'udp6' field.
     EstablishedNat(Enr, SocketAddr, ConnectionDirection),
+
+    /// A NAT session has been established with a node behind a symmetric NAT.
+    ///
+    /// A NAT session is only considered established once we have received a signed ENR from the
+    /// node and the observed `IpAddr` matches the one declared in the 'nat4' and/or 'nat6' field
+    /// of the ENR. The [`ConnectionDirection`] is always incoming as the peer behind a NAT will
+    /// not advertise a port to holepunch it through. This connection was assigned given remote
+    /// port.
+    EstablishedNatSymmetric(Enr, SocketAddr),
 
     /// A Request has been received from a node on the network.
     Request(NodeAddress, Box<Request>),
@@ -699,14 +708,26 @@ impl Handler {
 
                 // Notify the application that the session has been established
                 if enr.get("nat4").is_some() || enr.get("nat6").is_some() {
-                    self.service_send
-                        .send(HandlerOut::EstablishedNat(
-                            enr,
-                            node_address.socket_addr,
-                            connection_direction,
-                        ))
-                        .await
-                        .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                    if Some(node_address.socket_addr.port()) == enr.udp4()
+                        || Some(node_address.socket_addr.port()) == enr.udp6()
+                    {
+                        self.service_send
+                            .send(HandlerOut::EstablishedNat(
+                                enr,
+                                node_address.socket_addr,
+                                connection_direction,
+                            ))
+                            .await
+                            .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                    } else {
+                        self.service_send
+                            .send(HandlerOut::EstablishedNatSymmetric(
+                                enr,
+                                node_address.socket_addr,
+                            ))
+                            .await
+                            .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                    }
                 } else {
                     self.service_send
                         .send(HandlerOut::Established(
@@ -839,16 +860,25 @@ impl Handler {
                         // The session established here are from WHOAREYOU packets that we sent.
                         // This occurs when a node established a connection with us and the node
                         // knows it is behind a NAT and has configured its ENR accordingly.
-                        if let Err(e) = self
-                            .service_send
-                            .send(HandlerOut::EstablishedNat(
-                                enr,
-                                node_address.socket_addr,
-                                ConnectionDirection::Incoming,
-                            ))
-                            .await
+                        if Some(node_address.socket_addr.port()) == enr.udp4()
+                            || Some(node_address.socket_addr.port()) == enr.udp6()
                         {
-                            warn!("Failed to inform of established session {}", e)
+                            self.service_send
+                                .send(HandlerOut::EstablishedNat(
+                                    enr,
+                                    node_address.socket_addr,
+                                    ConnectionDirection::Incoming,
+                                ))
+                                .await
+                                .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                        } else {
+                            self.service_send
+                                .send(HandlerOut::EstablishedNatSymmetric(
+                                    enr,
+                                    node_address.socket_addr,
+                                ))
+                                .await
+                                .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
                         }
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
@@ -1033,16 +1063,30 @@ impl Handler {
                                             // This can occur when we try to dial a node without an ENR and it turns out
                                             // the node is behind a NAT. In this case we have attempted to establish the
                                             // connection, so this is an outgoing connection.
-                                            if let Err(e) = self
-                                                .service_send
-                                                .send(HandlerOut::EstablishedNat(
-                                                    enr,
-                                                    node_address.socket_addr,
-                                                    ConnectionDirection::Outgoing,
-                                                ))
-                                                .await
+                                            if Some(node_address.socket_addr.port()) == enr.udp4()
+                                                || Some(node_address.socket_addr.port())
+                                                    == enr.udp6()
                                             {
-                                                warn!("Failed to inform established outgoing connection to node behind NAT {}", e)
+                                                self.service_send
+                                                    .send(HandlerOut::EstablishedNat(
+                                                        enr,
+                                                        node_address.socket_addr,
+                                                        ConnectionDirection::Outgoing,
+                                                    ))
+                                                    .await
+                                                    .unwrap_or_else(|e| {
+                                                        warn!("Error with sending channel: {}", e)
+                                                    });
+                                            } else {
+                                                self.service_send
+                                                    .send(HandlerOut::EstablishedNatSymmetric(
+                                                        enr,
+                                                        node_address.socket_addr,
+                                                    ))
+                                                    .await
+                                                    .unwrap_or_else(|e| {
+                                                        warn!("Error with sending channel: {}", e)
+                                                    });
                                             }
                                             return;
                                         } else if self.verify_enr(&enr, &node_address) {

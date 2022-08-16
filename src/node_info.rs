@@ -77,6 +77,23 @@ impl NodeContact {
         }
     }
 
+    pub fn try_from_enr_nat_symmetric(
+        enr: &Enr,
+        ip_mode: IpMode,
+        port: u16,
+    ) -> Result<Self, NonContactable<'_>> {
+        let socket_addr = match ip_mode.get_contactable_addr_nat_symmetric(enr, port) {
+            Some(socket_addr) => socket_addr,
+            None => return Err(NonContactable { enr }),
+        };
+
+        Ok(NodeContact {
+            public_key: enr.public_key(),
+            socket_addr,
+            enr: Some(enr.clone()),
+        })
+    }
+
     pub fn try_from_enr_nat(enr: &Enr, ip_mode: IpMode) -> Result<Self, NonContactable<'_>> {
         let socket_addr = match ip_mode.get_contactable_addr_nat(enr) {
             Some(socket_addr) => socket_addr,

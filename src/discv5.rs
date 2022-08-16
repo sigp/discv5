@@ -93,6 +93,9 @@ pub enum Discv5Event {
     SessionEstablished(Enr, SocketAddr),
     /// A new NAT session has been established with a node behind a NAT.
     SessionEstablishedNat(Enr, SocketAddr),
+    /// A new NAT session has been established with a node behind a symmetric NAT,
+    /// this connection has been assigned given remote port.
+    SessionEstablishedNatSymmetric(Enr, IpAddr, u16),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
     /// Our local ENR NAT address and udp port has been updated indicating
