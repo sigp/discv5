@@ -56,6 +56,8 @@ mod test;
 /// NOTE: This must not be larger than 127.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
+pub(crate) const MAX_REQEUST_ENR_ATTEMPTS: u8 = 3;
+
 /// Request type for Protocols using `TalkReq` message.
 ///
 /// Automatically responds with an empty body on drop if
@@ -205,7 +207,7 @@ pub struct Service {
     /// The peers behind NAT that haven't yet published their reachable address
     /// in their enr (probably because they are awaiting enough connections to
     /// ip vote on their externally reachable address).
-    awaiting_reachable_address: HashMap<NodeId, Enr>,
+    awaiting_reachable_address: AwaitingContactableEnr,
 
     /// If this Dsicv5 instance is configured to allow peers behind symmetric NATs
     /// (peers that requests will be sent to but that will not be inlcuded in NODES
@@ -214,6 +216,46 @@ pub struct Service {
 
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
+}
+
+/// A peer is given a max number of PING attempts to send a contactable enr. This is relevant
+/// for peers that don't know if they are behind a NAT, to allow them to discover their externally
+/// reachable IP by ip voting and then advertising it in their ENR.
+#[derive(Clone)]
+struct NonContactableEnr {
+    enr: Enr,
+    attempts: u8,
+}
+
+#[derive(Default)]
+struct AwaitingContactableEnr {
+    peers: HashMap<NodeId, NonContactableEnr>,
+}
+
+impl AwaitingContactableEnr {
+    fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, String> {
+        if let Some(peer) = self.peers.get_mut(node_id) {
+            if peer.attempts >= MAX_REQEUST_ENR_ATTEMPTS {
+                self.peers.remove(node_id);
+                return Err(
+                    "This peer has already triggered the max request enr requests.".to_owned(),
+                );
+            } else {
+                peer.attempts += 1;
+                return Ok(Some(peer.enr.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    fn insert(&mut self, non_contactable: Enr) {
+        self.peers
+            .entry(non_contactable.node_id())
+            .or_insert(NonContactableEnr {
+                enr: non_contactable,
+                attempts: 0,
+            });
+    }
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -592,10 +634,11 @@ impl Service {
                     }
                     kbucket::Entry::Absent(_) => {
                         // If this is a node behind a NAT that is pinging us because it has discovered its externally
-                        // reachable address via ip-voting (and has updated its enr accordingly), then request its enr.
-                        if let Some(nat_peer) = self
+                        // reachable address via ip-voting (and has updated its enr accordingly), then request its enr*
+                        // unless we haven't done so too many times already.
+                        if let Ok(Some(nat_peer)) = self
                             .awaiting_reachable_address
-                            .remove(&node_address.node_id)
+                            .request_enr(&node_address.node_id)
                         {
                             to_request_enr = Some(nat_peer);
                         }
@@ -1718,7 +1761,7 @@ impl Service {
     fn inject_session_established_nat(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr_nat(&enr).is_none() {
-            self.awaiting_reachable_address.insert(enr.node_id(), enr);
+            self.awaiting_reachable_address.insert(enr);
             return;
         }
 
@@ -1739,7 +1782,7 @@ impl Service {
                 .get_contactable_addr_nat_symmetric(&enr, port)
                 .is_none()
             {
-                self.awaiting_reachable_address.insert(enr.node_id(), enr);
+                self.awaiting_reachable_address.insert(enr);
                 return;
             }
 
