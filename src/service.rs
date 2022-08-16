@@ -210,7 +210,7 @@ pub struct Service {
     /// If this Dsicv5 instance is configured to allow peers behind symmetric NATs
     /// (peers that requests will be sent to but that will not be inlcuded in NODES
     /// responses to other peers) then connection dependent port mapping is stored.
-    symmetric_nat_peers_ports: HashMap<NodeId, u16>,
+    symmetric_nat_peers_ports: Option<HashMap<NodeId, u16>>,
 
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
@@ -291,6 +291,12 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
+        let symmetric_nat_peers_ports = if config.include_symmetric_nat {
+            Some(HashMap::new())
+        } else {
+            None
+        };
+
         config
             .executor
             .clone()
@@ -315,7 +321,7 @@ impl Service {
                     relays: HashMap::new(),
                     peers_behind_nat: HashMap::new(),
                     awaiting_reachable_address: Default::default(),
-                    symmetric_nat_peers_ports: Default::default(),
+                    symmetric_nat_peers_ports,
                 };
 
                 info!("Discv5 Service started");
@@ -597,19 +603,31 @@ impl Service {
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    let contact =
+                    let contact = || -> NodeContact {
                         if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
-                            contact
-                        } else {
-                            match NodeContact::try_from_enr_nat(&enr, self.config.ip_mode) {
-                                Ok(contact) => contact,
-                                Err(NonContactable { enr: _ }) => NodeContact::new_without_enr(
-                                    enr.public_key(),
-                                    node_address.socket_addr,
-                                ),
+                            return contact;
+                        } else if let Ok(contact) =
+                            NodeContact::try_from_enr_nat(&enr, self.config.ip_mode)
+                        {
+                            return contact;
+                        } else if let Some(ref symmetric_nat_peers_ports) =
+                            self.symmetric_nat_peers_ports
+                        {
+                            if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
+                                if let Ok(contact) = NodeContact::try_from_enr_nat_symmetric(
+                                    &enr,
+                                    self.config.ip_mode,
+                                    *port,
+                                ) {
+                                    return contact;
+                                }
                             }
-                        };
-                    self.request_enr(contact, None);
+                        }
+                        // If this PING request comes from a peer behind a NAT which has just now discovered it's externally reachable
+                        // address, trying to make a node contact from its ENR will fail as no address is advertised in its ENR.
+                        NodeContact::new_without_enr(enr.public_key(), node_address.socket_addr)
+                    };
+                    self.request_enr(contact(), None);
                 }
 
                 // build the PONG response
@@ -662,18 +680,44 @@ impl Service {
                 } else if from_node_enr.node_id() != local_node_id {
                     // This node is the rendezvous
                     if let Some(receiver) = self.find_enr(&to_node_id) {
-                        match NodeContact::try_from_enr(&receiver, self.config.ip_mode) {
-                            Ok(contact) => {
-                                trace!("Rendezvous node sending RELAYREQUEST to receiver node");
-                                self.send_relay_request(contact, from_node_enr, to_node_id);
+                        let contact = || -> Option<NodeContact> {
+                            if let Ok(contact) =
+                                NodeContact::try_from_enr(&receiver, self.config.ip_mode)
+                            {
+                                return Some(contact);
+                            } else if let Ok(contact) =
+                                NodeContact::try_from_enr_nat(&receiver, self.config.ip_mode)
+                            {
+                                return Some(contact);
+                            } else if let Some(ref symmetric_nat_peers_ports) =
+                                self.symmetric_nat_peers_ports
+                            {
+                                if let Some(port) =
+                                    symmetric_nat_peers_ports.get(&receiver.node_id())
+                                {
+                                    match NodeContact::try_from_enr_nat_symmetric(
+                                        &receiver,
+                                        self.config.ip_mode,
+                                        *port,
+                                    ) {
+                                        Ok(contact) => {
+                                            return Some(contact);
+                                        }
+                                        Err(NonContactable { enr }) => {
+                                            debug_unreachable!("Failed to send RELAYREQUEST to receiver. Stored ENR is not contactable. {}", enr);
+                                            error!(
+                                                "Stored ENR is not contactable! This should never happen {}",
+                                                enr
+                                            );
+                                        }
+                                    }
+                                }
                             }
-                            Err(NonContactable { enr }) => {
-                                debug_unreachable!("Failed to send RELAYREQUEST to receiver. Stored ENR is not contactable. {}", enr);
-                                error!(
-                                    "Stored ENR is not contactable! This should never happen {}",
-                                    enr
-                                );
-                            }
+                            None
+                        };
+                        if let Some(contact) = contact() {
+                            trace!("Rendezvous node sending RELAYREQUEST to receiver node");
+                            self.send_relay_request(contact, from_node_enr, to_node_id);
                         }
                     }
                 }
@@ -1105,15 +1149,28 @@ impl Service {
             service.send_rpc_request(active_request);
         };
 
-        if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
-            ping(self, contact);
-        } else {
-            match NodeContact::try_from_enr_nat(&enr, self.config.ip_mode) {
-                Ok(contact) => ping(self, contact),
-                Err(NonContactable { enr }) => {
-                    error!("Trying to ping a non-contactable peer {}", enr)
+        let contact = || -> Option<NodeContact> {
+            if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
+                return Some(contact);
+            } else if let Ok(contact) = NodeContact::try_from_enr_nat(&enr, self.config.ip_mode) {
+                return Some(contact);
+            } else if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
+                if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
+                    match NodeContact::try_from_enr_nat_symmetric(&enr, self.config.ip_mode, *port)
+                    {
+                        Ok(contact) => {
+                            return Some(contact);
+                        }
+                        Err(NonContactable { enr }) => {
+                            error!("Trying to ping a non-contactable peer {}", enr);
+                        }
+                    }
                 }
             }
+            None
+        };
+        if let Some(contact) = contact() {
+            ping(self, contact);
         }
     }
 
@@ -1350,21 +1407,41 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
-            match NodeContact::try_from_enr(&enr, self.config.ip_mode) {
-                Ok(contact) => {
-                    let active_request = ActiveRequest {
-                        contact,
-                        request_body,
-                        query_id: Some(query_id),
-                        callback: None,
-                    };
-                    self.send_rpc_request(active_request);
-                    // Request successfully sent
-                    return;
+            let contact = || -> Option<NodeContact> {
+                if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
+                    return Some(contact);
+                } else if let Ok(contact) = NodeContact::try_from_enr_nat(&enr, self.config.ip_mode)
+                {
+                    return Some(contact);
+                } else if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
+                    if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
+                        match NodeContact::try_from_enr_nat_symmetric(
+                            &enr,
+                            self.config.ip_mode,
+                            *port,
+                        ) {
+                            Ok(contact) => {
+                                return Some(contact);
+                            }
+                            Err(NonContactable { enr }) => {
+                                error!("Query {} has a non contactable enr: {}", *query_id, enr);
+                            }
+                        }
+                    }
                 }
-                Err(NonContactable { enr }) => {
-                    error!("Query {} has a non contactable enr: {}", *query_id, enr);
-                }
+                None
+            };
+
+            if let Some(contact) = contact() {
+                let active_request = ActiveRequest {
+                    contact,
+                    request_body,
+                    query_id: Some(query_id),
+                    callback: None,
+                };
+                self.send_rpc_request(active_request);
+                // Request successfully sent
+                return;
             }
         } else {
             error!("Query {} requested an unknown ENR", *query_id);
@@ -1654,28 +1731,30 @@ impl Service {
     }
 
     fn inject_session_established_nat_symmetric(&mut self, enr: Enr, port: u16) {
-        // Ignore sessions with non-contactable ENRs
-        if self
-            .config
-            .ip_mode
-            .get_contactable_addr_nat_symmetric(&enr, port)
-            .is_none()
-        {
-            self.awaiting_reachable_address.insert(enr.node_id(), enr);
-            return;
-        }
+        if let Some(ref mut symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
+            // Ignore sessions with non-contactable ENRs
+            if self
+                .config
+                .ip_mode
+                .get_contactable_addr_nat_symmetric(&enr, port)
+                .is_none()
+            {
+                self.awaiting_reachable_address.insert(enr.node_id(), enr);
+                return;
+            }
 
-        self.symmetric_nat_peers_ports.insert(enr.node_id(), port);
+            symmetric_nat_peers_ports.insert(enr.node_id(), port);
 
-        let node_id = enr.node_id();
-        debug!(
-            "Session established with node behind symmetric NAT: {}, direction: Incoming (always)",
+            let node_id = enr.node_id();
+            debug!(
+            "Session established with node behind symmetric NAT: {}, direction: Incoming (always for peer behind symmetric NAT)",
             node_id
         );
-        self.connection_updated(
-            node_id,
-            ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
-        );
+            self.connection_updated(
+                node_id,
+                ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
+            );
+        }
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
