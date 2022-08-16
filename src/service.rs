@@ -634,13 +634,24 @@ impl Service {
                     }
                     kbucket::Entry::Absent(_) => {
                         // If this is a node behind a NAT that is pinging us because it has discovered its externally
-                        // reachable address via ip-voting (and has updated its enr accordingly), then request its enr*
+                        // reachable address via ip-voting (and has updated its enr accordingly), then request its enr
                         // unless we haven't done so too many times already.
-                        if let Ok(Some(nat_peer)) = self
+                        match self
                             .awaiting_reachable_address
                             .request_enr(&node_address.node_id)
                         {
-                            to_request_enr = Some(nat_peer);
+                            Ok(Some(nat_peer)) => {
+                                to_request_enr = Some(nat_peer);
+                            }
+                            Err(e) => {
+                                warn!("Enr of peer {} that is not in kbuckets will not be requested. Error: {}", node_address.node_id, e);
+                                let ban_timeout =
+                                    self.config.ban_duration.map(|v| Instant::now() + v);
+                                PERMIT_BAN_LIST
+                                    .write()
+                                    .ban(node_address.clone(), ban_timeout);
+                            }
+                            Ok(None) => {} // If we are not awaiting a PING from this node, don't request its enr
                         }
                     }
                     _ => {}
@@ -1747,6 +1758,7 @@ impl Service {
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
+            self.awaiting_reachable_address.insert(enr);
             return;
         }
 
@@ -1761,7 +1773,6 @@ impl Service {
     fn inject_session_established_nat(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr_nat(&enr).is_none() {
-            self.awaiting_reachable_address.insert(enr);
             return;
         }
 
@@ -1782,7 +1793,6 @@ impl Service {
                 .get_contactable_addr_nat_symmetric(&enr, port)
                 .is_none()
             {
-                self.awaiting_reachable_address.insert(enr);
                 return;
             }
 
