@@ -867,8 +867,9 @@ impl Service {
                                 );
                                 // If this peer has a reachable port mapping in its ENR, its considered to be
                                 // behind an asymmetric NAT.
-                                if nat_peer.udp4().is_some() && nat_peer.udp4() != Some(0)
-                                    || nat_peer.udp6().is_some() && nat_peer.udp6() != Some(0)
+                                trace!("Port of peer behind NAT: ipv4: {:?}, ipv6: {:?}", nat_peer.udp4(), nat_peer.udp6());
+                                if (nat_peer.udp4().is_some() && nat_peer.udp4() != Some(0))
+                                    || (nat_peer.udp6().is_some() && nat_peer.udp6() != Some(0))
                                 {
                                     // If we are awaiting on an ENR with a reachable address from this node it is
                                     // an incoming direction, initiated by the peer behind a NAT.
@@ -1037,7 +1038,7 @@ impl Service {
                             };
 
                             if let Some(Address::SymmetricNAT(ip)) = majority4 {
-                                trace!("A new WAN reachable address {} found for this node which appears to be behind a symmetric NAT", ip);
+                                trace!("A WAN reachable address {} found for this node which appears to be behind a symmetric NAT", ip);
                                 // get the advertised local addresses
                                 let local_nat4 =
                                     self.local_enr.read().get("nat4").and_then(|bytes| {
@@ -1068,6 +1069,7 @@ impl Service {
                                     }
                                 }
                             } else if let Some(Address::Reachable(socket)) = majority4 {
+                                trace!("A WAN reachable address {} found for this node", socket);
                                 // to-do: cover identifying asymmetric NAT situation
 
                                 // get the advertised local addresses
@@ -1093,7 +1095,7 @@ impl Service {
                                 }
                             }
                             if let Some(Address::SymmetricNAT(ip)) = majority6 {
-                                trace!("A new WAN reachable address ipv6 {} found for this node which appears to be behind a symmetric NAT", ip);
+                                trace!("A WAN reachable address ipv6 {} found for this node which appears to be behind a symmetric NAT", ip);
                                 // get the advertised local addresses
                                 let local_nat6 =
                                     self.local_enr.read().get("nat6").and_then(|bytes| {
@@ -1127,6 +1129,7 @@ impl Service {
                                     }
                                 }
                             } else if let Some(Address::Reachable(socket)) = majority6 {
+                                trace!("A WAN reachable ipv6 address {} found for this node", socket);
                                 // to-do: cover identifying asymmetric NAT situation (i.e. with port)
 
                                 // get the advertised local addresses
