@@ -861,9 +861,11 @@ impl Service {
                                 .awaiting_reachable_address
                                 .request_enr(&nat_peer.node_id())
                             {
+                                trace!("Received a requested ENR for node {} behind a NAT", node_address);
                                 if nat_peer.udp4().is_some() || nat_peer.udp6().is_some() {
                                     // If we are awaiting on an ENR with a reachable address from this node it is
                                     // an incoming direction, initiated by the peer behind a NAT.
+                                    trace!("Received a requested ENR for node {} behind an asymmetric NAT", node_address);
                                     self.inject_session_established_nat(
                                         nat_peer,
                                         ConnectionDirection::Incoming,
@@ -875,6 +877,7 @@ impl Service {
                                     if let Some(port) =
                                         symmetric_nat_peers_ports.get(&nat_peer.node_id())
                                     {
+                                        trace!("Received a requested ENR for node {} behind a symmetric NAT", node_address);
                                         self.inject_session_established_nat_symmetric(
                                             nat_peer, *port,
                                         );
