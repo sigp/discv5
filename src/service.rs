@@ -18,6 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
+    discv5::{CHECK_VERSION, NAT},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -850,6 +851,38 @@ impl Service {
                             warn!("Failed to send response in callback {:?}", e)
                         }
                         return;
+                    }
+
+                    // If this is a single ENR behind a NAT, that we are waiting on for an ENR updated with a
+                    // reachable address, attempt adding it to our kbuckets.
+                    if distances_requested.is_empty() || distances_requested[0] == 0 {
+                        if let Some(nat_peer) = nodes.pop() {
+                            if let Ok(Some(_)) = self
+                                .awaiting_reachable_address
+                                .request_enr(&nat_peer.node_id())
+                            {
+                                if nat_peer.udp4().is_some() || nat_peer.udp6().is_some() {
+                                    // If we are awaiting on an ENR with a reachable address from this node it is
+                                    // an incoming direction, initiated by the peer behind a NAT.
+                                    self.inject_session_established_nat(
+                                        nat_peer,
+                                        ConnectionDirection::Incoming,
+                                    );
+                                    return;
+                                } else if let Some(ref symmetric_nat_peers_ports) =
+                                    self.symmetric_nat_peers_ports
+                                {
+                                    if let Some(port) =
+                                        symmetric_nat_peers_ports.get(&nat_peer.node_id())
+                                    {
+                                        self.inject_session_established_nat_symmetric(
+                                            nat_peer, *port,
+                                        );
+                                        return;
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Filter out any nodes that are not of the correct distance
@@ -1758,7 +1791,11 @@ impl Service {
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
-            self.awaiting_reachable_address.insert(enr);
+            // It could be that this node is behind a NAT, if it supports the NAT traversal protocol we
+            // give it [`MAX_REQEUST_ENR_ATTEMPTS`] to trigger us via PING request to request its ENR.
+            if CHECK_VERSION(&enr, vec![NAT]) {
+                self.awaiting_reachable_address.insert(enr);
+            }
             return;
         }
 
