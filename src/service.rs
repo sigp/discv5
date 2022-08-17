@@ -420,7 +420,7 @@ impl Service {
                     match event {
                         HandlerOut::Established(enr, socket_addr, direction) => {
                             self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
-                            self.inject_session_established(enr, direction);
+                            self.inject_session_established(enr, direction, socket_addr.port());
                         }
                         HandlerOut::EstablishedNat(enr, socket_addr, direction) => {
                             self.send_event(Discv5Event::SessionEstablishedNat(enr.clone(), socket_addr));
@@ -428,7 +428,7 @@ impl Service {
                         }
                         HandlerOut::EstablishedNatSymmetric(enr, socket_addr) => {
                             self.send_event(Discv5Event::SessionEstablishedNatSymmetric(enr.clone(), socket_addr.ip(), socket_addr.port()));
-                            self.inject_session_established_nat_symmetric(enr, socket_addr.port());
+                            self.inject_session_established_nat_symmetric(enr);
                         }
                         HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
@@ -865,28 +865,29 @@ impl Service {
                                     "Received a requested ENR for node {} behind a NAT",
                                     node_address
                                 );
-                                if let Some(ref symmetric_nat_peers_ports) =
-                                    self.symmetric_nat_peers_ports
+                                // If this peer has a reachable port mapping in its ENR, its considered to be
+                                // behind an asymmetric NAT.
+                                if nat_peer.udp4().is_some() && nat_peer.udp4() != Some(0)
+                                    || nat_peer.udp6().is_some() && nat_peer.udp6() != Some(0)
                                 {
-                                    if let Some(port) =
-                                        symmetric_nat_peers_ports.get(&nat_peer.node_id())
-                                    {
-                                        trace!("Received a requested ENR for node {} behind a symmetric NAT", node_address);
-                                        self.inject_session_established_nat_symmetric(
-                                            nat_peer, *port,
-                                        );
-                                        return;
-                                    }
-                                } else {
                                     // If we are awaiting on an ENR with a reachable address from this node it is
                                     // an incoming direction, initiated by the peer behind a NAT.
-                                    trace!("Received a requested ENR for node {} behind an asymmetric NAT", node_address);
+                                    trace!(
+                                    "Received a requested ENR for node {} behind an asymmetric NAT",
+                                    node_address
+                                );
                                     self.inject_session_established_nat(
                                         nat_peer,
                                         ConnectionDirection::Incoming,
                                     );
                                     return;
                                 }
+                                trace!(
+                                    "Received a requested ENR for node {} behind a symmetric NAT",
+                                    node_address
+                                );
+                                self.inject_session_established_nat_symmetric(nat_peer);
+                                return;
                             }
                         }
                     }
@@ -1799,13 +1800,23 @@ impl Service {
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
+    fn inject_session_established(
+        &mut self,
+        enr: Enr,
+        direction: ConnectionDirection,
+        remote_port: u16,
+    ) {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             // It could be that this node is behind a NAT, if it supports the NAT traversal protocol we
             // give it [`MAX_REQEUST_ENR_ATTEMPTS`] to trigger us via PING request to request its ENR.
             if CHECK_VERSION(&enr, vec![NAT]) {
-                self.awaiting_reachable_address.insert(enr);
+                self.awaiting_reachable_address.insert(enr.clone());
+                // In case this is a node behind a symmetric NAT we need to store the port which is unique
+                // for this connection and hence will not eventually be advertised in the peer's ENR.
+                if let Some(ref mut symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
+                    symmetric_nat_peers_ports.insert(enr.node_id(), remote_port);
+                }
             }
             return;
         }
@@ -1832,29 +1843,31 @@ impl Service {
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
     }
 
-    fn inject_session_established_nat_symmetric(&mut self, enr: Enr, port: u16) {
-        if let Some(ref mut symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
-            // Ignore sessions with non-contactable ENRs
-            if self
-                .config
-                .ip_mode
-                .get_contactable_addr_nat_symmetric(&enr, port)
-                .is_none()
-            {
-                return;
-            }
+    fn inject_session_established_nat_symmetric(&mut self, enr: Enr) {
+        // Attempt adding the enr to the local routing table if this Discv5 instances stores remote ports
+        // for connections from nodes behind a symmetirc NAT.
+        if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
+            if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
+                // Ignore sessions with non-contactable ENRs
+                if self
+                    .config
+                    .ip_mode
+                    .get_contactable_addr_nat_symmetric(&enr, *port)
+                    .is_none()
+                {
+                    return;
+                }
 
-            symmetric_nat_peers_ports.insert(enr.node_id(), port);
-
-            let node_id = enr.node_id();
-            debug!(
+                let node_id = enr.node_id();
+                debug!(
             "Session established with node behind symmetric NAT: {}, direction: Incoming (always for peer behind symmetric NAT)",
             node_id
         );
-            self.connection_updated(
-                node_id,
-                ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
-            );
+                self.connection_updated(
+                    node_id,
+                    ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
+                );
+            }
         }
     }
 
