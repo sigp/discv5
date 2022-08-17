@@ -867,7 +867,16 @@ impl Service {
                                 );
                                 // If this peer has a reachable port mapping in its ENR, its considered to be
                                 // behind an asymmetric NAT.
-                                trace!("Port of peer behind NAT: ipv4: {:?}, ipv6: {:?}", nat_peer.udp4(), nat_peer.udp6());
+                                trace!(
+                                    "Ip of peer behind NAT: ipv4: {:?}, ipv6: {:?}",
+                                    nat_peer.get("nat4"),
+                                    nat_peer.get("nat6"),
+                                );
+                                trace!(
+                                    "Port of peer behind NAT: ipv4: {:?}, ipv6: {:?}",
+                                    nat_peer.udp4(),
+                                    nat_peer.udp6()
+                                );
                                 if (nat_peer.udp4().is_some() && nat_peer.udp4() != Some(0))
                                     || (nat_peer.udp6().is_some() && nat_peer.udp6() != Some(0))
                                 {
@@ -997,7 +1006,7 @@ impl Service {
 
                             let update_nat = |service: &mut Service,
                                               ip: IpAddr,
-                                              port: u16|
+                                              port: Option<u16>|
                              -> Result<(), EnrError> {
                                 let mut local_enr = service.local_enr.write();
                                 match ip {
@@ -1011,10 +1020,25 @@ impl Service {
                                         if let Err(e) = res {
                                             return Err(e);
                                         }
-                                        trace!("Successfully inserted reachable address {}:{} for node behind NAT into loal enr's 'nat4' field", ip4, port);
-                                        let res = local_enr.set_udp4(port, &service.enr_key.read());
-                                        if let Err(e) = res {
-                                            return Err(e);
+                                        trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into loal enr's 'nat4' field", ip4, port);
+                                        if let Some(port) = port {
+                                            let res = local_enr.insert(
+                                                "udp",
+                                                &port.to_be_bytes(),
+                                                &service.enr_key.read(),
+                                            );
+                                            if let Err(e) = res {
+                                                return Err(e);
+                                            }
+                                        } else {
+                                            let res = local_enr.insert(
+                                                "udp",
+                                                b"",
+                                                &service.enr_key.read(),
+                                            );
+                                            if let Err(e) = res {
+                                                return Err(e);
+                                            }
                                         }
                                     }
                                     IpAddr::V6(ip6) => {
@@ -1027,10 +1051,25 @@ impl Service {
                                         if let Err(e) = res {
                                             return Err(e);
                                         }
-                                        trace!("Successfully inserted reachable address {}:{} for node behind NAT into loal enr's 'nat6' field", ip6, port);
-                                        let res = local_enr.set_udp6(port, &service.enr_key.read());
-                                        if let Err(e) = res {
-                                            return Err(e);
+                                        trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into loal enr's 'nat6' field", ip6, port);
+                                        if let Some(port) = port {
+                                            let res = local_enr.insert(
+                                                "udp6",
+                                                &port.to_be_bytes(),
+                                                &service.enr_key.read(),
+                                            );
+                                            if let Err(e) = res {
+                                                return Err(e);
+                                            }
+                                        } else {
+                                            let res = local_enr.insert(
+                                                "udp6",
+                                                b"",
+                                                &service.enr_key.read(),
+                                            );
+                                            if let Err(e) = res {
+                                                return Err(e);
+                                            }
                                         }
                                     }
                                 }
@@ -1057,7 +1096,7 @@ impl Service {
                                     });
                                 // Check if our advertised external IP address needs to be updated.
                                 if Some(socket.ip()) != local_nat4.map(IpAddr::V4) {
-                                    match update_nat(self, socket.ip(), 0) {
+                                    match update_nat(self, socket.ip(), None) {
                                         Ok(_) => {
                                             updated = true;
                                             info!("Local NAT ip address updated to: {}", ip);
@@ -1117,7 +1156,7 @@ impl Service {
                                     // WARNING: In the case of a symmetric NAT the port field on the enr will not be removed but set to 0!
                                     // The node receiving the connection is responsible for storing the port used for the connection from
                                     // the peer behind a symmetric NAT.
-                                    match update_nat(self, socket.ip(), 0) {
+                                    match update_nat(self, socket.ip(), None) {
                                         Ok(_) => {
                                             updated = true;
                                             info!("Local NAT ipv6 address updated to: {}", ip);
@@ -1129,7 +1168,10 @@ impl Service {
                                     }
                                 }
                             } else if let Some(Address::Reachable(socket)) = majority6 {
-                                trace!("A WAN reachable ipv6 address {} found for this node", socket);
+                                trace!(
+                                    "A WAN reachable ipv6 address {} found for this node",
+                                    socket
+                                );
                                 // to-do: cover identifying asymmetric NAT situation (i.e. with port)
 
                                 // get the advertised local addresses
