@@ -1099,7 +1099,8 @@ impl Service {
                                     match update_nat(self, socket.ip(), None) {
                                         Ok(_) => {
                                             updated = true;
-                                            info!("Local NAT ip address updated to: {}", ip);
+                                            info!("Local NAT ip address updated to {}", ip);
+                                            trace!("Local 'nat4' field is now set to {:?} and udp4 port {:?}", self.local_enr.read().get("nat4"), self.local_enr.read().get("udp"));
                                             self.send_event(Discv5Event::NATSymmetricUpdated(ip));
                                         }
                                         Err(e) => {
@@ -1422,6 +1423,11 @@ impl Service {
             // if the distance is 0 send our local ENR
             nodes_to_send.push(self.local_enr.read().clone());
             debug!("Sending our ENR to node: {}", node_address);
+            trace!(
+                "Own ENR nat ip4 {:?} and udp4 port {:?}",
+                self.local_enr.read().get("nat4"),
+                self.local_enr.read().get("udp")
+            );
             distances.remove(0);
         }
 
