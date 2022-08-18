@@ -1576,9 +1576,6 @@ impl Service {
             let contact = || -> Option<NodeContact> {
                 if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
                     return Some(contact);
-                } else if let Ok(contact) = NodeContact::try_from_enr_nat(&enr, self.config.ip_mode)
-                {
-                    return Some(contact);
                 } else if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
                     if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
                         match NodeContact::try_from_enr_nat_symmetric(
@@ -1594,6 +1591,9 @@ impl Service {
                             }
                         }
                     }
+                } else if let Ok(contact) = NodeContact::try_from_enr_nat(&enr, self.config.ip_mode)
+                {
+                    return Some(contact);
                 }
                 None
             };
@@ -1927,7 +1927,7 @@ impl Service {
 
                 let node_id = enr.node_id();
                 debug!(
-            "Session established with node behind symmetric NAT: {}, direction: Incoming (always for peer behind symmetric NAT)",
+            "Session established with node behind symmetric NAT: {}, direction: Incoming (always 'Incoming' for peer behind symmetric NAT)",
             node_id
         );
                 self.connection_updated(
