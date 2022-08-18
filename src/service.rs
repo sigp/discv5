@@ -237,7 +237,6 @@ impl AwaitingContactableEnr {
     fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, String> {
         if let Some(peer) = self.peers.get_mut(node_id) {
             if peer.attempts >= MAX_REQEUST_ENR_ATTEMPTS {
-                self.peers.remove(node_id);
                 return Err(
                     "This peer has already triggered the max request enr requests.".to_owned(),
                 );
@@ -249,6 +248,16 @@ impl AwaitingContactableEnr {
         Ok(None)
     }
 
+    fn awaiting(&self, node_id: &NodeId) -> bool {
+        if let Some(peer) = self.peers.get(node_id) {
+            if peer.attempts >= MAX_REQEUST_ENR_ATTEMPTS {
+                return false;
+            }
+            return true;
+        }
+        false
+    }
+
     fn insert(&mut self, non_contactable: Enr) {
         self.peers
             .entry(non_contactable.node_id())
@@ -256,6 +265,10 @@ impl AwaitingContactableEnr {
                 enr: non_contactable,
                 attempts: 0,
             });
+    }
+
+    fn remove(&mut self, node_id: &NodeId) -> Option<NonContactableEnr> {
+        self.peers.remove(node_id)
     }
 }
 
@@ -651,6 +664,8 @@ impl Service {
                                 PERMIT_BAN_LIST
                                     .write()
                                     .ban(node_address.clone(), ban_timeout);
+                                self.awaiting_reachable_address
+                                    .remove(&node_address.node_id);
                             }
                             Ok(None) => {} // If we are not awaiting a PING from this node, don't request its enr
                         }
@@ -856,10 +871,11 @@ impl Service {
                     // If this is a single ENR behind a NAT, that we are waiting on for an ENR updated with a
                     // reachable address, attempt adding it to our kbuckets.
                     if distances_requested.is_empty() || distances_requested[0] == 0 {
+                        trace!("Received a NODES response with a single node, checking if this is the ENR with a reachable address for a node behind a NAT that we are waiting on...");
                         if let Some(nat_peer) = nodes.pop() {
-                            if let Ok(Some(_)) = self
+                            if self
                                 .awaiting_reachable_address
-                                .request_enr(&nat_peer.node_id())
+                                .awaiting(&nat_peer.node_id())
                             {
                                 trace!(
                                     "Received a requested ENR for node {} behind a NAT",
