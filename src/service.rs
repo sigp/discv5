@@ -872,7 +872,7 @@ impl Service {
                     // reachable address, attempt adding it to our kbuckets.
                     if distances_requested.is_empty() || distances_requested[0] == 0 {
                         trace!("Received a NODES response with a single node, checking if this is the ENR with a reachable address for a node behind a NAT that we are waiting on...");
-                        if let Some(nat_peer) = nodes.pop() {
+                        if let Some(nat_peer) = nodes.get(0) {
                             if self
                                 .awaiting_reachable_address
                                 .awaiting(&nat_peer.node_id())
@@ -903,7 +903,7 @@ impl Service {
                                     node_address
                                 );
                                     self.inject_session_established_nat(
-                                        nat_peer,
+                                        nat_peer.clone(),
                                         ConnectionDirection::Incoming,
                                     );
                                     return;
@@ -912,7 +912,7 @@ impl Service {
                                     "Received a requested ENR for node {} behind a symmetric NAT",
                                     node_address
                                 );
-                                self.inject_session_established_nat_symmetric(nat_peer);
+                                self.inject_session_established_nat_symmetric(nat_peer.clone());
                                 return;
                             }
                         }
