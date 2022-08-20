@@ -115,14 +115,14 @@ pub enum HandlerOut {
     /// A NAT session has been established with a node behind a NAT.
     ///
     /// A NAT session is only considered established once we have received a signed ENR from the
-    /// node and the observed `IpAddr` matches the one declared in the 'nat4' and/or 'nat6' field
+    /// node and the observed `IpAddr` matches the one declared in the 'nat' and/or 'nat6' field
     /// of the ENR, and the relative observed port matches the 'udp4'/'udp6' field.
     EstablishedNat(Enr, SocketAddr, ConnectionDirection),
 
     /// A NAT session has been established with a node behind a symmetric NAT.
     ///
     /// A NAT session is only considered established once we have received a signed ENR from the
-    /// node and the observed `IpAddr` matches the one declared in the 'nat4' and/or 'nat6' field
+    /// node and the observed `IpAddr` matches the one declared in the 'nat' and/or 'nat6' field
     /// of the ENR. The [`ConnectionDirection`] is always incoming as the peer behind a NAT will
     /// not advertise a port to holepunch it through. This connection was assigned given remote
     /// port.
@@ -465,6 +465,7 @@ impl Handler {
                 // Avoid recursive relay requesting
                 RequestBody::RelayRequest { .. } => {}
                 _ => {
+                    trace!("Inform service layer of request that has timed out a total of {} (max retries) times", self.request_retries);
                     if let Err(e) = self
                         .service_send
                         .send(HandlerOut::RequestTimedOut(
@@ -736,7 +737,7 @@ impl Handler {
                 self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
-                if enr.get("nat4").is_some() || enr.get("nat6").is_some() {
+                if enr.get("nat").is_some() || enr.get("nat6").is_some() {
                     if Some(node_address.socket_addr.port()) == enr.udp4()
                         || Some(node_address.socket_addr.port()) == enr.udp6()
                     {
@@ -818,7 +819,7 @@ impl Handler {
             |enr, node_address| {
                 match node_address.socket_addr.ip() {
                     IpAddr::V4(ip_addr) => {
-                        if let Some(advertised_addr) = enr.get("nat4") {
+                        if let Some(advertised_addr) = enr.get("nat") {
                             if advertised_addr.len() == 4 {
                                 let mut buf = [0u8; 4];
                                 buf.copy_from_slice(advertised_addr);

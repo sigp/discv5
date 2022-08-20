@@ -201,19 +201,16 @@ impl Discv5 {
             && self.local_enr.read().ip4().is_none()
             && self.local_enr.read().ip6().is_none()
         {
-            // A node shows if it is behind a NAT by setting the enr field(s) "nat4"/"nat6" to its
-            // externally reachable ip, or by leaving the nat4/nat6 field(s) empty if it is not sure
+            // A node shows if it is behind a NAT by setting the enr field(s) "nat"/"nat6" to its
+            // externally reachable ip, or by leaving the nat/nat6 field(s) empty if it is not sure
             // (or ip4/ip6 field(s) empty).
 
             if let Err(e) = self
                 .local_enr
                 .write()
-                .insert("nat4", &[], &self.enr_key.read())
+                .insert("nat", &[], &self.enr_key.read())
             {
-                error!(
-                    "Failed to insert field 'nat4' into local enr. Error {:?}",
-                    e
-                );
+                error!("Failed to insert field 'nat' into local enr. Error {:?}", e);
                 return Err(Discv5Error::InvalidEnr);
             }
             if let Err(e) = self
