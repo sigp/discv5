@@ -41,7 +41,7 @@ use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     convert::TryFrom,
     default::Default,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -142,6 +142,11 @@ pub enum HandlerOut {
     ///
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
+
+    /// The request has timed out, possibly the peer is behind a NAT and we can attempt contacting
+    /// it via the NAT traversal protocol if this Dsicv5 instance is configured to support the NAT
+    /// version.
+    RequestTimedOut(RequestId, NodeId),
 }
 
 /// How we connected to the node.
@@ -214,6 +219,8 @@ impl RequestCall {
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
+    /// The request has timed out, after the maximal number of retries.
+    request_relay_attempt: HashSet<NodeId>,
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
     /// during the operation of the server.
     node_id: NodeId,
@@ -305,6 +312,7 @@ impl Handler {
 
                 let mut handler = Handler {
                     request_retries: config.request_retries,
+                    request_relay_attempt: Default::default(),
                     node_id,
                     enr,
                     key,
@@ -449,6 +457,27 @@ impl Handler {
         mut request_call: RequestCall,
     ) {
         if request_call.retries >= self.request_retries {
+            // Send the timed out request to the service layer then drop (fail) this request.
+            // If the NAT traversal protocol version is enabled, the timeout will trigger the
+            // service layer to intiate a relay request (the NAT traversal protocol) to connect
+            // to the peer.
+            match request_call.request.body {
+                // Avoid recursive relay requesting
+                RequestBody::RelayRequest { .. } => {}
+                _ => {
+                    if let Err(e) = self
+                        .service_send
+                        .send(HandlerOut::RequestTimedOut(
+                            request_call.id().clone(),
+                            node_address.node_id,
+                        ))
+                        .await
+                    {
+                        warn!("Failed to inform of request timeout. Error {}", e)
+                    }
+                    self.request_relay_attempt.insert(node_address.node_id);
+                }
+            }
             trace!("Request timed out with {}", node_address);
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);

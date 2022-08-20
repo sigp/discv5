@@ -463,6 +463,16 @@ impl Service {
                                 }
                             }
                         }
+                        HandlerOut::RequestTimedOut(request_id, node_id) => {
+                            if CHECK_VERSION(&self.local_enr.read(), vec![NAT]) {
+                                if let Some(active_request) = self.active_requests.remove(&request_id) {
+                                    // Drop the request and attempt establishing the connection to the peer via the
+                                    // NAT traversal protocol for sending future requests to the peer.
+                                    let local_enr = self.local_enr.read().clone();
+                                    self.send_relay_request(active_request.contact, local_enr, node_id);
+                                }
+                            }
+                        }
                         HandlerOut::RequestFailed(request_id, error) => {
                             if let RequestError::Timeout = error {
                                 debug!("RPC Request timed out. id: {}", request_id);
