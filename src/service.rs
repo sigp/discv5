@@ -889,6 +889,9 @@ impl Service {
                                 .awaiting_reachable_address
                                 .awaiting(&nat_peer.node_id())
                             {
+                                // If we are awaiting an ENR with a reachable address from this node it is
+                                // an incoming direction, initiated by the peer behind a NAT.
+                                let connection_direction = ConnectionDirection::Incoming;
                                 trace!(
                                     "Received a requested ENR for node {} that we are waiting on for a reachable address",
                                     node_address
@@ -915,37 +918,37 @@ impl Service {
                                     // 'ip' and/or 'ip6' fields, its considered to be publicly reachable, i.e. the
                                     // 'ip' and 'ip6' fields have precedence over the 'nat' and 'nat6' fields.
                                     trace!(
-                                        "Received a requested ENR for node {} behind an asymmetric NAT",
+                                        "Received a requested ENR for node {} advertising that it is publicly reachable",
                                         node_address
                                     );
                                     self.inject_session_established(
                                         nat_peer.clone(),
-                                        ConnectionDirection::Incoming,
+                                        connection_direction,
                                         None,
                                     );
                                     return;
                                 }
-                                if (nat_peer.udp4().is_some() && nat_peer.udp4() != Some(0))
-                                    || (nat_peer.udp6().is_some() && nat_peer.udp6() != Some(0))
-                                {
-                                    // If we are awaiting on an ENR with a reachable address from this node it is
-                                    // an incoming direction, initiated by the peer behind a NAT.
+                                if nat_peer.get("nat").is_some() || nat_peer.get("nat6").is_some() {
+                                    if nat_peer.udp4().is_some() && nat_peer.udp4() != Some(0)
+                                        || nat_peer.udp6().is_some() && nat_peer.udp6() != Some(0)
+                                    {
+                                        trace!(
+                                            "Received a requested ENR for node {} advertising that is behind an asymmetric NAT",
+                                            node_address
+                                        );
+                                        self.inject_session_established_nat(
+                                            nat_peer.clone(),
+                                            connection_direction,
+                                        );
+                                        return;
+                                    }
                                     trace!(
-                                        "Received a requested ENR for node {} behind an asymmetric NAT",
+                                        "Received a requested ENR for node {} advertising that it is behind a symmetric NAT",
                                         node_address
                                     );
-                                    self.inject_session_established_nat(
-                                        nat_peer.clone(),
-                                        ConnectionDirection::Incoming,
-                                    );
+                                    self.inject_session_established_nat_symmetric(nat_peer.clone());
                                     return;
                                 }
-                                trace!(
-                                    "Received a requested ENR for node {} behind a symmetric NAT",
-                                    node_address
-                                );
-                                self.inject_session_established_nat_symmetric(nat_peer.clone());
-                                return;
                             }
                         }
                     }
