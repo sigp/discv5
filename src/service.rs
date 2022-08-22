@@ -465,13 +465,19 @@ impl Service {
                         }
                         HandlerOut::RequestTimedOut(request_id, node_id) => {
                             if CHECK_VERSION(&self.local_enr.read(), vec![NAT]) {
-                                if let Some(active_request) = self.active_requests.remove(&request_id) {
-                                    // Drop the request and attempt establishing the connection to the peer via the
-                                    // NAT traversal protocol for sending future requests to the peer.
+                                // Drop the request and attempt establishing the connection to the peer via the
+                                // NAT traversal protocol for sending future requests to the peer, if this peer
+                                // was forwarded to us in a NODES response and we hence have a relay for it.
+                                if self.active_requests.remove(&request_id).is_some() {
                                     let local_enr = self.local_enr.read().clone();
-                                    let contact = active_request.contact;
-                                    trace!("Requests to peer keep timing out, peer may be behind an asymmetric NAT. Trying to connect to peer via the NAT traversal protocol. Peer: {}", contact);
-                                    self.send_relay_request(contact, local_enr, node_id);
+                                    if let Some(relays) = self.relays.get(&node_id) {
+                                        if let Some(contact_relay) = relays.iter().next() {
+                                            trace!("Requests to peer, that we have learnt of in some NODES response, keep timing out. Peer may be behind an asymmetric NAT. Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", node_id, contact_relay);
+                                            self.send_relay_request(contact_relay.clone(), local_enr, node_id);
+                                        }
+                                    }
+                                } else {
+                                    warn!("Request {} to {} peer timed out the max retry times, but we have no relays for the peer to attempt contacting it via the NAT traversal protocol.", request_id, node_id);
                                 }
                             }
                         }
@@ -762,7 +768,7 @@ impl Service {
                 } else if from_node_enr.node_id() != local_node_id {
                     // This node is the rendezvous
                     if let Some(receiver) = self.find_enr(&to_node_id) {
-                        let contact = || -> Option<NodeContact> {
+                        let contact_receiver = || -> Option<NodeContact> {
                             if let Ok(contact) =
                                 NodeContact::try_from_enr(&receiver, self.config.ip_mode)
                             {
@@ -797,7 +803,7 @@ impl Service {
                             }
                             None
                         };
-                        if let Some(contact) = contact() {
+                        if let Some(contact) = contact_receiver() {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
                             self.send_relay_request(contact, from_node_enr, to_node_id);
                         }
@@ -1737,7 +1743,7 @@ impl Service {
         });
 
         enrs.retain(|enr| {
-            // If a discovered node flags that it is behind an assymetric NAT, send it a relay
+            // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
             // request directly instead of adding it to a query (avoid waiting for a request to
             // the new peer to timeout).
             if self.config.ip_mode.get_contactable_addr_nat(enr).is_some() {
