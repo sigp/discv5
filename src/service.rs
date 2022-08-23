@@ -1141,12 +1141,6 @@ impl Service {
                                         if bytes.len() == 4 {
                                             let mut buf = [0u8; 4];
                                             buf.copy_from_slice(bytes);
-                                            /*if let Some(port) = self.local_enr.read().udp4() {
-                                               return Some(SocketAddrV4::new(
-                                                    Ipv4Addr::from(buf),
-                                                    port,
-                                                ));
-                                            }*/
                                             return Some(Ipv4Addr::from(buf));
                                         }
                                         None
@@ -1198,12 +1192,6 @@ impl Service {
                                         if bytes.len() == 16 {
                                             let mut buf = [0u8; 16];
                                             buf.copy_from_slice(bytes);
-                                            /*if let Some(port) = self.local_enr.read().udp4() {
-                                               return Some(SocketAddrV4::new(
-                                                    Ipv4Addr::from(buf),
-                                                    port,
-                                                ));
-                                            }*/
                                             return Some(Ipv6Addr::from(buf));
                                         }
                                         None
@@ -1480,9 +1468,19 @@ impl Service {
             nodes_to_send.push(self.local_enr.read().clone());
             debug!("Sending our ENR to node: {}", node_address);
             trace!(
-                "Own ENR nat ip4 {:?} and udp4 port {:?}",
+                "Own ENR ip4 {:?} and ip6 {:?}",
+                self.local_enr.read().ip4(),
+                self.local_enr.read().ip6()
+            );
+            trace!(
+                "Own ENR nat ip4 {:?} and nat ip6 {:?}",
                 self.local_enr.read().get("nat"),
-                self.local_enr.read().get("udp")
+                self.local_enr.read().get("nat6")
+            );
+            trace!(
+                "Own ENR udp4 port {:?} and udp6 port {:?}",
+                self.local_enr.read().get("nat"),
+                self.local_enr.read().get("nat6")
             );
             distances.remove(0);
         }
@@ -1493,26 +1491,23 @@ impl Service {
                 .nodes_by_distances(distances.as_slice(), self.config.max_nodes_response)
                 .into_iter()
                 .filter_map(|entry| {
-                    if let Some(ip) = entry.node.value.get("nat") {
-                        if ip.len() == 4
-                            && entry.node.value.udp4().is_some()
-                            && entry.node.value.udp4() != Some(0)
-                        {
+                    let peer = entry.node;
+                    let enr = peer.value;
+                    if let Some(ip) = enr.get("nat") {
+                        if ip.len() == 4 && enr.udp4().is_some() && enr.udp4() != Some(0) {
                             // Only send nodes behind an asymmetric NAT, i.e. with a reachable port mapping in its ENR, no reachable port
                             // mapping in its ENR with a reachable ip in the 'nat' field is associated with a node behind a symmetric NAT.
-                            return Some(entry.node.value.clone());
+                            return None;
                         }
-                    } else if let Some(ip) = entry.node.value.get("nat6") {
-                        if ip.len() == 16
-                            && entry.node.value.udp6().is_some()
-                            && entry.node.value.udp6() != Some(0)
-                        {
+                    } else if let Some(ip) = enr.get("nat6") {
+                        if ip.len() == 16 && enr.udp6().is_some() && enr.udp6() != Some(0) {
                             // Only send nodes behind an asymmetric NAT, i.e. with a reachable port mapping in its ENR, no reachable port
                             // mapping in its ENR with a reachable ip in the 'nat6' field is associated with a node behind a symmetric NAT.
-                            return Some(entry.node.value.clone());
+                            return None;
                         }
-                    } else if entry.node.key.preimage() != &node_address.node_id {
-                        return Some(entry.node.value.clone());
+                    }
+                    if peer.key.preimage() != &node_address.node_id {
+                        return Some(enr.clone());
                     }
                     None
                 })
