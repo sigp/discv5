@@ -1738,16 +1738,17 @@ impl Service {
         });
 
         enrs.retain(|enr| {
+            let nat_node_id = enr.node_id();
+            // Add the source of the NODES response to the potential relays for this new peer (incase
+            // it is behind a NAT)
+            let relays = self.relays.entry(nat_node_id).or_default();
+            relays.insert(source.clone());
+
             // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
             // request directly instead of adding it to a query (avoid waiting for a request to
             // the new peer to timeout).
             if self.config.ip_mode.get_contactable_addr_nat(enr).is_some() {
-                let nat_node_id = enr.node_id();
                 self.peers_behind_nat.insert(enr.node_id(), enr.clone());
-
-                // Add the source of the NODES response to the potential relays for this new NAT:ed peer.
-                let relays = self.relays.entry(nat_node_id).or_default();
-                relays.insert(source.clone());
 
                 let key = kbucket::Key::from(enr.node_id());
                 if matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Absent(_)) {
