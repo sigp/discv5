@@ -3,6 +3,8 @@ use delay_map::HashMapDelay;
 use more_asserts::debug_unreachable;
 
 pub(crate) struct ActiveRequests {
+    /// The default timeout for requests.
+    request_timeout: Duration,
     /// A list of raw messages we are awaiting a response from the remote.
     active_requests_mapping: HashMapDelay<NodeAddress, RequestCall>,
     // WHOAREYOU messages do not include the source node id. We therefore maintain another
@@ -15,15 +17,36 @@ pub(crate) struct ActiveRequests {
 impl ActiveRequests {
     pub(crate) fn new(request_timeout: Duration) -> Self {
         ActiveRequests {
+            request_timeout,
             active_requests_mapping: HashMapDelay::new(request_timeout),
             active_requests_nonce_mapping: HashMap::new(),
         }
+    }
+
+    pub fn request_timeout(&self) -> Duration {
+        self.request_timeout
     }
 
     pub(crate) fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
         let nonce = *request_call.packet.message_nonce();
         self.active_requests_mapping
             .insert(node_address.clone(), request_call);
+        self.active_requests_nonce_mapping
+            .insert(nonce, node_address);
+    }
+
+    pub(crate) fn insert_at(
+        &mut self,
+        node_address: NodeAddress,
+        request_call: RequestCall,
+        timeout_extension: Duration,
+    ) {
+        let nonce = *request_call.packet.message_nonce();
+        self.active_requests_mapping.insert_at(
+            node_address.clone(),
+            request_call,
+            self.request_timeout + timeout_extension,
+        );
         self.active_requests_nonce_mapping
             .insert(nonce, node_address);
     }

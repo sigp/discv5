@@ -549,6 +549,20 @@ impl Handler {
         self.add_expected_response(node_address.socket_addr);
         self.send(node_address.clone(), packet).await;
 
+        if let RequestBody::RelayRequest {
+            ref from_node_enr, ..
+        } = call.request.body
+        {
+            // If this node is the initiator of the RELAYREQUEST, wait double the request time.
+            if from_node_enr.node_id() == self.enr.read().node_id() {
+                self.active_requests.insert_at(
+                    node_address,
+                    call,
+                    self.active_requests.request_timeout(),
+                );
+                return Ok(());
+            }
+        }
         self.active_requests.insert(node_address, call);
         Ok(())
     }
