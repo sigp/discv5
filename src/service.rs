@@ -482,7 +482,27 @@ impl Service {
                             }
                         }
                         HandlerOut::RequestFailed(request_id, error) => {
-                            if let RequestError::Timeout = error {
+                            // Don't fail the
+                            if let RequestError::TimeoutRendezvous(rendezvous, receiver) = error {
+                                debug!("RPC Request RELAYREQUEST to a relay (rendezvous node) timed out. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", receiver, request_id);
+                                let next_relay = |service: &mut Service| -> Option<NodeContact> {
+                                    if let Some(relays) = service.relays.get_mut(&receiver) {
+                                        // Only give each rendezvous one chance per receiver to relay.
+                                        relays.retain(|relay| relay.socket_addr() != rendezvous);
+                                        if let Some(contact_relay) = relays.iter().next() {
+                                            return Some(contact_relay.clone());
+                                        } else {
+                                            warn!("No further relays stored for peer (receiver) {}", receiver);
+                                        }
+                                    }
+                                    None
+                                };
+                                if let Some(relay) = next_relay(self) {
+                                    trace!("Retrying NAT traversal protocol with a new relay. Peer: {}, Relay: {}", receiver, relay);
+                                    let local_enr = self.local_enr.read().clone();
+                                    self.send_relay_request(relay, local_enr, receiver);
+                                }
+                            } else if let RequestError::Timeout = error {
                                 debug!("RPC Request timed out. id: {}", request_id);
                             } else {
                                 warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
@@ -2056,6 +2076,11 @@ impl Service {
                 }
             }
 
+            if let RequestError::TimeoutRendezvous(..) = error {
+                // Don't disconnect RELAYREQUESTs to rendezvous nodes that timeout, it may be because
+                // the receiver is unresponsive.
+                return;
+            }
             self.connection_updated(node_id, ConnectionStatus::Disconnected);
         }
     }

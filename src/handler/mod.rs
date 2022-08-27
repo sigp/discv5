@@ -461,9 +461,20 @@ impl Handler {
             // If the NAT traversal protocol version is enabled, the timeout will trigger the
             // service layer to intiate a relay request (the NAT traversal protocol) to connect
             // to the peer.
+            let mut request_error = RequestError::Timeout;
             match request_call.request.body {
-                // Avoid recursive relay requesting
-                RequestBody::RelayRequest { .. } => {}
+                // Avoid recursive relay requesting by distinguishing between a timeout of a RELAYREQUEST
+                // to a rendezvous node and from a rendezvous node.
+                RequestBody::RelayRequest {
+                    ref from_node_enr,
+                    to_node_id,
+                } => {
+                    // This node is the initiator and the request to the rendezvous node timed out
+                    if from_node_enr.node_id() == self.enr.read().node_id() {
+                        request_error =
+                            RequestError::TimeoutRendezvous(node_address.socket_addr, to_node_id);
+                    }
+                }
                 _ => {
                     trace!("Inform service layer of request that has timed out a total of {} (max retries) times", self.request_retries);
                     if let Err(e) = self
@@ -483,8 +494,7 @@ impl Handler {
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);
             // The request has timed out. We keep any established session for future use.
-            self.fail_request(request_call, RequestError::Timeout, false)
-                .await;
+            self.fail_request(request_call, request_error, false).await;
         } else {
             // increment the request retry count and restart the timeout
             trace!(
