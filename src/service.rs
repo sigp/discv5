@@ -32,7 +32,7 @@ use crate::{
     },
     rpc, Discv5Config, Discv5Event, Enr,
 };
-use delay_map::HashSetDelay;
+use delay_map::{HashMapDelay, HashSetDelay};
 use enr::{CombinedKey, EnrError, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
@@ -217,6 +217,16 @@ pub struct Service {
 
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
+
+    /// The request ids of RELAYREQUESTs from initators, that this node acts as
+    /// rendezvous for, are stored for double the request time out time so that we
+    /// can return the RELAYRESPONSE from the receiver to the initator.
+    relay_requests: HashMapDelay<NodeId, RelayedRequest>,
+}
+
+struct RelayedRequest {
+    id: RequestId,
+    initiator: NodeAddress,
 }
 
 /// A peer is given a max number of PING attempts to send a contactable enr. This is relevant
@@ -378,6 +388,7 @@ impl Service {
                     peers_behind_nat: HashMap::new(),
                     awaiting_reachable_address: Default::default(),
                     symmetric_nat_peers_ports,
+                    relay_requests: HashMapDelay::new(config.request_timeout * 2),
                 };
 
                 info!("Discv5 Service started");
@@ -787,6 +798,14 @@ impl Service {
                     self.send_relay_response(node_address, id, true);
                 } else if from_node_enr.node_id() != local_node_id {
                     // This node is the rendezvous
+                    self.relay_requests.insert(
+                        from_node_enr.node_id(),
+                        RelayedRequest {
+                            id,
+                            initiator: node_address,
+                        },
+                    );
+
                     if let Some(receiver) = self.find_enr(&to_node_id) {
                         let contact_receiver = || -> Option<NodeContact> {
                             if let Ok(contact) =
@@ -1320,7 +1339,15 @@ impl Service {
                             }
                         } else if to_node_id != local_node_id {
                             // This node is the rendezvous
-                            self.send_relay_response(node_address, id, response);
+                            if let Some(initiator_req) =
+                                self.relay_requests.remove(&from_node_enr.node_id())
+                            {
+                                self.send_relay_response(
+                                    initiator_req.initiator,
+                                    initiator_req.id,
+                                    response,
+                                );
+                            }
                         }
                     }
                 }

@@ -92,6 +92,7 @@ async fn build_service(
         discv5_recv,
         event_stream: None,
         exit,
+        relay_requests: HashMapDelay::new(config.request_timeout * 2),
         config,
         relays: HashMap::new(),
         peers_behind_nat: HashMap::new(),
