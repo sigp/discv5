@@ -69,7 +69,7 @@ mod test;
 /// NOTE: This must not be larger than 127.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
-/// The number of registration attempts that should be active per distance
+/// The maximum number of registration attempts that may be active per distance
 /// if there are sufficient peers.
 const MAX_REG_ATTEMPTS_PER_DISTANCE: usize = 16;
 
