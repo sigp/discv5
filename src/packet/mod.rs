@@ -72,7 +72,7 @@ impl AsRef<[u8]> for ChallengeData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
     /// Random data unique to the packet.
     pub iv: u128,
@@ -82,7 +82,7 @@ pub struct Packet {
     pub message: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PacketHeader {
     /// The nonce of the associated message
     pub message_nonce: MessageNonce,
@@ -106,7 +106,7 @@ impl PacketHeader {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PacketKind {
     /// An ordinary message.
     Message {

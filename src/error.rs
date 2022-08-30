@@ -47,7 +47,7 @@ impl From<std::io::Error> for Discv5Error {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Types of packet errors.
 pub enum PacketError {
     /// The packet type is unknown.
@@ -70,7 +70,7 @@ pub enum PacketError {
     InvalidEnr(DecoderError),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ResponseError {
     /// The channel used to send the response has already been closed.
@@ -89,7 +89,7 @@ impl fmt::Display for ResponseError {
 
 impl std::error::Error for ResponseError {}
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestError {
     /// The request timed out.
     Timeout,
@@ -113,7 +113,7 @@ pub enum RequestError {
     EntropyFailure(&'static str),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryError {
     /// The discv5 service is not currently running.
     ServiceNotStarted,

@@ -46,7 +46,7 @@ async fn main() {
         let mut builder = enr::EnrBuilder::new("v4");
         // if an IP was specified, use it
         if let Some(external_address) = address {
-            builder.ip4(external_address.into());
+            builder.ip4(external_address);
         }
         // if a port was specified, use it
         if std::env::args().nth(2).is_some() {
