@@ -22,7 +22,7 @@ use crate::{
         topic::TopicHash,
         Ads, AD_LIFETIME,
     },
-    discv5::{CHECK_VERSION, NAT, PERMIT_BAN_LIST, TOPICS},
+    discv5::{CHECK_VERSION, ENR_KEY_TOPICS, PERMIT_BAN_LIST, VERISON_TOPICS, VERSION_NAT},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -563,7 +563,7 @@ impl Service {
                             if self.registration_attempts.insert(topic.clone(), BTreeMap::new()).is_some() {
                                 warn!("This topic is already being advertised");
                             } else {
-                                let topics_field = if let Some(topics) = self.local_enr.read().get("topics") {
+                                let topics_field = if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
                                     let rlp = Rlp::new(topics);
                                     let item_count = rlp.iter().count();
                                     let mut rlp_stream = RlpStream::new_list(item_count + 1);
@@ -587,7 +587,7 @@ impl Service {
 
                                 if self.local_enr
                                     .write()
-                                    .insert("topics", &topics_field, &self.enr_key.write())
+                                    .insert(ENR_KEY_TOPICS, &topics_field, &self.enr_key.write())
                                     .map_err(|e| error!("Failed to insert field 'topics' into local enr. Error {:?}", e)).is_ok() {
 
                                     self.init_topic_kbuckets(topic_hash);
@@ -750,7 +750,7 @@ impl Service {
                                 let mut discovered_new_peer = false;
                                 if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
                                     for enr in found_enrs {
-                                        if !CHECK_VERSION(&enr, vec![TOPICS, TOPICS|NAT]) {
+                                        if !CHECK_VERSION(&enr, vec![VERISON_TOPICS, VERISON_TOPICS|VERSION_NAT]) {
                                             continue;
                                         }
                                         trace!("Found new peer {} for topic {}", enr, topic_hash);
@@ -903,7 +903,7 @@ impl Service {
 
         for entry in self.kbuckets.write().iter() {
             let enr = entry.node.value.clone();
-            if !CHECK_VERSION(&enr, vec![TOPICS, TOPICS | NAT]) {
+            if !CHECK_VERSION(&enr, vec![VERISON_TOPICS, VERISON_TOPICS | VERSION_NAT]) {
                 continue;
             }
             match kbuckets.insert_or_update(entry.node.key, enr, entry.status) {
@@ -1335,7 +1335,7 @@ impl Service {
 
                 // Blacklist if node doesn't contain the given topic in its enr 'topics' field
                 let mut topic_in_enr = false;
-                if let Some(topics) = enr.get("topics") {
+                if let Some(topics) = enr.get(ENR_KEY_TOPICS) {
                     let rlp = Rlp::new(topics);
                     for item in rlp.iter() {
                         if let Ok(data) = item.data().map_err(|e| error!("Could not decode a topic in topics field in enr of peer {}. Error {}", enr.node_id(), e)) {
@@ -1601,7 +1601,7 @@ impl Service {
                                 return false;
                             }
                             // Ads are checked for validity, if they do not contain the topic in their enr, they are discarded
-                            if let Some(topics) = enr.get("topics") {
+                            if let Some(topics) = enr.get(ENR_KEY_TOPICS) {
                                 let rlp = Rlp::new(topics);
                                 for item in rlp.iter() {
                                     if let Ok(data) = item.data().map_err(|e| error!("Could not decode a topic in topics field in enr of peer {}. Error {}", enr.node_id(), e)) {

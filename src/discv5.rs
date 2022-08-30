@@ -53,17 +53,21 @@ pub static HASH: for<'a> fn(topic: &'a str) -> TopicHash = |topic| {
     sha256_topic.hash()
 };
 
+/// Custom ENR keys.
+const ENR_KEY_VERSION: &str = "version";
+pub const ENR_KEY_TOPICS: &str = "topics";
+
 // Discv5 versions.
 iota! {
-    pub const NAT: u8 = 1 << iota;
-        , TOPICS
+    pub const VERSION_NAT: u8 = 1 << iota;
+        , VERISON_TOPICS
 }
 
 /// Check if a given peer supports one or more versions of the Discv5 protocol.
 /// /// Returns true if any of the given versions are supported.
 pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
     |peer, supported_versions| {
-        if let Some(version) = peer.get("version") {
+        if let Some(version) = peer.get(ENR_KEY_VERSION) {
             if let Some(v) = version.get(0) {
                 // Only add nodes which support the topics version
                 supported_versions.contains(v)
@@ -170,15 +174,16 @@ impl Discv5 {
         )));
 
         // This node supports topic requests REGTOPIC and TOPICQUERY, and their responses.
-        if let Err(e) = local_enr
-            .write()
-            .insert("version", &[TOPICS], &enr_key.write())
+        if let Err(e) =
+            local_enr
+                .write()
+                .insert(ENR_KEY_VERSION, &[VERISON_TOPICS], &enr_key.write())
         {
             error!("Failed writing to enr. Error {:?}", e);
             return Err("Failed to insert field 'version' into local enr");
         }
 
-        println!("{:?}", local_enr.read().get("version").unwrap());
+        println!("{:?}", local_enr.read().get(ENR_KEY_VERSION).unwrap());
 
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
