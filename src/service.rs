@@ -77,7 +77,7 @@ const MAX_REG_ATTEMPTS_PER_DISTANCE: usize = 16;
 const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Registration attempts must be limited per registration interval.
-const MAX_REGTOPICS_REGISTER_INTERVAL: usize = 16;
+const MAX_REGTOPICS_REGISTER_PER_INTERVAL: usize = 16;
 
 /// The max number of uncontacted peers to store before the kbuckets per topic.
 const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
