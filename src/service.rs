@@ -73,7 +73,7 @@ pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 /// if there are sufficient peers.
 const MAX_REG_ATTEMPTS_PER_DISTANCE: usize = 16;
 
-/// Registration of topics are paced to occur at intervals t avoid a self-provoked DoS.
+/// Registration of topics are paced to occur at intervals to avoid a self-provoked DoS.
 const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Registration attempts must be limited per registration interval.
