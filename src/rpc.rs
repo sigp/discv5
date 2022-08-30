@@ -37,7 +37,7 @@ impl RequestId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// A combined type representing requests and responses.
 pub enum Message {
     /// A request, which contains its [`RequestId`].
@@ -46,7 +46,7 @@ pub enum Message {
     Response(Response),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// A request sent between nodes.
 pub struct Request {
     /// The [`RequestId`] of the request.
@@ -55,7 +55,7 @@ pub struct Request {
     pub body: RequestBody,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// A response sent in response to a [`Request`]
 pub struct Response {
     /// The [`RequestId`] of the request that triggered this response.
@@ -64,7 +64,7 @@ pub struct Response {
     pub body: ResponseBody,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestBody {
     /// A PING request.
     Ping {
@@ -99,7 +99,7 @@ pub enum RequestBody {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResponseBody {
     /// A PONG response.
     Pong {

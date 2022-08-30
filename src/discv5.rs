@@ -68,7 +68,7 @@ iota! {
 pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
     |peer, supported_versions| {
         if let Some(version) = peer.get(ENR_KEY_VERSION) {
-            if let Some(v) = version.get(0) {
+            if let Some(v) = version.first() {
                 // Only add nodes which support the topics version
                 supported_versions.contains(v)
             } else {

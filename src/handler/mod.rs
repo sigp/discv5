@@ -106,7 +106,7 @@ pub enum HandlerIn {
 }
 
 /// Messages sent between a node on the network and `Handler`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandlerOut {
     /// A session has been established with a node.
     ///
@@ -145,7 +145,7 @@ pub enum ConnectionDirection {
 
 /// A reference for the application layer to send back when the handler requests any known
 /// ENR for the NodeContact.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WhoAreYouRef(pub NodeAddress, MessageNonce);
 
 #[derive(Debug)]
