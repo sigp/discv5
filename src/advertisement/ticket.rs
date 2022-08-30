@@ -8,7 +8,7 @@ use std::{cmp::Eq, hash::Hash};
 /// The max wait time accpeted for tickets.
 pub const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
 
-/// The time window within in which the number of new tickets from a peer for a topic will be limitied.
+/// The time window within which the number of new tickets from a peer for a topic will be limitied.
 pub const TICKET_LIMIT_DURATION: Duration = Duration::from_secs(60 * 15);
 
 /// Max tickets that are stored for an individual node for a topic (in the configured
