@@ -224,33 +224,6 @@ impl Discv5 {
                 );
                 return Err(Discv5Error::InvalidEnr);
             }
-
-            // This NAT traversal protocol will only work for routers that set up the same port
-            // externally (WAN facing) as this machine is configured to use for discv5 on LAN.
-            // The protocol does not cover routers that choose a random external port to map to
-            // this machine's listen port.
-            match listen_socket {
-                SocketAddr::V4(socket4) => {
-                    if let Err(e) = self
-                        .local_enr
-                        .write()
-                        .set_udp4(socket4.port(), &self.enr_key.read())
-                    {
-                        error!("Failed to set 'udp4' field in local enr. Error {:?}", e);
-                        return Err(Discv5Error::InvalidEnr);
-                    }
-                }
-                SocketAddr::V6(socket6) => {
-                    if let Err(e) = self
-                        .local_enr
-                        .write()
-                        .set_udp6(socket6.port(), &self.enr_key.read())
-                    {
-                        error!("Failed to set 'udp6' field in local enr. Error {:?}", e);
-                        return Err(Discv5Error::InvalidEnr);
-                    }
-                }
-            }
         }
 
         // create the main service
