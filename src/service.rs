@@ -805,6 +805,13 @@ impl Service {
                 let local_node_id = self.local_enr.read().node_id();
                 if to_node_id == local_node_id {
                     // This node is the receiver
+                    if from_node_enr.node_id() == node_address.node_id {
+                        debug!("Node acting as a rendezvous node for itself as initiator. Blacklisting peer: {}", node_address);
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                        return;
+                    }
+
                     let mut is_behind_nat = false;
                     if let Some(ref mut asymm_nat_votes) = self.asymm_nat_votes {
                         // If this node is advetising that it is not behind a NAT, we do a peer vote
@@ -876,6 +883,13 @@ impl Service {
                     self.send_relay_response(node_address, id, true);
                 } else if from_node_enr.node_id() != local_node_id {
                     // This node is the rendezvous
+                    if to_node_id == node_address.node_id {
+                        debug!("Node acting as a rendezvous node for itself as receiver. Blacklisting peer: {}", node_address);
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                        return;
+                    }
+
                     self.relay_requests.insert(
                         from_node_enr.node_id(),
                         RelayedRequest {

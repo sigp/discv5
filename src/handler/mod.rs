@@ -44,7 +44,7 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
     default::Default,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{atomic::Ordering, Arc},
     task::{Context, Poll},
@@ -156,6 +156,12 @@ pub enum ConnectionDirection {
     Incoming,
     /// We contacted the node.
     Outgoing,
+}
+
+/// Two types of NAT that are acknowledged.
+pub enum Nat {
+    Symmetric,
+    Asymmetric,
 }
 
 /// A reference for the application layer to send back when the handler requests any known
@@ -761,26 +767,28 @@ impl Handler {
                 self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
-                if enr.get("nat").is_some() || enr.get("nat6").is_some() {
-                    if Some(node_address.socket_addr.port()) == enr.udp4()
-                        || Some(node_address.socket_addr.port()) == enr.udp6()
-                    {
-                        self.service_send
-                            .send(HandlerOut::EstablishedNat(
-                                enr,
-                                node_address.socket_addr,
-                                connection_direction,
-                            ))
-                            .await
-                            .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
-                    } else {
-                        self.service_send
-                            .send(HandlerOut::EstablishedNatSymmetric(
-                                enr,
-                                node_address.socket_addr,
-                            ))
-                            .await
-                            .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address) {
+                    match valid_enr {
+                        Nat::Asymmetric => {
+                            self
+                                .service_send
+                                .send(HandlerOut::EstablishedNat(
+                                    enr,
+                                    node_address.socket_addr,
+                                    connection_direction,
+                                ))
+                                .await
+                                .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                        }
+                        Nat::Symmetric => {
+                            self.service_send
+                                .send(HandlerOut::EstablishedNatSymmetric(
+                                    enr,
+                                    node_address.socket_addr,
+                                ))
+                                .await
+                                .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                        }
                     }
                 } else {
                     self.service_send
@@ -836,40 +844,57 @@ impl Handler {
             }
     }
 
-    fn verify_enr_nat(&self, enr: &Enr, node_address: &NodeAddress) -> bool {
+    fn verify_enr_nat(&self, enr: &Enr, node_address: &NodeAddress) -> Option<Nat> {
         // If the ENR does not match the observed IP addresses, we consider the NAT Session
         // failed.
-        let advertised_addr: fn(enr: &Enr, node_address: &NodeAddress) -> bool =
-            |enr, node_address| {
-                match node_address.socket_addr.ip() {
-                    IpAddr::V4(ip_addr) => {
-                        if let Some(advertised_addr) = enr.get("nat") {
-                            if advertised_addr.len() == 4 {
-                                let mut buf = [0u8; 4];
-                                buf.copy_from_slice(advertised_addr);
-                                let advertised_addr = Ipv4Addr::from(buf);
-                                trace!("Verifying address of node {} behind NAT. Advertised externally reachable IP bytes {}", node_address, advertised_addr);
-                                return ip_addr == advertised_addr;
+        if enr.node_id() == node_address.node_id {
+            match node_address.socket_addr {
+                SocketAddr::V4(socket_addr) => {
+                    if let Some(advertised_addr) = enr.get("nat") {
+                        if advertised_addr.len() == 4 {
+                            let mut buf = [0u8; 4];
+                            buf.copy_from_slice(advertised_addr);
+                            let advertised_ip = Ipv4Addr::from(buf);
+                            if let Some(port) = enr.udp4() {
+                                let advertised_socket = SocketAddrV4::new(advertised_ip, port);
+                                trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket {}", node_address, advertised_socket);
+                                if socket_addr == advertised_socket {
+                                    return Some(Nat::Asymmetric);
+                                }
                             }
-                        }
-                    }
-                    IpAddr::V6(ip_addr) => {
-                        if let Some(advertised_addr) = enr.get("nat6") {
-                            if advertised_addr.len() == 16 {
-                                let mut buf = [0u8; 16];
-                                buf.copy_from_slice(advertised_addr);
-                                let advertised_addr = Ipv6Addr::from(buf);
-                                trace!("Verifying address of node {} behind NAT. Advertised externally reachable IP bytes {}", node_address, advertised_addr);
-                                return ip_addr == advertised_addr;
+                            trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip {}", node_address, advertised_ip);
+                            if socket_addr.ip() == &advertised_ip {
+                                return Some(Nat::Symmetric);
                             }
                         }
                     }
                 }
-                // If the ENR does not advertise any externally reachable address, we consider
-                // the NAT Session failed.
-                false
-            };
-        enr.node_id() == node_address.node_id && advertised_addr(enr, node_address)
+                SocketAddr::V6(socket_addr) => {
+                    if let Some(advertised_addr) = enr.get("nat6") {
+                        if advertised_addr.len() == 16 {
+                            let mut buf = [0u8; 16];
+                            buf.copy_from_slice(advertised_addr);
+                            let advertised_ip = Ipv6Addr::from(buf);
+                            if let Some(port) = enr.udp6() {
+                                let advertised_socket =
+                                    SocketAddrV6::new(advertised_ip, port, 0, 0);
+                                trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket6 {}", node_address, advertised_socket);
+                                if socket_addr == advertised_socket {
+                                    return Some(Nat::Asymmetric);
+                                }
+                            }
+                            trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip6 {}", node_address, advertised_ip);
+                            if socket_addr.ip() == &advertised_ip {
+                                return Some(Nat::Symmetric);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // If the ENR does not advertise any externally reachable address, we consider
+        // the NAT Session failed.
+        None
     }
 
     /// Handle a message that contains an authentication header.
@@ -907,44 +932,38 @@ impl Handler {
                     // Verify the ENR is valid either for a normal (node listens on and the same
                     // WAN reachable socket for all peers) session or a NAT session (node behind
                     // NAT listens on different WAN reachable ports for each peer).
-                    if self.verify_enr_nat(&enr, &node_address) {
+
+                    let mut is_valid_enr = false;
+
+                    if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address) {
                         trace!("Node {} is behind NAT", node_address);
                         // NAT Session is valid
                         // Notify the application
                         // The session established here are from WHOAREYOU packets that we sent.
                         // This occurs when a node established a connection with us and the node
                         // knows it is behind a NAT and has configured its ENR accordingly.
-                        if Some(node_address.socket_addr.port()) == enr.udp4()
-                            || Some(node_address.socket_addr.port()) == enr.udp6()
-                        {
-                            self.service_send
-                                .send(HandlerOut::EstablishedNat(
-                                    enr,
-                                    node_address.socket_addr,
-                                    ConnectionDirection::Incoming,
-                                ))
-                                .await
-                                .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
-                        } else {
-                            self.service_send
-                                .send(HandlerOut::EstablishedNatSymmetric(
-                                    enr,
-                                    node_address.socket_addr,
-                                ))
-                                .await
-                                .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                        match valid_enr {
+                            Nat::Asymmetric => {
+                                self.service_send
+                                    .send(HandlerOut::EstablishedNat(
+                                        enr,
+                                        node_address.socket_addr,
+                                        ConnectionDirection::Incoming,
+                                    ))
+                                    .await
+                                    .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                            }
+                            Nat::Symmetric => {
+                                self.service_send
+                                    .send(HandlerOut::EstablishedNatSymmetric(
+                                        enr,
+                                        node_address.socket_addr,
+                                    ))
+                                    .await
+                                    .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                            }
                         }
-                        self.new_session(node_address.clone(), session);
-                        self.handle_message(
-                            node_address.clone(),
-                            message_nonce,
-                            message,
-                            authenticated_data,
-                        )
-                        .await;
-                        // We could have pending messages that were awaiting this session to be
-                        // established. If so process them.
-                        self.send_next_request(node_address).await;
+                        is_valid_enr = true;
                     } else if self.verify_enr(&enr, &node_address) {
                         // Session is valid
                         // Notify the application
@@ -961,6 +980,20 @@ impl Handler {
                         {
                             warn!("Failed to inform of established session {}", e)
                         }
+                        is_valid_enr = true;
+                    } else {
+                        // IP's or NodeAddress don't match. Drop the session.
+                        warn!(
+                            "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
+                            enr.udp4_socket(),
+                            enr.udp6_socket(),
+                            node_address
+                        );
+                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
+                            .await;
+                    }
+
+                    if is_valid_enr {
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
                             node_address.clone(),
@@ -972,16 +1005,6 @@ impl Handler {
                         // We could have pending messages that were awaiting this session to be
                         // established. If so process them.
                         self.send_next_request(node_address).await;
-                    } else {
-                        // IP's or NodeAddress don't match. Drop the session.
-                        warn!(
-                            "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
-                            enr.udp4_socket(),
-                            enr.udp6_socket(),
-                            node_address
-                        );
-                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
-                            .await;
                     }
                 }
                 Err(Discv5Error::InvalidChallengeSignature(challenge)) => {
@@ -1112,37 +1135,44 @@ impl Handler {
                                 ResponseBody::Nodes { mut nodes, .. } => {
                                     // Received the requested ENR
                                     if let Some(enr) = nodes.pop() {
-                                        if self.verify_enr_nat(&enr, &node_address) {
+                                        if let Some(valid_enr) =
+                                            self.verify_enr_nat(&enr, &node_address)
+                                        {
                                             // Notify the application
                                             // This can occur when we try to dial a node without an ENR and it turns out
                                             // the node is behind a NAT. In this case we have attempted to establish the
                                             // connection, so this is an outgoing connection.
-                                            if Some(node_address.socket_addr.port()) == enr.udp4()
-                                                || Some(node_address.socket_addr.port())
-                                                    == enr.udp6()
-                                            {
-                                                self.service_send
-                                                    .send(HandlerOut::EstablishedNat(
-                                                        enr,
-                                                        node_address.socket_addr,
-                                                        ConnectionDirection::Outgoing,
-                                                    ))
-                                                    .await
-                                                    .unwrap_or_else(|e| {
-                                                        warn!("Error with sending channel: {}", e)
-                                                    });
-                                            } else {
-                                                self.service_send
-                                                    .send(HandlerOut::EstablishedNatSymmetric(
-                                                        enr,
-                                                        node_address.socket_addr,
-                                                    ))
-                                                    .await
-                                                    .unwrap_or_else(|e| {
-                                                        warn!("Error with sending channel: {}", e)
-                                                    });
+                                            match valid_enr {
+                                                Nat::Asymmetric => {
+                                                    self.service_send
+                                                        .send(HandlerOut::EstablishedNat(
+                                                            enr,
+                                                            node_address.socket_addr,
+                                                            ConnectionDirection::Outgoing,
+                                                        ))
+                                                        .await
+                                                        .unwrap_or_else(|e| {
+                                                            warn!(
+                                                                "Error with sending channel: {}",
+                                                                e
+                                                            )
+                                                        });
+                                                }
+                                                Nat::Symmetric => {
+                                                    self.service_send
+                                                        .send(HandlerOut::EstablishedNatSymmetric(
+                                                            enr,
+                                                            node_address.socket_addr,
+                                                        ))
+                                                        .await
+                                                        .unwrap_or_else(|e| {
+                                                            warn!(
+                                                                "Error with sending channel: {}",
+                                                                e
+                                                            )
+                                                        });
+                                                }
                                             }
-                                            return;
                                         } else if self.verify_enr(&enr, &node_address) {
                                             // Notify the application
                                             // This can occur when we try to dial a node without an
