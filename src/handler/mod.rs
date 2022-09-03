@@ -770,8 +770,7 @@ impl Handler {
                 if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address) {
                     match valid_enr {
                         Nat::Asymmetric => {
-                            self
-                                .service_send
+                            self.service_send
                                 .send(HandlerOut::EstablishedNat(
                                     enr,
                                     node_address.socket_addr,
