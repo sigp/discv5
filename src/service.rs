@@ -736,31 +736,14 @@ impl Service {
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    let contact = || -> NodeContact {
-                        if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
-                            return contact;
-                        } else if let Ok(contact) =
-                            NodeContact::try_from_enr_nat(&enr, self.config.ip_mode)
-                        {
-                            return contact;
-                        } else if let Some(ref symmetric_nat_peers_ports) =
-                            self.symmetric_nat_peers_ports
-                        {
-                            if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
-                                if let Ok(contact) = NodeContact::try_from_enr_nat_symmetric(
-                                    &enr,
-                                    self.config.ip_mode,
-                                    *port,
-                                ) {
-                                    return contact;
-                                }
-                            }
-                        }
+                    let contact = if let Some(contact) = self.contact_from_enr(&enr) {
+                        contact
+                    } else {
                         // If this PING request comes from a peer behind a NAT which has just now discovered it's externally reachable
                         // address, trying to make a node contact from its ENR will fail as no address is advertised in its ENR.
                         NodeContact::new_without_enr(enr.public_key(), node_address.socket_addr)
                     };
-                    self.request_enr(contact(), None);
+                    self.request_enr(contact, None);
                 }
 
                 // build the PONG response
@@ -899,42 +882,7 @@ impl Service {
                     );
 
                     if let Some(receiver) = self.find_enr(&to_node_id) {
-                        let contact_receiver = || -> Option<NodeContact> {
-                            if let Ok(contact) =
-                                NodeContact::try_from_enr(&receiver, self.config.ip_mode)
-                            {
-                                return Some(contact);
-                            } else if let Ok(contact) =
-                                NodeContact::try_from_enr_nat(&receiver, self.config.ip_mode)
-                            {
-                                return Some(contact);
-                            } else if let Some(ref symmetric_nat_peers_ports) =
-                                self.symmetric_nat_peers_ports
-                            {
-                                if let Some(port) =
-                                    symmetric_nat_peers_ports.get(&receiver.node_id())
-                                {
-                                    match NodeContact::try_from_enr_nat_symmetric(
-                                        &receiver,
-                                        self.config.ip_mode,
-                                        *port,
-                                    ) {
-                                        Ok(contact) => {
-                                            return Some(contact);
-                                        }
-                                        Err(NonContactable { enr }) => {
-                                            debug_unreachable!("Failed to send RELAYREQUEST to receiver. Stored ENR is not contactable. {}", enr);
-                                            error!(
-                                                "Stored ENR is not contactable! This should never happen {}",
-                                                enr
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            None
-                        };
-                        if let Some(contact) = contact_receiver() {
+                        if let Some(contact) = self.contact_from_enr(&receiver) {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
                             self.send_relay_request(contact, from_node_enr, to_node_id);
                         }
@@ -1396,28 +1344,7 @@ impl Service {
             };
             service.send_rpc_request(active_request);
         };
-
-        let contact = || -> Option<NodeContact> {
-            if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
-                return Some(contact);
-            } else if let Ok(contact) = NodeContact::try_from_enr_nat(&enr, self.config.ip_mode) {
-                return Some(contact);
-            } else if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
-                if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
-                    match NodeContact::try_from_enr_nat_symmetric(&enr, self.config.ip_mode, *port)
-                    {
-                        Ok(contact) => {
-                            return Some(contact);
-                        }
-                        Err(NonContactable { enr }) => {
-                            error!("Trying to ping a non-contactable peer {}", enr);
-                        }
-                    }
-                }
-            }
-            None
-        };
-        if let Some(contact) = contact() {
+        if let Some(contact) = self.contact_from_enr(&enr) {
             ping(self, contact);
         }
     }
@@ -1675,32 +1602,7 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
-            let contact = || -> Option<NodeContact> {
-                if let Ok(contact) = NodeContact::try_from_enr(&enr, self.config.ip_mode) {
-                    return Some(contact);
-                } else if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
-                    if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
-                        match NodeContact::try_from_enr_nat_symmetric(
-                            &enr,
-                            self.config.ip_mode,
-                            *port,
-                        ) {
-                            Ok(contact) => {
-                                return Some(contact);
-                            }
-                            Err(NonContactable { enr }) => {
-                                error!("Query {} has a non contactable enr: {}", *query_id, enr);
-                            }
-                        }
-                    }
-                } else if let Ok(contact) = NodeContact::try_from_enr_nat(&enr, self.config.ip_mode)
-                {
-                    return Some(contact);
-                }
-                None
-            };
-
-            if let Some(contact) = contact() {
+            if let Some(contact) = self.contact_from_enr(&enr) {
                 let active_request = ActiveRequest {
                     contact,
                     request_body,
@@ -2192,6 +2094,26 @@ impl Service {
             }
         }
         Ok(())
+    }
+
+    fn contact_from_enr(&self, enr: &Enr) -> Option<NodeContact> {
+        if let Ok(contact) = NodeContact::try_from_enr(enr, self.config.ip_mode) {
+            return Some(contact);
+        } else if let Ok(contact) = NodeContact::try_from_enr_nat(enr, self.config.ip_mode) {
+            return Some(contact);
+        } else if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
+            if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
+                match NodeContact::try_from_enr_nat_symmetric(enr, self.config.ip_mode, *port) {
+                    Ok(contact) => {
+                        return Some(contact);
+                    }
+                    Err(NonContactable { enr }) => {
+                        warn!("ENR is non-contactable {}", enr);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
