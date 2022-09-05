@@ -902,13 +902,11 @@ impl Service {
     /// Starts the continuous process of registering a topic, i.e. advertising it by peers.
     fn start_register_topic(&mut self, topic: Topic) {
         let topic_hash = topic.hash();
-        if self
-            .registration_attempts
-            .insert(topic.clone(), BTreeMap::new())
-            .is_some()
-        {
+        if self.registration_attempts.contains_key(&topic.clone()) {
             warn!("The topic {} is already being advertised", topic.topic());
         } else {
+            self.registration_attempts
+                .insert(topic.clone(), BTreeMap::new());
             let topics_field = if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
                 let rlp = Rlp::new(topics);
                 let item_count = rlp.iter().count();
