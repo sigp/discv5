@@ -65,13 +65,16 @@ mod ip_vote;
 mod query_info;
 mod test;
 
+/// The log2distance between to keys.
+pub type Log2Distance = u64;
+
 /// The number of distances (buckets) we simultaneously request from each peer.
 /// NOTE: This must not be larger than 127.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
 /// The maximum number of registration attempts that may be active per distance
 /// if there are sufficient peers.
-const MAX_REG_ATTEMPTS_PER_DISTANCE: usize = 16;
+const MAX_REG_ATTEMPTS_PER_LOG2DISTANCE: usize = 16;
 
 /// Registration of topics are paced to occur at intervals to avoid a self-provoked DoS.
 const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
@@ -200,12 +203,12 @@ pub enum ServiceRequest {
     /// Retrieves the registration attempts active for a given topic.
     RegistrationAttempts(
         Topic,
-        oneshot::Sender<Result<BTreeMap<u64, RegAttempts>, RequestError>>,
+        oneshot::Sender<Result<BTreeMap<Log2Distance, RegAttempts>, RequestError>>,
     ),
     /// Retrieves the node id of entries in a given topic's kbuckets by distance.
     TableEntriesIdTopic(
         TopicHash,
-        oneshot::Sender<Result<BTreeMap<u64, Vec<NodeId>>, RequestError>>,
+        oneshot::Sender<Result<BTreeMap<Log2Distance, Vec<NodeId>>, RequestError>>,
     ),
 }
 
@@ -259,16 +262,17 @@ pub struct Service {
     /// Ads advertised locally for other nodes.
     ads: Ads,
 
-    /// Registrations attempts underway for each topic.
-    registration_attempts: HashMap<Topic, BTreeMap<u64, RegAttempts>>,
+    /// Registrations attempts underway for each topic stored by bucket index, i.e. the
+    /// log2distance to the local node id.
+    registration_attempts: HashMap<Topic, BTreeMap<Log2Distance, RegAttempts>>,
 
     /// KBuckets per topic hash.
     topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
 
     /// The peers returned in a NODES response to a TOPICQUERY or REGTOPIC request are inserted in
     /// this intermediary storage to check their connectivity before inserting them in the topic's
-    /// kbuckets.
-    discovered_peers_topic: HashMap<TopicHash, BTreeMap<u64, HashMap<NodeId, Enr>>>,
+    /// kbuckets. Peers are stored by bucket index, i.e. the log2distance to the local node id.
+    discovered_peers_topic: HashMap<TopicHash, BTreeMap<Log2Distance, HashMap<NodeId, Enr>>>,
 
     /// The key used for en-/decrypting tickets.
     ticket_key: [u8; 16],
@@ -657,7 +661,7 @@ impl Service {
                                     // The bucket's index in the Vec of buckets in the kbucket table will
                                     // be one less than the distance as the log2distance 0 from the local
                                     // node, i.e. the local node, is not assigned a bucket.
-                                    let distance = index as u64 + 1;
+                                    let distance = index as Log2Distance + 1;
                                     let mut node_ids = Vec::new();
                                     bucket.iter().for_each(|node| node_ids.push(*node.key.preimage()));
                                     table_entries.insert(distance, node_ids);
@@ -777,7 +781,7 @@ impl Service {
                                                     let bucket = discovered_peers.entry(distance).or_default();
                                                     // If the intermediary storage before the topic's kbucktes is at bounds, discard the
                                                     // uncontacted peers.
-                                                    if bucket.len() < MAX_UNCONTACTED_PEERS_TOPIC_BUCKET {
+                                                    if bucket.len() < MAX_UNCONTACTED_PEERS_PER_TOPIC_BUCKET {
                                                         bucket.insert(node_id, enr.clone());
                                                         discovered_new_peer = true;
                                                     } else {
@@ -859,7 +863,7 @@ impl Service {
                     while let Some((topic, _topic_hash)) = topic_item {
                         trace!("Publishing topic {} with hash {}", topic.topic(), topic.hash());
                         sent_regtopics += self.send_register_topics(topic.clone());
-                        if sent_regtopics >= MAX_REGTOPICS_REGISTER_INTERVAL {
+                        if sent_regtopics >= MAX_REGTOPICS_REGISTER_PER_INTERVAL {
                             break
                         }
                         topic_item = topics_to_reg_iter.next();
@@ -941,10 +945,10 @@ impl Service {
             // Ensure that max_reg_attempts_bucket registration attempts are alive per bucket if that many peers are
             // available at that distance.
             for (index, bucket) in kbuckets.get_mut().buckets_iter().enumerate() {
-                if new_peers.len() >= MAX_REGTOPICS_REGISTER_INTERVAL {
+                if new_peers.len() >= MAX_REGTOPICS_REGISTER_PER_INTERVAL {
                     break;
                 }
-                let distance = index as u64 + 1;
+                let distance = index as Log2Distance + 1;
                 let mut active_reg_attempts_bucket = 0;
 
                 let registrations = reg_attempts.entry(distance).or_default();
@@ -976,7 +980,7 @@ impl Service {
                 if let Some(peers) = self.discovered_peers_topic.get_mut(&topic_hash) {
                     if let Some(bucket) = peers.get_mut(&distance) {
                         bucket.retain(|node_id, enr | {
-                            if new_peers_bucket.len() + active_reg_attempts_bucket >= MAX_REG_ATTEMPTS_DISTANCE {
+                            if new_peers_bucket.len() + active_reg_attempts_bucket >= MAX_REG_ATTEMPTS_PER_LOG2DISTANCE {
                                 true
                             } else if let Entry::Vacant(_) = registrations.reg_attempts.entry(*node_id) {
                                 debug!("Found new registration peer in uncontacted peers for topic {}. Peer: {:?}", topic_hash, node_id);
@@ -994,12 +998,12 @@ impl Service {
                 // The count of active registration attempts for a distance after expired ads have been
                 // removed is less than the max number of registration attempts that should be active
                 // per bucket and is not equal to the total number of peers available in that bucket.
-                if active_reg_attempts_bucket < MAX_REG_ATTEMPTS_DISTANCE
+                if active_reg_attempts_bucket < MAX_REG_ATTEMPTS_PER_LOG2DISTANCE
                     && registrations.reg_attempts.len() != bucket.num_entries()
                 {
                     for peer in bucket.iter() {
                         if new_peers_bucket.len() + active_reg_attempts_bucket
-                            >= MAX_REG_ATTEMPTS_DISTANCE
+                            >= MAX_REG_ATTEMPTS_PER_LOG2DISTANCE
                         {
                             break;
                         }
@@ -1376,7 +1380,7 @@ impl Service {
                             let waited_time = ticket.req_time().elapsed();
                             let wait_time = ticket.wait_time();
                             if waited_time < wait_time
-                                || waited_time >= wait_time + WAIT_TIME_MARGINAL
+                                || waited_time >= wait_time + WAIT_TIME_TOLERANCE
                             {
                                 warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
                                 let ban_timeout =
@@ -1462,7 +1466,7 @@ impl Service {
                     // size of 1280 and ENR's have a max size of 300 bytes.
                     //
                     // Bucket sizes should be 16. In this case, there should be no more than 5*DISTANCES_TO_REQUEST_PER_PEER responses, to return all required peers.
-                    if total > 5 * DISTANCES_TO_REQUEST_PER_PEER as u64 {
+                    if total > 5 * DISTANCES_TO_REQUEST_PER_PEER as Log2Distance {
                         warn!(
                             "NodesResponse has a total larger than {}, nodes will be truncated",
                             DISTANCES_TO_REQUEST_PER_PEER * 5
@@ -1996,7 +2000,7 @@ impl Service {
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
-        mut distances: Vec<u64>,
+        mut distances: Vec<Log2Distance>,
     ) {
         // NOTE: At most we only allow 5 distances to be sent (see the decoder). If each of these
         // buckets are full, that equates to 80 ENR's to respond with.
