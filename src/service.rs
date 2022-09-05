@@ -562,70 +562,10 @@ impl Service {
                             self.send_topic_queries(topic_hash, Some(callback));
                         }
                         ServiceRequest::RegisterTopic(topic) => {
-                            let topic_hash = topic.hash();
-                            if self.registration_attempts.insert(topic.clone(), BTreeMap::new()).is_some() {
-                                warn!("This topic is already being advertised");
-                            } else {
-                                let topics_field = if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
-                                    let rlp = Rlp::new(topics);
-                                    let item_count = rlp.iter().count();
-                                    let mut rlp_stream = RlpStream::new_list(item_count + 1);
-                                    for item in rlp.iter() {
-                                        if let Ok(data) = item.data().map_err(|e| debug_unreachable!("Topic item which was previously encoded in enr, cannot be decoded into data. Error {}", e)) {
-                                            rlp_stream.append(&data);
-                                        }
-                                    }
-                                    rlp_stream.append(&topic.topic().as_bytes());
-                                    rlp_stream.out()
-                                } else {
-                                    let mut rlp_stream = RlpStream::new_list(1);
-                                    rlp_stream.append(&topic.topic().as_bytes());
-                                    rlp_stream.out()
-                                };
-
-                                let enr_size = self.local_enr.read().size() + topics_field.len();
-                                if enr_size >= 300 {
-                                    error!("Failed to register topic {}. The ENR would be a total of {} bytes if this topic was registered, the maximum size is 300 bytes", topic.topic(), enr_size);
-                                }
-
-                                if self.local_enr
-                                    .write()
-                                    .insert(ENR_KEY_TOPICS, &topics_field, &self.enr_key.write())
-                                    .map_err(|e| error!("Failed to insert field 'topics' into local enr. Error {:?}", e)).is_ok() {
-
-                                    self.init_topic_kbuckets(topic_hash);
-                                    METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
-
-                                    // To fill the kbuckets closest to the topic hash as well as those further away
-                                    // (itertively getting closer to node ids to the topic hash) start a find node
-                                    // query searching for the topic hash's bytes wrapped in a NodeId.
-                                    let topic_key = NodeId::new(&topic_hash.as_bytes());
-                                    self.start_findnode_query(QueryType::FindTopic(topic_key), None);
-                                }
-                            }
+                            self.start_register_topic(topic);
                         }
                         ServiceRequest::ActiveTopics(callback) => {
-                            let mut active_topics = HashMap::<TopicHash, Vec<NodeId>>::new();
-                            self.registration_attempts.iter_mut().for_each(|(topic, reg_attempts_by_distance)| {
-                                for reg_attempts in reg_attempts_by_distance.values_mut() {
-                                    reg_attempts.reg_attempts.retain(|node_id, reg_state| {
-                                        match reg_state {
-                                            RegistrationState::Confirmed(insert_time) => {
-                                                if insert_time.elapsed() < AD_LIFETIME {
-                                                    active_topics.entry(topic.hash()).or_default().push(*node_id);
-                                                    true
-                                                } else {
-                                                    false
-                                                }
-                                            }
-                                            RegistrationState::TicketLimit(insert_time) => insert_time.elapsed() < TICKET_LIMIT_DURATION,
-                                            RegistrationState::Ticket => true,
-                                        }
-                                    });
-                                }
-                            });
-
-                            if callback.send(Ok(active_topics)).is_err() {
+                            if callback.send(Ok(self.get_active_topics())).is_err() {
                                 error!("Failed to return active topics");
                             }
                         }
@@ -876,6 +816,36 @@ impl Service {
         }
     }
 
+    fn get_active_topics(&mut self) -> HashMap<TopicHash, Vec<NodeId>> {
+        let mut active_topics = HashMap::<TopicHash, Vec<NodeId>>::new();
+        self.registration_attempts
+            .iter_mut()
+            .for_each(|(topic, reg_attempts_by_distance)| {
+                for reg_attempts in reg_attempts_by_distance.values_mut() {
+                    reg_attempts
+                        .reg_attempts
+                        .retain(|node_id, reg_state| match reg_state {
+                            RegistrationState::Confirmed(insert_time) => {
+                                if insert_time.elapsed() < AD_LIFETIME {
+                                    active_topics
+                                        .entry(topic.hash())
+                                        .or_default()
+                                        .push(*node_id);
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            RegistrationState::TicketLimit(insert_time) => {
+                                insert_time.elapsed() < TICKET_LIMIT_DURATION
+                            }
+                            RegistrationState::Ticket => true,
+                        });
+                }
+            });
+        active_topics
+    }
+
     fn init_topic_kbuckets(&mut self, topic_hash: TopicHash) {
         trace!("Initiating kbuckets for topic hash {}", topic_hash);
 
@@ -927,6 +897,64 @@ impl Service {
             }
         }
         self.topics_kbuckets.insert(topic_hash, kbuckets);
+    }
+
+    /// Starts the continuous process of registering a topic, i.e. advertising it by peers.
+    fn start_register_topic(&mut self, topic: Topic) {
+        let topic_hash = topic.hash();
+        if self
+            .registration_attempts
+            .insert(topic.clone(), BTreeMap::new())
+            .is_some()
+        {
+            warn!("The topic {} is already being advertised", topic.topic());
+        } else {
+            let topics_field = if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
+                let rlp = Rlp::new(topics);
+                let item_count = rlp.iter().count();
+                let mut rlp_stream = RlpStream::new_list(item_count + 1);
+                for item in rlp.iter() {
+                    if let Ok(data) = item.data().map_err(|e| debug_unreachable!("Topic item which was previously encoded in enr, cannot be decoded into data. Error {}", e)) {
+                        rlp_stream.append(&data);
+                    }
+                }
+                rlp_stream.append(&topic.topic().as_bytes());
+                rlp_stream.out()
+            } else {
+                let mut rlp_stream = RlpStream::new_list(1);
+                rlp_stream.append(&topic.topic().as_bytes());
+                rlp_stream.out()
+            };
+
+            let enr_size = self.local_enr.read().size() + topics_field.len();
+            if enr_size >= 300 {
+                error!("Failed to register topic {}. The ENR would be a total of {} bytes if this topic was registered, the maximum size is 300 bytes", topic.topic(), enr_size);
+            }
+
+            if self
+                .local_enr
+                .write()
+                .insert(ENR_KEY_TOPICS, &topics_field, &self.enr_key.write())
+                .map_err(|e| {
+                    error!(
+                        "Failed to insert field 'topics' into local enr. Error {:?}",
+                        e
+                    )
+                })
+                .is_ok()
+            {
+                self.init_topic_kbuckets(topic_hash);
+                METRICS
+                    .topics_to_publish
+                    .store(self.registration_attempts.len(), Ordering::Relaxed);
+
+                // To fill the kbuckets closest to the topic hash as well as those further away
+                // (itertively getting closer to node ids to the topic hash) start a find node
+                // query searching for the topic hash's bytes wrapped in a NodeId.
+                let topic_key = NodeId::new(&topic_hash.as_bytes());
+                self.start_findnode_query(QueryType::FindTopic(topic_key), None);
+            }
+        }
     }
 
     /// Internal function that starts a topic registration. This function should not be called outside of [`REGISTER_INTERVAL`].
