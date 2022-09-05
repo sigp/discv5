@@ -1403,7 +1403,7 @@ impl Service {
                     Duration::default(),
                 );
 
-                // If there is no wait time and the ad is successfuly registered as an ad, the new ticket is sent
+                // If there is no wait time and the ad is successfully registered as an ad, the new ticket is sent
                 // with wait time set to zero indicating successful registration.
                 if let Err((wait_time, e)) =
                     self.ads
