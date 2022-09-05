@@ -274,7 +274,7 @@ pub struct Service {
     /// The key used for en-/decrypting tickets.
     ticket_key: [u8; 16],
 
-    /// Tickets received by other nodes.
+    /// Tickets received from other nodes.
     tickets: Tickets,
 
     /// Locally initiated topic query requests in process.
