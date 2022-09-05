@@ -112,11 +112,7 @@ impl Tickets {
 
     /// Removes all tickets held for the given topic.
     pub fn remove(&mut self, topic: &Topic) {
-        for (active_topic, _) in self.tickets.iter() {
-            if active_topic.topic() == topic {
-                self.tickets.remove(active_topic);
-            }
-        }
+        self.tickets.retain(|active_topic, _| active_topic.topic() != topic);
     }
 
 }
