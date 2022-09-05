@@ -195,7 +195,7 @@ pub enum ServiceRequest {
     RemoveTopic(Topic, oneshot::Sender<Result<String, RequestError>>),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
-    /// Retrieves the ads adveritsed for other nodes for a given topic.
+    /// Retrieves the ads advertised for other nodes for a given topic.
     Ads(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
     /// Retrieves the registration attempts acitve for a given topic.
     RegistrationAttempts(
