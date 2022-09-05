@@ -290,7 +290,7 @@ pub enum TopicQueryState {
     /// The topic look up has not obtained enough results and has timed out.
     TimedOut(TopicHash),
     /// Not enough ads have been returned from the first round of sending TOPICQUERY
-    /// requests, new peers in the topic's kbucktes should be queried.
+    /// requests, new peers in the topic's kbuckets should be queried.
     Unsatisfied(TopicHash),
 }
 
