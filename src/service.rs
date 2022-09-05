@@ -80,10 +80,10 @@ const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_REGTOPICS_REGISTER_PER_INTERVAL: usize = 16;
 
 /// The max number of uncontacted peers to store before the kbuckets per topic.
-const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
+const MAX_UNCONTACTED_PEERS_PER_TOPIC_BUCKET: usize = 16;
 
 /// The duration in seconds which a node can come late to an assigned wait time.
-const WAIT_TIME_MARGINAL: Duration = Duration::from_secs(5);
+const WAIT_TIME_TOLERANCE: Duration = Duration::from_secs(5);
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -191,13 +191,13 @@ pub enum ServiceRequest {
     /// RegisterTopic publishes this node as an advertiser for a topic in a discv5 network
     /// until removed.
     RegisterTopic(Topic),
-    /// Stops publishing this node as an advetiser for a topic.
+    /// Stops publishing this node as an advertiser for a topic.
     RemoveTopic(Topic, oneshot::Sender<Result<String, RequestError>>),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
-    /// Retrieves the ads adveritsed for other nodes for a given topic.
+    /// Retrieves the ads advertised for other nodes for a given topic.
     Ads(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
-    /// Retrieves the registration attempts acitve for a given topic.
+    /// Retrieves the registration attempts active for a given topic.
     RegistrationAttempts(
         Topic,
         oneshot::Sender<Result<BTreeMap<u64, RegAttempts>, RequestError>>,
@@ -259,22 +259,21 @@ pub struct Service {
     /// Ads advertised locally for other nodes.
     ads: Ads,
 
-    /// Topics tracks registration attempts of the topic hashes to advertise on
-    /// other nodes.
+    /// Registrations attempts underway for each topic.
     registration_attempts: HashMap<Topic, BTreeMap<u64, RegAttempts>>,
 
     /// KBuckets per topic hash.
     topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
 
     /// The peers returned in a NODES response to a TOPICQUERY or REGTOPIC request are inserted in
-    /// this intermediary stroage to check their connectivity before inserting them in the topic's
+    /// this intermediary storage to check their connectivity before inserting them in the topic's
     /// kbuckets.
     discovered_peers_topic: HashMap<TopicHash, BTreeMap<u64, HashMap<NodeId, Enr>>>,
 
     /// The key used for en-/decrypting tickets.
     ticket_key: [u8; 16],
 
-    /// Tickets received by other nodes.
+    /// Tickets received from other nodes.
     tickets: Tickets,
 
     /// Locally initiated topic query requests in process.
@@ -291,12 +290,12 @@ pub enum TopicQueryState {
     /// The topic look up has not obtained enough results and has timed out.
     TimedOut(TopicHash),
     /// Not enough ads have been returned from the first round of sending TOPICQUERY
-    /// requests, new peers in the topic's kbucktes should be queried.
+    /// requests, new peers in the topic's kbuckets should be queried.
     Unsatisfied(TopicHash),
 }
 
 /// At any given time, a set number of registrations should be active per topic hash to
-/// set to be registered. A registration is active when either a ticket for an adslot is
+/// set to be registered. A registration is active when either a ticket for an ad slot is
 /// held and the ticket wait time has not yet expired, or a REGCONFIRMATION has been
 /// received for an ad slot and the ad lifetime has not yet elapsed.
 #[derive(Debug, Clone)]
@@ -307,7 +306,7 @@ pub enum RegistrationState {
     /// wait time.
     Ticket,
     /// A fixed number of tickets are accepted within a certain time span. A node id in
-    /// ticket limit regsitration state will not be sent a REGTOPIC till the ticket
+    /// ticket limit registration state will not be sent a REGTOPIC till the ticket
     /// [`TICKET_LIMIT_DURATION`] has expired.
     TicketLimit(Instant),
 }
