@@ -266,7 +266,7 @@ pub struct Service {
     topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
 
     /// The peers returned in a NODES response to a TOPICQUERY or REGTOPIC request are inserted in
-    /// this intermediary stroage to check their connectivity before inserting them in the topic's
+    /// this intermediary storage to check their connectivity before inserting them in the topic's
     /// kbuckets.
     discovered_peers_topic: HashMap<TopicHash, BTreeMap<u64, HashMap<NodeId, Enr>>>,
 
