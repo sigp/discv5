@@ -550,7 +550,7 @@ impl Service {
                                 self.init_topic_kbuckets(topic_hash);
                             }
                             // To fill the kbuckets closest to the topic hash as well as those further away
-                            // (itertively getting closer to node ids to the topic hash) start a find node
+                            // (iteratively getting closer to node ids to the topic hash) start a find node
                             // query searching for the topic hash's bytes wrapped in a NodeId.
                             let topic_key = NodeId::new(&topic_hash.as_bytes());
                             self.start_findnode_query(QueryType::FindTopic(topic_key), None);
