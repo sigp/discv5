@@ -306,8 +306,8 @@ pub enum RegistrationState {
     /// wait time.
     Ticket,
     /// A fixed number of tickets are accepted within a certain time span. A node id in
-    /// ticket limit regsitration state will not be sent a REGTOPIC till the ticket
-    /// TICKET_LIMITER_DURATION has expired.
+    /// ticket limit registration state will not be sent a REGTOPIC until the ticket
+    /// TICKET_LIMIT_DURATION has expired.
     TicketLimit(Instant),
 }
 
