@@ -191,7 +191,7 @@ pub enum ServiceRequest {
     /// RegisterTopic publishes this node as an advertiser for a topic in a discv5 network
     /// until removed.
     RegisterTopic(Topic),
-    /// Stops publishing this node as an advetiser for a topic.
+    /// Stops publishing this node as an advertiser for a topic.
     RemoveTopic(Topic, oneshot::Sender<Result<String, RequestError>>),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
