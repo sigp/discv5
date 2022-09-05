@@ -80,7 +80,7 @@ const REGISTER_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_REGTOPICS_REGISTER_PER_INTERVAL: usize = 16;
 
 /// The max number of uncontacted peers to store before the kbuckets per topic.
-const MAX_UNCONTACTED_PEERS_TOPIC_BUCKET: usize = 16;
+const MAX_UNCONTACTED_PEERS_PER_TOPIC_BUCKET: usize = 16;
 
 /// The duration in seconds which a node can come late to an assigned wait time.
 const WAIT_TIME_MARGINAL: Duration = Duration::from_secs(5);
