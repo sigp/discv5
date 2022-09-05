@@ -881,6 +881,8 @@ impl Service {
                         },
                     );
 
+                    // Requests are only relayed to peers in the local routing table, i.e. that we have possibly passed in a
+                    // NODES response to the initiator.
                     if let Some(receiver) = self.find_enr(&to_node_id) {
                         if let Some(contact) = self.contact_from_enr(&receiver) {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
