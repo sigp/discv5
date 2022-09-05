@@ -323,7 +323,7 @@ pub struct ActiveTopicQuery {
     /// The resulting ad nodes are returned to the app layer when the query has reached
     /// a Finished, TimedOut or Dry state.
     callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
-    /// A start time is used to montior time out of the query.
+    /// A start time is used to monitor time out of the query.
     start: Instant,
     /// A query is marked as dry being true if no peers are found in the topic's kbuckets
     /// that aren't already queried peers.
