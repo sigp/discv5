@@ -259,8 +259,7 @@ pub struct Service {
     /// Ads advertised locally for other nodes.
     ads: Ads,
 
-    /// Topics tracks registration attempts of the topic hashes to advertise on
-    /// other nodes.
+    /// Registrations attempts underway for each topic.
     registration_attempts: HashMap<Topic, BTreeMap<u64, RegAttempts>>,
 
     /// KBuckets per topic hash.
