@@ -197,7 +197,7 @@ pub enum ServiceRequest {
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
     /// Retrieves the ads advertised for other nodes for a given topic.
     Ads(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
-    /// Retrieves the registration attempts acitve for a given topic.
+    /// Retrieves the registration attempts active for a given topic.
     RegistrationAttempts(
         Topic,
         oneshot::Sender<Result<BTreeMap<u64, RegAttempts>, RequestError>>,
