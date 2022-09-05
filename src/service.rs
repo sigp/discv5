@@ -312,8 +312,8 @@ pub enum RegistrationState {
 }
 
 /// An active topic query/lookup keeps track of which peers from the topic's kbuckets
-/// have already been queired until the set number of ads are found for the lookup or it
-/// is prematurely terminated in lack of peers or time.
+/// have already been queried until the set number of ads are found for the lookup or it
+/// is prematurely terminated by lack of peers or time.
 pub struct ActiveTopicQuery {
     /// A NodeId mapped to false is waiting for a response. A value of true means the
     /// TOPICQUERY has received a response or the request has failed.
