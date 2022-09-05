@@ -68,7 +68,7 @@ mod ip_vote;
 mod query_info;
 mod test;
 
-/// The log2distance between to keys.
+/// The log2distance between two keys.
 pub type Log2Distance = u64;
 
 /// The number of distances (buckets) we simultaneously request from each peer.
