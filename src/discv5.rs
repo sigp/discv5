@@ -416,7 +416,7 @@ impl Discv5 {
 
     /// Updates the local ENR TCP/UDP socket.
     pub fn update_local_enr_socket(&self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
-        let local_enr = self.local_enr.read();
+        let mut local_enr = self.local_enr.write();
         let update_socket: Option<SocketAddr> = match socket_addr {
             SocketAddr::V4(socket_addr) => {
                 if Some(socket_addr) != local_enr.udp4_socket() {
@@ -435,13 +435,11 @@ impl Discv5 {
         };
         if let Some(new_socket_addr) = update_socket {
             if is_tcp {
-                self.local_enr
-                    .write()
+                local_enr
                     .set_tcp_socket(new_socket_addr, &self.enr_key.read())
                     .is_ok()
             } else {
-                self.local_enr
-                    .write()
+                local_enr
                     .set_udp_socket(new_socket_addr, &self.enr_key.read())
                     .is_ok()
             }
