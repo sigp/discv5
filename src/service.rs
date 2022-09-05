@@ -295,7 +295,7 @@ pub enum TopicQueryState {
 }
 
 /// At any given time, a set number of registrations should be active per topic hash to
-/// set to be registered. A registration is active when either a ticket for an adslot is
+/// set to be registered. A registration is active when either a ticket for an ad slot is
 /// held and the ticket wait time has not yet expired, or a REGCONFIRMATION has been
 /// received for an ad slot and the ad lifetime has not yet elapsed.
 #[derive(Debug, Clone)]
