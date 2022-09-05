@@ -109,6 +109,16 @@ impl Tickets {
             .insert_at(active_topic, ActiveTicket::new(contact, ticket), wait_time);
         Ok(())
     }
+
+    /// Removes all tickets held for the given topic.
+    pub fn remove(&mut self, topic: &Topic) {
+        for (active_topic, _) in self.tickets.iter() {
+            if active_topic.topic() == topic {
+                self.tickets.remove(active_topic);
+            }
+        }
+    }
+
 }
 
 impl Stream for Tickets {
@@ -153,7 +163,7 @@ pub struct TicketHistory {
     /// The ticket_count keeps track of how many tickets are stored for the
     /// ActiveTopic.
     ticket_count: HashMap<ActiveTopic, u8>,
-    /// Up to MAX_TICKETS_PER_NODE_TOPIC PendingTickets in expirations maps
+    /// Up to [`MAX_TICKETS_PER_NODE_TOPIC`] PendingTickets in expirations map
     /// to an ActiveTopic in ticket_count.
     expirations: VecDeque<PendingTicket>,
     /// The time a PendingTicket remains in expirations.

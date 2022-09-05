@@ -573,6 +573,8 @@ impl Service {
                             }
                         }
                         ServiceRequest::RemoveTopic(topic, callback) => {
+                            self.tickets.remove(&topic);
+
                             let result = if self.registration_attempts.remove(&topic).is_some() {
                                 METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
                                 Ok(())
