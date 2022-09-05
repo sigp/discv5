@@ -148,7 +148,7 @@ impl<H: Hasher> Hash for Topic<H> {
 }
 
 impl<H: Hasher> PartialEq for Topic<H> {
-    /// Each hash algortihm used to publish a hashed topic (as XOR metric key) is in
+    /// Each hash algorithm used to publish a hashed topic (as XOR metric key) is in
     /// discv5 seen as its own [`Topic<H>`] upon comparison. That means a topic string
     /// can be published/registered more than once using different [`Hasher`]s.
     fn eq(&self, other: &Topic<H>) -> bool {

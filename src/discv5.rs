@@ -60,7 +60,7 @@ pub const ENR_KEY_TOPICS: &str = "topics";
 // Discv5 versions.
 iota! {
     pub const VERSION_NAT: u8 = 1 << iota;
-        , VERISON_TOPICS
+        , VERSION_TOPICS
 }
 
 /// Check if a given peer supports one or more versions of the Discv5 protocol.
@@ -89,7 +89,7 @@ mod test;
 /// Events that can be produced by the `Discv5` event stream.
 #[derive(Debug)]
 pub enum Discv5Event {
-    /// A node has been discovered from a FINDNODES request.
+    /// A node has been discovered from a FINDNODE request.
     ///
     /// The ENR of the node is returned. Various properties can be derived from the ENR.
     /// This happen spontaneously through queries as nodes return ENR's. These ENR's are not
@@ -141,9 +141,9 @@ impl Discv5 {
         enr_key: CombinedKey,
         mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
-        // ensure the keypair matches the one that signed the enr.
+        // ensure the key-pair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
-            return Err("Provided keypair does not match the provided ENR");
+            return Err("Provided key-pair does not match the provided ENR");
         }
 
         // If an executor is not provided, assume a current tokio runtime is running. If not panic.
@@ -177,7 +177,7 @@ impl Discv5 {
         if let Err(e) =
             local_enr
                 .write()
-                .insert(ENR_KEY_VERSION, &[VERISON_TOPICS], &enr_key.write())
+                .insert(ENR_KEY_VERSION, &[VERSION_TOPICS], &enr_key.write())
         {
             error!("Failed writing to enr. Error {:?}", e);
             return Err("Failed to insert field 'version' into local enr");
@@ -308,7 +308,7 @@ impl Discv5 {
         nodes_to_send
     }
 
-    /// Mark a node in the routing table as `Disconnnected`.
+    /// Mark a node in the routing table as `Disconnected`.
     ///
     /// A `Disconnected` node will be present in the routing table and will be only
     /// used if there are no other `Connected` peers in the bucket.
@@ -572,7 +572,7 @@ impl Discv5 {
             let topic = Topic::new(topic);
             let topic_hash = topic.hash();
 
-            let event = ServiceRequest::TableEntriesIdTopic(topic_hash, callback_send);
+            let event = ServiceRequest::TableEntriesIdTopicKBuckets(topic_hash, callback_send);
 
             channel
                 .send(event)
@@ -626,12 +626,12 @@ impl Discv5 {
     }
 
     /// Removes a topic we do not wish to keep advertising on other nodes. This does not tell any nodes
-    /// we are currently adveritsed on to remove us as advertisements, however in the next registration
+    /// we are currently advertised on to remove us as advertisements, however in the next registration
     /// interval no registration attempts will be made for the topic.
     pub fn remove_topic(
         &self,
         topic_str: &'static str,
-    ) -> impl Future<Output = Result<String, RequestError>> + 'static {
+    ) -> impl Future<Output = Result<(), RequestError>> + 'static {
         let channel = self.clone_channel();
 
         async move {
@@ -645,7 +645,7 @@ impl Discv5 {
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
             callback_recv.await.map_err(|e| {
                 RequestError::ChannelFailed(format!(
-                    "Failed to receive removed topic {}. Error {}",
+                    "Failed to receive result from remove topic operation for topic {}. Error {}",
                     topic_str, e
                 ))
             })?
@@ -658,7 +658,7 @@ impl Discv5 {
     /// registering a topic it must be removed by calling remove_topic.
     pub fn register_topic(
         &self,
-        topic: &'static str,
+        topic_str: &'static str,
     ) -> impl Future<Output = Result<(), RequestError>> + 'static {
         let channel = self.clone_channel();
 
@@ -666,24 +666,30 @@ impl Discv5 {
             let channel = channel
                 .as_ref()
                 .map_err(|_| RequestError::ServiceNotStarted)?;
-            let topic = Topic::new(topic);
+            let topic = Topic::new(topic_str);
             debug!(
                 "Registering topic {} with topic hash {}",
                 topic,
                 topic.hash(),
             );
-            let event = ServiceRequest::RegisterTopic(topic);
+            let (callback_send, callback_recv) = oneshot::channel();
+            let event = ServiceRequest::RegisterTopic(topic, callback_send);
             // send the request
             channel
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
-            Ok(())
+            callback_recv.await.map_err(|e| {
+                RequestError::ChannelFailed(format!(
+                    "Failed to receive result from register topic operation for topic {}. Error {}",
+                    topic_str, e
+                ))
+            })?
         }
     }
 
     /// Retrieves the registration attempts for a given topic, either confirmed registrations that
-    /// are still active on other nodes or regsitration attempts that returned tickets we are
+    /// are still active on other nodes or registration attempts that returned tickets we are
     /// currently waiting on to expire (ticket wait time) before re-attempting registration at that
     /// same node. Caution! The returned map will also contain
     pub fn reg_attempts(
@@ -705,7 +711,7 @@ impl Discv5 {
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ServiceNotStarted)?;
-            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive regsitration attempts for topic {} with topic hash {}. Error {}", topic_str, topic_hash, e)))?
+            callback_recv.await.map_err(|e| RequestError::ChannelFailed(format!("Failed to receive registration attempts for topic {} with topic hash {}. Error {}", topic_str, topic_hash, e)))?
         }
     }
     /// Retrieves the topics that we have published on other nodes.
@@ -761,7 +767,7 @@ impl Discv5 {
                     "Failed to receive ads for topic {} with topic hash {}. Error {}",
                     topic, topic_hash, e
                 ))
-            })?
+            })
         }
     }
 

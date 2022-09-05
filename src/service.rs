@@ -22,7 +22,7 @@ use crate::{
         topic::TopicHash,
         Ads, AD_LIFETIME,
     },
-    discv5::{CHECK_VERSION, ENR_KEY_TOPICS, PERMIT_BAN_LIST, VERISON_TOPICS, VERSION_NAT},
+    discv5::{CHECK_VERSION, ENR_KEY_TOPICS, PERMIT_BAN_LIST, VERSION_NAT, VERSION_TOPICS},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -193,20 +193,20 @@ pub enum ServiceRequest {
     TopicQuery(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
     /// RegisterTopic publishes this node as an advertiser for a topic in a discv5 network
     /// until removed.
-    RegisterTopic(Topic),
+    RegisterTopic(Topic, oneshot::Sender<Result<(), RequestError>>),
     /// Stops publishing this node as an advertiser for a topic.
-    RemoveTopic(Topic, oneshot::Sender<Result<String, RequestError>>),
+    RemoveTopic(Topic, oneshot::Sender<Result<(), RequestError>>),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
     /// Retrieves the ads advertised for other nodes for a given topic.
-    Ads(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
+    Ads(TopicHash, oneshot::Sender<Vec<Enr>>),
     /// Retrieves the registration attempts active for a given topic.
     RegistrationAttempts(
         Topic,
         oneshot::Sender<Result<BTreeMap<Log2Distance, RegAttempts>, RequestError>>,
     ),
-    /// Retrieves the node id of entries in a given topic's kbuckets by distance.
-    TableEntriesIdTopic(
+    /// Retrieves the node id of entries in a given topic's kbuckets by log2distance (bucket index).
+    TableEntriesIdTopicKBuckets(
         TopicHash,
         oneshot::Sender<Result<BTreeMap<Log2Distance, Vec<NodeId>>, RequestError>>,
     ),
@@ -561,8 +561,11 @@ impl Service {
 
                             self.send_topic_queries(topic_hash, Some(callback));
                         }
-                        ServiceRequest::RegisterTopic(topic) => {
-                            self.start_register_topic(topic);
+                        ServiceRequest::RegisterTopic(topic, callback) => {
+                            let result = self.start_topic_registration(topic.clone());
+                            if callback.send(result).is_err() {
+                                error!("Failed to return result of register topic operation for topic {}", topic);
+                            }
                         }
                         ServiceRequest::ActiveTopics(callback) => {
                             if callback.send(Ok(self.get_active_topics())).is_err() {
@@ -570,33 +573,36 @@ impl Service {
                             }
                         }
                         ServiceRequest::RemoveTopic(topic, callback) => {
-                            if self.registration_attempts.remove(&topic).is_some() {
+                            let result = if self.registration_attempts.remove(&topic).is_some() {
                                 METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
-                                if callback.send(Ok(topic.topic())).is_err() {
-                                    error!("Failed to return the removed topic {}", topic.topic());
-                                }
+                                Ok(())
+                            } else {
+                                Err(RequestError::TopicNotRegistered)
+                            };
+                            if callback.send(result).is_err() {
+                                error!("Failed to return the result of the remove topic operation for topic {}", topic);
                             }
                         }
                         ServiceRequest::Ads(topic_hash, callback) => {
                             let ads = self.ads.get_ad_nodes(topic_hash).map(|ad_node| ad_node.node_record().clone()).collect::<Vec<Enr>>();
-                            if callback.send(Ok(ads)).is_err() {
+                            if callback.send(ads).is_err() {
                                 error!("Failed to return ads for topic {}", topic_hash);
                             }
                         }
                         ServiceRequest::RegistrationAttempts(topic_hash, callback) => {
                             let reg_attempts = if let Some(reg_attempts) = self.registration_attempts.get(&topic_hash) {
-                                reg_attempts.clone()
+                                Ok(reg_attempts.clone())
                             } else {
                                 error!("Topic hash {} is not being registered", topic_hash);
-                                BTreeMap::new()
+                                Err(RequestError::TopicNotRegistered)
                             };
-                            if callback.send(Ok(reg_attempts)).is_err() {
+                            if callback.send(reg_attempts).is_err() {
                                 error!("Failed to return registration attempts for topic hash {}", topic_hash);
                             }
                         }
-                        ServiceRequest::TableEntriesIdTopic(topic_hash, callback) => {
-                            let mut table_entries = BTreeMap::new();
-                            if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
+                        ServiceRequest::TableEntriesIdTopicKBuckets(topic_hash, callback) => {
+                            let table_entries = if let Some(kbuckets) = self.topics_kbuckets.get_mut(&topic_hash) {
+                                let mut entries = BTreeMap::new();
                                 for (index, bucket) in kbuckets.buckets_iter().enumerate() {
                                     // The bucket's index in the Vec of buckets in the kbucket table will
                                     // be one less than the distance as the log2distance 0 from the local
@@ -604,10 +610,13 @@ impl Service {
                                     let distance = index as Log2Distance + 1;
                                     let mut node_ids = Vec::new();
                                     bucket.iter().for_each(|node| node_ids.push(*node.key.preimage()));
-                                    table_entries.insert(distance, node_ids);
+                                    entries.insert(distance, node_ids);
                                 }
-                            }
-                            if callback.send(Ok(table_entries)).is_err() {
+                                Ok(entries)
+                            } else {
+                                Err(RequestError::TopicKBucketsUninitialised)
+                            };
+                            if callback.send(table_entries).is_err() {
                                 error!("Failed to return table entries' ids for topic hash {}", topic_hash);
                             }
                         }
@@ -638,7 +647,7 @@ impl Service {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
                                 if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
-                                    warn!("Failed to send who are you to unknonw enr peer {}", e);
+                                    warn!("Failed to send who are you to unknown enr peer {}", e);
                                 }
                             }
                         }
@@ -693,7 +702,7 @@ impl Service {
                                 let mut discovered_new_peer = false;
                                 if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
                                     for enr in found_enrs {
-                                        if !CHECK_VERSION(&enr, vec![VERISON_TOPICS, VERISON_TOPICS|VERSION_NAT]) {
+                                        if !CHECK_VERSION(&enr, vec![VERSION_TOPICS, VERSION_TOPICS|VERSION_NAT]) {
                                             continue;
                                         }
                                         trace!("Found new peer {} for topic {}", enr, topic_hash);
@@ -719,7 +728,7 @@ impl Service {
                                                     NodeId::new(&topic_hash.as_bytes()).into();
                                                 if let Some(distance) = peer_key.log2_distance(&topic_key) {
                                                     let bucket = discovered_peers.entry(distance).or_default();
-                                                    // If the intermediary storage before the topic's kbucktes is at bounds, discard the
+                                                    // If the intermediary storage before the topic's kbuckets is at bounds, discard the
                                                     // uncontacted peers.
                                                     if bucket.len() < MAX_UNCONTACTED_PEERS_PER_TOPIC_BUCKET {
                                                         bucket.insert(node_id, enr.clone());
@@ -801,7 +810,7 @@ impl Service {
                     let mut sent_regtopics = 0;
                     let mut topic_item = topics_to_reg_iter.next();
                     while let Some((topic, _topic_hash)) = topic_item {
-                        trace!("Publishing topic {} with hash {}", topic.topic(), topic.hash());
+                        trace!("Publishing topic {} with hash {}", topic, topic.hash());
                         sent_regtopics += self.send_register_topics(topic.clone());
                         if sent_regtopics >= MAX_REGTOPICS_REGISTER_PER_INTERVAL {
                             break
@@ -876,7 +885,7 @@ impl Service {
 
         for entry in self.kbuckets.write().iter() {
             let enr = entry.node.value.clone();
-            if !CHECK_VERSION(&enr, vec![VERISON_TOPICS, VERISON_TOPICS | VERSION_NAT]) {
+            if !CHECK_VERSION(&enr, vec![VERSION_TOPICS, VERSION_TOPICS | VERSION_NAT]) {
                 continue;
             }
             match kbuckets.insert_or_update(entry.node.key, enr, entry.status) {
@@ -899,58 +908,64 @@ impl Service {
         self.topics_kbuckets.insert(topic_hash, kbuckets);
     }
 
-    /// Starts the continuous process of registering a topic, i.e. advertising it by peers.
-    fn start_register_topic(&mut self, topic: Topic) {
+    /// Starts the continuous process of registering a topic, i.e. advertising it at peers.
+    fn start_topic_registration(&mut self, topic: Topic) -> Result<(), RequestError> {
         let topic_hash = topic.hash();
-        if self.registration_attempts.contains_key(&topic.clone()) {
-            warn!("The topic {} is already being advertised", topic.topic());
-        } else {
-            self.registration_attempts
-                .insert(topic.clone(), BTreeMap::new());
-            let topics_field = if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
-                let rlp = Rlp::new(topics);
-                let item_count = rlp.iter().count();
-                let mut rlp_stream = RlpStream::new_list(item_count + 1);
-                for item in rlp.iter() {
-                    if let Ok(data) = item.data().map_err(|e| debug_unreachable!("Topic item which was previously encoded in enr, cannot be decoded into data. Error {}", e)) {
-                        rlp_stream.append(&data);
-                    }
+        if self.registration_attempts.contains_key(&topic) {
+            warn!("The topic {} is already being advertised", topic);
+            return Err(RequestError::TopicAlreadyRegistered);
+        }
+        self.registration_attempts
+            .insert(topic.clone(), BTreeMap::new());
+
+        let topics_field = if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
+            let rlp = Rlp::new(topics);
+            let item_count = rlp.iter().count();
+            let mut rlp_stream = RlpStream::new_list(item_count + 1);
+            for item in rlp.iter() {
+                if let Ok(data) = item.data().map_err(|e| debug_unreachable!("Topic item which was previously encoded in enr, cannot be decoded into data. Error {}", e)) {
+                    rlp_stream.append(&data);
                 }
-                rlp_stream.append(&topic.topic().as_bytes());
-                rlp_stream.out()
-            } else {
-                let mut rlp_stream = RlpStream::new_list(1);
-                rlp_stream.append(&topic.topic().as_bytes());
-                rlp_stream.out()
-            };
-
-            let enr_size = self.local_enr.read().size() + topics_field.len();
-            if enr_size >= 300 {
-                error!("Failed to register topic {}. The ENR would be a total of {} bytes if this topic was registered, the maximum size is 300 bytes", topic.topic(), enr_size);
             }
+            rlp_stream.append(&topic.topic().as_bytes());
+            rlp_stream.out()
+        } else {
+            let mut rlp_stream = RlpStream::new_list(1);
+            rlp_stream.append(&topic.topic().as_bytes());
+            rlp_stream.out()
+        };
 
-            if self
-                .local_enr
+        let enr_size = self.local_enr.read().size() + topics_field.len();
+        if enr_size >= 300 {
+            error!("Failed to register topic {}. The ENR would be a total of {} bytes if this topic was registered, the maximum size is 300 bytes", topic.topic(), enr_size);
+            return Err(RequestError::InsufficientSpaceEnr(topic));
+        }
+
+        let result =
+            self.local_enr
                 .write()
-                .insert(ENR_KEY_TOPICS, &topics_field, &self.enr_key.write())
-                .map_err(|e| {
-                    error!(
-                        "Failed to insert field 'topics' into local enr. Error {:?}",
-                        e
-                    )
-                })
-                .is_ok()
-            {
+                .insert(ENR_KEY_TOPICS, &topics_field, &self.enr_key.write());
+
+        match result {
+            Err(e) => {
+                error!(
+                    "Failed to insert field 'topics' into local enr. Error {:?}",
+                    e
+                );
+                Err(RequestError::EnrWriteFailed)
+            }
+            Ok(_) => {
                 self.init_topic_kbuckets(topic_hash);
                 METRICS
                     .topics_to_publish
                     .store(self.registration_attempts.len(), Ordering::Relaxed);
 
                 // To fill the kbuckets closest to the topic hash as well as those further away
-                // (itertively getting closer to node ids to the topic hash) start a find node
+                // (iteratively getting closer to node ids to the topic hash) start a find node
                 // query searching for the topic hash's bytes wrapped in a NodeId.
                 let topic_key = NodeId::new(&topic_hash.as_bytes());
                 self.start_findnode_query(QueryType::FindTopic(topic_key), None);
+                Ok(())
             }
         }
     }
@@ -1087,7 +1102,7 @@ impl Service {
             });
 
         // Attempt to query max_topic_query_peers peers at a time. Possibly some peers will return more than one result
-        // (ADNODES of length > 1), or no results will be returned from that peer.
+        // (NODES of length > 1), or no results will be returned from that peer.
         let max_topic_query_peers = self.config.max_nodes_response;
 
         let mut new_query_peers: Vec<Enr> = Vec::new();
@@ -1381,7 +1396,7 @@ impl Service {
                     warn!("The topic given in the REGTOPIC request body cannot be found in sender's 'topics' enr field. Blacklisting peer {}.", node_address.node_id);
                     let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                     PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                    self.rpc_failure(id, RequestError::InvalidTopicsEnr);
+                    self.rpc_failure(id, RequestError::InvalidEnrTopicsField);
                     return;
                 }
 
@@ -1452,7 +1467,7 @@ impl Service {
                 self.send_ticket_response(node_address, id, topic, new_ticket, wait_time);
             }
             RequestBody::TopicQuery { topic } => {
-                self.send_topic_query_adnodes_response(node_address, id, topic);
+                self.send_topic_query_nodes_response(node_address, id, topic);
             }
         }
     }
@@ -1526,7 +1541,7 @@ impl Service {
                             }
                             return;
                         } else if !distances.is_empty() {
-                            // This is a repsonse to a FINDNODE request with specifically request distances
+                            // This is a response to a FINDNODE request with specifically request distances
                             // Filter out any nodes that are not of the correct distance
 
                             let peer_key: kbucket::Key<NodeId> = node_id.into();
@@ -1992,7 +2007,7 @@ impl Service {
 
     /// Response to a topic query containing the nodes currently advertised for the
     /// requested topic if any.
-    fn send_topic_query_adnodes_response(
+    fn send_topic_query_nodes_response(
         &mut self,
         node_address: NodeAddress,
         rpc_id: RequestId,
@@ -2110,14 +2125,14 @@ impl Service {
             for enr in nodes_to_send.into_iter() {
                 let entry_size = rlp::encode(&enr).len();
                 // Responses assume that a session is established. Thus, on top of the encoded
-                // ENR's the packet should be a regular message. A regular message has an IV (16
-                // bytes), and a header of 55 bytes. The find-nodes RPC requires 16 bytes for the ID and the
+                // ENRs the packet should be a regular message. A regular message has an IV (16
+                // bytes), and a header of 55 bytes. The FINDNODE RPC requires 16 bytes for the ID and the
                 // `total` field. Also there is a 16 byte HMAC for encryption and an extra byte for
                 // RLP encoding.
                 //
-                // We could also be responding via an autheader which can take up to 282 bytes in its
+                // We could also be responding via an auth header which can take up to 282 bytes in its
                 // header.
-                // As most messages will be normal messages we will try and pack as many ENR's we
+                // As most messages will be normal messages we will try and pack as many ENRs we
                 // can in and drop the response packet if a user requests an auth message of a very
                 // packed response.
                 //
@@ -2316,7 +2331,7 @@ impl Service {
 
     /// Update the connection status of a node in the routing table.
     /// This tracks whether or not we should be pinging peers. Disconnected peers are removed from
-    /// the queue and newly added peers to the routing table (or topics kbucktes) are added to the queue.
+    /// the queue and newly added peers to the routing table (or topics kbuckets) are added to the queue.
     fn connection_updated(
         &mut self,
         node_id: NodeId,
@@ -2390,7 +2405,7 @@ impl Service {
                     enr.clone(),
                     Some(ConnectionState::Connected),
                 ) {
-                    UpdateResult::Failed(FailureReason::KeyNonExistant) => {}
+                    UpdateResult::Failed(FailureReason::KeyNonExistent) => {}
                     UpdateResult::Failed(reason) => {
                         self.peers_to_ping.remove(&node_id);
                         debug!(
@@ -2405,7 +2420,7 @@ impl Service {
                 for kbuckets in self.topics_kbuckets.values_mut() {
                     match kbuckets.update_node(&key, enr.clone(), Some(ConnectionState::Connected))
                     {
-                        UpdateResult::Failed(FailureReason::KeyNonExistant) => {}
+                        UpdateResult::Failed(FailureReason::KeyNonExistent) => {}
                         UpdateResult::Failed(reason) => {
                             self.peers_to_ping.remove(&node_id);
                             debug!(
@@ -2432,7 +2447,7 @@ impl Service {
                 // If the node has disconnected, remove any ping timer for the node.
                 match update_result {
                     UpdateResult::Failed(reason) => match reason {
-                        FailureReason::KeyNonExistant => {}
+                        FailureReason::KeyNonExistent => {}
                         others => {
                             warn!(
                                 "Could not update node to disconnected. Node: {}, Reason: {:?}",

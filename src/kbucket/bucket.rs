@@ -217,7 +217,7 @@ pub enum FailureReason {
     /// The node didn't pass the table filter.
     TableFilter,
     /// The node didn't exist.
-    KeyNonExistant,
+    KeyNonExistent,
     /// The bucket was full.
     BucketFull,
     /// Cannot update self,
@@ -467,10 +467,10 @@ where
                 }
                 UpdateResult::UpdatedPending
             } else {
-                UpdateResult::Failed(FailureReason::KeyNonExistant)
+                UpdateResult::Failed(FailureReason::KeyNonExistent)
             }
         } else {
-            UpdateResult::Failed(FailureReason::KeyNonExistant)
+            UpdateResult::Failed(FailureReason::KeyNonExistent)
         }
     }
 
@@ -506,10 +506,10 @@ where
                 pending.node.value = value;
                 UpdateResult::UpdatedPending
             } else {
-                UpdateResult::Failed(FailureReason::KeyNonExistant)
+                UpdateResult::Failed(FailureReason::KeyNonExistent)
             }
         } else {
-            UpdateResult::Failed(FailureReason::KeyNonExistant)
+            UpdateResult::Failed(FailureReason::KeyNonExistent)
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::{handler::Challenge, node_info::NonContactable};
+use crate::{handler::Challenge, node_info::NonContactable, Topic};
 use rlp::DecoderError;
 use std::fmt;
 
@@ -101,6 +101,8 @@ pub enum RequestError {
     ChannelFailed(String),
     /// An invalid ENR was provided.
     InvalidEnr(&'static str),
+    /// Failed to update enr.
+    EnrWriteFailed,
     /// The remote's ENR is invalid.
     InvalidRemoteEnr,
     /// The remote returned and invalid packet.
@@ -113,7 +115,7 @@ pub enum RequestError {
     EntropyFailure(&'static str),
     /// Finding nodes closest to a topic hash failed.
     TopicDistance(String),
-    /// A request that is responded with multiple respones
+    /// A request that is responded with multiple responses
     /// gets the wrong combination of responses.
     InvalidResponseCombo(String),
     /// A REGTOPIC request has sent a ticket that was not
@@ -126,7 +128,15 @@ pub enum RequestError {
     InvalidWaitTime,
     /// A REGTOPIC tries to advertise a topic it does not
     /// list in its enr.
-    InvalidTopicsEnr,
+    InvalidEnrTopicsField,
+    /// The ENR can't fit the given topic into its topic field.
+    InsufficientSpaceEnr(Topic),
+    /// Neither a topic look up or registration has been done for the topic.
+    TopicKBucketsUninitialised,
+    /// Trying to stop registering a topic which isn't being registered.
+    TopicNotRegistered,
+    /// Trying to start registering a topic which is already in registration.
+    TopicAlreadyRegistered,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
