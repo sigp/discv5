@@ -316,8 +316,8 @@ pub enum RegistrationState {
 }
 
 /// An active topic query/lookup keeps track of which peers from the topic's kbuckets
-/// have already been queired until the set number of ads are found for the lookup or it
-/// is prematurely terminated in lack of peers or time.
+/// have already been queried until the set number of ads are found for the lookup or it
+/// is prematurely terminated by lack of peers or time.
 pub struct ActiveTopicQuery {
     /// A NodeId mapped to false is waiting for a response. A value of true means the
     /// TOPICQUERY has received a response or the request has failed.
@@ -327,7 +327,7 @@ pub struct ActiveTopicQuery {
     /// The resulting ad nodes are returned to the app layer when the query has reached
     /// a Finished, TimedOut or Dry state.
     callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
-    /// A start time is used to montior time out of the query.
+    /// A start time is used to monitor time out of the query.
     start: Instant,
     /// A query is marked as dry being true if no peers are found in the topic's kbuckets
     /// that aren't already queried peers.
@@ -554,7 +554,7 @@ impl Service {
                                 self.init_topic_kbuckets(topic_hash);
                             }
                             // To fill the kbuckets closest to the topic hash as well as those further away
-                            // (itertively getting closer to node ids to the topic hash) start a find node
+                            // (iteratively getting closer to node ids to the topic hash) start a find node
                             // query searching for the topic hash's bytes wrapped in a NodeId.
                             let topic_key = NodeId::new(&topic_hash.as_bytes());
                             self.start_findnode_query(QueryType::FindTopic(topic_key), None);
@@ -1407,7 +1407,7 @@ impl Service {
                     Duration::default(),
                 );
 
-                // If there is no wait time and the ad is successfuly registered as an ad, the new ticket is sent
+                // If there is no wait time and the ad is successfully registered as an ad, the new ticket is sent
                 // with wait time set to zero indicating successful registration.
                 if let Err((wait_time, e)) =
                     self.ads
