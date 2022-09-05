@@ -64,7 +64,7 @@ iota! {
 }
 
 /// Check if a given peer supports one or more versions of the Discv5 protocol.
-/// /// Returns true if any of the given versions are supported.
+/// Returns true if any of the given versions is supported.
 pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
     |peer, supported_versions| {
         if let Some(version) = peer.get(ENR_KEY_VERSION) {
