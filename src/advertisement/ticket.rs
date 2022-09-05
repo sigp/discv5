@@ -5,15 +5,15 @@ use enr::NodeId;
 use node_info::NodeContact;
 use std::{cmp::Eq, hash::Hash};
 
-/// The max wait time accpeted for tickets.
+/// The max wait time accepted for tickets.
 pub const MAX_WAIT_TIME_TICKET: u64 = 60 * 5;
 
-/// The time window within which the number of new tickets from a peer for a topic will be limitied.
+/// The time window within which the number of new tickets from a peer for a topic will be limited.
 pub const TICKET_LIMIT_DURATION: Duration = Duration::from_secs(60 * 15);
 
 /// Max tickets that are stored for an individual node for a topic (in the configured
 /// time period).
-pub const MAX_TICKETS_NODE_TOPIC: u8 = 3;
+pub const MAX_TICKETS_PER_NODE_PER_TOPIC: u8 = 3;
 
 /// A topic is active when it's associated with the NodeId from a node it is
 /// published on.
@@ -71,7 +71,7 @@ impl ActiveTicket {
     }
 }
 
-/// Tickets holds the tickets recieved in TICKET responses to locally initiated
+/// Tickets holds the tickets received in TICKET responses to locally initiated
 /// REGTOPIC requests.
 pub struct Tickets {
     /// Tickets maps an [`ActiveTopic`] to an [`ActiveTicket`].
@@ -112,9 +112,9 @@ impl Tickets {
 
     /// Removes all tickets held for the given topic.
     pub fn remove(&mut self, topic: &Topic) {
-        self.tickets.retain(|active_topic, _| active_topic.topic() != topic);
+        self.tickets
+            .retain(|active_topic, _| active_topic.topic() != topic);
     }
-
 }
 
 impl Stream for Tickets {
@@ -143,23 +143,23 @@ impl Stream for Tickets {
 /// A PendingTicket maps to a Ticket received by another node in Tickets upon insert.
 #[derive(Clone)]
 struct PendingTicket {
-    /// The ActiveTopic serves to match the Ticket to an entry in Tickets'
+    /// The [`ActiveTopic`] serves to match the [`ActiveTicket`] to an entry in [`Tickets`]'
     /// tickets HashMapDelay.
     active_topic: ActiveTopic,
-    /// The insert_time is used to check MAX_TICKETS_PER_NODE_TOPIC against
+    /// The insert_time is used to check [`MAX_TICKETS_PER_NODE_PER_TOPIC`] against
     /// the ticket_limiter_duration.
     insert_time: Instant,
 }
 
 /// TicketHistory keeps track of how many times a ticket was replaced for
-/// an ActiveTopic within the time limit given by ticket_limiter_duration
-/// and limits it to MAX_TICKETS_PER_NODE_TOPIC times.
+/// an [`ActiveTopic`] within the time limit given by ticket_limiter_duration
+/// and limits it to [`MAX_TICKETS_PER_NODE_PER_TOPIC`] times.
 #[derive(Default)]
 pub struct TicketHistory {
     /// The ticket_count keeps track of how many tickets are stored for the
     /// ActiveTopic.
     ticket_count: HashMap<ActiveTopic, u8>,
-    /// Up to [`MAX_TICKETS_PER_NODE_TOPIC`] PendingTickets in expirations map
+    /// Up to [`MAX_TICKETS_PER_NODE_PER_TOPIC`] PendingTickets in expirations map
     /// to an ActiveTopic in ticket_count.
     expirations: VecDeque<PendingTicket>,
     /// The time a PendingTicket remains in expirations.
@@ -176,17 +176,17 @@ impl TicketHistory {
     }
 
     /// Inserts a ticket into [`TicketHistory`] unless the ticket of the given active
-    /// topic has already been updated the limit amount of [`MAX_TICKETS_NODE_TOPIC`]
+    /// topic has already been updated the limit amount of [`MAX_TICKETS_PER_NODE_PER_TOPIC`]
     /// times per ticket limit duration, then it is discarded and an error is returned.
     /// Expired entries are removed before insertion.
     pub fn insert(&mut self, active_topic: ActiveTopic) -> Result<(), &str> {
         self.remove_expired();
         let insert_time = Instant::now();
         let count = self.ticket_count.entry(active_topic.clone()).or_default();
-        if *count >= MAX_TICKETS_NODE_TOPIC {
+        if *count >= MAX_TICKETS_PER_NODE_PER_TOPIC {
             debug!(
                 "Max {} tickets per NodeId - Topic mapping accepted in {} minutes",
-                MAX_TICKETS_NODE_TOPIC,
+                MAX_TICKETS_PER_NODE_PER_TOPIC,
                 self.ticket_limit_duration.as_secs()
             );
             return Err("Ticket limit reached");
@@ -201,7 +201,7 @@ impl TicketHistory {
 
     /// Removes entries that have been stored for at least the ticket limit duration.
     /// If the same [`ActiveTopic`] is inserted again the count up till
-    /// [`MAX_TICKETS_NODE_TOPIC`] inserts/updates starts anew.
+    /// [`MAX_TICKETS_PER_NODE_PER_TOPIC`] inserts/updates starts anew.
     fn remove_expired(&mut self) {
         let now = Instant::now();
         let ticket_limiter_duration = self.ticket_limit_duration;

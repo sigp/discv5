@@ -69,7 +69,7 @@ async fn build_service(
 
     let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
         local_enr.read().node_id().into(),
-        Duration::from_secs(60),
+        KBUCKET_PENDING_TIMEOUT,
         config.incoming_bucket_limit,
         table_filter,
         bucket_filter,

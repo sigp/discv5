@@ -22,7 +22,10 @@ use crate::{
         topic::TopicHash,
         Ads, AD_LIFETIME,
     },
-    discv5::{CHECK_VERSION, ENR_KEY_TOPICS, PERMIT_BAN_LIST, VERSION_NAT, VERSION_TOPICS},
+    discv5::{
+        CHECK_VERSION, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST, VERSION_NAT,
+        VERSION_TOPICS,
+    },
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -699,7 +702,10 @@ impl Service {
                                 if callback.send(found_enrs).is_err() {
                                     warn!("Callback dropped for query {}. Results dropped", *id);
                                 }
-                            } else if let QueryType::FindTopic(topic_key) = query_type {
+                                return;
+                            }
+
+                            if let QueryType::FindTopic(topic_key) = query_type {
                                 let topic_hash = TopicHash::from_raw(topic_key.raw());
                                 let mut discovered_new_peer = false;
                                 if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
@@ -736,7 +742,7 @@ impl Service {
                                                         bucket.insert(node_id, enr.clone());
                                                         discovered_new_peer = true;
                                                     } else {
-                                                        warn!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
+                                                        debug!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
                                                     }
                                                 }
                                                 false
@@ -874,7 +880,7 @@ impl Service {
 
         let mut kbuckets = KBucketsTable::new(
             NodeId::new(&topic_hash.as_bytes()).into(),
-            Duration::from_secs(60),
+            KBUCKET_PENDING_TIMEOUT,
             self.config.incoming_bucket_limit,
             table_filter,
             bucket_filter,
@@ -974,7 +980,7 @@ impl Service {
 
     /// Internal function that starts a topic registration. This function should not be called outside of [`REGISTER_INTERVAL`].
     fn send_register_topics(&mut self, topic: Topic) -> usize {
-        trace!("Sending REGTOPICS");
+        trace!("Sending REGTOPICS for topic {}", topic);
         let topic_hash = topic.hash();
         if let Entry::Occupied(ref mut kbuckets) = self.topics_kbuckets.entry(topic_hash) {
             trace!(

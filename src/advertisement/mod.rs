@@ -18,7 +18,7 @@ mod test;
 pub mod ticket;
 pub mod topic;
 
-/// The max nodes to adveritse for a topic.
+/// The max nodes to advertise for a topic.
 const MAX_ADS_TOPIC: usize = 100;
 
 /// The max nodes to advertise.
@@ -78,7 +78,7 @@ impl AdTopic {
     }
 }
 
-/// The Ads struct contains adveritsed AdNodes. Topics table is used to refer to
+/// The Ads struct contains advertised AdNodes. Topics table is used to refer to
 /// all the ads, and the table stores ads by topic.
 #[derive(Clone, Debug)]
 pub struct Ads {
@@ -90,10 +90,10 @@ pub struct Ads {
     /// The ad_lifetime is specified by the spec but can be modified for
     /// testing purposes.
     ad_lifetime: Duration,
-    /// The max_ads_per_topic limit is up to the user although recommnedations
+    /// The max_ads_per_topic limit is up to the user although recommendations
     /// are given in the specs.
     max_ads_topic: usize,
-    /// The max_ads limit is up to the user although recommnedations are
+    /// The max_ads limit is up to the user although recommendations are
     /// given in the specs.
     max_ads: usize,
     /// Max ads per subnet for the whole table,
@@ -160,7 +160,7 @@ impl Ads {
         self.ads.get(&topic).into_iter().flatten()
     }
 
-    /// Ticket wait time enforces diversity among adveritsed nodes. The ticket wait time is
+    /// Ticket wait time enforces diversity among advertised nodes. The ticket wait time is
     /// calculated after removing expired entries based on the current state of the topics
     /// table (ads).
     pub fn ticket_wait_time(

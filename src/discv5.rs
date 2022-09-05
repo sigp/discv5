@@ -53,6 +53,10 @@ pub static HASH: for<'a> fn(topic: &'a str) -> TopicHash = |topic| {
     sha256_topic.hash()
 };
 
+/// The duration which pending entries have to be dormant before they are considered
+/// for insertion in a kbucket.
+pub(crate) const KBUCKET_PENDING_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Custom ENR keys.
 const ENR_KEY_VERSION: &str = "version";
 pub const ENR_KEY_TOPICS: &str = "topics";
@@ -167,7 +171,7 @@ impl Discv5 {
         let enr_key = Arc::new(RwLock::new(enr_key));
         let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
             local_enr.read().node_id().into(),
-            Duration::from_secs(60),
+            KBUCKET_PENDING_TIMEOUT,
             config.incoming_bucket_limit,
             table_filter,
             bucket_filter,
