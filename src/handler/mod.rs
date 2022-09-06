@@ -144,7 +144,7 @@ pub enum HandlerOut {
     RequestFailed(RequestId, RequestError),
 
     /// The request has timed out, possibly the peer is behind a NAT and we can attempt contacting
-    /// it via the NAT traversal protocol if this Dsicv5 instance is configured to support the NAT
+    /// it via the NAT traversal protocol if this Discv5 instance is configured to support the NAT
     /// version.
     RequestTimedOut(RequestId, NodeId),
 }
