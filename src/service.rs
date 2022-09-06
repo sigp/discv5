@@ -19,7 +19,7 @@ use self::{
 use crate::{
     advertisement::{
         ticket::{Tickets, MAX_WAIT_TIME_TICKET, TICKET_LIMIT_DURATION},
-        topic::TopicHash,
+        topic::{TopicHash, TopicsEnrField},
         Ads, AD_LIFETIME,
     },
     discv5::{Version, CHECK_VERSION, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST},
@@ -47,7 +47,7 @@ use fnv::FnvHashMap;
 use futures::{future::select_all, prelude::*};
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
-use rlp::{Rlp, RlpStream};
+use rlp::Rlp;
 use rpc::*;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
@@ -923,33 +923,31 @@ impl Service {
         self.registration_attempts
             .insert(topic.clone(), BTreeMap::new());
 
-        let topics_field = if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
-            let rlp = Rlp::new(topics);
-            let item_count = rlp.iter().count();
-            let mut rlp_stream = RlpStream::new_list(item_count + 1);
-            for item in rlp.iter() {
-                if let Ok(data) = item.data().map_err(|e| debug_unreachable!("Topic item which was previously encoded in enr, cannot be decoded into data. Error {}", e)) {
-                    rlp_stream.append(&data);
+        let topics_field = |topic: Topic| -> TopicsEnrField<_> {
+            if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
+                if let Ok(Some(mut advertised_topics)) = TopicsEnrField::decode(topics) {
+                    advertised_topics.add(topic);
+                    return advertised_topics;
                 }
             }
-            rlp_stream.append(&topic.topic().as_bytes());
-            rlp_stream.out()
-        } else {
-            let mut rlp_stream = RlpStream::new_list(1);
-            rlp_stream.append(&topic.topic().as_bytes());
-            rlp_stream.out()
+            let mut advertised_topics = TopicsEnrField::new(Vec::new());
+            advertised_topics.add(topic);
+            advertised_topics
         };
 
-        let enr_size = self.local_enr.read().size() + topics_field.len();
+        let encoded_topics_field = topics_field(topic.clone()).encode();
+
+        let enr_size = self.local_enr.read().size() + encoded_topics_field.len();
         if enr_size >= 300 {
             error!("Failed to register topic {}. The ENR would be a total of {} bytes if this topic was registered, the maximum size is 300 bytes", topic.topic(), enr_size);
             return Err(RequestError::InsufficientSpaceEnr(topic));
         }
 
-        let result =
-            self.local_enr
-                .write()
-                .insert(ENR_KEY_TOPICS, &topics_field, &self.enr_key.write());
+        let result = self.local_enr.write().insert(
+            ENR_KEY_TOPICS,
+            &encoded_topics_field,
+            &self.enr_key.write(),
+        );
 
         match result {
             Err(e) => {

@@ -19,7 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use base64::encode;
-use rlp::{DecoderError, Rlp, RlpStream};
+use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use sha2::{Digest, Sha256};
 use std::{fmt, hash::Hash};
 use tracing::debug;
@@ -78,13 +78,13 @@ impl TopicHash {
     }
 }
 
-impl rlp::Encodable for TopicHash {
+impl Encodable for TopicHash {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.append(&self.hash.to_vec());
     }
 }
 
-impl rlp::Decodable for TopicHash {
+impl Decodable for TopicHash {
     fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let topic = {
             let topic_bytes = rlp.data()?;
@@ -161,5 +161,82 @@ impl<H: Hasher> Eq for Topic<H> {}
 impl<H: Hasher> fmt::Display for Topic<H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.topic)
+    }
+}
+
+pub struct TopicsEnrField<H: Hasher> {
+    topics: Vec<Topic<H>>,
+}
+
+impl<H: Hasher> TopicsEnrField<H> {
+    pub fn new(topics: Vec<Topic<H>>) -> Self {
+        TopicsEnrField { topics }
+    }
+
+    pub fn add(&mut self, topic: Topic<H>) {
+        self.topics.push(topic);
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut s = RlpStream::new();
+        s.append(self);
+        buf.extend_from_slice(&s.out());
+        buf
+    }
+
+    pub fn decode(topics_field: &[u8]) -> Result<Option<Self>, DecoderError> {
+        if !topics_field.is_empty() {
+            let rlp = Rlp::new(topics_field);
+            let topics = rlp.as_val::<TopicsEnrField<H>>()?;
+            return Ok(Some(topics));
+        }
+        Ok(None)
+    }
+}
+
+impl<H: Hasher> rlp::Encodable for TopicsEnrField<H> {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        s.begin_list(self.topics.len());
+        for topic in self.topics.iter() {
+            s.append(&topic.topic().as_bytes());
+        }
+    }
+}
+
+impl<H: Hasher> rlp::Decodable for TopicsEnrField<H> {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+        if !rlp.is_list() {
+            debug!(
+                "Failed to decode ENR field 'topics'. Not an RLP list: {}",
+                rlp
+            );
+            return Err(DecoderError::RlpExpectedToBeList);
+        }
+
+        let item_count = rlp.iter().count();
+        let mut decoded_list: Vec<Rlp<'_>> = rlp.iter().collect();
+
+        let mut topics = Vec::new();
+
+        for _ in 0..item_count {
+            match decoded_list.remove(0).data() {
+                Ok(data) => match std::str::from_utf8(data) {
+                    Ok(topic_string) => {
+                        let topic = Topic::new(topic_string);
+                        topics.push(topic);
+                    }
+                    Err(e) => {
+                        debug!("Failed to decode topic as utf8. Error: {}", e);
+                        return Err(DecoderError::Custom("Topic is not utf8 encoded"));
+                    }
+                },
+                Err(e) => {
+                    debug!("Failed to decode item. Error: {}", e);
+                    return Err(DecoderError::RlpExpectedToBeData);
+                }
+            }
+        }
+        Ok(TopicsEnrField { topics })
     }
 }
