@@ -244,3 +244,28 @@ impl<H: Hasher> rlp::Decodable for TopicsEnrField<H> {
         Ok(TopicsEnrField { topics })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_decode_topics_enr_field() {
+        let topics: Vec<Sha256Topic> = vec![
+            Topic::new("lighthouse"),
+            Topic::new("eth_syncing"),
+            Topic::new("eth_feeHistory"),
+        ];
+
+        let topics_field = TopicsEnrField::new(topics.clone());
+
+        let encoded = topics_field.encode();
+        let decoded = TopicsEnrField::<Sha256Hash>::decode(&encoded)
+            .unwrap()
+            .unwrap();
+
+        for (index, item) in decoded.topics_iter().enumerate() {
+            assert_eq!(item.topic(), topics[index].topic());
+        }
+    }
+}
