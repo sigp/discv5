@@ -329,11 +329,11 @@ impl Ads {
             node_record.ip6().map(|ip6| ip6.octets()[0..=5].to_vec())
         };
         if let Some(subnet) = subnet {
-            let subnet_expirires = self
+            let subnet_expiries = self
                 .subnet_expirations
                 .entry(subnet)
                 .or_insert_with(VecDeque::new);
-            subnet_expirires.push_back(now);
+            subnet_expiries.push_back(now);
         }
         let nodes = self.ads.entry(topic).or_default();
 

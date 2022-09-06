@@ -177,6 +177,10 @@ impl<H: Hasher> TopicsEnrField<H> {
         self.topics.push(topic);
     }
 
+    pub fn topics_iter(&self) -> impl Iterator<Item = &Topic<H>> {
+        self.topics.iter()
+    }
+
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         let mut s = RlpStream::new();

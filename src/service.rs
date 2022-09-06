@@ -19,7 +19,7 @@ use self::{
 use crate::{
     advertisement::{
         ticket::{Tickets, MAX_WAIT_TIME_TICKET, TICKET_LIMIT_DURATION},
-        topic::{TopicHash, TopicsEnrField},
+        topic::TopicHash,
         Ads, AD_LIFETIME,
     },
     discv5::{Version, CHECK_VERSION, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST},
@@ -35,7 +35,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr, IpMode, Topic,
+    rpc, Discv5Config, Discv5Event, Enr, IpMode, Topic, TopicsEnrField,
 };
 use aes_gcm::{
     aead::{generic_array::GenericArray, Aead, NewAead, Payload},
@@ -47,7 +47,6 @@ use fnv::FnvHashMap;
 use futures::{future::select_all, prelude::*};
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
-use rlp::Rlp;
 use rpc::*;
 use std::{
     collections::{hash_map::Entry, BTreeMap, HashMap},
@@ -923,7 +922,7 @@ impl Service {
         self.registration_attempts
             .insert(topic.clone(), BTreeMap::new());
 
-        let topics_field = |topic: Topic| -> TopicsEnrField<_> {
+        let topics_field = |topic: Topic| -> TopicsEnrField {
             if let Some(topics) = self.local_enr.read().get(ENR_KEY_TOPICS) {
                 if let Ok(Some(mut advertised_topics)) = TopicsEnrField::decode(topics) {
                     advertised_topics.add(topic);
@@ -1381,21 +1380,20 @@ impl Service {
                 }
 
                 // Blacklist if node doesn't contain the given topic in its enr 'topics' field
-                let mut topic_in_enr = false;
-                if let Some(topics) = enr.get(ENR_KEY_TOPICS) {
-                    let rlp = Rlp::new(topics);
-                    for item in rlp.iter() {
-                        if let Ok(data) = item.data().map_err(|e| error!("Could not decode a topic in topics field in enr of peer {}. Error {}", enr.node_id(), e)) {
-                            if let Ok(topic_string) = std::str::from_utf8(data).map_err(|e| error!("Could not decode topic in topics field into utf8, in enr of peer {}. Error {}", enr.node_id(), e)) {
-                                let topic_hash = Topic::new(topic_string).hash();
-                                if topic_hash == topic.hash() {
-                                    topic_in_enr = true;
+                let topic_in_enr = |topic_hash: &TopicHash| -> bool {
+                    if let Some(topics) = enr.get(ENR_KEY_TOPICS) {
+                        if let Ok(Some(advertised_topics)) = TopicsEnrField::decode(topics) {
+                            for topic in advertised_topics.topics_iter() {
+                                if topic_hash == &topic.hash() {
+                                    return true;
                                 }
                             }
                         }
                     }
-                }
-                if !topic_in_enr {
+                    false
+                };
+
+                if !topic_in_enr(&topic.hash()) {
                     warn!("The topic given in the REGTOPIC request body cannot be found in sender's 'topics' enr field. Blacklisting peer {}.", node_address.node_id);
                     let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                     PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
@@ -1649,14 +1647,11 @@ impl Service {
                             }
                             // Ads are checked for validity, if they do not contain the topic in their enr, they are discarded
                             if let Some(topics) = enr.get(ENR_KEY_TOPICS) {
-                                let rlp = Rlp::new(topics);
-                                for item in rlp.iter() {
-                                    if let Ok(data) = item.data().map_err(|e| error!("Could not decode a topic in topics field in enr of peer {}. Error {}", enr.node_id(), e)) {
-                                        if let Ok(topic_string) = std::str::from_utf8(data).map_err(|e| error!("Could not decode topic in topics field into utf8, in enr of peer {}. Error {}", enr.node_id(), e)) {
-                                            let topic_hash = Topic::new(topic_string).hash();
-                                            if &topic_hash == topic {
-                                                return true;
-                                            }
+                                if let Ok(Some(advertised_topics)) = TopicsEnrField::decode(topics)
+                                {
+                                    for advertised_topic in advertised_topics.topics_iter() {
+                                        if advertised_topic.hash() == *topic {
+                                            return true;
                                         }
                                     }
                                 }
