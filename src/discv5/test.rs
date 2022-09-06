@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{
-    discv5::{CHECK_VERSION, ENR_KEY_VERSION, VERSION_NAT, VERSION_TOPICS},
+    discv5::{Version, CHECK_VERSION, ENR_KEY_VERSION},
     kbucket, Discv5, *,
 };
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
@@ -639,9 +639,9 @@ fn test_version_check() {
         .udp4(port)
         .build(&key)
         .unwrap();
-    let supported_versions = VERSION_TOPICS | VERSION_NAT;
+    let supported_versions = Version::Topics as u8 | 2;
     enr.insert(ENR_KEY_VERSION, &[supported_versions], &key)
         .unwrap();
 
-    assert!(CHECK_VERSION(&enr, vec!(supported_versions)));
+    assert!(CHECK_VERSION(&enr, Version::Topics));
 }

@@ -24,7 +24,6 @@ use crate::{
     Discv5Config, Enr, Topic,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
-use iota::iota;
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -61,32 +60,29 @@ pub(crate) const KBUCKET_PENDING_TIMEOUT: Duration = Duration::from_secs(60);
 const ENR_KEY_VERSION: &str = "version";
 pub const ENR_KEY_TOPICS: &str = "topics";
 
-// Discv5 versions.
-iota! {
-    pub const VERSION_NAT: u8 = 1 << iota;
-        , VERSION_TOPICS
+/// Discv5 versions.
+pub enum Version {
+    /// The protocol for advertising and looking up to topics in Discv5 is supported.
+    Topics = 1,
 }
 
-/// Check if a given peer supports one or more versions of the Discv5 protocol.
-/// Returns true if any of the given versions is supported.
-pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
-    |peer, supported_versions| {
-        if let Some(version) = peer.get(ENR_KEY_VERSION) {
-            if let Some(v) = version.first() {
-                // Only add nodes which support the topics version
-                supported_versions.contains(v)
-            } else {
-                error!("Version field in enr of peer {} is empty", peer.node_id());
-                false
-            }
+/// Check if a given peer supports a given version of the Discv5 protocol.
+pub const CHECK_VERSION: fn(peer: &Enr, version: Version) -> bool = |peer, version| {
+    if let Some(supported_versions) = peer.get(ENR_KEY_VERSION) {
+        if let Some(supported_versions) = supported_versions.first() {
+            let version_num = version as u8;
+            supported_versions & version_num == version_num
         } else {
-            warn!(
-                "Enr of peer {} doesn't contain field 'version'",
-                peer.node_id()
-            );
             false
         }
-    };
+    } else {
+        warn!(
+            "Enr of peer {} doesn't contain field 'version'",
+            peer.node_id()
+        );
+        false
+    }
+};
 
 mod test;
 
@@ -181,7 +177,7 @@ impl Discv5 {
         if let Err(e) =
             local_enr
                 .write()
-                .insert(ENR_KEY_VERSION, &[VERSION_TOPICS], &enr_key.write())
+                .insert(ENR_KEY_VERSION, &[Version::Topics as u8], &enr_key.write())
         {
             error!("Failed writing to enr. Error {:?}", e);
             return Err("Failed to insert field 'version' into local enr");
