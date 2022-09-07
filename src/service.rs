@@ -1453,8 +1453,7 @@ impl Service {
 
                     if !topic_in_enr(&topic.hash()) {
                         warn!("The topic given in the REGTOPIC request body cannot be found in sender's 'topics' enr field. Blacklisting peer {}.", node_address.node_id);
-                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                        BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
                         self.rpc_failure(id, RequestError::InvalidEnrTopicsField);
                         return;
                     }
@@ -1467,8 +1466,7 @@ impl Service {
                         if waited_time < wait_time || waited_time >= wait_time + WAIT_TIME_TOLERANCE
                         {
                             warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
-                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                            BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
                             self.rpc_failure(id, RequestError::InvalidWaitTime);
                             return;
                         }
@@ -1596,9 +1594,7 @@ impl Service {
                                     "Peer returned more than one ENR for itself. Blacklisting {}",
                                     node_address
                                 );
-                                    let ban_timeout =
-                                        self.config.ban_duration.map(|v| Instant::now() + v);
-                                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                    BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
                                     nodes.retain(|enr| {
                                         peer_key.log2_distance(&enr.node_id().into()).is_none()
                                     });
@@ -1618,9 +1614,7 @@ impl Service {
                                         "Peer sent invalid ENR. Blacklisting {}",
                                         active_request.contact
                                     );
-                                    let ban_timeout =
-                                        self.config.ban_duration.map(|v| Instant::now() + v);
-                                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                                    BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
                                 }
                             }
                         }
