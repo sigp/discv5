@@ -659,11 +659,7 @@ impl Handler {
 
                 // Notify the application that the session has been established
                 let event = match request_call.kind() {
-                    RequestBody::RegisterTopic {
-                        topic,
-                        enr: _,
-                        ticket: _,
-                    } => {
+                    RequestBody::RegisterTopic { topic, ticket: _ } => {
                         let topic_hash = Topic::new(topic).hash();
                         HandlerOut::EstablishedTopic(enr, connection_direction, topic_hash)
                     }

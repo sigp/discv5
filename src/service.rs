@@ -35,7 +35,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr, IpMode, Topic, TopicsEnrField,
+    rpc, Discv5Config, Discv5Event, Enr, Topic, TopicsEnrField,
 };
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
@@ -683,7 +683,7 @@ impl Service {
                         }
                         HandlerOut::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
-                            if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
+                            if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id, true) {
                                 if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
                                     warn!("Failed to send whoareyou {}", e);
                                 };
@@ -728,7 +728,7 @@ impl Service {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
                                     let enr = result.target.untrusted_enrs.swap_remove(position);
                                     found_enrs.push(enr);
-                                } else if let Some(enr) = self.find_enr(&node_id) {
+                                } else if let Some(enr) = self.find_enr(&node_id, true) {
                                     // look up from the routing table
                                     found_enrs.push(enr);
                                 }
@@ -767,8 +767,13 @@ impl Service {
                                                     enr.node_id(),
                                                     topic_hash
                                                 );
+                                                // A QueryType::FindTopic variant will always time out. The last batch of
+                                                // ENRs returned by the last iteration in the query is added to
+                                                // discovered_peers_topic, like previous batches of uncontacted peers were
+                                                // added to the query itself first.
                                                 let discovered_peers =
                                                     self.discovered_peers_topic.entry(topic_hash).or_default();
+
                                                 let node_id = enr.node_id();
                                                 let peer_key: kbucket::Key<NodeId> = node_id.into();
                                                 let topic_key: kbucket::Key<NodeId> =
@@ -832,11 +837,10 @@ impl Service {
                     }
                 }
                 Some(Ok((active_topic, active_ticket))) = self.tickets.next() => {
-                    let enr = self.local_enr.read().clone();
                     // When the ticket time expires a new REGTOPIC request is automatically sent to the
                     // ticket issuer and the registration attempt stays in the [`RegistrationState::Ticket`]
                     // from sending the first REGTOPIC request to this contact for this topic.
-                    self.reg_topic_request(active_ticket.contact(), active_topic.topic().clone(), enr, RequestTicket::RemotelyIssued(active_ticket.ticket()));
+                    self.reg_topic_request(active_ticket.contact(), active_topic.topic().clone(), RequestTicket::RemotelyIssued(active_ticket.ticket()));
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
                     match topic_query_progress {
@@ -1118,14 +1122,12 @@ impl Service {
             let mut sent_regtopics = 0;
 
             for peer in new_peers {
-                let local_enr = self.local_enr.read().clone();
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
                     .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
                 {
                     self.reg_topic_request(
                         node_contact,
                         topic.clone(),
-                        local_enr.clone(),
                         RequestTicket::RemotelyIssued(Vec::new()),
                     );
                     // If an uncontacted peer has a faulty enr, don't count the registration attempt.
@@ -1316,7 +1318,7 @@ impl Service {
     }
 
     /// Returns an ENR if one is known for the given NodeId.
-    pub fn find_enr(&mut self, node_id: &NodeId) -> Option<Enr> {
+    pub fn find_enr(&mut self, node_id: &NodeId, include_untrusted_enrs: bool) -> Option<Enr> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
         if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
@@ -1327,15 +1329,31 @@ impl Service {
                 return Some(entry.value().clone());
             }
         }
-        // check the untrusted addresses for ongoing queries
-        for query in self.queries.iter() {
-            if let Some(enr) = query
-                .target()
-                .untrusted_enrs
-                .iter()
-                .find(|v| v.node_id() == *node_id)
+
+        if include_untrusted_enrs {
+            // check the untrusted addresses for ongoing queries
+            for query in self.queries.iter() {
+                if let Some(enr) = query
+                    .target()
+                    .untrusted_enrs
+                    .iter()
+                    .find(|v| v.node_id() == *node_id)
+                {
+                    return Some(enr.clone());
+                }
+            }
+
+            // check the untrusted addresses for ongoing topic queries/registrations
+            for buckets in self
+                .discovered_peers_topic
+                .values()
+                .map(|buckets| buckets.values())
             {
-                return Some(enr.clone());
+                for bucket in buckets {
+                    if let Some((_, enr)) = bucket.iter().find(|(v, _)| *v == node_id) {
+                        return Some(enr.clone());
+                    }
+                }
             }
         }
         None
@@ -1413,92 +1431,81 @@ impl Service {
 
                 self.send_event(Discv5Event::TalkRequest(req));
             }
-            RequestBody::RegisterTopic { topic, enr, ticket } => {
+            RequestBody::RegisterTopic { topic, ticket } => {
                 let topic = Topic::new(topic);
-                // Blacklist if request tries to advertise another node than the sender
-                let registration_of_other_node = enr.node_id() != node_address.node_id
-                    || match self.config.ip_mode {
-                        IpMode::Ip4 => {
-                            enr.udp4_socket().map(SocketAddr::V4) != Some(node_address.socket_addr)
-                        }
-                        IpMode::Ip6 { .. } => {
-                            enr.udp6_socket().map(SocketAddr::V6) != Some(node_address.socket_addr)
-                        }
-                    };
-                if registration_of_other_node {
-                    warn!("The enr in the REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
-                    BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
-                    self.rpc_failure(id, RequestError::RegistrationOtherNode);
-                    return;
-                }
 
-                // Blacklist if node doesn't contain the given topic in its enr 'topics' field
-                let topic_in_enr = |topic_hash: &TopicHash| -> bool {
-                    if let Some(topics) = enr.get(ENR_KEY_TOPICS) {
-                        if let Ok(Some(advertised_topics)) = TopicsEnrField::decode(topics) {
-                            for topic in advertised_topics.topics_iter() {
-                                if topic_hash == &topic.hash() {
-                                    return true;
+                // Only advertise peer which have been added to our kbuckets, i.e. which have
+                // a contactable address in their enr.
+                if let Some(enr) = self.find_enr(&node_address.node_id, false) {
+                    // Blacklist if node doesn't contain the given topic in its enr 'topics' field
+                    let topic_in_enr = |topic_hash: &TopicHash| -> bool {
+                        if let Some(topics) = enr.get(ENR_KEY_TOPICS) {
+                            if let Ok(Some(advertised_topics)) = TopicsEnrField::decode(topics) {
+                                for topic in advertised_topics.topics_iter() {
+                                    if topic_hash == &topic.hash() {
+                                        return true;
+                                    }
                                 }
                             }
                         }
-                    }
-                    false
-                };
+                        false
+                    };
 
-                if !topic_in_enr(&topic.hash()) {
-                    warn!("The topic given in the REGTOPIC request body cannot be found in sender's 'topics' enr field. Blacklisting peer {}.", node_address.node_id);
-                    let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                    self.rpc_failure(id, RequestError::InvalidEnrTopicsField);
-                    return;
-                }
-
-                // If the node has not respected the wait time and arrives before the wait time has
-                // expired or more than 5 seconds later than it has expired, the peer is blacklisted
-                if let RequestTicket::LocallyIssued(ticket) = ticket {
-                    let waited_time = ticket.req_time().elapsed();
-                    let wait_time = ticket.wait_time();
-                    if waited_time < wait_time || waited_time >= wait_time + WAIT_TIME_TOLERANCE {
-                        warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
+                    if !topic_in_enr(&topic.hash()) {
+                        warn!("The topic given in the REGTOPIC request body cannot be found in sender's 'topics' enr field. Blacklisting peer {}.", node_address.node_id);
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                         PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                        self.rpc_failure(id, RequestError::InvalidWaitTime);
+                        self.rpc_failure(id, RequestError::InvalidEnrTopicsField);
                         return;
                     }
-                }
 
-                let mut new_ticket = Ticket::new(
-                    node_address.node_id,
-                    node_address.socket_addr.ip(),
-                    topic.hash(),
-                    tokio::time::Instant::now(),
-                    Duration::default(),
-                );
+                    // If the node has not respected the wait time and arrives before the wait time has
+                    // expired or more than 5 seconds later than it has expired, the peer is blacklisted
+                    if let RequestTicket::LocallyIssued(ticket) = ticket {
+                        let waited_time = ticket.req_time().elapsed();
+                        let wait_time = ticket.wait_time();
+                        if waited_time < wait_time || waited_time >= wait_time + WAIT_TIME_TOLERANCE
+                        {
+                            warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
+                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                            self.rpc_failure(id, RequestError::InvalidWaitTime);
+                            return;
+                        }
+                    }
 
-                // If there is no wait time and the ad is successfully registered as an ad, the new ticket is sent
-                // with wait time set to zero indicating successful registration.
-                if let Err((wait_time, e)) =
-                    self.ads
-                        .insert(enr, topic.hash(), node_address.socket_addr.ip())
-                {
-                    // The wait time on the new ticket to send is updated if there is wait time for the requesting
-                    // node for this topic to register as an ad due to the current state of the topic table.
-                    error!(
-                        "Registration attempt from peer {} for topic hash {} failed. Error: {}",
-                        node_address.node_id, topic, e
+                    let mut new_ticket = Ticket::new(
+                        node_address.node_id,
+                        node_address.socket_addr.ip(),
+                        topic.hash(),
+                        tokio::time::Instant::now(),
+                        Duration::default(),
                     );
-                    new_ticket.set_wait_time(wait_time);
-                }
 
-                let wait_time = new_ticket.wait_time();
-                self.send_ticket_response(
-                    node_address,
-                    id,
-                    topic,
-                    ResponseTicket::LocallyIssued(new_ticket),
-                    wait_time,
-                );
+                    // If there is no wait time and the ad is successfully registered as an ad, the new ticket is sent
+                    // with wait time set to zero indicating successful registration.
+                    if let Err((wait_time, e)) =
+                        self.ads
+                            .insert(enr, topic.hash(), node_address.socket_addr.ip())
+                    {
+                        // The wait time on the new ticket to send is updated if there is wait time for the requesting
+                        // node for this topic to register as an ad due to the current state of the topic table.
+                        error!(
+                            "Registration attempt from peer {} for topic hash {} failed. Error: {}",
+                            node_address.node_id, topic, e
+                        );
+                        new_ticket.set_wait_time(wait_time);
+                    }
+
+                    let wait_time = new_ticket.wait_time();
+                    self.send_ticket_response(
+                        node_address,
+                        id,
+                        topic,
+                        ResponseTicket::LocallyIssued(new_ticket),
+                        wait_time,
+                    );
+                }
             }
             RequestBody::TopicQuery { topic } => {
                 self.send_topic_query_nodes_response(node_address, id, topic);
@@ -1666,7 +1673,6 @@ impl Service {
                     self.active_nodes_responses.remove(&node_id);
 
                     if let RequestBody::FindNode { .. } = &active_request.request_body {
-                        // In the case that it is a FINDNODE request using a topic hash as key, remove the mapping.
                         self.discovered(&node_id, nodes, active_request.query_id);
                     } else if let RequestBody::TopicQuery { topic } = &active_request.request_body {
                         nodes.retain(|enr| {
@@ -1805,7 +1811,7 @@ impl Service {
                     }
 
                     // check if we need to request a new ENR
-                    if let Some(enr) = self.find_enr(&node_id) {
+                    if let Some(enr) = self.find_enr(&node_id, true) {
                         if enr.seq() < enr_seq {
                             // request an ENR update
                             debug!("Requesting an ENR update from: {}", active_request.contact);
@@ -1962,16 +1968,9 @@ impl Service {
     }
 
     /// Requests a node to advertise the sending node for a given topic hash.
-    fn reg_topic_request(
-        &mut self,
-        contact: NodeContact,
-        topic: Topic,
-        enr: Enr,
-        ticket: RequestTicket,
-    ) {
+    fn reg_topic_request(&mut self, contact: NodeContact, topic: Topic, ticket: RequestTicket) {
         let request_body = RequestBody::RegisterTopic {
             topic: topic.topic(),
-            enr,
             ticket,
         };
         trace!("Sending reg topic to node {}", contact.socket_addr());
@@ -2210,7 +2209,7 @@ impl Service {
         request_body: RequestBody,
     ) {
         // find the ENR associated with the query
-        if let Some(enr) = self.find_enr(&return_peer) {
+        if let Some(enr) = self.find_enr(&return_peer, true) {
             match NodeContact::try_from_enr(enr, self.config.ip_mode) {
                 Ok(contact) => {
                     let active_request = ActiveRequest {
@@ -2271,7 +2270,7 @@ impl Service {
         }
     }
 
-    /// Processes discovered peers from a query or a TOPICQUERY or REGTOPIC request.
+    /// Processes discovered peers from a FINDNODE query looking up a node id or a topic hash.
     fn discovered(&mut self, source: &NodeId, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
         let local_id = self.local_enr.read().node_id();
 
@@ -2602,11 +2601,7 @@ impl Service {
                     self.connection_updated(node_id, ConnectionStatus::Disconnected, Some(topic));
                     return;
                 }
-                RequestBody::RegisterTopic {
-                    topic,
-                    enr: _,
-                    ticket: _,
-                } => {
+                RequestBody::RegisterTopic { topic, ticket: _ } => {
                     let peer_key: kbucket::Key<NodeId> = node_id.into();
                     let topic = Topic::new(topic);
                     let topic_hash = topic.hash();

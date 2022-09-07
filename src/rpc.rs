@@ -221,8 +221,6 @@ pub enum RequestBody {
     RegisterTopic {
         /// The topic string we want to advertise at the node receiving this request.
         topic: String,
-        // Current node record of sender.
-        enr: Enr,
         // Ticket content of ticket from a previous registration attempt or empty.
         ticket: RequestTicket,
     },
@@ -313,12 +311,11 @@ impl Request {
                 buf.extend_from_slice(&s.out());
                 buf
             }
-            RequestBody::RegisterTopic { topic, enr, ticket } => {
+            RequestBody::RegisterTopic { topic, ticket } => {
                 let mut s = RlpStream::new();
                 s.begin_list(4);
                 s.append(&id.as_bytes());
                 s.append(&topic);
-                s.append(&enr);
                 s.append(&ticket);
                 buf.extend_from_slice(&s.out());
                 buf
@@ -513,13 +510,9 @@ impl std::fmt::Display for RequestBody {
                 hex::encode(request)
             ),
             RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {}", topic),
-            RequestBody::RegisterTopic { topic, enr, ticket } => write!(
-                f,
-                "REGTOPIC: topic: {}, enr: {}, ticket: {}",
-                topic,
-                enr.to_base64(),
-                ticket,
-            ),
+            RequestBody::RegisterTopic { topic, ticket } => {
+                write!(f, "REGTOPIC: topic: {}, ticket: {}", topic, ticket,)
+            }
         }
     }
 }
@@ -703,14 +696,12 @@ impl Message {
             }
             7 => {
                 // RegisterTopicRequest
-                if list_len != 4 {
-                    debug!("RegisterTopic request has an invalid RLP list length. Expected 4, found {}", list_len);
+                if list_len != 3 {
+                    debug!("RegisterTopic request has an invalid RLP list length. Expected 3, found {}", list_len);
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
                 let topic = rlp.val_at::<String>(1)?;
-                let enr_rlp = rlp.at(2)?;
-                let enr = enr_rlp.as_val::<Enr>()?;
-                let ticket = rlp.val_at::<Vec<u8>>(3)?;
+                let ticket = rlp.val_at::<Vec<u8>>(2)?;
 
                 let returned_ticket = {
                     let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
@@ -739,7 +730,6 @@ impl Message {
                     id,
                     body: RequestBody::RegisterTopic {
                         topic,
-                        enr,
                         ticket: returned_ticket,
                     },
                 })
@@ -1284,16 +1274,11 @@ mod tests {
     #[test]
     fn encode_decode_register_topic_request_empty_ticket() {
         let ticket_key: [u8; 16] = rand::random();
-        let port = 5000;
-        let ip: IpAddr = "127.0.0.1".parse().unwrap();
-        let key = enr::CombinedKey::generate_secp256k1();
-        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::RegisterTopic {
                 topic: "lighthouse".to_string(),
-                enr,
                 ticket: RequestTicket::Empty,
             },
         });
@@ -1313,8 +1298,8 @@ mod tests {
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let key = enr::CombinedKey::generate_secp256k1();
         let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
-
         let node_id = enr.node_id();
+
         let og_ticket = Ticket::new(
             node_id,
             ip,
@@ -1353,7 +1338,6 @@ mod tests {
                 id: RequestId(vec![1]),
                 body: RequestBody::RegisterTopic {
                     topic: "lighthouse".to_string(),
-                    enr,
                     ticket: RequestTicket::RemotelyIssued(ticket_bytes),
                 },
             });
@@ -1368,7 +1352,6 @@ mod tests {
                 body:
                     RequestBody::RegisterTopic {
                         topic: _,
-                        enr: _,
                         ticket: RequestTicket::LocallyIssued(ticket),
                     },
             }) = decoded_req
