@@ -133,9 +133,11 @@ pub enum RequestError {
     InsufficientSpaceEnr(Topic),
     /// Neither a topic look up or registration has been done for the topic.
     TopicKBucketsUninitialised,
-    /// Trying to stop registering a topic which isn't being registered.
+    /// The topic isn't stored in the topic query history.
+    TopicNotQueried,
+    /// The topic isn't being registered.
     TopicNotRegistered,
-    /// Trying to start registering a topic which is already in registration.
+    /// The topic is already in registration.
     TopicAlreadyRegistered,
 }
 

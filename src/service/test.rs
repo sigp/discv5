@@ -97,6 +97,7 @@ async fn build_service(
         ticket_key: rand::random(),
         tickets: Tickets::new(Duration::from_secs(60 * 15)),
         registration_attempts: HashMap::new(),
+        topic_lookups: Default::default(),
         topics_kbuckets: HashMap::new(),
         discovered_peers_topic: HashMap::new(),
         active_topic_queries: ActiveTopicQueries::new(

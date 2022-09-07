@@ -596,9 +596,8 @@ impl Discv5 {
             let (callback_send, callback_recv) = oneshot::channel();
 
             let topic = Topic::new(topic);
-            let topic_hash = topic.hash();
 
-            let event = ServiceRequest::TopicQuery(topic_hash, callback_send);
+            let event = ServiceRequest::TopicQuery(topic.clone(), callback_send);
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             // send the request
@@ -610,13 +609,14 @@ impl Discv5 {
             let ad_nodes = callback_recv.await.map_err(|e| {
                 RequestError::ChannelFailed(format!(
                     "Failed to receive ad nodes from lookup of topic {} with topic hash {}. Error {}",
-                    topic, topic_hash, e
+                    topic, topic.hash(), e
                 ))
             })?;
             if ad_nodes.is_ok() {
                 debug!(
                     "Received ad nodes for topic {} with topic hash {}",
-                    topic, topic_hash
+                    topic,
+                    topic.hash()
                 );
             }
             ad_nodes
@@ -636,7 +636,7 @@ impl Discv5 {
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
             let (callback_send, callback_recv) = oneshot::channel();
             let topic = Topic::new(topic_str);
-            let event = ServiceRequest::RemoveTopic(topic, callback_send);
+            let event = ServiceRequest::DeregisterTopic(topic, callback_send);
             channel
                 .send(event)
                 .await

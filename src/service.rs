@@ -49,7 +49,7 @@ use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{
-    collections::{hash_map::Entry, BTreeMap, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap, HashSet},
     io::Error,
     net::SocketAddr,
     pin::Pin,
@@ -189,21 +189,25 @@ pub enum ServiceRequest {
     /// discovered nodes as it traverses the DHT.
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
     /// Starts a topic look up of nodes advertising a topic in a discv5 network.
-    TopicQuery(TopicHash, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
+    TopicQuery(Topic, oneshot::Sender<Result<Vec<Enr>, RequestError>>),
+    /// Retrieves a list of previously looked up topics, i.e. topics pertaining a set of topic's kbuckets.
+    TopicQueryHistory(oneshot::Sender<Vec<Topic>>),
+    /// Removes a topic from the [`ServiceRequest::TopicQueryHistory`].
+    RemoveFromTopicQueryHistory(Topic, oneshot::Sender<Result<(), RequestError>>),
     /// RegisterTopic publishes this node as an advertiser for a topic in a discv5 network
     /// until removed.
     RegisterTopic(Topic, oneshot::Sender<Result<(), RequestError>>),
-    /// Stops publishing this node as an advertiser for a topic.
-    RemoveTopic(Topic, oneshot::Sender<Result<(), RequestError>>),
-    /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
-    ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
-    /// Retrieves the ads advertised for other nodes for a given topic.
-    Ads(TopicHash, oneshot::Sender<Vec<Enr>>),
     /// Retrieves the registration attempts active for a given topic.
     RegistrationAttempts(
         Topic,
         oneshot::Sender<Result<BTreeMap<Log2Distance, RegAttempts>, RequestError>>,
     ),
+    /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
+    ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
+    /// Stops publishing this node as an advertiser for a topic.
+    DeregisterTopic(Topic, oneshot::Sender<Result<(), RequestError>>),
+    /// Retrieves the ads advertised for other nodes for a given topic.
+    Ads(TopicHash, oneshot::Sender<Vec<Enr>>),
     /// Retrieves the node id of entries in a given topic's kbuckets by log2distance (bucket index).
     TableEntriesIdTopicKBuckets(
         TopicHash,
@@ -264,6 +268,12 @@ pub struct Service {
     /// Registrations attempts underway for each topic stored by bucket index, i.e. the
     /// log2distance to the local node id.
     registration_attempts: HashMap<Topic, BTreeMap<Log2Distance, RegAttempts>>,
+
+    /// The topics that have been looked-up. Upon insertion a set of kbuckets is initialised for
+    /// the topic, if one didn't already exist from registration. Keeping these kbuckets until
+    /// a topic is manually removed from topic_lookups (and registration_attempts) makes the
+    /// repeated look-up for the same topic less costly.
+    topic_lookups: HashSet<Topic>,
 
     /// KBuckets per topic hash.
     topics_kbuckets: HashMap<TopicHash, KBucketsTable<NodeId, Enr>>,
@@ -479,6 +489,7 @@ impl Service {
                     event_stream: None,
                     ads: Ads::default(),
                     registration_attempts: HashMap::new(),
+                    topic_lookups: Default::default(),
                     topics_kbuckets: HashMap::new(),
                     discovered_peers_topic: HashMap::new(),
                     ticket_key: rand::random(),
@@ -547,8 +558,14 @@ impl Service {
                                 error!("Failed to return the event stream channel");
                             }
                         }
-                        ServiceRequest::TopicQuery(topic_hash, callback) => {
-                            // If we look up the topic hash for the first time we initialise its kbuckets.
+                        ServiceRequest::TopicQuery(topic, callback) => {
+                            // Store the topic to make sure the kbuckets for the topic persist for repeated
+                            // look ups.
+                            self.topic_lookups.insert(topic.clone());
+
+                            let topic_hash = topic.hash();
+                            // If we look up the topic hash for the first time, and aren't registering it,
+                            // we initialise its kbuckets.
                             if let Entry::Vacant(_) = self.topics_kbuckets.entry(topic_hash) {
                                 self.init_topic_kbuckets(topic_hash);
                             }
@@ -560,28 +577,56 @@ impl Service {
 
                             self.send_topic_queries(topic_hash, Some(callback));
                         }
+                        ServiceRequest::RemoveFromTopicQueryHistory(topic, callback) => {
+                            let result = if self.topic_lookups.remove(&topic) {
+                                // If this topic isn't being registered, free the storage occupied by the topic's kbuckets
+                                // and get rid of the overhead needed to maintain the those kbuckets.
+                                if !self.registration_attempts.contains_key(&topic) {
+                                    self.topics_kbuckets.remove(&topic.hash());
+                                }
+                                Ok(())
+                            } else {
+                                Err(RequestError::TopicNotQueried)
+                            };
+                            if callback.send(result).is_err() {
+                                error!("Failed to return result of remove topic query operation for topic {}", topic);
+                            }
+                        }
+                        ServiceRequest::TopicQueryHistory(callback) => {
+                            if callback.send(self.topic_lookups.iter().cloned().collect::<Vec<Topic>>()).is_err() {
+                                error!("Failed to return topic query history");
+                            }
+                        }
                         ServiceRequest::RegisterTopic(topic, callback) => {
                             let result = self.start_topic_registration(topic.clone());
                             if callback.send(result).is_err() {
                                 error!("Failed to return result of register topic operation for topic {}", topic);
                             }
                         }
-                        ServiceRequest::ActiveTopics(callback) => {
-                            if callback.send(Ok(self.get_active_topics())).is_err() {
-                                error!("Failed to return active topics");
-                            }
-                        }
-                        ServiceRequest::RemoveTopic(topic, callback) => {
+                        ServiceRequest::DeregisterTopic(topic, callback) => {
+                            // If we have any pending tickets, discard those, i.e. don't return the ticket to the
+                            // peer that issued it.
                             self.tickets.remove(&topic);
 
                             let result = if self.registration_attempts.remove(&topic).is_some() {
                                 METRICS.topics_to_publish.store(self.registration_attempts.len(), Ordering::Relaxed);
+                                // If this topic isn't being looked up, free the storage occupied by the topic's kbuckets
+                                // and get rid of the overhead needed to maintain the those kbuckets.
+                                if !self.topic_lookups.contains(&topic) {
+                                    self.topics_kbuckets.remove(&topic.hash());
+                                }
                                 Ok(())
                             } else {
                                 Err(RequestError::TopicNotRegistered)
                             };
+
                             if callback.send(result).is_err() {
-                                error!("Failed to return the result of the remove topic operation for topic {}", topic);
+                                error!("Failed to return the result of the deregister topic operation for topic {}", topic);
+                            }
+                        }
+                        ServiceRequest::ActiveTopics(callback) => {
+                            if callback.send(Ok(self.get_active_topics())).is_err() {
+                                error!("Failed to return active topics");
                             }
                         }
                         ServiceRequest::Ads(topic_hash, callback) => {
