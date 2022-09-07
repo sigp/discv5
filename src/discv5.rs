@@ -92,7 +92,7 @@ pub enum Discv5Event {
     /// A node has been discovered from a FINDNODE request.
     ///
     /// The ENR of the node is returned. Various properties can be derived from the ENR.
-    /// This happen spontaneously through queries as nodes return ENR's. These ENR's are not
+    /// This happen spontaneously through queries as nodes return ENRs. These ENRs are not
     /// guaranteed to be live or contactable.
     Discovered(Enr),
     /// A node has been discovered from a FINDNODE request using the given TopiHash as key.
@@ -239,7 +239,7 @@ impl Discv5 {
     /// operations involving one of these peers, without having to dial
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
-        // only add ENR's that have a valid udp socket.
+        // only add ENRs that have a valid udp socket.
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             warn!("ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored.");
             return Err("ENR has no compatible UDP socket to connect to");
@@ -461,7 +461,7 @@ impl Discv5 {
             .collect()
     }
 
-    /// Returns an iterator over all the ENR's of nodes currently contained in the routing table.
+    /// Returns an iterator over all the ENRs of nodes currently contained in the routing table.
     pub fn table_entries_enr(&self) -> Vec<Enr> {
         self.kbuckets
             .write()
@@ -636,7 +636,7 @@ impl Discv5 {
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
             let (callback_send, callback_recv) = oneshot::channel();
             let topic = Topic::new(topic_str);
-            let event = ServiceRequest::DeregisterTopic(topic, callback_send);
+            let event = ServiceRequest::StopRegistrationOfTopic(topic, callback_send);
             channel
                 .send(event)
                 .await

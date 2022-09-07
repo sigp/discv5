@@ -114,7 +114,7 @@ pub enum ResponseBody {
     Nodes {
         /// The total number of responses that make up this response.
         total: u64,
-        /// A list of ENR's returned by the responder.
+        /// A list of ENRs returned by the responder.
         nodes: Vec<Enr<CombinedKey>>,
     },
     /// The TALKRESP response.

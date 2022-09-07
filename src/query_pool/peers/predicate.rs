@@ -21,7 +21,7 @@ pub(crate) struct PredicateQuery<TNodeId, TResult> {
     /// The number of peers for which the query is currently waiting for results.
     num_waiting: usize,
 
-    /// The predicate function to be applied to filter the ENR's found during the search.
+    /// The predicate function to be applied to filter the ENRs found during the search.
     predicate: Box<dyn Fn(&TResult) -> bool + Send + 'static>,
 
     /// The configuration of the query.

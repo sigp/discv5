@@ -3,7 +3,7 @@
 //! The [`Handler`] is responsible for establishing and maintaining sessions with
 //! connected/discovered nodes. Each node, identified by it's [`NodeId`] is associated with a
 //! `Session`. This service drives the handshakes for establishing the sessions and associated
-//! logic for sending/requesting initial connections/ENR's to/from unknown peers.
+//! logic for sending/requesting initial connections/ENRs to/from unknown peers.
 //!
 //! The [`Handler`] also manages the timeouts for each request and reports back RPC failures,
 //! and received messages. Messages are encrypted and decrypted using the

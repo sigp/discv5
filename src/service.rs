@@ -1,11 +1,11 @@
 //! The Discovery v5 protocol. See `lib.rs` for further details.
 //!
-//! Note: Discovered ENR's are not automatically added to the routing table. Only established
+//! Note: Discovered ENRs are not automatically added to the routing table. Only established
 //! sessions get added, ensuring only valid ENRs are added. Manual additions can be made using the
 //! `add_enr()` function.
 //!
 //! Response to queries return `PeerId`. Only the trusted (a session has been established with)
-//! `PeerId`'s are returned, as ENR's for these `PeerId`'s are stored in the routing table and as
+//! `PeerId`'s are returned, as ENRs for these `PeerId`'s are stored in the routing table and as
 //! such should have an address to connect to. Untrusted `PeerId`'s can be obtained from the
 //! `Service::Discovered` event, which is fired as peers get discovered.
 //!
@@ -205,7 +205,7 @@ pub enum ServiceRequest {
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
     ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
     /// Stops publishing this node as an advertiser for a topic.
-    DeregisterTopic(Topic, oneshot::Sender<Result<(), RequestError>>),
+    StopRegistrationOfTopic(Topic, oneshot::Sender<Result<(), RequestError>>),
     /// Retrieves the ads advertised for other nodes for a given topic.
     Ads(TopicHash, oneshot::Sender<Vec<Enr>>),
     /// Retrieves the node id of entries in a given topic's kbuckets by log2distance (bucket index).
@@ -603,7 +603,7 @@ impl Service {
                                 error!("Failed to return result of register topic operation for topic {}", topic);
                             }
                         }
-                        ServiceRequest::DeregisterTopic(topic, callback) => {
+                        ServiceRequest::StopRegistrationOfTopic(topic, callback) => {
                             // If we have any pending tickets, discard those, i.e. don't return the ticket to the
                             // peer that issued it.
                             self.tickets.remove(&topic);
@@ -724,7 +724,7 @@ impl Service {
                             let id = query.id();
                             let query_type = query.target().query_type.clone();
                             let mut result = query.into_result();
-                            // obtain the ENR's for the resulting nodes
+                            // obtain the ENRs for the resulting nodes
                             let mut found_enrs = Vec::new();
                             for node_id in result.closest_peers {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
@@ -860,11 +860,17 @@ impl Service {
                     let mut topic_item = topics_to_reg_iter.next();
                     while let Some((topic, _topic_hash)) = topic_item {
                         trace!("Publishing topic {} with hash {}", topic, topic.hash());
+                        topic_item = topics_to_reg_iter.next();
+                        // It could be that a topic has been set to stop registration since the
+                        // iteration through topics_to_reg_iter was started, in that case skip
+                        // that topic.
+                        if !self.registration_attempts.contains_key(&topic) {
+                            continue;
+                        }
                         sent_regtopics += self.send_register_topics(topic.clone());
                         if sent_regtopics >= MAX_REGTOPICS_REGISTER_PER_INTERVAL {
                             break
                         }
-                        topic_item = topics_to_reg_iter.next();
                     }
                     if topics_to_reg_iter.next().is_none() {
                         topics_to_reg_iter = self.registration_attempts.keys().map(|topic| (topic.clone(), topic.hash())).collect::<Vec<(Topic, TopicHash)>>().into_iter();
@@ -1239,7 +1245,7 @@ impl Service {
         {
             let mut kbuckets = self.kbuckets.write();
             for closest in kbuckets.closest_values(&target_key) {
-                // Add the known ENR's to the untrusted list
+                // Add the known ENRs to the untrusted list
                 target.untrusted_enrs.push(closest.value);
                 // Add the key to the list for the query
                 known_closest_peers.push(closest.key);
@@ -1284,7 +1290,7 @@ impl Service {
         {
             let mut kbuckets = self.kbuckets.write();
             for closest in kbuckets.closest_values_predicate(&target_key, &kbucket_predicate) {
-                // Add the known ENR's to the untrusted list
+                // Add the known ENRs to the untrusted list
                 target.untrusted_enrs.push(closest.value.clone());
                 // Add the key to the list for the query
                 known_closest_peers.push(closest.into());
@@ -1550,7 +1556,7 @@ impl Service {
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
                     // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can be returned. Datagrams have a max
-                    // size of 1280 and ENR's have a max size of 300 bytes.
+                    // size of 1280 and ENRs have a max size of 300 bytes.
                     //
                     // Bucket sizes should be 16. In this case, there should be no more than 5*DISTANCES_TO_REQUEST_PER_PEER responses, to return all required peers.
                     if total > 5 * DISTANCES_TO_REQUEST_PER_PEER as Log2Distance {
@@ -1567,7 +1573,7 @@ impl Service {
                         if let Some(CallbackResponse::Enr(callback)) =
                             active_request.callback.take()
                         {
-                            // Currently only support requesting for ENR's. Verify this is the case.
+                            // Currently only support requesting for ENRs. Verify this is the case.
                             if !distances.is_empty() && distances[0] != 0 {
                                 error!("Retrieved a callback request that wasn't for a peer's ENR");
                                 return;
@@ -2087,7 +2093,7 @@ impl Service {
         mut distances: Vec<Log2Distance>,
     ) {
         // NOTE: At most we only allow 5 distances to be sent (see the decoder). If each of these
-        // buckets are full, that equates to 80 ENR's to respond with.
+        // buckets are full, that equates to 80 ENRs to respond with.
 
         let mut nodes_to_send = Vec::new();
         distances.sort_unstable();

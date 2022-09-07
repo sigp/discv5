@@ -42,7 +42,7 @@ type Key = [u8; KEY_LENGTH];
 /* Session key generation */
 
 /// Generates session and auth-response keys for a nonce and remote ENR. This currently only
-/// supports Secp256k1 signed ENR's. This returns four keys; initiator key, responder key, auth
+/// supports Secp256k1 signed ENRs. This returns four keys; initiator key, responder key, auth
 /// response key and the ephemeral public key.
 pub(crate) fn generate_session_keys(
     local_id: &NodeId,
