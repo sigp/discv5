@@ -1,5 +1,10 @@
-use crate::advertisement::topic::TopicHash;
-use enr::{CombinedKey, Enr, NodeId};
+use crate::{advertisement::topic::TopicHash, Enr};
+use aes_gcm::{
+    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+    Aes128Gcm,
+};
+use enr::NodeId;
+use more_asserts::debug_unreachable;
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
     net::{IpAddr, Ipv6Addr},
@@ -7,6 +12,135 @@ use std::{
 };
 use tokio::time::{Duration, Instant};
 use tracing::{debug, error, warn};
+
+pub const FALSE_TICKET: &str = "TICKET_ENCRYPTED_BY_FOREIGN_KEY";
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum RequestTicket {
+    Empty,
+    LocallyIssued(Ticket),
+    RemotelyIssued(Vec<u8>),
+}
+
+impl RequestTicket {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut s = RlpStream::new();
+        s.append(self);
+        buf.extend_from_slice(&s.out());
+        buf
+    }
+
+    pub fn decode(ticket: &[u8]) -> Result<Self, DecoderError> {
+        let rlp = rlp::Rlp::new(ticket);
+        let request_ticket = rlp.as_val::<RequestTicket>()?;
+        Ok(request_ticket)
+    }
+}
+
+impl rlp::Encodable for RequestTicket {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        match self {
+            RequestTicket::Empty => {
+                s.append(&Vec::new());
+            }
+            RequestTicket::LocallyIssued(ticket) => {
+                debug!("A locally issued ticket will never be sent in the form of a request hence the RequestTicket::LocallyIssued variant should not need to be encoded. This functionality should merely be invoked by tests.");
+                s.append(ticket);
+            }
+            RequestTicket::RemotelyIssued(bytes) => {
+                // A remotely issued ticket is encoded to return it to its issuer once its wait
+                // time expires.
+                s.append(bytes);
+            }
+        }
+    }
+}
+
+impl rlp::Decodable for RequestTicket {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+        // If a ticket is incoming in a REGTOPIC request, and we hence decode
+        // the request, it should only be a ticket that was locally issued. A
+        // remotely issued ticket RegtopicTicket::Remote will only be encoded
+        // by this node to return it to its issuer.
+        Ok(RequestTicket::LocallyIssued(rlp.as_val::<Ticket>()?))
+    }
+}
+
+impl std::fmt::Display for RequestTicket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestTicket::Empty => {
+                write!(f, "Empty")
+            }
+            RequestTicket::LocallyIssued(ticket) => {
+                write!(f, "Locally issued ticket: {}", ticket)
+            }
+            RequestTicket::RemotelyIssued(bytes) => {
+                write!(f, "Remotely issued ticket: {}", hex::encode(bytes))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum ResponseTicket {
+    LocallyIssued(Ticket),
+    RemotelyIssued(Vec<u8>),
+}
+
+impl ResponseTicket {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut s = RlpStream::new();
+        s.append(self);
+        buf.extend_from_slice(&s.out());
+        buf
+    }
+
+    pub fn decode(ticket: &[u8]) -> Result<Self, DecoderError> {
+        let rlp = rlp::Rlp::new(ticket);
+        let response_ticket = rlp.as_val::<ResponseTicket>()?;
+        Ok(response_ticket)
+    }
+}
+
+impl rlp::Encodable for ResponseTicket {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        match self {
+            ResponseTicket::LocallyIssued(ticket) => {
+                s.append(ticket);
+            }
+            ResponseTicket::RemotelyIssued(bytes) => {
+                debug!("A remotely issued ticket will never be returned to the issuer in the form of a response hence the ResponseTicket::RemotelyIssued variant should not need to be encoded. This functionality should merely be invoked by tests.");
+                s.append(bytes);
+            }
+        }
+    }
+}
+
+impl rlp::Decodable for ResponseTicket {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+        // If a ticket is incoming in a TICKET response, and we hence decode
+        // the response, it should only be a ticket that was remotely issued.
+        // A locally issued ticket ResponseTicket::Local will only be encoded
+        // by this node and sent to a given peer.
+        Ok(ResponseTicket::RemotelyIssued(rlp.as_val::<Vec<u8>>()?))
+    }
+}
+
+impl std::fmt::Display for ResponseTicket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseTicket::LocallyIssued(ticket) => {
+                write!(f, "Locally issued ticket: {}", ticket)
+            }
+            ResponseTicket::RemotelyIssued(bytes) => {
+                write!(f, "Remotely issued ticket: {}", hex::encode(bytes))
+            }
+        }
+    }
+}
 
 /// Type to manage the request IDs.
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
@@ -88,9 +222,9 @@ pub enum RequestBody {
         /// The topic string we want to advertise at the node receiving this request.
         topic: String,
         // Current node record of sender.
-        enr: crate::Enr,
+        enr: Enr,
         // Ticket content of ticket from a previous registration attempt or empty.
-        ticket: Vec<u8>,
+        ticket: RequestTicket,
     },
     /// A TOPICQUERY request.
     TopicQuery {
@@ -115,7 +249,7 @@ pub enum ResponseBody {
         /// The total number of responses that make up this response.
         total: u64,
         /// A list of ENRs returned by the responder.
-        nodes: Vec<Enr<CombinedKey>>,
+        nodes: Vec<Enr>,
     },
     /// The TALKRESP response.
     Talk {
@@ -125,7 +259,7 @@ pub enum ResponseBody {
     /// The TICKET response.
     Ticket {
         /// The response to a REGTOPIC request.
-        ticket: Vec<u8>,
+        ticket: ResponseTicket,
         /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
         /// The topic hash for which the opaque ticket is issued.
@@ -227,7 +361,7 @@ impl Response {
     }
 
     /// Encodes a Message to RLP-encoded bytes.
-    pub fn encode(self) -> Vec<u8> {
+    pub fn encode(self, ticket_key: &[u8; 16]) -> Vec<u8> {
         let mut buf = Vec::with_capacity(10);
         let msg_type = self.msg_type();
         buf.push(msg_type);
@@ -276,13 +410,22 @@ impl Response {
                 wait_time,
                 topic,
             } => {
-                let mut s = RlpStream::new();
-                s.begin_list(4);
-                s.append(&id.as_bytes());
-                s.append(&ticket);
-                s.append(&wait_time);
-                s.append(&topic);
-                buf.extend_from_slice(&s.out());
+                let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
+                let payload = Payload {
+                    msg: &ticket.encode(),
+                    aad: b"",
+                };
+                if let Ok(encrypted_ticket) =
+                    aead.encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
+                {
+                    let mut s = RlpStream::new();
+                    s.begin_list(4);
+                    s.append(&id.as_bytes());
+                    s.append(&encrypted_ticket);
+                    s.append(&wait_time);
+                    s.append(&topic);
+                    buf.extend_from_slice(&s.out());
+                }
                 buf
             }
         }
@@ -315,11 +458,11 @@ impl std::fmt::Display for ResponseBody {
         match self {
             ResponseBody::Pong { enr_seq, ip, port } => write!(
                 f,
-                "PONG: Enr-seq: {}, Ip: {:?},  Port: {}",
+                "PONG: enr-seq: {}, ip: {:?},  port: {}",
                 enr_seq, ip, port
             ),
             ResponseBody::Nodes { total, nodes } => {
-                write!(f, "NODES: total: {}, Nodes: [", total)?;
+                write!(f, "NODES: total: {}, nodes: [", total)?;
                 let mut first = true;
                 for id in nodes {
                     if !first {
@@ -333,7 +476,7 @@ impl std::fmt::Display for ResponseBody {
                 write!(f, "]")
             }
             ResponseBody::Talk { response } => {
-                write!(f, "TALK: Response {}", hex::encode(response))
+                write!(f, "TALK: response {}", hex::encode(response))
             }
             ResponseBody::Ticket {
                 ticket,
@@ -342,10 +485,8 @@ impl std::fmt::Display for ResponseBody {
             } => {
                 write!(
                     f,
-                    "TICKET: Ticket: {}, Wait time: {}, Topic: {}",
-                    hex::encode(ticket),
-                    wait_time,
-                    topic
+                    "TICKET: ticket: {}, wait time: {}, topic: {}",
+                    ticket, wait_time, topic
                 )
             }
         }
@@ -377,21 +518,21 @@ impl std::fmt::Display for RequestBody {
                 "REGTOPIC: topic: {}, enr: {}, ticket: {}",
                 topic,
                 enr.to_base64(),
-                hex::encode(ticket),
+                ticket,
             ),
         }
     }
 }
 #[allow(dead_code)]
 impl Message {
-    pub fn encode(self) -> Vec<u8> {
+    pub fn encode(self, ticket_key: &[u8; 16]) -> Vec<u8> {
         match self {
             Self::Request(request) => request.encode(),
-            Self::Response(response) => response.encode(),
+            Self::Response(response) => response.encode(ticket_key),
         }
     }
 
-    pub fn decode(data: &[u8]) -> Result<Self, DecoderError> {
+    pub fn decode(data: &[u8], ticket_key: &[u8; 16]) -> Result<Self, DecoderError> {
         if data.len() < 3 {
             return Err(DecoderError::RlpIsTooShort);
         }
@@ -518,7 +659,7 @@ impl Message {
                         // no records
                         vec![]
                     } else {
-                        enr_list_rlp.as_list::<Enr<CombinedKey>>()?
+                        enr_list_rlp.as_list::<Enr>()?
                     }
                 };
                 Message::Response(Response {
@@ -568,11 +709,39 @@ impl Message {
                 }
                 let topic = rlp.val_at::<String>(1)?;
                 let enr_rlp = rlp.at(2)?;
-                let enr = enr_rlp.as_val::<Enr<CombinedKey>>()?;
+                let enr = enr_rlp.as_val::<Enr>()?;
                 let ticket = rlp.val_at::<Vec<u8>>(3)?;
+
+                let returned_ticket = {
+                    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
+                    let payload = Payload {
+                        msg: &ticket,
+                        aad: b"",
+                    };
+                    if !ticket.is_empty() {
+                        if let Ok(decrypted_ticket) = aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload).map_err(|e| debug!("Failed to decrypt ticket in REGTOPIC request. Ticket not issued by us. Error: {}", e)) {
+                            if let Ok(decoded_ticket) = RequestTicket::decode(&decrypted_ticket).map_err(|e| {
+                                debug!("Failed to decode ticket in REGTOPIC request. Error: {}", e)
+                            }) {
+                                decoded_ticket
+                            } else {
+                                debug_unreachable!("Encoding of ticket issued locally is faulty");
+                                return Err(DecoderError::Custom("Faulty encoding of ticket"));
+                            }
+                        } else {
+                            return Err(DecoderError::Custom(FALSE_TICKET));
+                        }
+                    } else {
+                        RequestTicket::Empty
+                    }
+                };
                 Message::Request(Request {
                     id,
-                    body: RequestBody::RegisterTopic { topic, enr, ticket },
+                    body: RequestBody::RegisterTopic {
+                        topic,
+                        enr,
+                        ticket: returned_ticket,
+                    },
                 })
             }
             8 => {
@@ -584,7 +753,7 @@ impl Message {
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                let ticket = rlp.val_at::<Vec<u8>>(1)?;
+                let ticket = rlp.val_at::<ResponseTicket>(1)?;
                 let wait_time = rlp.val_at::<u64>(2)?;
                 let topic = rlp.val_at::<String>(3)?;
                 Message::Response(Response {
@@ -630,7 +799,7 @@ impl Message {
 }
 
 /// A ticket object, outlined in the spec.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub struct Ticket {
     src_node_id: NodeId,
     src_ip: IpAddr,
@@ -834,6 +1003,20 @@ impl Ticket {
     }
 }
 
+impl std::fmt::Display for Ticket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Ticket: src node id: {}, src ip: {}, topic: {}, req time: {:?}, wait time: {}",
+            self.src_node_id,
+            self.src_ip,
+            self.topic,
+            self.req_time,
+            self.wait_time.as_secs()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -845,6 +1028,8 @@ mod tests {
 
     #[test]
     fn ref_test_encode_request_ping() {
+        let ticket_key: [u8; 16] = rand::random();
+
         // reference input
         let id = RequestId(vec![1]);
         let enr_seq = 1;
@@ -856,12 +1041,14 @@ mod tests {
         // expected hex output
         let expected_output = hex::decode("01c20101").unwrap();
 
-        dbg!(hex::encode(message.clone().encode()));
-        assert_eq!(message.encode(), expected_output);
+        dbg!(hex::encode(message.clone().encode(&ticket_key)));
+        assert_eq!(message.encode(&ticket_key), expected_output);
     }
 
     #[test]
     fn ref_test_encode_request_findnode() {
+        let ticket_key: [u8; 16] = rand::random();
+
         // reference input
         let id = RequestId(vec![1]);
         let distances = vec![256];
@@ -872,13 +1059,15 @@ mod tests {
 
         // expected hex output
         let expected_output = hex::decode("03c501c3820100").unwrap();
-        dbg!(hex::encode(message.clone().encode()));
+        dbg!(hex::encode(message.clone().encode(&ticket_key)));
 
-        assert_eq!(message.encode(), expected_output);
+        assert_eq!(message.encode(&ticket_key), expected_output);
     }
 
     #[test]
     fn ref_test_encode_response_ping() {
+        let ticket_key: [u8; 16] = rand::random();
+
         // reference input
         let id = RequestId(vec![1]);
         let enr_seq = 1;
@@ -892,12 +1081,14 @@ mod tests {
         // expected hex output
         let expected_output = hex::decode("02ca0101847f000001821388").unwrap();
 
-        dbg!(hex::encode(message.clone().encode()));
-        assert_eq!(message.encode(), expected_output);
+        dbg!(hex::encode(message.clone().encode(&ticket_key)));
+        assert_eq!(message.encode(&ticket_key), expected_output);
     }
 
     #[test]
     fn ref_test_encode_response_nodes_empty() {
+        let ticket_key: [u8; 16] = rand::random();
+
         // reference input
         let id = RequestId(vec![1]);
         let total = 1;
@@ -912,16 +1103,18 @@ mod tests {
                 nodes: vec![],
             },
         });
-        assert_eq!(message.encode(), expected_output);
+        assert_eq!(message.encode(&ticket_key), expected_output);
     }
 
     #[test]
     fn ref_test_encode_response_nodes() {
+        let ticket_key: [u8; 16] = rand::random();
+
         // reference input
         let id = RequestId(vec![1]);
         let total = 1;
 
-        let enr = "-HW4QCjfjuCfSmIJHxqLYfGKrSz-Pq3G81DVJwd_muvFYJiIOkf0bGtJu7kZVCOPnhSTMneyvR4MRbF3G5TNB4wy2ssBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
+        let enr = "-HW4QCjfjuCfSmIJHxqLYfGKrSz-Pq3G81DVJwd_muvFYJiIOkf0bGtJu7kZVCOPnhSTMneyvR4MRbF3G5TNB4wy2ssBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
         // expected hex output
         let expected_output = hex::decode("04f87b0101f877f875b84028df8ee09f4a62091f1a8b61f18aad2cfe3eadc6f350d527077f9aebc56098883a47f46c6b49bbb91954238f9e14933277b2bd1e0c45b1771b94cd078c32dacb0182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138").unwrap();
 
@@ -932,18 +1125,20 @@ mod tests {
                 nodes: vec![enr],
             },
         });
-        dbg!(hex::encode(message.clone().encode()));
-        assert_eq!(message.encode(), expected_output);
+        dbg!(hex::encode(message.clone().encode(&ticket_key)));
+        assert_eq!(message.encode(&ticket_key), expected_output);
     }
 
     #[test]
     fn ref_test_encode_response_nodes_multiple() {
+        let ticket_key: [u8; 16] = rand::random();
+
         // reference input
         let id = RequestId(vec![1]);
         let total = 1;
-        let enr = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
+        let enr = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
 
-        let enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
+        let enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr>().unwrap();
 
         // expected hex output
         let expected_output = hex::decode("04f8f20101f8eef875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138f875b840d7f1c39e376297f81d7297758c64cb37dcc5c3beea9f57f7ce9695d7d5a67553417d719539d6ae4b445946de4d99e680eb8063f29485b555d45b7df16a1850130182696482763489736563703235366b31a1030e2cb74241c0c4fc8e8166f1a79a05d5b0dd95813a74b094529f317d5c39d235").unwrap();
@@ -955,18 +1150,19 @@ mod tests {
                 nodes: vec![enr, enr2],
             },
         });
-        dbg!(hex::encode(message.clone().encode()));
-        assert_eq!(message.encode(), expected_output);
+        dbg!(hex::encode(message.clone().encode(&ticket_key)));
+        assert_eq!(message.encode(&ticket_key), expected_output);
     }
 
     #[test]
     fn ref_decode_response_nodes_multiple() {
+        let ticket_key: [u8; 16] = rand::random();
         let input = hex::decode("04f8f20101f8eef875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138f875b840d7f1c39e376297f81d7297758c64cb37dcc5c3beea9f57f7ce9695d7d5a67553417d719539d6ae4b445946de4d99e680eb8063f29485b555d45b7df16a1850130182696482763489736563703235366b31a1030e2cb74241c0c4fc8e8166f1a79a05d5b0dd95813a74b094529f317d5c39d235").unwrap();
 
-        let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
-        let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
+        let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
+        let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr>().unwrap();
 
-        let decoded = Message::decode(&input).unwrap();
+        let decoded = Message::decode(&input, &ticket_key).unwrap();
 
         match decoded {
             Message::Response(response) => match response.body {
@@ -983,20 +1179,22 @@ mod tests {
 
     #[test]
     fn encode_decode_ping_request() {
+        let ticket_key: [u8; 16] = rand::random();
         let id = RequestId(vec![1]);
         let request = Message::Request(Request {
             id,
             body: RequestBody::Ping { enr_seq: 15 },
         });
 
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let encoded = request.clone().encode(&ticket_key);
+        let decoded = Message::decode(&encoded, &ticket_key).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_ping_response() {
+        let ticket_key: [u8; 16] = rand::random();
         let id = RequestId(vec![1]);
         let request = Message::Response(Response {
             id,
@@ -1007,14 +1205,15 @@ mod tests {
             },
         });
 
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let encoded = request.clone().encode(&ticket_key);
+        let decoded = Message::decode(&encoded, &ticket_key).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_find_node_request() {
+        let ticket_key: [u8; 16] = rand::random();
         let id = RequestId(vec![1]);
         let request = Message::Request(Request {
             id,
@@ -1023,15 +1222,16 @@ mod tests {
             },
         });
 
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let encoded = request.clone().encode(&ticket_key);
+        let decoded = Message::decode(&encoded, &ticket_key).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_nodes_response() {
-        let key = CombinedKey::generate_secp256k1();
+        let ticket_key: [u8; 16] = rand::random();
+        let key = enr::CombinedKey::generate_secp256k1();
         let enr1 = EnrBuilder::new("v4")
             .ip4("127.0.0.1".parse().unwrap())
             .udp4(500)
@@ -1057,14 +1257,15 @@ mod tests {
             },
         });
 
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let encoded = request.clone().encode(&ticket_key);
+        let decoded = Message::decode(&encoded, &ticket_key).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_talk_request() {
+        let ticket_key: [u8; 16] = rand::random();
         let id = RequestId(vec![1]);
         let request = Message::Request(Request {
             id,
@@ -1074,17 +1275,18 @@ mod tests {
             },
         });
 
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let encoded = request.clone().encode(&ticket_key);
+        let decoded = Message::decode(&encoded, &ticket_key).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
     fn encode_decode_register_topic_request_empty_ticket() {
+        let ticket_key: [u8; 16] = rand::random();
         let port = 5000;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
-        let key = CombinedKey::generate_secp256k1();
+        let key = enr::CombinedKey::generate_secp256k1();
         let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
         let request = Message::Request(Request {
@@ -1092,23 +1294,103 @@ mod tests {
             body: RequestBody::RegisterTopic {
                 topic: "lighthouse".to_string(),
                 enr,
-                ticket: Vec::new(),
+                ticket: RequestTicket::Empty,
             },
         });
 
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let encoded = request.clone().encode(&ticket_key);
+        let decoded = Message::decode(&encoded, &ticket_key).unwrap();
 
         assert_eq!(request, decoded);
     }
 
     #[test]
-    fn encode_decode_register_topic_request() {
+    fn encode_decode_ticket_transit() {
+        let local_ticket_key: [u8; 16] = rand::random();
+        let remote_ticket_key: [u8; 16] = rand::random();
+
         let port = 5000;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
-        let key = CombinedKey::generate_secp256k1();
+        let key = enr::CombinedKey::generate_secp256k1();
         let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
 
+        let node_id = enr.node_id();
+        let og_ticket = Ticket::new(
+            node_id,
+            ip,
+            TopicHash::from_raw([1u8; 32]),
+            Instant::now(),
+            Duration::from_secs(11),
+            //Duration::from_secs(25),
+        );
+
+        // The local node sends a ticket response
+        let response = Message::Response(Response {
+            id: RequestId(vec![1]),
+            body: ResponseBody::Ticket {
+                ticket: ResponseTicket::LocallyIssued(og_ticket.clone()),
+                wait_time: 1u64,
+                topic: "lighthouse".to_string(),
+            },
+        });
+
+        let encoded_resp = response.encode(&local_ticket_key);
+
+        // The response arrives at the remote peer
+        let decoded_resp = Message::decode(&encoded_resp, &remote_ticket_key).unwrap();
+
+        if let Message::Response(Response {
+            id: _,
+            body:
+                ResponseBody::Ticket {
+                    ticket: ResponseTicket::RemotelyIssued(ticket_bytes),
+                    ..
+                },
+        }) = decoded_resp
+        {
+            // The remote peer returns the ticket to the issuer
+            let request = Message::Request(Request {
+                id: RequestId(vec![1]),
+                body: RequestBody::RegisterTopic {
+                    topic: "lighthouse".to_string(),
+                    enr,
+                    ticket: RequestTicket::RemotelyIssued(ticket_bytes),
+                },
+            });
+
+            let encoded_req = request.encode(&remote_ticket_key);
+
+            // The request arrives at the issuer who decodes it
+            let decoded_req = Message::decode(&encoded_req, &local_ticket_key).unwrap();
+
+            if let Message::Request(Request {
+                id: _,
+                body:
+                    RequestBody::RegisterTopic {
+                        topic: _,
+                        enr: _,
+                        ticket: RequestTicket::LocallyIssued(ticket),
+                    },
+            }) = decoded_req
+            {
+                assert_eq!(og_ticket, ticket);
+            } else {
+                panic!();
+            }
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn encode_decode_request_ticket() {
+        // Create the test values needed
+        let port = 5000;
+        let ip: IpAddr = "127.0.0.1".parse().unwrap();
+
+        let key = enr::CombinedKey::generate_secp256k1();
+
+        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
         let node_id = enr.node_id();
         let ticket = Ticket::new(
             node_id,
@@ -1119,55 +1401,20 @@ mod tests {
             //Duration::from_secs(25),
         );
 
-        let ticket = ticket.encode();
+        let encoded = RequestTicket::LocallyIssued(ticket.clone()).encode();
 
-        let request = Message::Request(Request {
-            id: RequestId(vec![1]),
-            body: RequestBody::RegisterTopic {
-                topic: "lighthouse".to_string(),
-                enr,
-                ticket,
-            },
-        });
+        let decoded = RequestTicket::decode(&encoded).unwrap();
 
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
-
-        assert_eq!(request, decoded);
+        assert_eq!(RequestTicket::LocallyIssued(ticket), decoded);
     }
 
     #[test]
-    fn encode_decode_ticket() {
+    fn encode_decode_request_ticket_with_encryption() {
         // Create the test values needed
         let port = 5000;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
 
-        let key = CombinedKey::generate_secp256k1();
-
-        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
-        let node_id = enr.node_id();
-        let ticket = Ticket::new(
-            node_id,
-            ip,
-            TopicHash::from_raw([1u8; 32]),
-            Instant::now(),
-            Duration::from_secs(11),
-            //Duration::from_secs(25),
-        );
-
-        let encoded = ticket.encode();
-        let decoded = Ticket::decode(&encoded).unwrap();
-
-        assert_eq!(Some(ticket), decoded);
-    }
-
-    #[test]
-    fn encode_decode_ticket_with_encryption() {
-        // Create the test values needed
-        let port = 5000;
-        let ip: IpAddr = "127.0.0.1".parse().unwrap();
-
-        let key = CombinedKey::generate_secp256k1();
+        let key = enr::CombinedKey::generate_secp256k1();
 
         let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
         let node_id = enr.node_id();
@@ -1182,7 +1429,7 @@ mod tests {
 
         let ticket_key: [u8; 16] = rand::random();
 
-        let encoded = ticket.encode();
+        let encoded = RequestTicket::LocallyIssued(ticket.clone()).encode();
 
         let encrypted_ticket = {
             let aead = Aes128Gcm::new(GenericArray::from_slice(&ticket_key));
@@ -1205,57 +1452,24 @@ mod tests {
         }
         .unwrap();
 
-        let decoded = Ticket::decode(&decrypted_ticket).unwrap();
+        let decoded = RequestTicket::decode(&decrypted_ticket).unwrap();
 
         assert_eq!(encoded, decrypted_ticket);
-        assert_eq!(Some(ticket), decoded);
-    }
-
-    #[test]
-    fn encode_decode_ticket_response() {
-        // Create the test values needed
-        let port = 5000;
-        let ip: IpAddr = "127.0.0.1".parse().unwrap();
-
-        let key = CombinedKey::generate_secp256k1();
-
-        let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
-        let node_id = enr.node_id();
-        let ticket = Ticket::new(
-            node_id,
-            ip,
-            TopicHash::from_raw([1u8; 32]),
-            Instant::now(),
-            Duration::from_secs(11),
-            //Duration::from_secs(25),
-        );
-
-        let ticket = ticket.encode();
-        let response = Message::Response(Response {
-            id: RequestId(vec![1]),
-            body: ResponseBody::Ticket {
-                ticket,
-                wait_time: 1u64,
-                topic: "lighthouse".to_string(),
-            },
-        });
-
-        let encoded = response.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
-
-        assert_eq!(response, decoded);
+        assert_eq!(RequestTicket::LocallyIssued(ticket), decoded);
     }
 
     #[test]
     fn encode_decode_topic_query_request() {
+        let ticket_key: [u8; 16] = rand::random();
+
         let request = Message::Request(Request {
             id: RequestId(vec![1]),
             body: RequestBody::TopicQuery {
                 topic: TopicHash::from_raw([1u8; 32]),
             },
         });
-        let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let encoded = request.clone().encode(&ticket_key);
+        let decoded = Message::decode(&encoded, &ticket_key).unwrap();
 
         assert_eq!(request, decoded);
     }

@@ -32,7 +32,8 @@ use crate::{
     discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
-    rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
+    rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody, FALSE_TICKET},
+    service::BAN_MALICIOUS_PEER,
     socket,
     socket::{FilterConfig, Socket},
     Enr, Topic,
@@ -41,6 +42,7 @@ use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
+use rlp::DecoderError;
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -161,6 +163,9 @@ pub struct Challenge {
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
+    /// The duration nodes that show malicious behaviour are banned. A configuration for the
+    /// discv5 service.
+    ban_duration: Option<Duration>,
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
     /// during the operation of the server.
     node_id: NodeId,
@@ -168,6 +173,8 @@ pub struct Handler {
     enr: Arc<RwLock<Enr>>,
     /// The key to sign the ENR and set up encrypted communication with peers.
     key: Arc<RwLock<CombinedKey>>,
+    /// The key used for en-/decrypting tickets.
+    ticket_key: [u8; 16],
     /// Pending raw requests.
     active_requests: ActiveRequests,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
@@ -252,9 +259,11 @@ impl Handler {
 
                 let mut handler = Handler {
                     request_retries: config.request_retries,
+                    ban_duration: config.ban_duration,
                     node_id,
                     enr,
                     key,
+                    ticket_key: rand::random(),
                     active_requests: ActiveRequests::new(config.request_timeout),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
@@ -479,13 +488,14 @@ impl Handler {
         // Check for an established session
         if let Some(session) = self.sessions.get_mut(&node_address) {
             // Encrypt the message and send
-            let packet = match session.encrypt_message(self.node_id, &response.encode()) {
-                Ok(packet) => packet,
-                Err(e) => {
-                    warn!("Could not encrypt response: {:?}", e);
-                    return;
-                }
-            };
+            let packet =
+                match session.encrypt_message(self.node_id, &response.encode(&self.ticket_key)) {
+                    Ok(packet) => packet,
+                    Err(e) => {
+                        warn!("Could not encrypt response: {:?}", e);
+                        return;
+                    }
+                };
             self.send(node_address, packet).await;
         } else {
             // Either the session is being established or has expired. We simply drop the
@@ -859,10 +869,21 @@ impl Handler {
             // attempt to decrypt and process the message.
             let message = match session.decrypt_message(message_nonce, message, authenticated_data)
             {
-                Ok(m) => match Message::decode(&m) {
+                Ok(m) => match Message::decode(&m, &self.ticket_key) {
                     Ok(p) => p,
                     Err(e) => {
                         warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
+                        if let DecoderError::Custom(FALSE_TICKET) = e {
+                            warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting peer {}", node_address.node_id);
+                            BAN_MALICIOUS_PEER(self.ban_duration, node_address.clone());
+                            self.fail_session(
+                                &node_address,
+                                RequestError::InvalidRemotePacket,
+                                true,
+                            )
+                            .await;
+                            return;
+                        }
                         return;
                     }
                 },

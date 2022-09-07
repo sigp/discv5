@@ -1,8 +1,6 @@
 #![cfg(test)]
 
 use super::*;
-use std::net::IpAddr;
-
 use crate::{
     handler::Handler,
     kbucket,
@@ -94,7 +92,6 @@ async fn build_service(
         discv5_recv,
         event_stream: None,
         ads: Ads::new(Duration::from_secs(60 * 15), 100, 50000, 10, 3),
-        ticket_key: rand::random(),
         tickets: Tickets::new(Duration::from_secs(60 * 15)),
         registration_attempts: HashMap::new(),
         topic_lookups: Default::default(),
@@ -177,78 +174,4 @@ async fn test_updating_connection_on_ping() {
     let buckets = service.kbuckets.read();
     let node = buckets.iter_ref().next().unwrap();
     assert!(node.status.is_connected())
-}
-
-#[tokio::test]
-async fn encrypt_decrypt_ticket() {
-    init();
-    let enr_key = CombinedKey::generate_secp256k1();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
-    let enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp4(10006)
-        .build(&enr_key)
-        .unwrap();
-
-    let socket_addr = enr.udp4_socket().unwrap();
-
-    let service = build_service(
-        Arc::new(RwLock::new(enr)),
-        Arc::new(RwLock::new(enr_key)),
-        socket_addr.into(),
-        false,
-    )
-    .await;
-
-    let ticket_key: [u8; 16] = rand::random();
-    service
-        .local_enr
-        .write()
-        .insert("ticket_key", &ticket_key, &service.enr_key.write())
-        .unwrap();
-    let decoded_enr = service
-        .local_enr
-        .write()
-        .to_base64()
-        .parse::<Enr>()
-        .unwrap();
-
-    let port = 6666;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
-    let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4").ip(ip).udp4(port).build(&key).unwrap();
-    let node_id = enr.node_id();
-
-    let ticket = Ticket::new(
-        node_id,
-        ip,
-        TopicHash::from_raw([1u8; 32]),
-        tokio::time::Instant::now(),
-        tokio::time::Duration::from_secs(5),
-        //tokio::time::Duration::from_secs(25),
-    );
-
-    let ticket_key = decoded_enr.get("ticket_key").unwrap();
-
-    let aead = Aes128Gcm::new(GenericArray::from_slice(ticket_key));
-    let payload = Payload {
-        msg: &ticket.encode(),
-        aad: b"",
-    };
-    let nonce = [1u8; 12];
-    let encrypted_ticket = aead
-        .encrypt(GenericArray::from_slice(&nonce), payload)
-        .unwrap();
-
-    let decrypted_ticket = {
-        let payload = Payload {
-            msg: &encrypted_ticket,
-            aad: b"",
-        };
-        aead.decrypt(GenericArray::from_slice(&nonce), payload)
-            .unwrap()
-    };
-    let decoded_ticket = Ticket::decode(&decrypted_ticket).unwrap().unwrap();
-
-    assert_eq!(decoded_ticket, ticket);
 }

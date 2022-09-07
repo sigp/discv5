@@ -37,10 +37,6 @@ use crate::{
     },
     rpc, Discv5Config, Discv5Event, Enr, IpMode, Topic, TopicsEnrField,
 };
-use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
-    Aes128Gcm,
-};
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
@@ -86,6 +82,12 @@ const MAX_UNCONTACTED_PEERS_PER_TOPIC_BUCKET: usize = 16;
 
 /// The duration in seconds which a node can come late to an assigned wait time.
 const WAIT_TIME_TOLERANCE: Duration = Duration::from_secs(5);
+
+pub const BAN_MALICIOUS_PEER: fn(ban_duration: Option<Duration>, node_address: NodeAddress) =
+    |ban_duration, node_address| {
+        let ban_timeout = ban_duration.map(|v| Instant::now() + v);
+        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+    };
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -282,9 +284,6 @@ pub struct Service {
     /// this intermediary storage to check their connectivity before inserting them in the topic's
     /// kbuckets. Peers are stored by bucket index, i.e. the log2distance to the local node id.
     discovered_peers_topic: HashMap<TopicHash, BTreeMap<Log2Distance, HashMap<NodeId, Enr>>>,
-
-    /// The key used for en-/decrypting tickets.
-    ticket_key: [u8; 16],
 
     /// Tickets received from other nodes.
     tickets: Tickets,
@@ -492,7 +491,6 @@ impl Service {
                     topic_lookups: Default::default(),
                     topics_kbuckets: HashMap::new(),
                     discovered_peers_topic: HashMap::new(),
-                    ticket_key: rand::random(),
                     tickets: Tickets::default(),
                     active_topic_queries: ActiveTopicQueries::new(
                         config.topic_query_timeout,
@@ -838,7 +836,7 @@ impl Service {
                     // When the ticket time expires a new REGTOPIC request is automatically sent to the
                     // ticket issuer and the registration attempt stays in the [`RegistrationState::Ticket`]
                     // from sending the first REGTOPIC request to this contact for this topic.
-                    self.reg_topic_request(active_ticket.contact(), active_topic.topic().clone(), enr, Some(active_ticket.ticket()));
+                    self.reg_topic_request(active_ticket.contact(), active_topic.topic().clone(), enr, RequestTicket::RemotelyIssued(active_ticket.ticket()));
                 }
                 Some(topic_query_progress) = self.active_topic_queries.next() => {
                     match topic_query_progress {
@@ -1124,7 +1122,12 @@ impl Service {
                 if let Ok(node_contact) = NodeContact::try_from_enr(peer, self.config.ip_mode)
                     .map_err(|e| error!("Failed to send REGTOPIC to peer. Error: {:?}", e))
                 {
-                    self.reg_topic_request(node_contact, topic.clone(), local_enr.clone(), None);
+                    self.reg_topic_request(
+                        node_contact,
+                        topic.clone(),
+                        local_enr.clone(),
+                        RequestTicket::RemotelyIssued(Vec::new()),
+                    );
                     // If an uncontacted peer has a faulty enr, don't count the registration attempt.
                     sent_regtopics += 1;
                 }
@@ -1424,8 +1427,7 @@ impl Service {
                     };
                 if registration_of_other_node {
                     warn!("The enr in the REGTOPIC request body does not match sender's. Nodes can only register themselves. Blacklisting peer {}.", node_address.node_id);
-                    let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                    BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
                     self.rpc_failure(id, RequestError::RegistrationOtherNode);
                     return;
                 }
@@ -1452,42 +1454,16 @@ impl Service {
                     return;
                 }
 
-                if !ticket.is_empty() {
-                    let decrypted_ticket = {
-                        let aead = Aes128Gcm::new(GenericArray::from_slice(&self.ticket_key));
-                        let payload = Payload {
-                            msg: &ticket,
-                            aad: b"",
-                        };
-                        aead.decrypt(GenericArray::from_slice(&[1u8; 12]), payload)
-                            .map_err(|e| {
-                                error!("Failed to decrypt ticket in REGTOPIC request. Error: {}", e)
-                            })
-                    };
-                    if let Ok(decrypted_ticket) = decrypted_ticket {
-                        if let Ok(Some(ticket)) = Ticket::decode(&decrypted_ticket).map_err(|e| {
-                            error!("Failed to decode ticket in REGTOPIC request. Error: {}", e)
-                        }) {
-                            // If the node has not respected the wait time and arrives before the wait time has
-                            // expired or more than 5 seconds later than it has expired, the peer is blacklisted
-                            let waited_time = ticket.req_time().elapsed();
-                            let wait_time = ticket.wait_time();
-                            if waited_time < wait_time
-                                || waited_time >= wait_time + WAIT_TIME_TOLERANCE
-                            {
-                                warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
-                                let ban_timeout =
-                                    self.config.ban_duration.map(|v| Instant::now() + v);
-                                PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                                self.rpc_failure(id, RequestError::InvalidWaitTime);
-                                return;
-                            }
-                        }
-                    } else {
-                        warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting peer {}", node_address.node_id);
+                // If the node has not respected the wait time and arrives before the wait time has
+                // expired or more than 5 seconds later than it has expired, the peer is blacklisted
+                if let RequestTicket::LocallyIssued(ticket) = ticket {
+                    let waited_time = ticket.req_time().elapsed();
+                    let wait_time = ticket.wait_time();
+                    if waited_time < wait_time || waited_time >= wait_time + WAIT_TIME_TOLERANCE {
+                        warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                         PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                        self.rpc_failure(id, RequestError::InvalidTicket);
+                        self.rpc_failure(id, RequestError::InvalidWaitTime);
                         return;
                     }
                 }
@@ -1516,7 +1492,13 @@ impl Service {
                 }
 
                 let wait_time = new_ticket.wait_time();
-                self.send_ticket_response(node_address, id, topic, new_ticket, wait_time);
+                self.send_ticket_response(
+                    node_address,
+                    id,
+                    topic,
+                    ResponseTicket::LocallyIssued(new_ticket),
+                    wait_time,
+                );
             }
             RequestBody::TopicQuery { topic } => {
                 self.send_topic_query_nodes_response(node_address, id, topic);
@@ -1871,17 +1853,19 @@ impl Service {
                                 .get_mut(&node_id)
                             {
                                 if wait_time > 0 {
-                                    if let Err(e) = self.tickets.insert(
-                                        active_request.contact,
-                                        ticket,
-                                        Duration::from_secs(wait_time),
-                                        topic,
-                                    ) {
-                                        error!(
-                                            "Failed storing ticket from node id {}. Error {}",
-                                            node_id, e
-                                        );
-                                        *reg_state = RegistrationState::TicketLimit(now);
+                                    if let ResponseTicket::RemotelyIssued(ticket_bytes) = ticket {
+                                        if let Err(e) = self.tickets.insert(
+                                            active_request.contact,
+                                            ticket_bytes,
+                                            Duration::from_secs(wait_time),
+                                            topic,
+                                        ) {
+                                            error!(
+                                                "Failed storing ticket from node id {}. Error {}",
+                                                node_id, e
+                                            );
+                                            *reg_state = RegistrationState::TicketLimit(now);
+                                        }
                                     }
                                 } else {
                                     *reg_state = RegistrationState::Confirmed(now);
@@ -1983,17 +1967,12 @@ impl Service {
         contact: NodeContact,
         topic: Topic,
         enr: Enr,
-        ticket: Option<Vec<u8>>,
+        ticket: RequestTicket,
     ) {
-        let ticket_bytes = if let Some(ticket) = ticket {
-            ticket
-        } else {
-            Vec::new()
-        };
         let request_body = RequestBody::RegisterTopic {
             topic: topic.topic(),
             enr,
-            ticket: ticket_bytes,
+            ticket,
         };
         trace!("Sending reg topic to node {}", contact.socket_addr());
         self.send_rpc_request(ActiveRequest {
@@ -2023,35 +2002,25 @@ impl Service {
         node_address: NodeAddress,
         rpc_id: RequestId,
         topic: Topic,
-        ticket: Ticket,
+        ticket: ResponseTicket,
         wait_time: Duration,
     ) {
-        let aead = Aes128Gcm::new(GenericArray::from_slice(&self.ticket_key));
-        let payload = Payload {
-            msg: &ticket.encode(),
-            aad: b"",
+        let response = Response {
+            id: rpc_id,
+            body: ResponseBody::Ticket {
+                ticket,
+                wait_time: wait_time.as_secs(),
+                topic: topic.topic(),
+            },
         };
-        let _ = aead
-            .encrypt(GenericArray::from_slice(&[1u8; 12]), payload)
-            .map_err(|e| error!("Failed to send TICKET response: {}", e))
-            .map(|encrypted_ticket| {
-                let response = Response {
-                    id: rpc_id,
-                    body: ResponseBody::Ticket {
-                        ticket: encrypted_ticket,
-                        wait_time: wait_time.as_secs(),
-                        topic: topic.topic(),
-                    },
-                };
-                trace!(
-                    "Sending TICKET response to: {}. Response: {} ",
-                    node_address,
-                    response
-                );
-                let _ = self
-                    .handler_send
-                    .send(HandlerIn::Response(node_address, Box::new(response)));
-            });
+        trace!(
+            "Sending TICKET response to: {}. Response: {} ",
+            node_address,
+            response
+        );
+        let _ = self
+            .handler_send
+            .send(HandlerIn::Response(node_address, Box::new(response)));
     }
 
     /// Response to a topic query containing the nodes currently advertised for the
