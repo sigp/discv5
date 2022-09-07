@@ -15,10 +15,18 @@ use tracing::{debug, error, warn};
 
 pub const FALSE_TICKET: &str = "TICKET_ENCRYPTED_BY_FOREIGN_KEY";
 
+/// A ticket contained in the body of a REGTOPIC request.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum RequestTicket {
+    /// If this REGTOPIC is the first being sent to a given peer, no
+    /// ticket will be at hand.
     Empty,
+    /// This is an incoming REGTOPIC request with a ticket this node
+    /// issued to the sender at the prior registration attempt.
     LocallyIssued(Ticket),
+    /// This is an outgoing REGTOPIC request returning a ticket
+    /// received from the recipient at the prior registration
+    /// attempt.
     RemotelyIssued(Vec<u8>),
 }
 
@@ -83,9 +91,14 @@ impl std::fmt::Display for RequestTicket {
     }
 }
 
+/// A ticket contained in the body of a TICKET response.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ResponseTicket {
+    /// This is an outgoing TICKET response containing a locally
+    /// assembled ticket.
     LocallyIssued(Ticket),
+    /// This is an incoming TICKET response containing a ticket
+    /// issued by the sender.
     RemotelyIssued(Vec<u8>),
 }
 

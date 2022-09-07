@@ -33,7 +33,7 @@ use crate::{
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody, FALSE_TICKET},
-    service::BAN_MALICIOUS_PEER,
+    service::ban_malicious_peer,
     socket,
     socket::{FilterConfig, Socket},
     Enr, Topic,
@@ -871,7 +871,7 @@ impl Handler {
                         warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
                         if let DecoderError::Custom(FALSE_TICKET) = e {
                             warn!("Node sent a ticket that couldn't be decrypted with local ticket key. Blacklisting peer {}", node_address.node_id);
-                            BAN_MALICIOUS_PEER(self.ban_duration, node_address.clone());
+                            ban_malicious_peer(self.ban_duration, node_address.clone());
                             self.fail_session(
                                 &node_address,
                                 RequestError::InvalidRemotePacket,

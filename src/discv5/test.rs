@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{
-    discv5::{Version, CHECK_VERSION, ENR_KEY_VERSION},
+    discv5::{check_version, Version, ENR_KEY_VERSION},
     kbucket, Discv5, *,
 };
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
@@ -643,5 +643,5 @@ fn test_version_check() {
     enr.insert(ENR_KEY_VERSION, &[supported_versions], &key)
         .unwrap();
 
-    assert!(CHECK_VERSION(&enr, Version::Topics));
+    assert!(check_version(&enr, Version::Topics));
 }

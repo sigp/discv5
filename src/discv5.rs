@@ -66,24 +66,6 @@ pub enum Version {
     Topics = 1,
 }
 
-/// Check if a given peer supports a given version of the Discv5 protocol.
-pub const CHECK_VERSION: fn(peer: &Enr, version: Version) -> bool = |peer, version| {
-    if let Some(supported_versions) = peer.get(ENR_KEY_VERSION) {
-        if let Some(supported_versions) = supported_versions.first() {
-            let version_num = version as u8;
-            supported_versions & version_num == version_num
-        } else {
-            false
-        }
-    } else {
-        warn!(
-            "Enr of peer {} doesn't contain field 'version'",
-            peer.node_id()
-        );
-        false
-    }
-};
-
 mod test;
 
 /// Events that can be produced by the `Discv5` event stream.
@@ -883,5 +865,23 @@ impl Discv5 {
 impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+/// Check if a given peer supports a given version of the Discv5 protocol.
+pub fn check_version(peer: &Enr, version: Version) -> bool {
+    if let Some(supported_versions) = peer.get(ENR_KEY_VERSION) {
+        if let Some(supported_versions) = supported_versions.first() {
+            let version_num = version as u8;
+            supported_versions & version_num == version_num
+        } else {
+            false
+        }
+    } else {
+        warn!(
+            "Enr of peer {} doesn't contain field 'version'",
+            peer.node_id()
+        );
+        false
     }
 }

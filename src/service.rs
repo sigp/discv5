@@ -22,7 +22,7 @@ use crate::{
         topic::TopicHash,
         Ads, AD_LIFETIME,
     },
-    discv5::{Version, CHECK_VERSION, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST},
+    discv5::{check_version, Version, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -82,12 +82,6 @@ const MAX_UNCONTACTED_PEERS_PER_TOPIC_BUCKET: usize = 16;
 
 /// The duration in seconds which a node can come late to an assigned wait time.
 const WAIT_TIME_TOLERANCE: Duration = Duration::from_secs(5);
-
-pub const BAN_MALICIOUS_PEER: fn(ban_duration: Option<Duration>, node_address: NodeAddress) =
-    |ban_duration, node_address| {
-        let ban_timeout = ban_duration.map(|v| Instant::now() + v);
-        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-    };
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -749,7 +743,7 @@ impl Service {
                                 let mut discovered_new_peer = false;
                                 if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
                                     for enr in found_enrs {
-                                        if !CHECK_VERSION(&enr, Version::Topics) {
+                                        if !check_version(&enr, Version::Topics) {
                                             continue;
                                         }
                                         trace!("Found new peer {} for topic {}", enr, topic_hash);
@@ -942,7 +936,7 @@ impl Service {
 
         for entry in self.kbuckets.write().iter() {
             let enr = entry.node.value.clone();
-            if !CHECK_VERSION(&enr, Version::Topics) {
+            if !check_version(&enr, Version::Topics) {
                 continue;
             }
             match kbuckets.insert_or_update(entry.node.key, enr, entry.status) {
@@ -1453,7 +1447,7 @@ impl Service {
 
                     if !topic_in_enr(&topic.hash()) {
                         warn!("The topic given in the REGTOPIC request body cannot be found in sender's 'topics' enr field. Blacklisting peer {}.", node_address.node_id);
-                        BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
+                        ban_malicious_peer(self.config.ban_duration, node_address);
                         self.rpc_failure(id, RequestError::InvalidEnrTopicsField);
                         return;
                     }
@@ -1466,7 +1460,7 @@ impl Service {
                         if waited_time < wait_time || waited_time >= wait_time + WAIT_TIME_TOLERANCE
                         {
                             warn!("The REGTOPIC has not waited the time assigned in the ticket. Blacklisting peer {}.", node_address.node_id);
-                            BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
+                            ban_malicious_peer(self.config.ban_duration, node_address);
                             self.rpc_failure(id, RequestError::InvalidWaitTime);
                             return;
                         }
@@ -1594,7 +1588,7 @@ impl Service {
                                     "Peer returned more than one ENR for itself. Blacklisting {}",
                                     node_address
                                 );
-                                    BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
+                                    ban_malicious_peer(self.config.ban_duration, node_address);
                                     nodes.retain(|enr| {
                                         peer_key.log2_distance(&enr.node_id().into()).is_none()
                                     });
@@ -1614,7 +1608,7 @@ impl Service {
                                         "Peer sent invalid ENR. Blacklisting {}",
                                         active_request.contact
                                     );
-                                    BAN_MALICIOUS_PEER(self.config.ban_duration, node_address);
+                                    ban_malicious_peer(self.config.ban_duration, node_address);
                                 }
                             }
                         }
@@ -2709,6 +2703,12 @@ impl Service {
         })
         .await
     }
+}
+
+/// If a peer behaves maliciously, the peer can be banned for a certain time span.
+pub fn ban_malicious_peer(ban_duration: Option<Duration>, node_address: NodeAddress) {
+    let ban_timeout = ban_duration.map(|v| Instant::now() + v);
+    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
 }
 
 /// The result of the `query_event_poll` indicating an action is required to further progress an
