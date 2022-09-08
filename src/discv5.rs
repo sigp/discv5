@@ -57,11 +57,11 @@ pub static HASH: for<'a> fn(topic: &'a str) -> TopicHash = |topic| {
 pub(crate) const KBUCKET_PENDING_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Custom ENR keys.
-const ENR_KEY_VERSION: &str = "version";
+const ENR_KEY_FEATURES: &str = "features";
 pub const ENR_KEY_TOPICS: &str = "topics";
 
-/// Discv5 versions.
-pub enum Version {
+/// Discv5 features.
+pub enum Features {
     /// The protocol for advertising and looking up to topics in Discv5 is supported.
     Topics = 1,
 }
@@ -156,16 +156,16 @@ impl Discv5 {
         )));
 
         // This node supports topic requests REGTOPIC and TOPICQUERY, and their responses.
-        if let Err(e) =
-            local_enr
-                .write()
-                .insert(ENR_KEY_VERSION, &[Version::Topics as u8], &enr_key.write())
-        {
+        if let Err(e) = local_enr.write().insert(
+            ENR_KEY_FEATURES,
+            &[Features::Topics as u8],
+            &enr_key.write(),
+        ) {
             error!("Failed writing to enr. Error {:?}", e);
             return Err("Failed to insert field 'version' into local enr");
         }
 
-        println!("{:?}", local_enr.read().get(ENR_KEY_VERSION).unwrap());
+        println!("{:?}", local_enr.read().get(ENR_KEY_FEATURES).unwrap());
 
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
@@ -868,12 +868,12 @@ impl Drop for Discv5 {
     }
 }
 
-/// Check if a given peer supports a given version of the Discv5 protocol.
-pub fn check_version(peer: &Enr, version: Version) -> bool {
-    if let Some(supported_versions) = peer.get(ENR_KEY_VERSION) {
-        if let Some(supported_versions) = supported_versions.first() {
-            let version_num = version as u8;
-            supported_versions & version_num == version_num
+/// Check if a given peer supports a given feature of the Discv5 protocol.
+pub fn supports_feature(peer: &Enr, feature: Features) -> bool {
+    if let Some(supported_features) = peer.get(ENR_KEY_FEATURES) {
+        if let Some(supported_features_num) = supported_features.first() {
+            let feature_num = feature as u8;
+            supported_features_num & feature_num == feature_num
         } else {
             false
         }

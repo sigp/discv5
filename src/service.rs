@@ -22,7 +22,7 @@ use crate::{
         topic::TopicHash,
         Ads, AD_LIFETIME,
     },
-    discv5::{check_version, Version, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST},
+    discv5::{supports_feature, Features, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -743,7 +743,7 @@ impl Service {
                                 let mut discovered_new_peer = false;
                                 if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
                                     for enr in found_enrs {
-                                        if !check_version(&enr, Version::Topics) {
+                                        if !supports_feature(&enr, Features::Topics) {
                                             continue;
                                         }
                                         trace!("Found new peer {} for topic {}", enr, topic_hash);
@@ -936,7 +936,7 @@ impl Service {
 
         for entry in self.kbuckets.write().iter() {
             let enr = entry.node.value.clone();
-            if !check_version(&enr, Version::Topics) {
+            if !supports_feature(&enr, Features::Topics) {
                 continue;
             }
             match kbuckets.insert_or_update(entry.node.key, enr, entry.status) {
