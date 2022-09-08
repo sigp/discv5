@@ -15,11 +15,11 @@ use aes_gcm::{
     Aes128Gcm,
 };
 use ecdh::ecdh;
-use enr::k256::ecdsa::digest::Update;
 use enr::{
     k256::{
         self,
         ecdsa::{
+            digest::Update,
             signature::{DigestSigner, DigestVerifier, Signature as _},
             Signature,
         },
