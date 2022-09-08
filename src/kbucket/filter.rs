@@ -1,6 +1,6 @@
 //! Provides a trait that can be implemented to apply a filter to a table or bucket.
 
-use crate::{Enr, discv5::ENR_KEY_NAT};
+use crate::{discv5::ENR_KEY_NAT, Enr};
 pub trait Filter<TVal: Eq>: FilterClone<TVal> + Send + Sync {
     fn filter(
         &self,

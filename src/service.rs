@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    discv5::{Features, ENR_KEY_NAT, ENR_KEY_NAT_6, supports_feature},
+    discv5::{supports_feature, Features, ENR_KEY_NAT, ENR_KEY_NAT_6},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -32,7 +32,7 @@ use crate::{
     },
     rpc, Discv5Config, Discv5Event, Enr,
 };
-use delay_map::{HashMapDelay, HashSetDelay};
+use delay_map::HashSetDelay;
 use enr::{CombinedKey, EnrError, NodeId};
 use fnv::FnvHashMap;
 use futures::prelude::*;
@@ -222,15 +222,20 @@ pub struct Service {
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
 
-    /// The request ids of RELAYREQUESTs from initiators, that this node acts as
-    /// rendezvous for, are stored for double the request time out time so that we
-    /// can return the RELAYRESPONSE from the receiver to the initiator.
-    relay_requests: HashMapDelay<NodeId, RelayedRequest>,
+    /// For RELAYREQUESTs for which this node is the rendezvous, the request ids of
+    /// RELAYREQUESTs to receivers are mapped to the node address of the initiator so
+    /// the RELAYRESPONSE can be returned to the initiator. The initiator could be a
+    /// peer that is not in our kbuckets, e.g. a peer behind a symmetric NAT, hence
+    /// the node address is stored.
+    relayed_requests: HashMap<RequestId, RelayedRequest>,
 }
 
+/// When this node is a rendezvous, the id of the RELAYREQUEST from the initiator is
+/// stored along with the node address of the initiator, so the RELAYRESPONSE from the
+/// receiver can be re-packaged and relayed to the initiator.
 struct RelayedRequest {
-    id: RequestId,
     initiator: NodeAddress,
+    id: RequestId,
 }
 
 /// A peer is given a max number of PING attempts to send a contactable enr. This is relevant
@@ -348,14 +353,15 @@ impl Service {
             None
         };
 
-        let asymm_nat_votes = if config.enr_update && supports_feature(&local_enr.read(), Features::Nat) {
-            Some(AsymmNatVote::new(
-                config.enr_peer_update_min,
-                config.vote_duration,
-            ))
-        } else {
-            None
-        };
+        let asymm_nat_votes =
+            if config.enr_update && supports_feature(&local_enr.read(), Features::Nat) {
+                Some(AsymmNatVote::new(
+                    config.enr_peer_update_min,
+                    config.vote_duration,
+                ))
+            } else {
+                None
+            };
 
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
@@ -402,7 +408,7 @@ impl Service {
                     peers_behind_nat: HashMap::new(),
                     awaiting_reachable_address: Default::default(),
                     symmetric_nat_peers_ports,
-                    relay_requests: HashMapDelay::new(config.request_timeout * 2),
+                    relayed_requests: Default::default(),
                 };
 
                 info!("Discv5 Service started");
@@ -488,46 +494,8 @@ impl Service {
                                 }
                             }
                         }
-                        HandlerOut::RequestTimedOut(request_id, node_id) => {
-                            if supports_feature(&self.local_enr.read(), Features::Nat) {
-                                // Drop the request and attempt establishing the connection to the peer via the
-                                // NAT traversal protocol for sending future requests to the peer, if this peer
-                                // was forwarded to us in a NODES response and we hence have a relay for it.
-                                if self.active_requests.get(&request_id).is_some() {
-                                    let local_enr = self.local_enr.read().clone();
-                                    if let Some(relays) = self.relays.get(&node_id) {
-                                        if let Some(contact_relay) = relays.iter().next() {
-                                            trace!("Requests to peer, that we have learnt of in some NODES response, keep timing out. Peer may be behind an asymmetric NAT. Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", node_id, contact_relay);
-                                            self.send_relay_request(contact_relay.clone(), local_enr, node_id);
-                                        }
-                                    } else {
-                                        warn!("Request {} to peer {} timed out the max retry times, but we have no relays for the peer to attempt contacting it via the NAT traversal protocol.", request_id, node_id);
-                                    }
-                                }
-                            }
-                        }
                         HandlerOut::RequestFailed(request_id, error) => {
-                            // Don't fail the
-                            if let RequestError::TimeoutRendezvous(rendezvous, receiver) = error {
-                                debug!("RPC Request RELAYREQUEST to a relay (rendezvous node) timed out. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", receiver, request_id);
-                                let next_relay = |service: &mut Service| -> Option<NodeContact> {
-                                    if let Some(relays) = service.relays.get_mut(&receiver) {
-                                        // Only give each rendezvous one chance per receiver to relay.
-                                        relays.retain(|relay| relay.socket_addr() != rendezvous);
-                                        if let Some(contact_relay) = relays.iter().next() {
-                                            return Some(contact_relay.clone());
-                                        } else {
-                                            warn!("No further relays stored for peer (receiver) {}", receiver);
-                                        }
-                                    }
-                                    None
-                                };
-                                if let Some(relay) = next_relay(self) {
-                                    trace!("Retrying NAT traversal protocol with a new relay. Peer: {}, Relay: {}", receiver, relay);
-                                    let local_enr = self.local_enr.read().clone();
-                                    self.send_relay_request(relay, local_enr, receiver);
-                                }
-                            } else if let RequestError::Timeout = error {
+                            if let RequestError::Timeout = error {
                                 debug!("RPC Request timed out. id: {}", request_id);
                             } else {
                                 warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
@@ -788,6 +756,7 @@ impl Service {
                 let local_node_id = self.local_enr.read().node_id();
                 if to_node_id == local_node_id {
                     // This node is the receiver
+
                     if from_node_enr.node_id() == node_address.node_id {
                         debug!("Node acting as a rendezvous node for itself as initiator. Blacklisting peer: {}", node_address);
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
@@ -807,7 +776,6 @@ impl Service {
                             is_behind_nat = asymm_nat_votes.vote().is_some();
                         }
                     }
-
                     let update = |service: &mut Service| -> Option<(Ipv4Addr, u16)> {
                         if let Some(ip4) = service.local_enr.read().ip4() {
                             if let Some(udp4) = service.local_enr.read().udp4() {
@@ -866,6 +834,7 @@ impl Service {
                     self.send_relay_response(node_address, id, true);
                 } else if from_node_enr.node_id() != local_node_id {
                     // This node is the rendezvous
+
                     if to_node_id == node_address.node_id {
                         debug!("Node acting as a rendezvous node for itself as receiver. Blacklisting peer: {}", node_address);
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
@@ -873,20 +842,22 @@ impl Service {
                         return;
                     }
 
-                    self.relay_requests.insert(
-                        from_node_enr.node_id(),
-                        RelayedRequest {
-                            id,
-                            initiator: node_address,
-                        },
-                    );
-
                     // Requests are only relayed to peers in the local routing table, i.e. that we have possibly passed in a
                     // NODES response to the initiator.
                     if let Some(receiver) = self.find_enr(&to_node_id) {
                         if let Some(contact) = self.contact_from_enr(&receiver) {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
-                            self.send_relay_request(contact, from_node_enr, to_node_id);
+                            if let Ok(req_id) =
+                                self.send_relay_request(contact, from_node_enr, to_node_id)
+                            {
+                                self.relayed_requests.insert(
+                                    req_id,
+                                    RelayedRequest {
+                                        initiator: node_address,
+                                        id,
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -1015,7 +986,9 @@ impl Service {
                                     );
                                     return;
                                 }
-                                if nat_peer.get(ENR_KEY_NAT).is_some() || nat_peer.get("nat6").is_some() {
+                                if nat_peer.get(ENR_KEY_NAT).is_some()
+                                    || nat_peer.get("nat6").is_some()
+                                {
                                     if nat_peer.udp4().is_some() && nat_peer.udp4() != Some(0)
                                         || nat_peer.udp6().is_some() && nat_peer.udp6() != Some(0)
                                     {
@@ -1268,7 +1241,7 @@ impl Service {
                                 query_id: None,
                                 callback: None,
                             };
-                            self.send_rpc_request(active_request);
+                            _ = self.send_rpc_request(active_request);
                         }
                         self.connection_updated(node_id, ConnectionStatus::PongReceived(enr));
                     }
@@ -1303,9 +1276,7 @@ impl Service {
                             }
                         } else if to_node_id != local_node_id {
                             // This node is the rendezvous
-                            if let Some(initiator_req) =
-                                self.relay_requests.remove(&from_node_enr.node_id())
-                            {
+                            if let Some(initiator_req) = self.relayed_requests.remove(&id) {
                                 self.send_relay_response(
                                     initiator_req.initiator,
                                     initiator_req.id,
@@ -1338,7 +1309,7 @@ impl Service {
                 query_id: None,
                 callback: None,
             };
-            service.send_rpc_request(active_request);
+            _ = service.send_rpc_request(active_request);
         };
         if let Some(contact) = self.contact_from_enr(&enr) {
             ping(self, contact);
@@ -1380,7 +1351,7 @@ impl Service {
             query_id: None,
             callback: callback.map(CallbackResponse::Enr),
         };
-        self.send_rpc_request(active_request);
+        _ = self.send_rpc_request(active_request);
     }
 
     /// Requests a TALK message from the peer.
@@ -1399,13 +1370,18 @@ impl Service {
             query_id: None,
             callback: Some(CallbackResponse::Talk(callback)),
         };
-        self.send_rpc_request(active_request);
+        _ = self.send_rpc_request(active_request);
     }
 
     /// An initiator node sends a RELAYREQUEST request to a rendezvous node requesting it to help
     /// establish a connection to a receiver node behind a nat. The rendezvous node relays the
     /// RELAYREQUEST request on to the receiver.
-    fn send_relay_request(&mut self, contact: NodeContact, initiator: Enr, receiver: NodeId) {
+    fn send_relay_request(
+        &mut self,
+        contact: NodeContact,
+        initiator: Enr,
+        receiver: NodeId,
+    ) -> Result<RequestId, &str> {
         let active_request = ActiveRequest {
             contact,
             request_body: RequestBody::RelayRequest {
@@ -1415,7 +1391,7 @@ impl Service {
             query_id: None,
             callback: None,
         };
-        self.send_rpc_request(active_request);
+        self.send_rpc_request(active_request)
     }
 
     /// A receiver node sends a RELAYRESPONSE in response to a RELAYREQUEST to a rendezvous node,
@@ -1606,7 +1582,7 @@ impl Service {
                     query_id: Some(query_id),
                     callback: None,
                 };
-                self.send_rpc_request(active_request);
+                _ = self.send_rpc_request(active_request);
                 // Request successfully sent
                 return;
             }
@@ -1624,7 +1600,7 @@ impl Service {
     }
 
     /// Sends generic RPC requests. Each request gets added to known outputs, awaiting a response.
-    fn send_rpc_request(&mut self, active_request: ActiveRequest) {
+    fn send_rpc_request(&mut self, active_request: ActiveRequest) -> Result<RequestId, &str> {
         // Generate a random rpc_id which is matched per node id
         let id = RequestId::random();
         let request: Request = Request {
@@ -1634,12 +1610,21 @@ impl Service {
         let contact = active_request.contact.clone();
 
         debug!("Sending RPC {} to node: {}", request, contact);
-        if self
+        match self
             .handler_send
             .send(HandlerIn::Request(contact, Box::new(request)))
-            .is_ok()
         {
-            self.active_requests.insert(id, active_request);
+            Ok(_) => {
+                self.active_requests.insert(id.clone(), active_request);
+                Ok(id)
+            }
+            Err(e) => {
+                error!(
+                    "Failed to send request {} to the handler layer. Error: {}",
+                    id, e
+                );
+                Err("Failed to send request")
+            }
         }
     }
 
@@ -1719,7 +1704,7 @@ impl Service {
                 let key = kbucket::Key::from(enr.node_id());
                 if matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Absent(_)) {
                     let local_enr = self.local_enr.read().clone();
-                    self.send_relay_request(source.clone(), local_enr, nat_node_id);
+                    _ = self.send_relay_request(source.clone(), local_enr, nat_node_id);
                     return false;
                 }
             } else if self.config.ip_mode.get_contactable_addr(enr).is_some() {
@@ -2023,11 +2008,71 @@ impl Service {
                 }
             }
 
-            if let RequestError::TimeoutRendezvous(..) = error {
-                // Don't disconnect RELAYREQUESTs to rendezvous nodes that timeout, it may be because
-                // the receiver is unresponsive.
-                return;
+            if let RequestError::Timeout = error {
+                match active_request.request_body {
+                    RequestBody::RelayRequest {
+                        ref from_node_enr,
+                        to_node_id,
+                    } => {
+                        // Avoid recursive relay requesting by distinguishing between a timeout of a RELAYREQUEST
+                        // to a rendezvous node and from a rendezvous node.
+
+                        // This node is the initiator and the request to the rendezvous node timed out.
+                        if from_node_enr.node_id() == self.local_enr.read().node_id() {
+                            debug!("RPC Request RELAYREQUEST to a relay (rendezvous node) timed out. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", to_node_id, id);
+                            let next_relay = |service: &mut Service| -> Option<NodeContact> {
+                                if let Some(relays) = service.relays.get_mut(&to_node_id) {
+                                    // Only give each rendezvous one chance per receiver to relay.
+                                    relays.retain(|relay| {
+                                        relay.socket_addr() != active_request.contact.socket_addr()
+                                    });
+                                    if let Some(contact_relay) = relays.iter().next() {
+                                        return Some(contact_relay.clone());
+                                    } else {
+                                        warn!(
+                                            "No further relays stored for peer (receiver) {}",
+                                            to_node_id
+                                        );
+                                    }
+                                }
+                                None
+                            };
+                            if let Some(relay) = next_relay(self) {
+                                trace!("Retrying NAT traversal protocol with a new relay. Peer: {}, Relay: {}", to_node_id, relay);
+                                let local_enr = self.local_enr.read().clone();
+                                _ = self.send_relay_request(relay, local_enr, to_node_id);
+                            }
+                            // Don't disconnect rendezvous nodes for timed out RELAYREQUESTs, it may be because
+                            // the receiver is unresponsive.
+                            return;
+                        } else {
+                            // This node is the rendezvous, remove the info stored to return a RELAYRESPONSE to the initiator.
+                            self.relayed_requests.remove(&id);
+                        }
+                    }
+                    _ => {
+                        if supports_feature(&self.local_enr.read(), Features::Nat) {
+                            // Drop the request and attempt establishing the connection to the peer via the
+                            // NAT traversal protocol for sending future requests to the peer, if this peer
+                            // was forwarded to us in a NODES response and we hence have a relay for it.
+                            let local_enr = self.local_enr.read().clone();
+                            if let Some(relays) = self.relays.get(&node_id) {
+                                if let Some(contact_relay) = relays.iter().next() {
+                                    trace!("Requests to peer, that we have learnt of in some NODES response, keep timing out. Peer may be behind an asymmetric NAT. Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", node_id, contact_relay);
+                                    _ = self.send_relay_request(
+                                        contact_relay.clone(),
+                                        local_enr,
+                                        node_id,
+                                    );
+                                }
+                            } else {
+                                warn!("Request {} to peer {} timed out the max retry times, but we have no relays for the peer to attempt contacting it via the NAT traversal protocol.", id, node_id);
+                            }
+                        }
+                    }
+                }
             }
+
             self.connection_updated(node_id, ConnectionStatus::Disconnected);
         }
     }

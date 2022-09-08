@@ -28,7 +28,7 @@
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
     config::Discv5Config,
-    discv5::{PERMIT_BAN_LIST, ENR_KEY_NAT},
+    discv5::{ENR_KEY_NAT, PERMIT_BAN_LIST},
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
@@ -41,7 +41,7 @@ use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     convert::TryFrom,
     default::Default,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -124,7 +124,7 @@ pub enum HandlerOut {
     /// A NAT session is only considered established once we have received a signed ENR from the
     /// node and the observed `IpAddr` matches the one declared in the 'nat' and/or 'nat6' field
     /// of the ENR. The [`ConnectionDirection`] is always incoming as the peer behind a NAT will
-    /// not advertise a port to holepunch it through. This connection was assigned given remote
+    /// not advertise a port to hole-punch it through. This connection was assigned given remote
     /// port.
     EstablishedNatSymmetric(Enr, SocketAddr),
 
@@ -142,11 +142,6 @@ pub enum HandlerOut {
     ///
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
-
-    /// The request has timed out, possibly the peer is behind a NAT and we can attempt contacting
-    /// it via the NAT traversal protocol if this Discv5 instance is configured to support the NAT
-    /// version.
-    RequestTimedOut(RequestId, NodeId),
 }
 
 /// How we connected to the node.
@@ -219,14 +214,38 @@ impl RequestCall {
     fn id(&self) -> &RequestId {
         &self.request.id
     }
+
+    fn timeout(&self, local_node_id: &NodeId, default_timeout: Duration) -> Duration {
+        if let RequestBody::RelayRequest {
+            ref from_node_enr, ..
+        } = self.request.body
+        {
+            // If this node is the initiator of the RELAYREQUEST, wait double the default request timeout
+            // as the rendezvous node will also be waiting for the duration of one request timeout for the
+            // receiver to return a RELAYRESPONSE.
+            if from_node_enr.node_id() == *local_node_id {
+                return default_timeout * 2;
+            }
+        }
+        default_timeout
+    }
+
+    fn max_retries(&self, max_retires: u8) -> u8 {
+        if let RequestBody::RelayRequest { .. } = self.request.body {
+            // If this node is the initiator and the request to the rendezvous node timed out,
+            // a new relay (rendezvous node) should be used instead of retrying. If this node
+            // is the rendezvous, avoiding a retry minimizes the effect of malicious nodes
+            // trying to DoS us with RELAYREQUESTs to unresponsive receivers.
+            return 0;
+        }
+        max_retires
+    }
 }
 
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
-    /// The request has timed out, after the maximal number of retries.
-    request_relay_attempt: HashSet<NodeId>,
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
     /// during the operation of the server.
     node_id: NodeId,
@@ -318,7 +337,6 @@ impl Handler {
 
                 let mut handler = Handler {
                     request_retries: config.request_retries,
-                    request_relay_attempt: Default::default(),
                     node_id,
                     enr,
                     key,
@@ -462,45 +480,21 @@ impl Handler {
         node_address: NodeAddress,
         mut request_call: RequestCall,
     ) {
-        if request_call.retries >= self.request_retries {
+        if request_call.retries >= request_call.max_retries(self.request_retries) {
             // Send the timed out request to the service layer then drop (fail) this request.
             // If the NAT traversal protocol version is enabled, the timeout will trigger the
-            // service layer to intiate a relay request (the NAT traversal protocol) to connect
+            // service layer to initiate a relay request (the NAT traversal protocol) to connect
             // to the peer.
-            let mut request_error = RequestError::Timeout;
-            match request_call.request.body {
-                // Avoid recursive relay requesting by distinguishing between a timeout of a RELAYREQUEST
-                // to a rendezvous node and from a rendezvous node.
-                RequestBody::RelayRequest {
-                    ref from_node_enr,
-                    to_node_id,
-                } => {
-                    // This node is the initiator and the request to the rendezvous node timed out
-                    if from_node_enr.node_id() == self.enr.read().node_id() {
-                        request_error =
-                            RequestError::TimeoutRendezvous(node_address.socket_addr, to_node_id);
-                    }
-                }
-                _ => {
-                    trace!("Inform service layer of request that has timed out a total of {} (max retries) times", self.request_retries);
-                    if let Err(e) = self
-                        .service_send
-                        .send(HandlerOut::RequestTimedOut(
-                            request_call.id().clone(),
-                            node_address.node_id,
-                        ))
-                        .await
-                    {
-                        warn!("Failed to inform of request timeout. Error {}", e)
-                    }
-                    self.request_relay_attempt.insert(node_address.node_id);
-                }
-            }
-            trace!("Request timed out with {}", node_address);
+            trace!(
+                "Request to {} timed out a total of {} (max retries) times",
+                node_address,
+                self.request_retries
+            );
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);
             // The request has timed out. We keep any established session for future use.
-            self.fail_request(request_call, request_error, false).await;
+            self.fail_request(request_call, RequestError::Timeout, false)
+                .await;
         } else {
             // increment the request retry count and restart the timeout
             trace!(
@@ -511,7 +505,8 @@ impl Handler {
             self.send(node_address.clone(), request_call.packet.clone())
                 .await;
             request_call.retries += 1;
-            self.active_requests.insert(node_address, request_call);
+            self.active_requests
+                .insert(node_address, request_call, &self.enr.read().node_id());
         }
     }
 
@@ -564,22 +559,8 @@ impl Handler {
         // let the filter know we are expecting a response
         self.add_expected_response(node_address.socket_addr);
         self.send(node_address.clone(), packet).await;
-
-        if let RequestBody::RelayRequest {
-            ref from_node_enr, ..
-        } = call.request.body
-        {
-            // If this node is the initiator of the RELAYREQUEST, wait double the request time.
-            if from_node_enr.node_id() == self.enr.read().node_id() {
-                self.active_requests.insert_at(
-                    node_address,
-                    call,
-                    self.active_requests.request_timeout(),
-                );
-                return Ok(());
-            }
-        }
-        self.active_requests.insert(node_address, call);
+        self.active_requests
+            .insert(node_address, call, &self.enr.read().node_id());
         Ok(())
     }
 
@@ -663,7 +644,11 @@ impl Handler {
                 if node_address.socket_addr != src_address {
                     trace!("Received a WHOAREYOU packet for a message with a non-expected source. Source {}, expected_source: {} message_nonce {}", src_address, node_address.socket_addr, hex::encode(request_nonce));
                     // Add the request back if src_address doesn't match
-                    self.active_requests.insert(node_address, request_call);
+                    self.active_requests.insert(
+                        node_address,
+                        request_call,
+                        &self.enr.read().node_id(),
+                    );
                     return;
                 }
                 request_call
@@ -1234,7 +1219,8 @@ impl Handler {
                     node_address
                 );
                 // add the request back and reset the timer
-                self.active_requests.insert(node_address, request_call);
+                self.active_requests
+                    .insert(node_address, request_call, &self.enr.read().node_id());
                 return;
             }
 
@@ -1250,8 +1236,11 @@ impl Handler {
                         if remaining_responses != &0 {
                             // more responses remaining, add back the request and send the response
                             // add back the request and send the response
-                            self.active_requests
-                                .insert(node_address.clone(), request_call);
+                            self.active_requests.insert(
+                                node_address.clone(),
+                                request_call,
+                                &self.enr.read().node_id(),
+                            );
                             if let Err(e) = self
                                 .service_send
                                 .send(HandlerOut::Response(node_address, Box::new(response)))
@@ -1265,8 +1254,11 @@ impl Handler {
                         // This is the first instance
                         request_call.remaining_responses = Some(total - 1);
                         // add back the request and send the response
-                        self.active_requests
-                            .insert(node_address.clone(), request_call);
+                        self.active_requests.insert(
+                            node_address.clone(),
+                            request_call,
+                            &self.enr.read().node_id(),
+                        );
                         if let Err(e) = self
                             .service_send
                             .send(HandlerOut::Response(node_address, Box::new(response)))
@@ -1306,7 +1298,8 @@ impl Handler {
         let node_address = request_call.contact.node_address();
 
         // adds the mapping of message nonce to node address
-        self.active_requests.insert(node_address, request_call);
+        self.active_requests
+            .insert(node_address, request_call, &self.enr.read().node_id());
     }
 
     fn new_session(&mut self, node_address: NodeAddress, session: Session) {

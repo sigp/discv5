@@ -1,4 +1,4 @@
-use crate::{Enr, discv5::ENR_KEY_NAT};
+use crate::{discv5::ENR_KEY_NAT, Enr};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 ///! A set of configuration parameters to tune the discovery protocol.
 

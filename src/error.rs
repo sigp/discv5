@@ -1,6 +1,6 @@
-use crate::{enr::NodeId, handler::Challenge, node_info::NonContactable};
+use crate::{handler::Challenge, node_info::NonContactable};
 use rlp::DecoderError;
-use std::{fmt, net::SocketAddr};
+use std::fmt;
 
 #[derive(Debug)]
 /// A general error that is used throughout the Discv5 library.
@@ -93,9 +93,6 @@ impl std::error::Error for ResponseError {}
 pub enum RequestError {
     /// The request timed out.
     Timeout,
-    /// The request timed out and it is a RELAYREQUEST to a rendezvous node from the initiator.
-    /// The socket address is that of the relay and the node id is that of the intended receiver.
-    TimeoutRendezvous(SocketAddr, NodeId),
     /// The discovery service has not been started.
     ServiceNotStarted,
     /// The request was sent to ourselves.

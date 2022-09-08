@@ -23,30 +23,16 @@ impl ActiveRequests {
         }
     }
 
-    pub fn request_timeout(&self) -> Duration {
-        self.request_timeout
-    }
-
-    pub(crate) fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
-        let nonce = *request_call.packet.message_nonce();
-        self.active_requests_mapping
-            .insert(node_address.clone(), request_call);
-        self.active_requests_nonce_mapping
-            .insert(nonce, node_address);
-    }
-
-    pub(crate) fn insert_at(
+    pub(crate) fn insert(
         &mut self,
         node_address: NodeAddress,
         request_call: RequestCall,
-        timeout_extension: Duration,
+        local_node_id: &NodeId,
     ) {
         let nonce = *request_call.packet.message_nonce();
-        self.active_requests_mapping.insert_at(
-            node_address.clone(),
-            request_call,
-            self.request_timeout + timeout_extension,
-        );
+        let timeout = request_call.timeout(local_node_id, self.request_timeout);
+        self.active_requests_mapping
+            .insert_at(node_address.clone(), request_call, timeout);
         self.active_requests_nonce_mapping
             .insert(nonce, node_address);
     }
