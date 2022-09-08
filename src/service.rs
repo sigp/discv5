@@ -57,7 +57,7 @@ mod test;
 /// NOTE: This must not be larger than 127.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
-pub(crate) const MAX_REQEUST_ENR_ATTEMPTS: u8 = 3;
+pub(crate) const MAX_REQUEST_ENR_ATTEMPTS: u8 = 3;
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -214,15 +214,15 @@ pub struct Service {
     /// ip vote on their externally reachable address).
     awaiting_reachable_address: AwaitingContactableEnr,
 
-    /// If this Dsicv5 instance is configured to allow peers behind symmetric NATs
-    /// (peers that requests will be sent to but that will not be inlcuded in NODES
+    /// If this Discv5 instance is configured to allow peers behind symmetric NATs
+    /// (peers that requests will be sent to but that will not be included in NODES
     /// responses to other peers) then connection dependent port mapping is stored.
     symmetric_nat_peers_ports: Option<HashMap<NodeId, u16>>,
 
     /// Nodes behind a NAT mapped to their potential relays.
     relays: HashMap<NodeId, HashSet<NodeContact>>,
 
-    /// The request ids of RELAYREQUESTs from initators, that this node acts as
+    /// The request ids of RELAYREQUESTs from initiators, that this node acts as
     /// rendezvous for, are stored for double the request time out time so that we
     /// can return the RELAYRESPONSE from the receiver to the initator.
     relay_requests: HashMapDelay<NodeId, RelayedRequest>,
@@ -250,7 +250,7 @@ struct AwaitingContactableEnr {
 impl AwaitingContactableEnr {
     fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, String> {
         if let Some(peer) = self.peers.get_mut(node_id) {
-            if peer.attempts >= MAX_REQEUST_ENR_ATTEMPTS {
+            if peer.attempts >= MAX_REQUEST_ENR_ATTEMPTS {
                 return Err(
                     "This peer has already triggered the max request enr requests.".to_owned(),
                 );
@@ -264,7 +264,7 @@ impl AwaitingContactableEnr {
 
     fn awaiting(&self, node_id: &NodeId) -> bool {
         if let Some(peer) = self.peers.get(node_id) {
-            if peer.attempts >= MAX_REQEUST_ENR_ATTEMPTS {
+            if peer.attempts >= MAX_REQUEST_ENR_ATTEMPTS {
                 return false;
             }
             return true;
@@ -797,7 +797,7 @@ impl Service {
 
                     let mut is_behind_nat = false;
                     if let Some(ref mut asymm_nat_votes) = self.asymm_nat_votes {
-                        // If this node is advetising that it is not behind a NAT, we do a peer vote
+                        // If this node is advertising that it is not behind a NAT, we do a peer vote
                         // to verify this.
                         is_behind_nat = self.local_enr.read().ip4().is_some()
                             || self.local_enr.read().ip6().is_some();
