@@ -62,7 +62,7 @@ pub struct Discv5Config {
     /// to attempt hole punching them through.
     pub include_symmetric_nat: bool,
 
-    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist
+    /// Sets a maximum limit to the number of incoming nodes (nodes that have dialed us) to exist
     /// per-bucket. This cannot be larger than the bucket size (16). By default this is disabled
     /// (set to the maximum bucket size, 16).
     pub incoming_bucket_limit: usize,
