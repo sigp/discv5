@@ -987,23 +987,6 @@ impl Ticket {
     pub fn update_cum_wait(&mut self) {
         self.cum_wait = self.cum_wait + self.wait_time;
     }*/
-
-    pub fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        let mut s = RlpStream::new();
-        s.append(self);
-        buf.extend_from_slice(&s.out());
-        buf
-    }
-
-    pub fn decode(ticket: &[u8]) -> Result<Option<Self>, DecoderError> {
-        if !ticket.is_empty() {
-            let rlp = rlp::Rlp::new(ticket);
-            let ticket = rlp.as_val::<Ticket>()?;
-            return Ok(Some(ticket));
-        }
-        Ok(None)
-    }
 }
 
 impl std::fmt::Display for Ticket {
