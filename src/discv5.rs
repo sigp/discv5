@@ -23,7 +23,6 @@ use crate::{
     Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
-use iota::iota;
 use parking_lot::RwLock;
 use std::{
     future::Future,
@@ -44,32 +43,16 @@ lazy_static! {
         RwLock::new(crate::PermitBanList::default());
 }
 
-// Discv5 versions.
-iota! {
-    pub const NAT: u8 = 1 << iota;
-        , TOPICS
-}
+/// Custom ENR keys.
+const ENR_KEY_FEATURES: &str = "features";
+pub const ENR_KEY_NAT: &str = "nat";
+pub const ENR_KEY_NAT_6: &str = "nat6";
 
-/// Check if a given peer supports one or more versions of the Discv5 protocol.
-/// Returns true if any of the given versions are supported.
-pub const CHECK_VERSION: fn(peer: &Enr, supported_versions: Vec<u8>) -> bool =
-    |peer, supported_versions| {
-        if let Some(version) = peer.get("version") {
-            if let Some(v) = version.first() {
-                // Only add nodes which support the topics version
-                supported_versions.contains(v)
-            } else {
-                warn!("Version field in enr of peer {} is empty", peer.node_id());
-                false
-            }
-        } else {
-            warn!(
-                "Enr of peer {} doesn't contain field 'version'",
-                peer.node_id()
-            );
-            false
-        }
-    };
+/// Discv5 features.
+pub enum Features {
+    /// The protocol for advertising and looking up to topics in Discv5 is supported.
+    Nat = 1,
+}
 
 mod test;
 
@@ -162,7 +145,7 @@ impl Discv5 {
         let mut local_enr = local_enr;
 
         // This node supports NAT traversal request RELAYREQUEST, and its response RELAYRESPONSE.
-        if let Err(e) = local_enr.insert("version", &[NAT], &enr_key) {
+        if let Err(e) = local_enr.insert(ENR_KEY_FEATURES, &[Features::Nat as u8], &enr_key) {
             error!("Failed writing to enr. Error {:?}", e);
             return Err("Failed to insert field 'version' into local enr");
         }
@@ -197,7 +180,7 @@ impl Discv5 {
             return Err(Discv5Error::ServiceAlreadyStarted);
         }
 
-        if CHECK_VERSION(&self.local_enr.read(), vec![NAT])
+        if supports_feature(&self.local_enr.read(), Features::Nat)
             && self.local_enr.read().ip4().is_none()
             && self.local_enr.read().ip6().is_none()
         {
@@ -691,5 +674,23 @@ impl Discv5 {
 impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+/// Check if a given peer supports a given feature of the Discv5 protocol.
+pub fn supports_feature(peer: &Enr, feature: Features) -> bool {
+    if let Some(supported_features) = peer.get(ENR_KEY_FEATURES) {
+        if let Some(supported_features_num) = supported_features.first() {
+            let feature_num = feature as u8;
+            supported_features_num & feature_num == feature_num
+        } else {
+            false
+        }
+    } else {
+        warn!(
+            "Enr of peer {} doesn't contain field 'version'",
+            peer.node_id()
+        );
+        false
     }
 }

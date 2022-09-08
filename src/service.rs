@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    discv5::{CHECK_VERSION, NAT},
+    discv5::{Features, supports_feature},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -348,7 +348,7 @@ impl Service {
             None
         };
 
-        let asymm_nat_votes = if config.enr_update && CHECK_VERSION(&local_enr.read(), vec![NAT]) {
+        let asymm_nat_votes = if config.enr_update && supports_feature(&local_enr.read(), Features::Nat) {
             Some(AsymmNatVote::new(
                 config.enr_peer_update_min,
                 config.vote_duration,
@@ -489,7 +489,7 @@ impl Service {
                             }
                         }
                         HandlerOut::RequestTimedOut(request_id, node_id) => {
-                            if CHECK_VERSION(&self.local_enr.read(), vec![NAT]) {
+                            if supports_feature(&self.local_enr.read(), Features::Nat) {
                                 // Drop the request and attempt establishing the connection to the peer via the
                                 // NAT traversal protocol for sending future requests to the peer, if this peer
                                 // was forwarded to us in a NODES response and we hence have a relay for it.
@@ -1879,7 +1879,7 @@ impl Service {
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             // It could be that this node is behind a NAT, if it supports the NAT traversal protocol we
             // give it MAX_REQUEST_ENR_ATTEMPTS to trigger us via PING request to request its ENR.
-            if CHECK_VERSION(&enr, vec![NAT]) {
+            if supports_feature(&enr, Features::Nat) {
                 self.awaiting_reachable_address.insert(enr.clone());
                 // In case this is a node behind a symmetric NAT we need to store the port which is unique
                 // for this connection and hence will not eventually be advertised in the peer's ENR.
