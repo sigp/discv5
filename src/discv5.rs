@@ -126,20 +126,20 @@ impl Discv5 {
         // NOTE: Currently we don't expose custom filter support in the configuration. Users can
         // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
         // may expose this functionality to the users if there is demand for it.
-        let table_filter = if config.ip_limit {
-            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>)
-        } else {
-            None
-        };
-
-        let bucket_filter = if config.nat_limit && config.ip_limit {
-            Some(Box::new(kbucket::IpAndNATBucketFilter) as Box<dyn kbucket::Filter<Enr>>)
-        } else if config.nat_limit {
-            Some(Box::new(kbucket::NATBucketFilter) as Box<dyn kbucket::Filter<Enr>>)
-        } else if config.ip_limit {
-            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>)
-        } else {
-            None
+        let (table_filter, bucket_filter) = match (config.ip_limit, config.nat_limit) {
+            (true, true) => (
+                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(kbucket::IpAndNATBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            ),
+            (false, true) => (
+                None,
+                Some(Box::new(kbucket::NATBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            ),
+            (true, false) => (
+                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            ),
+            (false, false) => (None, None),
         };
 
         let mut local_enr = local_enr;
