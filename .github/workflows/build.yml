@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v2
       - name: Get latest version of stable rust
         run: rustup update stable
+      - name: Install protobuf compiler for the libp2p-core dependency
+        run: apt-get update -y && apt-get install -y protobuf-compiler
       - name: Lint code for quality and style with Clippy
         run: cargo clippy --workspace --tests --all-features -- -D warnings
   release-tests-ubuntu:
