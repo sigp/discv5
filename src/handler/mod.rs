@@ -121,7 +121,7 @@ pub enum HandlerOut {
 
     /// A NAT session has been established with a node behind a symmetric NAT.
     ///
-    /// A NAT session is only considered established once we have received a signed ENR from the
+    /// A NAT session is only considered established once we have received an ENR from the
     /// node and the observed `IpAddr` matches the one declared in the 'nat' and/or 'nat6' field
     /// of the ENR. The [`ConnectionDirection`] is always incoming as the peer behind a NAT will
     /// not advertise a port to hole-punch it through. This connection was assigned given remote
