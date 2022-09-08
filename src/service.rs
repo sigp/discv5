@@ -22,7 +22,9 @@ use crate::{
         topic::TopicHash,
         Ads, AD_LIFETIME,
     },
-    discv5::{supports_feature, Features, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST},
+    discv5::{
+        supports_feature, Features, ENR_KEY_TOPICS, KBUCKET_PENDING_TIMEOUT, PERMIT_BAN_LIST,
+    },
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
