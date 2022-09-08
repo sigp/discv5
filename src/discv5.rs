@@ -109,7 +109,7 @@ pub struct Discv5 {
 
 impl Discv5 {
     pub fn new(
-        local_enr: Enr,
+        mut local_enr: Enr,
         enr_key: CombinedKey,
         mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
@@ -141,8 +141,6 @@ impl Discv5 {
             ),
             (false, false) => (None, None),
         };
-
-        let mut local_enr = local_enr;
 
         // This node supports NAT traversal request RELAYREQUEST, and its response RELAYRESPONSE.
         if let Err(e) = local_enr.insert(ENR_KEY_FEATURES, &[Features::Nat as u8], &enr_key) {

@@ -269,10 +269,7 @@ impl AwaitingContactableEnr {
 
     fn awaiting(&self, node_id: &NodeId) -> bool {
         if let Some(peer) = self.peers.get(node_id) {
-            if peer.attempts >= MAX_REQUEST_ENR_ATTEMPTS {
-                return false;
-            }
-            return true;
+            return peer.attempts < MAX_REQUEST_ENR_ATTEMPTS;
         }
         false
     }
@@ -376,11 +373,7 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
-        let symmetric_nat_peers_ports = if config.include_symmetric_nat {
-            Some(HashMap::new())
-        } else {
-            None
-        };
+        let symmetric_nat_peers_ports = config.include_symmetric_nat.then(HashMap::default);
 
         config
             .executor
@@ -2020,27 +2013,24 @@ impl Service {
                         // This node is the initiator and the request to the rendezvous node timed out.
                         if from_node_enr.node_id() == self.local_enr.read().node_id() {
                             debug!("RPC Request RELAYREQUEST to a relay (rendezvous node) timed out. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", to_node_id, id);
-                            let next_relay = |service: &mut Service| -> Option<NodeContact> {
-                                if let Some(relays) = service.relays.get_mut(&to_node_id) {
+                            let maybe_next_relay =
+                                self.relays.get_mut(&to_node_id).and_then(|relays| {
                                     // Only give each rendezvous one chance per receiver to relay.
                                     relays.retain(|relay| {
                                         relay.socket_addr() != active_request.contact.socket_addr()
                                     });
-                                    if let Some(contact_relay) = relays.iter().next() {
-                                        return Some(contact_relay.clone());
-                                    } else {
-                                        warn!(
-                                            "No further relays stored for peer (receiver) {}",
-                                            to_node_id
-                                        );
-                                    }
-                                }
-                                None
-                            };
-                            if let Some(relay) = next_relay(self) {
+                                    relays.iter().next().cloned()
+                                });
+
+                            if let Some(relay) = maybe_next_relay {
                                 trace!("Retrying NAT traversal protocol with a new relay. Peer: {}, Relay: {}", to_node_id, relay);
                                 let local_enr = self.local_enr.read().clone();
                                 _ = self.send_relay_request(relay, local_enr, to_node_id);
+                            } else {
+                                warn!(
+                                    "No further relays stored for peer (receiver) {}",
+                                    to_node_id
+                                );
                             }
                             // Don't disconnect rendezvous nodes for timed out RELAYREQUESTs, it may be because
                             // the receiver is unresponsive.
