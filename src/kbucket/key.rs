@@ -23,8 +23,10 @@
 
 #![allow(clippy::all)]
 
-use enr::NodeId;
-use sha2::digest::generic_array::{typenum::U32, GenericArray};
+use enr::{
+    k256::sha2::digest::generic_array::{typenum::U32, GenericArray},
+    NodeId,
+};
 use uint::construct_uint;
 
 construct_uint! {

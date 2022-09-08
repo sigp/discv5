@@ -21,12 +21,11 @@ zeroize = { version = "1.4.3", features = ["zeroize_derive"] }
 futures = "0.3.19"
 uint = { version = "0.9.1", default-features = false }
 rlp = "0.5.1"
-sha2 = "0.9.5"
-hkdf = "0.11.0"
+# This version must be kept up to date do it uses the same dependencies as ENR
+hkdf = "0.12.3" 
 hex = "0.4.3"
 fnv = "1.0.7"
 arrayvec = "0.7.2"
-digest = "0.10.1"
 rand = { version = "0.8.4", package = "rand" }
 socket2 = "0.4.4"
 smallvec = "1.7.0"

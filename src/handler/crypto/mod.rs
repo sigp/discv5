@@ -15,6 +15,7 @@ use aes_gcm::{
     Aes128Gcm,
 };
 use ecdh::ecdh;
+use enr::k256::ecdsa::digest::Update;
 use enr::{
     k256::{
         self,
@@ -22,11 +23,11 @@ use enr::{
             signature::{DigestSigner, DigestVerifier, Signature as _},
             Signature,
         },
+        sha2::{Digest, Sha256},
     },
     CombinedKey, CombinedPublicKey, NodeId,
 };
 use hkdf::Hkdf;
-use sha2::{Digest, Sha256};
 use std::convert::TryFrom;
 
 mod ecdh;
@@ -54,7 +55,7 @@ pub(crate) fn generate_session_keys(
             CombinedPublicKey::Secp256k1(remote_pk) => {
                 let ephem_sk = k256::ecdsa::SigningKey::random(rand::thread_rng());
                 let secret = ecdh(&remote_pk, &ephem_sk);
-                let ephem_pk = ephem_sk.verify_key();
+                let ephem_pk = ephem_sk.verifying_key();
                 (secret, ephem_pk.to_bytes().to_vec())
             }
             CombinedPublicKey::Ed25519(_) => {
