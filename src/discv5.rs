@@ -191,7 +191,7 @@ impl Discv5 {
             if let Err(e) = self
                 .local_enr
                 .write()
-                .insert("nat", &[], &self.enr_key.read())
+                .insert(ENR_KEY_NAT, &[], &self.enr_key.read())
             {
                 error!("Failed to insert field 'nat' into local enr. Error {:?}", e);
                 return Err(Discv5Error::InvalidEnr);
@@ -199,7 +199,7 @@ impl Discv5 {
             if let Err(e) = self
                 .local_enr
                 .write()
-                .insert("nat6", &[], &self.enr_key.read())
+                .insert(ENR_KEY_NAT_6, &[], &self.enr_key.read())
             {
                 error!(
                     "Failed to insert field 'nat6' into local enr. Error {:?}",

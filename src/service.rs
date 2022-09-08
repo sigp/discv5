@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    discv5::{Features, supports_feature},
+    discv5::{Features, ENR_KEY_NAT, ENR_KEY_NAT_6, supports_feature},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -990,8 +990,8 @@ impl Service {
                                 );
                                 trace!(
                                     "NAT ip of ENR of peer: nat: {:?}, nat6: {:?}",
-                                    nat_peer.get("nat"),
-                                    nat_peer.get("nat6"),
+                                    nat_peer.get(ENR_KEY_NAT),
+                                    nat_peer.get(ENR_KEY_NAT_6),
                                 );
                                 trace!(
                                     "Port of ENR of peer: udp: {:?}, udp6: {:?}",
@@ -1015,7 +1015,7 @@ impl Service {
                                     );
                                     return;
                                 }
-                                if nat_peer.get("nat").is_some() || nat_peer.get("nat6").is_some() {
+                                if nat_peer.get(ENR_KEY_NAT).is_some() || nat_peer.get("nat6").is_some() {
                                     if nat_peer.udp4().is_some() && nat_peer.udp4() != Some(0)
                                         || nat_peer.udp6().is_some() && nat_peer.udp6() != Some(0)
                                     {
@@ -1146,7 +1146,7 @@ impl Service {
                                 trace!("A WAN reachable address {} found for this node which appears to be behind a symmetric NAT", ip);
                                 // get the advertised local addresses
                                 let local_nat4 =
-                                    self.local_enr.read().get("nat").and_then(|bytes| {
+                                    self.local_enr.read().get(ENR_KEY_NAT).and_then(|bytes| {
                                         if bytes.len() == 4 {
                                             let mut buf = [0u8; 4];
                                             buf.copy_from_slice(bytes);
@@ -1160,7 +1160,7 @@ impl Service {
                                         Ok(_) => {
                                             updated = true;
                                             info!("Local NAT ip address updated to {}", ip);
-                                            trace!("Local 'nat' field is now set to {:?} and udp port {:?}", self.local_enr.read().get("nat"), self.local_enr.read().get("udp"));
+                                            trace!("Local 'nat' field is now set to {:?} and udp port {:?}", self.local_enr.read().get(ENR_KEY_NAT), self.local_enr.read().udp4());
                                             self.send_event(Discv5Event::NATSymmetricUpdated(ip));
                                         }
                                         Err(e) => {
@@ -1464,13 +1464,13 @@ impl Service {
             );
             trace!(
                 "Own ENR nat ip4 {:?} and nat ip6 {:?}",
-                self.local_enr.read().get("nat"),
-                self.local_enr.read().get("nat6")
+                self.local_enr.read().get(ENR_KEY_NAT),
+                self.local_enr.read().get(ENR_KEY_NAT_6)
             );
             trace!(
                 "Own ENR udp4 port {:?} and udp6 port {:?}",
-                self.local_enr.read().get("nat"),
-                self.local_enr.read().get("nat6")
+                self.local_enr.read().get(ENR_KEY_NAT),
+                self.local_enr.read().get(ENR_KEY_NAT_6)
             );
             distances.remove(0);
         }
@@ -1483,13 +1483,13 @@ impl Service {
                 .filter_map(|entry| {
                     let peer = entry.node;
                     let enr = peer.value;
-                    if let Some(ip) = enr.get("nat") {
+                    if let Some(ip) = enr.get(ENR_KEY_NAT) {
                         if ip.len() == 4 && enr.udp4().is_some() && enr.udp4() != Some(0) {
                             // Only send nodes behind an asymmetric NAT, i.e. with a reachable port mapping in its ENR, no reachable port
                             // mapping in its ENR with a reachable ip in the 'nat' field is associated with a node behind a symmetric NAT.
                             return None;
                         }
-                    } else if let Some(ip) = enr.get("nat6") {
+                    } else if let Some(ip) = enr.get(ENR_KEY_NAT_6) {
                         if ip.len() == 16 && enr.udp6().is_some() && enr.udp6() != Some(0) {
                             // Only send nodes behind an asymmetric NAT, i.e. with a reachable port mapping in its ENR, no reachable port
                             // mapping in its ENR with a reachable ip in the 'nat6' field is associated with a node behind a symmetric NAT.
@@ -2043,11 +2043,11 @@ impl Service {
         match ip {
             IpAddr::V4(ip4) => {
                 trace!("Inserting reachable address {} for node behind NAT into local enr's 'nat' field", ip4);
-                let res = local_enr.insert("nat", &ip4.octets(), &self.enr_key.read());
+                let res = local_enr.insert(ENR_KEY_NAT, &ip4.octets(), &self.enr_key.read());
                 if let Err(e) = res {
                     return Err(e);
                 }
-                trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into loal enr's 'nat' field", ip4, port);
+                trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into local enr's 'nat' field", ip4, port);
                 if let Some(port) = port {
                     let res = local_enr.insert("udp", &port.to_be_bytes(), &self.enr_key.read());
                     if let Err(e) = res {
@@ -2067,7 +2067,7 @@ impl Service {
             }
             IpAddr::V6(ip6) => {
                 trace!("Inserting reachable address {} for node behind NAT into local enr's 'nat6' field", ip6);
-                let res = local_enr.insert("nat6", &ip6.octets(), &self.enr_key.read());
+                let res = local_enr.insert(ENR_KEY_NAT_6, &ip6.octets(), &self.enr_key.read());
                 if let Err(e) = res {
                     return Err(e);
                 }

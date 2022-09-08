@@ -1,4 +1,4 @@
-use crate::Enr;
+use crate::{Enr, discv5::ENR_KEY_NAT};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 ///! A set of configuration parameters to tune the discovery protocol.
 
@@ -31,7 +31,7 @@ impl IpMode {
     /// Get the contactable Socket address of an Enr under current configuration.
     pub fn get_contactable_addr_nat_symmetric(&self, enr: &Enr, port: u16) -> Option<SocketAddr> {
         let nat4: fn(enr: &Enr, port: u16) -> Option<SocketAddr> = |enr, port| {
-            if let Some(nat4) = enr.get("nat") {
+            if let Some(nat4) = enr.get(ENR_KEY_NAT) {
                 if nat4.len() == 4 {
                     let mut buf = [0u8; 4];
                     buf.copy_from_slice(nat4);
@@ -79,7 +79,7 @@ impl IpMode {
     /// Get the contactable Socket address of an Enr under current configuration.
     pub fn get_contactable_addr_nat(&self, enr: &Enr) -> Option<SocketAddr> {
         let nat4: fn(enr: &Enr, port: u16) -> Option<SocketAddr> = |enr, port| {
-            if let Some(nat4) = enr.get("nat") {
+            if let Some(nat4) = enr.get(ENR_KEY_NAT) {
                 if nat4.len() == 4 {
                     let mut buf = [0u8; 4];
                     buf.copy_from_slice(nat4);

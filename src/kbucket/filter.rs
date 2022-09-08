@@ -1,6 +1,6 @@
 //! Provides a trait that can be implemented to apply a filter to a table or bucket.
 
-use crate::Enr;
+use crate::{Enr, discv5::ENR_KEY_NAT};
 pub trait Filter<TVal: Eq>: FilterClone<TVal> + Send + Sync {
     fn filter(
         &self,
@@ -124,7 +124,7 @@ fn nat_filter(
             continue;
         }
         // Count nodes which are behind a nat
-        if let Some(is_behind_nat) = enr.get("nat") {
+        if let Some(is_behind_nat) = enr.get(ENR_KEY_NAT) {
             println!("Nat field");
             if is_behind_nat.to_vec().is_empty() || *is_behind_nat == [1u8] {
                 count += 1;

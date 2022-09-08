@@ -28,7 +28,7 @@
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
     config::Discv5Config,
-    discv5::PERMIT_BAN_LIST,
+    discv5::{PERMIT_BAN_LIST, ENR_KEY_NAT},
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
@@ -849,7 +849,7 @@ impl Handler {
         if enr.node_id() == node_address.node_id {
             match node_address.socket_addr {
                 SocketAddr::V4(socket_addr) => {
-                    if let Some(advertised_addr) = enr.get("nat") {
+                    if let Some(advertised_addr) = enr.get(ENR_KEY_NAT) {
                         if advertised_addr.len() == 4 {
                             let mut buf = [0u8; 4];
                             buf.copy_from_slice(advertised_addr);
