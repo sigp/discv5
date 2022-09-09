@@ -191,10 +191,8 @@ async fn main() {
                 }
                 match discv5_ev {
                     Discv5Event::Discovered(enr) => info!("Enr discovered {}", enr),
-                    Discv5Event::DiscoveredPeerTopic(enr, topic_hash) => info!("Enr discovered {} for topic {}", enr, topic_hash),
                     Discv5Event::EnrAdded { enr, replaced: _ } => info!("Enr added {}", enr),
                     Discv5Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
-                    Discv5Event::NodeInsertedTopic { node_id, replaced: _, topic_hash } => info!("Node inserted {} in topic hash {} kbucket", node_id, topic_hash),
                     Discv5Event::SessionEstablished(enr, _) => info!("Session established {}", enr),
                     Discv5Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
                     Discv5Event::TalkRequest(_) => info!("Talk request received"),
