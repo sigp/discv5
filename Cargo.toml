@@ -21,6 +21,7 @@ zeroize = { version = "1.4.3", features = ["zeroize_derive"] }
 futures = "0.3.19"
 uint = { version = "0.9.1", default-features = false }
 rlp = "0.5.1"
+sha2 = "0.9.5"
 # This version must be kept up to date do it uses the same dependencies as ENR
 hkdf = "0.12.3" 
 hex = "0.4.3"
