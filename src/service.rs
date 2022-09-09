@@ -737,7 +737,6 @@ impl Service {
                                 if callback.send(found_enrs).is_err() {
                                     warn!("Callback dropped for query {}. Results dropped", *id);
                                 }
-                                return;
                             }
 
                             if let QueryType::FindTopic(topic_key) = query_type {
