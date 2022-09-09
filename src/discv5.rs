@@ -693,7 +693,7 @@ impl Discv5 {
     /// Retrieves the topics that we have published on other nodes.
     pub fn active_topics(
         &self,
-    ) -> impl Future<Output = Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>> + 'static {
+    ) -> impl Future<Output = Result<HashMap<Topic, Vec<NodeId>>, RequestError>> + 'static {
         // the service will verify if this node is contactable, we just send it and
         // await a response.
         let (callback_send, callback_recv) = oneshot::channel();

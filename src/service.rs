@@ -201,7 +201,7 @@ pub enum ServiceRequest {
         oneshot::Sender<Result<BTreeMap<Log2Distance, RegAttempts>, RequestError>>,
     ),
     /// Retrieves the ads currently published by this node on other nodes in a discv5 network.  
-    ActiveTopics(oneshot::Sender<Result<HashMap<TopicHash, Vec<NodeId>>, RequestError>>),
+    ActiveTopics(oneshot::Sender<Result<HashMap<Topic, Vec<NodeId>>, RequestError>>),
     /// Stops publishing this node as an advertiser for a topic.
     StopRegistrationOfTopic(Topic, oneshot::Sender<Result<(), RequestError>>),
     /// Retrieves the ads advertised for other nodes for a given topic.
@@ -882,8 +882,8 @@ impl Service {
         }
     }
 
-    fn get_active_topics(&mut self) -> HashMap<TopicHash, Vec<NodeId>> {
-        let mut active_topics = HashMap::<TopicHash, Vec<NodeId>>::new();
+    fn get_active_topics(&mut self) -> HashMap<Topic, Vec<NodeId>> {
+        let mut active_topics = HashMap::<Topic, Vec<NodeId>>::new();
         self.registration_attempts
             .iter_mut()
             .for_each(|(topic, reg_attempts_by_distance)| {
@@ -894,7 +894,7 @@ impl Service {
                             RegistrationState::Confirmed(insert_time) => {
                                 if insert_time.elapsed() < AD_LIFETIME {
                                     active_topics
-                                        .entry(topic.hash())
+                                        .entry(topic.clone())
                                         .or_default()
                                         .push(*node_id);
                                     true

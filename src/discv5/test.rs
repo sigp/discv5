@@ -647,5 +647,3 @@ fn test_features_check() {
 
     assert!(supports_feature(&enr, Features::Topics));
 }
-
-
