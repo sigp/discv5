@@ -566,7 +566,7 @@ impl Discv5 {
     /// Looks up a given topic on other nodes that, if currently advertising the given topic, return the enrs of
     /// those ads. The query keeps going through the given topic's kbuckets until a certain number (passed to
     /// [`crate::service::ActiveTopicQueries`] upon instantiation) of results are obtained or the query times out.
-    pub fn topic_query_req(
+    pub fn topic_query(
         &self,
         topic: &'static str,
     ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
