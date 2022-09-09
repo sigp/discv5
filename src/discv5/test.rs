@@ -629,7 +629,7 @@ async fn test_bucket_limits() {
 }
 
 #[test]
-fn test_version_check() {
+fn test_features_check() {
     // Create the test values needed
     let port = 6666;
     let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
@@ -639,9 +639,13 @@ fn test_version_check() {
         .udp4(port)
         .build(&key)
         .unwrap();
-    let supported_versions = Features::Topics as u8 | 2;
+
+    let supported_versions = Features::Topics as u8;
+
     enr.insert(ENR_KEY_FEATURES, &[supported_versions], &key)
         .unwrap();
 
     assert!(supports_feature(&enr, Features::Topics));
 }
+
+

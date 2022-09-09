@@ -119,7 +119,7 @@ pub struct Discv5 {
 
 impl Discv5 {
     pub fn new(
-        local_enr: Enr,
+        mut local_enr: Enr,
         enr_key: CombinedKey,
         mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
@@ -145,6 +145,12 @@ impl Discv5 {
             (None, None)
         };
 
+        // This node supports topic requests REGTOPIC and TOPICQUERY, and their responses.
+        if let Err(e) = local_enr.insert(ENR_KEY_FEATURES, &[Features::Topics as u8], &enr_key) {
+            error!("Failed writing to enr. Error {:?}", e);
+            return Err("Failed to insert field 'features' into local enr");
+        }
+
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));
         let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
@@ -154,16 +160,6 @@ impl Discv5 {
             table_filter,
             bucket_filter,
         )));
-
-        // This node supports topic requests REGTOPIC and TOPICQUERY, and their responses.
-        if let Err(e) = local_enr.write().insert(
-            ENR_KEY_FEATURES,
-            &[Features::Topics as u8],
-            &enr_key.write(),
-        ) {
-            error!("Failed writing to enr. Error {:?}", e);
-            return Err("Failed to insert field 'version' into local enr");
-        }
 
         println!("{:?}", local_enr.read().get(ENR_KEY_FEATURES).unwrap());
 
@@ -879,7 +875,7 @@ pub fn supports_feature(peer: &Enr, feature: Features) -> bool {
         }
     } else {
         warn!(
-            "Enr of peer {} doesn't contain field 'version'",
+            "Enr of peer {} doesn't contain field 'features'",
             peer.node_id()
         );
         false
