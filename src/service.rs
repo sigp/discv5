@@ -2671,7 +2671,10 @@ impl Service {
                 if let Some(entry) = (*topic_kbuckets).take_applied_pending() {
                     let node_id = entry.inserted.into_preimage();
                     let replaced = entry.evicted.map(|n| n.key.into_preimage());
-                    return Poll::Ready(format!("Node {} has been inserted into kbuckets of topic {}. Replaced: {:?}", node_id, topic_hash, replaced));
+                    return Poll::Ready(format!(
+                        "Node {} has been inserted into kbuckets of topic {}. Replaced: {:?}",
+                        node_id, topic_hash, replaced
+                    ));
                 }
                 Poll::Pending
             }));
