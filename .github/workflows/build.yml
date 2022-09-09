@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v2
       - name: Get latest version of stable rust
         run: rustup update stable
+      - name: Install protobuf compiler for the libp2p-core dependency
+        uses: arduino/setup-protoc@v1
       - name: Lint code for quality and style with Clippy
         run: cargo clippy --workspace --tests --all-features -- -D warnings
   release-tests-ubuntu:
@@ -38,6 +40,8 @@ jobs:
       - uses: actions/checkout@v2
       - name: Get latest version of stable rust
         run: rustup update stable
+      - name: Install protobuf compiler for the libp2p-core dependency
+        uses: arduino/setup-protoc@v1
       - name: Run tests in release
         run: cargo test --all --release --all-features --tests
   check-rustdoc-links:
