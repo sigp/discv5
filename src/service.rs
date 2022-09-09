@@ -705,7 +705,7 @@ impl Service {
                     self.send_event(event);
                 }
                 Some(event) = Service::bucket_maintenance_poll_topics(self.topics_kbuckets.iter_mut()) => {
-                    self.send_event(event);
+                    debug!("{}", event);
                 }
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
@@ -2663,18 +2663,15 @@ impl Service {
     /// the routing table.
     async fn bucket_maintenance_poll_topics(
         kbuckets: impl Iterator<Item = (&TopicHash, &mut KBucketsTable<NodeId, Enr>)>,
-    ) -> Option<Discv5Event> {
+    ) -> Option<String> {
         // Drain applied pending entries from the routing table.
         let mut update_kbuckets_futures = Vec::new();
         for (topic_hash, topic_kbuckets) in kbuckets {
             update_kbuckets_futures.push(future::poll_fn(move |_cx| {
                 if let Some(entry) = (*topic_kbuckets).take_applied_pending() {
-                    let event = Discv5Event::NodeInsertedTopic {
-                        node_id: entry.inserted.into_preimage(),
-                        replaced: entry.evicted.map(|n| n.key.into_preimage()),
-                        topic_hash: *topic_hash,
-                    };
-                    return Poll::Ready(event);
+                    let node_id = entry.inserted.into_preimage();
+                    let replaced = entry.evicted.map(|n| n.key.into_preimage());
+                    return Poll::Ready(format!("Node {} has been inserted into kbuckets of topic {}. Replaced: {:?}", node_id, topic_hash, replaced));
                 }
                 Poll::Pending
             }));

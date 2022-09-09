@@ -77,21 +77,12 @@ pub enum Discv5Event {
     /// This happen spontaneously through queries as nodes return ENRs. These ENRs are not
     /// guaranteed to be live or contactable.
     Discovered(Enr),
-    /// A node has been discovered from a FINDNODE request using the given TopiHash as key.
-    /// See [`Discv5Event::Discovered`].
-    DiscoveredPeerTopic(Enr, TopicHash),
     /// A new ENR was added to the routing table.
     EnrAdded { enr: Enr, replaced: Option<Enr> },
     /// A new node has been added to the routing table.
     NodeInserted {
         node_id: NodeId,
         replaced: Option<NodeId>,
-    },
-    /// A new node has been added to a topic hash kbucket.
-    NodeInsertedTopic {
-        node_id: NodeId,
-        replaced: Option<NodeId>,
-        topic_hash: TopicHash,
     },
     /// A new session has been established with a node.
     SessionEstablished(Enr, SocketAddr),
