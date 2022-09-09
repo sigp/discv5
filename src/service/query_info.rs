@@ -1,6 +1,5 @@
 use crate::{kbucket::Key, rpc::RequestBody, Enr};
-use enr::NodeId;
-use sha2::digest::generic_array::GenericArray;
+use enr::{k256::sha2::digest::generic_array::GenericArray, NodeId};
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
