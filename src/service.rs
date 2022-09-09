@@ -733,82 +733,87 @@ impl Service {
                                 }
                             }
 
-                            if let Some(callback) = result.target.callback {
-                                if callback.send(found_enrs).is_err() {
-                                    warn!("Callback dropped for query {}. Results dropped", *id);
+                            match result.target.callback {
+                                Some(callback) => {
+                                    if callback.send(found_enrs).is_err() {
+                                        warn!("Callback dropped for query {}. Results dropped", *id);
+                                    }
                                 }
-                            }
+                                None => {
+                                    // This was an automatically initiated query to look for more peers
+                                    // for a give topic's kbuckets
+                                    if let QueryType::FindTopic(topic_key) = query_type {
+                                        let topic_hash = TopicHash::from_raw(topic_key.raw());
+                                        let mut discovered_new_peer = false;
+                                        if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
+                                            for enr in found_enrs {
+                                                if !supports_feature(&enr, Features::Topics) {
+                                                    continue;
+                                                }
+                                                trace!("Found new peer {} for topic {}", enr, topic_hash);
+                                                let key = kbucket::Key::from(enr.node_id());
 
-                            if let QueryType::FindTopic(topic_key) = query_type {
-                                let topic_hash = TopicHash::from_raw(topic_key.raw());
-                                let mut discovered_new_peer = false;
-                                if let Some(kbuckets_topic) = self.topics_kbuckets.get_mut(&topic_hash) {
-                                    for enr in found_enrs {
-                                        if !supports_feature(&enr, Features::Topics) {
-                                            continue;
-                                        }
-                                        trace!("Found new peer {} for topic {}", enr, topic_hash);
-                                        let key = kbucket::Key::from(enr.node_id());
+                                                // If the ENR exists in the routing table and the discovered ENR has a greater
+                                                // sequence number, perform some filter checks before updating the enr.
 
-                                        // If the ENR exists in the routing table and the discovered ENR has a greater
-                                        // sequence number, perform some filter checks before updating the enr.
+                                                let must_update_enr = match kbuckets_topic.entry(&key) {
+                                                    kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
+                                                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                                                    kbucket::Entry::Absent(_) => {
+                                                        trace!(
+                                                            "Discovered new peer {} for topic hash {}",
+                                                            enr.node_id(),
+                                                            topic_hash
+                                                        );
+                                                        // A QueryType::FindTopic variant will always time out. The last batch of
+                                                        // ENRs returned by the last iteration in the query is added to
+                                                        // discovered_peers_topic, like previous batches of uncontacted peers were
+                                                        // added to the query itself first.
+                                                        let discovered_peers =
+                                                            self.discovered_peers_topic.entry(topic_hash).or_default();
 
-                                        let must_update_enr = match kbuckets_topic.entry(&key) {
-                                            kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
-                                            kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
-                                            kbucket::Entry::Absent(_) => {
-                                                trace!(
-                                                    "Discovered new peer {} for topic hash {}",
-                                                    enr.node_id(),
-                                                    topic_hash
-                                                );
-                                                // A QueryType::FindTopic variant will always time out. The last batch of
-                                                // ENRs returned by the last iteration in the query is added to
-                                                // discovered_peers_topic, like previous batches of uncontacted peers were
-                                                // added to the query itself first.
-                                                let discovered_peers =
-                                                    self.discovered_peers_topic.entry(topic_hash).or_default();
-
-                                                let node_id = enr.node_id();
-                                                let peer_key: kbucket::Key<NodeId> = node_id.into();
-                                                let topic_key: kbucket::Key<NodeId> =
-                                                    NodeId::new(&topic_hash.as_bytes()).into();
-                                                if let Some(distance) = peer_key.log2_distance(&topic_key) {
-                                                    let bucket = discovered_peers.entry(distance).or_default();
-                                                    // If the intermediary storage before the topic's kbuckets is at bounds, discard the
-                                                    // uncontacted peers.
-                                                    if bucket.len() < MAX_UNCONTACTED_PEERS_PER_TOPIC_BUCKET {
-                                                        bucket.insert(node_id, enr.clone());
-                                                        discovered_new_peer = true;
+                                                        let node_id = enr.node_id();
+                                                        let peer_key: kbucket::Key<NodeId> = node_id.into();
+                                                        let topic_key: kbucket::Key<NodeId> =
+                                                            NodeId::new(&topic_hash.as_bytes()).into();
+                                                        if let Some(distance) = peer_key.log2_distance(&topic_key) {
+                                                            let bucket = discovered_peers.entry(distance).or_default();
+                                                            // If the intermediary storage before the topic's kbuckets is at bounds, discard the
+                                                            // uncontacted peers.
+                                                            if bucket.len() < MAX_UNCONTACTED_PEERS_PER_TOPIC_BUCKET {
+                                                                bucket.insert(node_id, enr.clone());
+                                                                discovered_new_peer = true;
+                                                            } else {
+                                                                debug!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
+                                                            }
+                                                        }
+                                                        false
+                                                    }
+                                                    _ => false,
+                                                };
+                                                if must_update_enr {
+                                                    if let UpdateResult::Failed(reason) =
+                                                        kbuckets_topic.update_node(&key, enr.clone(), None)
+                                                    {
+                                                        self.peers_to_ping.remove(&enr.node_id());
+                                                        debug!(
+                                                                "Failed to update discovered ENR of peer {} for kbucket of topic hash {:?}. Reason: {:?}",
+                                                                topic_hash, enr.node_id(), reason
+                                                            );
                                                     } else {
-                                                        debug!("Discarding uncontacted peers, uncontacted peers at bounds for topic hash {}", topic_hash);
+                                                        // If the enr was successfully updated, progress might be made in a topic lookup
+                                                        discovered_new_peer = true;
                                                     }
                                                 }
-                                                false
                                             }
-                                            _ => false,
-                                        };
-                                        if must_update_enr {
-                                            if let UpdateResult::Failed(reason) =
-                                                kbuckets_topic.update_node(&key, enr.clone(), None)
-                                            {
-                                                self.peers_to_ping.remove(&enr.node_id());
-                                                debug!(
-                                                        "Failed to update discovered ENR of peer {} for kbucket of topic hash {:?}. Reason: {:?}",
-                                                        topic_hash, enr.node_id(), reason
-                                                    );
-                                            } else {
-                                                // If the enr was successfully updated, progress might be made in a topic lookup
-                                                discovered_new_peer = true;
+                                            if discovered_new_peer {
+                                                // If a topic lookup has dried up (no more peers to query), and we now have found new peers or updated enrs for
+                                                // known peers to that topic, the query can now proceed as long as it hasn't timed out already.
+                                                if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
+                                                    debug!("Found new peers to send TOPICQUERY to, unsetting query status dry");
+                                                    query.dry = false;
+                                                }
                                             }
-                                        }
-                                    }
-                                    if discovered_new_peer {
-                                        // If a topic lookup has dried up (no more peers to query), and we now have found new peers or updated enrs for
-                                        // known peers to that topic, the query can now proceed as long as it hasn't timed out already.
-                                        if let Some(query) = self.active_topic_queries.queries.get_mut(&topic_hash) {
-                                            debug!("Found new peers to send TOPICQUERY to, unsetting query status dry");
-                                            query.dry = false;
                                         }
                                     }
                                 }
