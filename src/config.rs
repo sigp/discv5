@@ -138,7 +138,7 @@ impl Default for Discv5Config {
             enr_peer_update_min: 10,
             query_parallelism: 3,
             ip_limit: false,
-            nat_limit: false,
+            nat_limit: true,
             include_symmetric_nat: false,
             incoming_bucket_limit: MAX_NODES_PER_BUCKET,
             table_filter: |_| true,
@@ -252,10 +252,10 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Limits the number of nodes behind a NAT per bucket. Only makes sense to set if this node
-    /// supports NAT traversal.
-    pub fn nat_limit(&mut self) -> &mut Self {
-        self.config.nat_limit = true;
+    /// Limits the number of nodes behind a NAT per bucket when set to true. Only
+    /// makes sense to set if this node supports NAT traversal.
+    pub fn nat_limit(&mut self, limit_nat: bool) -> &mut Self {
+        self.config.nat_limit = limit_nat;
         self
     }
 

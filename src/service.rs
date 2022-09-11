@@ -460,11 +460,11 @@ impl Service {
                             self.inject_session_established(enr, direction, Some(socket_addr.port()));
                         }
                         HandlerOut::EstablishedNat(enr, socket_addr, direction) => {
-                            self.send_event(Discv5Event::SessionEstablishedNat(enr.clone(), socket_addr));
+                            info!("A new session has been established with a peer behind an asymmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
                             self.inject_session_established_nat(enr, direction);
                         }
                         HandlerOut::EstablishedNatSymmetric(enr, socket_addr) => {
-                            self.send_event(Discv5Event::SessionEstablishedNatSymmetric(enr.clone(), socket_addr.ip(), socket_addr.port()));
+                            info!("A new session has been established with a peer behind a symmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
                             self.inject_session_established_nat_symmetric(enr);
                         }
                         HandlerOut::Request(node_address, request) => {
@@ -792,10 +792,10 @@ impl Service {
 
                             match self.update_enr_nat(ip4, Some(udp4)) {
                                 Ok(_) => {
-                                    info!("Local NAT ipv4 address updated to: {}", ip4);
-                                    self.send_event(Discv5Event::NATUpdated(SocketAddr::V4(
-                                        SocketAddrV4::new(ip4, udp4),
-                                    )));
+                                    info!(
+                                        "Updated local ENR's 'nat' and 'udp' field with socket {}",
+                                        SocketAddrV4::new(ip4, udp4)
+                                    );
                                     self.ping_connected_peers();
                                 }
                                 Err(e) => {
@@ -808,10 +808,7 @@ impl Service {
 
                             match self.update_enr_nat(ip6, Some(udp6)) {
                                 Ok(_) => {
-                                    info!("Local NAT ipv4 address updated to: {}", ip6);
-                                    self.send_event(Discv5Event::NATUpdated(SocketAddr::V6(
-                                        SocketAddrV6::new(ip6, udp6, 0, 0),
-                                    )));
+                                    info!("Updated local ENR's 'nat6' and 'udp6' field with socket {}", SocketAddrV6::new(ip6, udp6, 0, 0));
                                     self.ping_connected_peers();
                                 }
                                 Err(e) => {
@@ -1126,8 +1123,7 @@ impl Service {
                                         Ok(_) => {
                                             updated = true;
                                             info!("Local NAT ip address updated to {}", ip);
-                                            trace!("Local 'nat' field is now set to {:?} and udp port {:?}", self.local_enr.read().get(ENR_KEY_NAT), self.local_enr.read().udp4());
-                                            self.send_event(Discv5Event::NATSymmetricUpdated(ip));
+                                            debug!("Our local ENR's 'nat' field has been updated with ip {}. No single port could be found by ip voting indicating this node is behind a symmetric NAT.", ip);
                                         }
                                         Err(e) => {
                                             warn!("Failed to update local NAT ip address. ip: {}, error: {:?}", ip, e);
@@ -1180,7 +1176,7 @@ impl Service {
                                         Ok(_) => {
                                             updated = true;
                                             info!("Local NAT ipv6 address updated to: {}", ip);
-                                            self.send_event(Discv5Event::NATSymmetricUpdated(ip));
+                                            debug!("Our local ENR's 'nat6' field has been updated with ip {}. No single port could be found by ip voting indicating this node is behind a symmetric NAT.", ip);
                                         }
                                         Err(e) => {
                                             warn!("Failed to update local NAT ipv6 address. ipv6: {}, error: {:?}", ip, e);

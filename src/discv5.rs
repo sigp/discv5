@@ -26,7 +26,7 @@ use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -74,19 +74,8 @@ pub enum Discv5Event {
     },
     /// A new session has been established with a node.
     SessionEstablished(Enr, SocketAddr),
-    /// A new NAT session has been established with a node behind a NAT.
-    SessionEstablishedNat(Enr, SocketAddr),
-    /// A new NAT session has been established with a node behind a symmetric NAT,
-    /// this connection has been assigned given remote port.
-    SessionEstablishedNatSymmetric(Enr, IpAddr, u16),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
-    /// Our local ENR NAT address and udp port has been updated indicating
-    /// this node is behind a NAT and is externally reachable on this address.
-    NATUpdated(SocketAddr),
-    /// Our local ENR NAT address has been updated, no single port could be found by ip voting
-    /// indicating this node is behind a symmetric NAT and is externally reachable on this address.
-    NATSymmetricUpdated(IpAddr),
     /// A node has initiated a talk request.
     TalkRequest(TalkRequest),
 }

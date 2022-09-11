@@ -196,10 +196,6 @@ async fn main() {
                     Discv5Event::SessionEstablished(enr, _) => info!("Session established {}", enr),
                     Discv5Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
                     Discv5Event::TalkRequest(_) => info!("Talk request received"),
-                    Discv5Event::NATUpdated(addr) => info!("Node is behind NAT, externally reachable address updated {}", addr),
-                    Discv5Event::NATSymmetricUpdated(ip) => info!("Node is behind a symmetric NAT, externally reachable ip updated {}", ip),
-                    Discv5Event::SessionEstablishedNat(enr, _) => info!("Session established with node behind NAT {}", enr),
-                    Discv5Event::SessionEstablishedNatSymmetric(enr, _, _) => info!("Session established with node behind symmetric NAT {}", enr),
                 };
             }
         }
