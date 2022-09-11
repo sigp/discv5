@@ -792,8 +792,8 @@ impl Service {
 
                             match self.update_enr_nat(ip4, Some(udp4)) {
                                 Ok(_) => {
-                                    info!(
-                                        "Updated local ENR's 'nat' and 'udp' field with socket {}",
+                                    debug!(
+                                        "This node is behind an asymmetric NAT. Updated local ENR's 'nat' and 'udp' field with socket {}",
                                         SocketAddrV4::new(ip4, udp4)
                                     );
                                     self.ping_connected_peers();
@@ -808,7 +808,7 @@ impl Service {
 
                             match self.update_enr_nat(ip6, Some(udp6)) {
                                 Ok(_) => {
-                                    info!("Updated local ENR's 'nat6' and 'udp6' field with socket {}", SocketAddrV6::new(ip6, udp6, 0, 0));
+                                    debug!("This node is behind an asymmetric NAT. Updated local ENR's 'nat6' and 'udp6' field with socket {}", SocketAddrV6::new(ip6, udp6, 0, 0));
                                     self.ping_connected_peers();
                                 }
                                 Err(e) => {
