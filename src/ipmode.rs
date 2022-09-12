@@ -1,5 +1,5 @@
-use crate::{discv5::ENR_KEY_NAT, Enr};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use crate::{discv5::EnrExtension, Enr};
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 ///! A set of configuration parameters to tune the discovery protocol.
 
 /// Sets the socket type to be established and also determines the type of ENRs that we will store
@@ -31,12 +31,8 @@ impl IpMode {
     /// Get the contactable Socket address of an Enr under current configuration.
     pub fn get_contactable_addr_nat_symmetric(&self, enr: &Enr, port: u16) -> Option<SocketAddr> {
         let nat4: fn(enr: &Enr, port: u16) -> Option<SocketAddr> = |enr, port| {
-            if let Some(nat4) = enr.get(ENR_KEY_NAT) {
-                if nat4.len() == 4 {
-                    let mut buf = [0u8; 4];
-                    buf.copy_from_slice(nat4);
-                    return Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(buf), port)));
-                }
+            if let Some(nat4) = enr.nat4() {
+                return Some(SocketAddr::V4(SocketAddrV4::new(nat4, port)));
             }
             None
         };
@@ -47,22 +43,15 @@ impl IpMode {
                 enable_mapped_addresses,
             } => {
                 // NOTE: general consensus is that ipv6 addresses should be preferred.
-                let maybe_ipv6_addr = enr.get("nat6").and_then(|nat6| {
-                    if nat6.len() == 16 {
-                        let mut buf = [0u8; 16];
-                        buf.copy_from_slice(nat6);
-                        // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
-                        // transmitted in the ENR. Here we choose to enforce canonical addresses since
-                        // it implies the logic of matching socket_addr verification. For this we prevent
-                        // communications with Ipv4 addresses advertized in the Ipv6 field.
-                        let ipv6 = Ipv6Addr::from(buf);
-                        if to_ipv4_mapped(&ipv6).is_some() {
-                            None
-                        } else {
-                            Some(SocketAddr::V6(SocketAddrV6::new(ipv6, port, 0, 0)))
-                        }
-                    } else {
+                let maybe_ipv6_addr = enr.nat6().and_then(|nat6| {
+                    // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
+                    // transmitted in the ENR. Here we choose to enforce canonical addresses since
+                    // it implies the logic of matching socket_addr verification. For this we prevent
+                    // communications with Ipv4 addresses advertized in the Ipv6 field.
+                    if to_ipv4_mapped(&nat6).is_some() {
                         None
+                    } else {
+                        Some(SocketAddr::V6(SocketAddrV6::new(nat6, port, 0, 0)))
                     }
                 });
                 if *enable_mapped_addresses {
@@ -78,55 +67,31 @@ impl IpMode {
 
     /// Get the contactable Socket address of an Enr under current configuration.
     pub fn get_contactable_addr_nat(&self, enr: &Enr) -> Option<SocketAddr> {
-        let nat4: fn(enr: &Enr, port: u16) -> Option<SocketAddr> = |enr, port| {
-            if let Some(nat4) = enr.get(ENR_KEY_NAT) {
-                if nat4.len() == 4 {
-                    let mut buf = [0u8; 4];
-                    buf.copy_from_slice(nat4);
-                    return Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::from(buf)), port));
-                }
-            }
-            None
-        };
-
         match self {
-            IpMode::Ip4 => {
-                if let Some(port) = enr.udp4() {
-                    nat4(enr, port)
-                } else {
-                    None
-                }
-            }
+            IpMode::Ip4 => enr.udp4_socket_nat().map(SocketAddr::V4),
             IpMode::Ip6 {
                 enable_mapped_addresses,
             } => {
                 // NOTE: general consensus is that ipv6 addresses should be preferred.
-                let maybe_ipv6_addr = enr.get("nat6").and_then(|nat6| {
-                    if nat6.len() == 16 {
-                        let mut buf = [0u8; 16];
-                        buf.copy_from_slice(nat6);
-                        // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
-                        // transmitted in the ENR. Here we choose to enforce canonical addresses since
-                        // it implies the logic of matching socket_addr verification. For this we prevent
-                        // communications with Ipv4 addresses advertized in the Ipv6 field.
-                        let ipv6 = Ipv6Addr::from(buf);
-                        if to_ipv4_mapped(&ipv6).is_some() {
-                            None
-                        } else {
-                            enr.udp6()
-                                .map(|port| SocketAddr::new(IpAddr::V6(ipv6), port))
-                        }
-                    } else {
+                let maybe_ipv6_addr = enr.udp6_socket_nat().and_then(|nat6| {
+                    // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
+                    // transmitted in the ENR. Here we choose to enforce canonical addresses since
+                    // it implies the logic of matching socket_addr verification. For this we prevent
+                    // communications with Ipv4 addresses advertized in the Ipv6 field.
+                    if to_ipv4_mapped(nat6.ip()).is_some() {
                         None
+                    } else {
+                        Some(nat6)
                     }
                 });
                 if *enable_mapped_addresses {
                     // If mapped addresses are enabled we can use the Ipv4 address of the node in
                     // case it doesn't have an ipv6 one
-                    enr.udp4()
-                        .and_then(|port| maybe_ipv6_addr.or_else(|| nat4(enr, port)))
-                } else {
                     maybe_ipv6_addr
+                        .map(SocketAddr::V6)
+                        .or_else(|| enr.udp4_socket_nat().map(SocketAddr::V4))
+                } else {
+                    maybe_ipv6_addr.map(SocketAddr::V6)
                 }
             }
         }

@@ -81,7 +81,9 @@ pub use bucket::{
     ConnectionState, FailureReason, InsertResult as BucketInsertResult, UpdateResult,
     MAX_NODES_PER_BUCKET,
 };
-pub use filter::{Filter, IpAndNATBucketFilter, IpBucketFilter, IpTableFilter, NATBucketFilter};
+pub use filter::{
+    Filter, IpAndSymmetricNatBucketFilter, IpBucketFilter, IpTableFilter, SymmetricNatBucketFilter,
+};
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},

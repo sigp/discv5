@@ -107,6 +107,9 @@ pub struct Discv5Config {
     /// will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
+    /// This node supports the NAT traversal protocol. Default is true.
+    pub nat_feature: bool,
+
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
@@ -150,6 +153,7 @@ impl Default for Discv5Config {
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             ip_mode: IpMode::default(),
+            nat_feature: true,
             executor: None,
         }
     }
@@ -253,7 +257,8 @@ impl Discv5ConfigBuilder {
     }
 
     /// Limits the number of nodes behind a NAT per bucket when set to true. Only
-    /// makes sense to set if this node supports NAT traversal.
+    /// makes sense to set if this node supports the NAT traversal protocol, i.e.
+    /// if nat_feature is set to true in the config.
     pub fn nat_limit(&mut self, limit_nat: bool) -> &mut Self {
         self.config.nat_limit = limit_nat;
         self
@@ -338,6 +343,12 @@ impl Discv5ConfigBuilder {
     /// to contact an ENR.
     pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
         self.config.ip_mode = ip_mode;
+        self
+    }
+
+    /// Configures this node to run with or with out the NAT traversal protocol.
+    pub fn nat_feature(&mut self, run_with_nat_feature: bool) -> &mut Self {
+        self.config.nat_feature = run_with_nat_feature;
         self
     }
 

@@ -28,7 +28,7 @@
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
     config::Discv5Config,
-    discv5::{ENR_KEY_NAT, PERMIT_BAN_LIST},
+    discv5::{EnrExtension, PERMIT_BAN_LIST},
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
@@ -44,7 +44,7 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     default::Default,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::SocketAddr,
     pin::Pin,
     sync::{atomic::Ordering, Arc},
     task::{Context, Poll},
@@ -834,43 +834,28 @@ impl Handler {
         if enr.node_id() == node_address.node_id {
             match node_address.socket_addr {
                 SocketAddr::V4(socket_addr) => {
-                    if let Some(advertised_addr) = enr.get(ENR_KEY_NAT) {
-                        if advertised_addr.len() == 4 {
-                            let mut buf = [0u8; 4];
-                            buf.copy_from_slice(advertised_addr);
-                            let advertised_ip = Ipv4Addr::from(buf);
-                            if let Some(port) = enr.udp4() {
-                                let advertised_socket = SocketAddrV4::new(advertised_ip, port);
-                                trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket {}", node_address, advertised_socket);
-                                if socket_addr == advertised_socket {
-                                    return Some(Nat::Asymmetric);
-                                }
-                            }
-                            trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip {}", node_address, advertised_ip);
-                            if socket_addr.ip() == &advertised_ip {
-                                return Some(Nat::Symmetric);
-                            }
+                    if let Some(advertised_socket) = enr.udp4_socket_nat() {
+                        trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket {}", node_address, advertised_socket);
+                        if socket_addr == advertised_socket {
+                            return Some(Nat::Asymmetric);
+                        }
+                    } else if let Some(advertised_ip) = enr.nat4() {
+                        trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip {}", node_address, advertised_ip);
+                        if socket_addr.ip() == &advertised_ip {
+                            return Some(Nat::Symmetric);
                         }
                     }
                 }
                 SocketAddr::V6(socket_addr) => {
-                    if let Some(advertised_addr) = enr.get("nat6") {
-                        if advertised_addr.len() == 16 {
-                            let mut buf = [0u8; 16];
-                            buf.copy_from_slice(advertised_addr);
-                            let advertised_ip = Ipv6Addr::from(buf);
-                            if let Some(port) = enr.udp6() {
-                                let advertised_socket =
-                                    SocketAddrV6::new(advertised_ip, port, 0, 0);
-                                trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket6 {}", node_address, advertised_socket);
-                                if socket_addr == advertised_socket {
-                                    return Some(Nat::Asymmetric);
-                                }
-                            }
-                            trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip6 {}", node_address, advertised_ip);
-                            if socket_addr.ip() == &advertised_ip {
-                                return Some(Nat::Symmetric);
-                            }
+                    if let Some(advertised_socket) = enr.udp6_socket_nat() {
+                        trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket6 {}", node_address, advertised_socket);
+                        if socket_addr == advertised_socket {
+                            return Some(Nat::Asymmetric);
+                        }
+                    } else if let Some(advertised_ip) = enr.nat6() {
+                        trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip6 {}", node_address, advertised_ip);
+                        if socket_addr.ip() == &advertised_ip {
+                            return Some(Nat::Symmetric);
                         }
                     }
                 }

@@ -1,6 +1,6 @@
 //! Provides a trait that can be implemented to apply a filter to a table or bucket.
 
-use crate::{discv5::ENR_KEY_NAT, Enr};
+use crate::{discv5::EnrExtension, Enr};
 pub trait Filter<TVal: Eq>: FilterClone<TVal> + Send + Sync {
     fn filter(
         &self,
@@ -96,15 +96,15 @@ fn ip_filter(
 }
 
 #[derive(Clone)]
-pub struct NATBucketFilter;
+pub struct SymmetricNatBucketFilter;
 
-impl Filter<Enr> for NATBucketFilter {
+impl Filter<Enr> for SymmetricNatBucketFilter {
     fn filter(
         &self,
         value_to_be_inserted: &Enr,
         other_vals: &mut dyn Iterator<Item = &Enr>,
     ) -> bool {
-        nat_filter(
+        symmetric_nat_filter(
             value_to_be_inserted,
             other_vals,
             MAX_NODES_BEHIND_NAT_PER_SUBNET_BUCKET,
@@ -112,7 +112,7 @@ impl Filter<Enr> for NATBucketFilter {
     }
 }
 
-fn nat_filter(
+fn symmetric_nat_filter(
     value_to_be_inserted: &Enr,
     other_vals: &mut dyn Iterator<Item = &Enr>,
     limit: usize,
@@ -123,12 +123,11 @@ fn nat_filter(
         if enr == value_to_be_inserted {
             continue;
         }
-        // Count nodes which are behind a nat
-        if let Some(is_behind_nat) = enr.get(ENR_KEY_NAT) {
-            println!("Nat field");
-            if is_behind_nat.to_vec().is_empty() || *is_behind_nat == [1u8] {
-                count += 1;
-            }
+        // Count nodes which are behind a symmetric nat
+        if enr.udp4().is_none() && enr.nat4().is_some()
+            || enr.udp6().is_none() && enr.nat6().is_some()
+        {
+            count += 1;
         }
         if count >= limit {
             return false;
@@ -138,9 +137,9 @@ fn nat_filter(
 }
 
 #[derive(Clone)]
-pub struct IpAndNATBucketFilter;
+pub struct IpAndSymmetricNatBucketFilter;
 
-impl Filter<Enr> for IpAndNATBucketFilter {
+impl Filter<Enr> for IpAndSymmetricNatBucketFilter {
     fn filter(
         &self,
         value_to_be_inserted: &Enr,
@@ -150,7 +149,7 @@ impl Filter<Enr> for IpAndNATBucketFilter {
             value_to_be_inserted,
             other_vals,
             MAX_NODES_PER_SUBNET_BUCKET,
-        ) && nat_filter(
+        ) && symmetric_nat_filter(
             value_to_be_inserted,
             other_vals,
             MAX_NODES_BEHIND_NAT_PER_SUBNET_BUCKET,

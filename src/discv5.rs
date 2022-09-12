@@ -26,12 +26,12 @@ use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 #[cfg(feature = "libp2p")]
 use libp2p_core::Multiaddr;
@@ -43,39 +43,11 @@ lazy_static! {
         RwLock::new(crate::PermitBanList::default());
 }
 
-/// Custom ENR keys.
-const ENR_KEY_FEATURES: &str = "features";
-pub const ENR_KEY_NAT: &str = "nat";
-pub const ENR_KEY_NAT_6: &str = "nat6";
-
 /// Discv5 features.
-pub enum Features {
-    /// The protocol for advertising and looking up to topics in Discv5 is supported.
+pub enum Feature {
+    /// The protocol for NAT traversal using UDP hole-punching is supported
+    /// by this node.
     Nat = 1,
-}
-
-pub trait EnrExtension {
-    fn supports_feature(&self, feature: Features) -> bool;
-}
-
-impl EnrExtension for Enr {
-    /// Check if a given peer supports a given feature of the Discv5 protocol.
-    fn supports_feature(&self, feature: Features) -> bool {
-        if let Some(supported_features) = self.get(ENR_KEY_FEATURES) {
-            if let Some(supported_features_num) = supported_features.first() {
-                let feature_num = feature as u8;
-                supported_features_num & feature_num == feature_num
-            } else {
-                false
-            }
-        } else {
-            warn!(
-                "Enr of peer {} doesn't contain field 'version'",
-                self.node_id()
-            );
-            false
-        }
-    }
 }
 
 mod test;
@@ -137,16 +109,18 @@ impl Discv5 {
         };
 
         // NOTE: Currently we don't expose custom filter support in the configuration. Users can
-        // optionally use the IP filter via the ip_limit configuration parameter. In the future, we
-        // may expose this functionality to the users if there is demand for it.
+        // optionally use the IP filter via the ip_limit configuration parameter and the NAT filter
+        // via the nat_limit configuration parameter. In the future, we may expose this functionality
+        // to the users if there is demand for it.
         let (table_filter, bucket_filter) = match (config.ip_limit, config.nat_limit) {
             (true, true) => (
                 Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-                Some(Box::new(kbucket::IpAndNATBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(kbucket::IpAndSymmetricNatBucketFilter)
+                    as Box<dyn kbucket::Filter<Enr>>),
             ),
             (false, true) => (
                 None,
-                Some(Box::new(kbucket::NATBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(kbucket::SymmetricNatBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
             ),
             (true, false) => (
                 Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
@@ -156,9 +130,11 @@ impl Discv5 {
         };
 
         // This node supports NAT traversal request RELAYREQUEST, and its response RELAYRESPONSE.
-        if let Err(e) = local_enr.insert(ENR_KEY_FEATURES, &[Features::Nat as u8], &enr_key) {
-            error!("Failed writing to enr. Error {:?}", e);
-            return Err("Failed to insert field 'version' into local enr");
+        if config.nat_feature {
+            if let Err(e) = local_enr.set_feature(&enr_key, Feature::Nat) {
+                error!("Failed to set field 'features' in local enr. Error: {}", e);
+                return Err("Failed to set field 'features' in local enr");
+            }
         }
 
         let local_enr = Arc::new(RwLock::new(local_enr));
@@ -189,35 +165,6 @@ impl Discv5 {
         if self.service_channel.is_some() {
             warn!("Service is already started");
             return Err(Discv5Error::ServiceAlreadyStarted);
-        }
-
-        if self.local_enr.read().supports_feature(Features::Nat)
-            && self.local_enr.read().ip4().is_none()
-            && self.local_enr.read().ip6().is_none()
-        {
-            // A node shows if it is behind a NAT by setting the enr field(s) "nat"/"nat6" to its
-            // externally reachable ip, or by leaving the nat/nat6 field(s) empty if it is not sure
-            // (or ip4/ip6 field(s) empty).
-
-            if let Err(e) = self
-                .local_enr
-                .write()
-                .insert(ENR_KEY_NAT, &[], &self.enr_key.read())
-            {
-                error!("Failed to insert field 'nat' into local enr. Error {:?}", e);
-                return Err(Discv5Error::InvalidEnr);
-            }
-            if let Err(e) = self
-                .local_enr
-                .write()
-                .insert(ENR_KEY_NAT_6, &[], &self.enr_key.read())
-            {
-                error!(
-                    "Failed to insert field 'nat6' into local enr. Error {:?}",
-                    e
-                );
-                return Err(Discv5Error::InvalidEnr);
-            }
         }
 
         // create the main service
@@ -685,5 +632,212 @@ impl Discv5 {
 impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+pub trait EnrExtension<K> {
+    const ENR_KEY_FEATURES: &'static str = "features";
+    const ENR_KEY_NAT: &'static str = "nat";
+    const ENR_KEY_NAT_6: &'static str = "nat6";
+    const ENR_KEY_IP: &'static str = "ip";
+    const ENR_KEY_IP_6: &'static str = "ip6";
+    const ENR_KEY_UDP: &'static str = "udp";
+    const ENR_KEY_UDP_6: &'static str = "udp6";
+
+    /// Check if node supports a given feature.
+    fn supports_feature(&self, feature: Feature) -> bool;
+    /// Returns the IPv4 address in the 'nat' field if it is defined.
+    fn nat4(&self) -> Option<Ipv4Addr>;
+    /// Returns the IPv6 address in the 'nat6' field if it is defined.
+    fn nat6(&self) -> Option<Ipv6Addr>;
+    /// Provides a socket (based on the UDP port), if the 'nat' and 'udp' fields are specified.
+    fn udp4_socket_nat(&self) -> Option<SocketAddrV4>;
+    /// Provides a socket (based on the UDP port), if the 'nat6' and 'udp6' fields are specified.
+    fn udp6_socket_nat(&self) -> Option<SocketAddrV6>;
+    /// Set a protocol feature that node supports. Returns the previous features.
+    fn set_feature(&mut self, enr_key: &K, feature: Feature) -> Result<Option<u8>, EnrError>;
+    /// Updates ENR to show this node is behind a NAT by setting the externally reachable IP of the
+    /// node in the 'nat'/'nat6' field and removing any value in the 'ip'/'ip6' field. If this node
+    /// is behind a symmetric NAT the value in the 'udp'/'udp6' field is removed. If this node is
+    /// behind an asymmetric NAT the 'udp'/'udp6' field is set to the port to hole-punch this node
+    /// on. Returns the previous value in the 'ip'/'ip6'field and 'udp'/'udp6' field if any (if ENR
+    /// was set in belief that it is not behind a NAT or is port-forwarded, the 'ip'/'ip6' and 'udp'/
+    /// 'udp6' fields would be set). WARNING: This update increases the ENR sequence number more
+    /// than once.
+    fn set_udp_socket_nat(
+        &mut self,
+        enr_key: &CombinedKey,
+        ip: impl std::convert::Into<IpAddr>,
+        port: Option<u16>,
+    ) -> Result<Option<SocketAddr>, EnrError>;
+}
+
+impl EnrExtension<CombinedKey> for Enr {
+    fn supports_feature(&self, feature: Feature) -> bool {
+        if let Some(supported_features) = self.get(Self::ENR_KEY_FEATURES) {
+            if let Some(supported_features_num) = supported_features.first() {
+                let feature_num = feature as u8;
+                supported_features_num & feature_num == feature_num
+            } else {
+                false
+            }
+        } else {
+            warn!(
+                "Enr of peer {} doesn't contain field 'version'",
+                self.node_id()
+            );
+            false
+        }
+    }
+
+    fn nat4(&self) -> Option<Ipv4Addr> {
+        if let Some(ip_bytes) = self.get(Self::ENR_KEY_NAT) {
+            return match ip_bytes.len() {
+                4 => {
+                    let mut ip = [0_u8; 4];
+                    ip.copy_from_slice(ip_bytes);
+                    Some(Ipv4Addr::from(ip))
+                }
+                _ => None,
+            };
+        }
+        None
+    }
+
+    fn nat6(&self) -> Option<Ipv6Addr> {
+        if let Some(ip_bytes) = self.get(Self::ENR_KEY_NAT_6) {
+            return match ip_bytes.len() {
+                16 => {
+                    let mut ip = [0_u8; 16];
+                    ip.copy_from_slice(ip_bytes);
+                    Some(Ipv6Addr::from(ip))
+                }
+                _ => None,
+            };
+        }
+        None
+    }
+
+    fn udp4_socket_nat(&self) -> Option<SocketAddrV4> {
+        if let Some(ip) = self.nat4() {
+            if let Some(udp) = self.udp4() {
+                return Some(SocketAddrV4::new(ip, udp));
+            }
+        }
+        None
+    }
+
+    fn udp6_socket_nat(&self) -> Option<SocketAddrV6> {
+        if let Some(ip6) = self.nat6() {
+            if let Some(udp6) = self.udp6() {
+                return Some(SocketAddrV6::new(ip6, udp6, 0, 0));
+            }
+        }
+        None
+    }
+
+    fn set_feature(
+        &mut self,
+        enr_key: &CombinedKey,
+        feature: Feature,
+    ) -> Result<Option<u8>, EnrError> {
+        let mut previous_features = None;
+
+        if let Some(features) = self.get(Self::ENR_KEY_FEATURES) {
+            if let Some(features_num) = features.first() {
+                previous_features = Some(*features_num);
+            }
+        }
+        let new_features_num = if let Some(previous_features) = previous_features {
+            previous_features | feature as u8
+        } else {
+            feature as u8
+        };
+        self.insert(Self::ENR_KEY_FEATURES, &[new_features_num], enr_key)?;
+        Ok(previous_features)
+    }
+
+    fn set_udp_socket_nat(
+        &mut self,
+        enr_key: &CombinedKey,
+        ip: impl std::convert::Into<IpAddr>,
+        port: Option<u16>,
+    ) -> Result<Option<SocketAddr>, EnrError> {
+        let ip = ip.into();
+
+        match ip {
+            IpAddr::V4(ip4) => {
+                trace!("Inserting reachable address {}:{:?} for node behind NAT into local enr's 'nat' field", ip4, port);
+
+                self.insert(Self::ENR_KEY_NAT, &ip4.octets(), enr_key)?;
+
+                let previous_port = if let Some(port) = port {
+                    trace!("Inserting reachable port {} for node behind asymmetric NAT into local enr's 'udp' field", port);
+                    self.set_udp4(port, enr_key)?
+                } else {
+                    trace!(
+                        "Emptying 'udp' field in local enr to show node is behind a symmetric NAT"
+                    );
+                    self.insert(Self::ENR_KEY_UDP, b"", enr_key)?;
+                    None
+                };
+
+                trace!("Emptying 'ip' field in local enr to show node cannot receive incoming connections and node must be contacted via NAT traversal protocol");
+                let previous_ip = self.insert(Self::ENR_KEY_IP, b"", enr_key)?;
+
+                let previous_socket = move || -> Option<SocketAddr> {
+                    if let Some(bytes) = previous_ip {
+                        if let Some(port) = previous_port {
+                            if bytes.len() == 4 {
+                                let mut buf = [0u8; 4];
+                                buf.copy_from_slice(&bytes);
+                                return Some(SocketAddr::new(
+                                    IpAddr::V4(Ipv4Addr::from(buf)),
+                                    port,
+                                ));
+                            }
+                        }
+                    }
+                    None
+                };
+
+                Ok(previous_socket())
+            }
+            IpAddr::V6(ip6) => {
+                trace!("Inserting reachable address {}:{:?} for node behind NAT into local enr's 'nat6' field", ip6, port);
+
+                self.insert(Self::ENR_KEY_NAT, &ip6.octets(), enr_key)?;
+                let previous_port = if let Some(port) = port {
+                    trace!("Inserting reachable port {} for node behind asymmetric NAT into local enr's 'udp6' field", port);
+                    self.set_udp6(port, enr_key)?
+                } else {
+                    trace!(
+                        "Emptying 'udp6' field in local enr to show node is behind a symmetric NAT"
+                    );
+                    self.insert(Self::ENR_KEY_UDP_6, b"", enr_key)?;
+                    None
+                };
+
+                trace!("Emptying 'ip6' field in local enr to show node cannot receive incoming connections and node must be contacted via NAT traversal protocol");
+                let previous_ip = self.insert(Self::ENR_KEY_IP_6, b"", enr_key)?;
+
+                let previous_socket_6 = move || -> Option<SocketAddr> {
+                    if let Some(bytes) = previous_ip {
+                        if let Some(port) = previous_port {
+                            if bytes.len() == 4 {
+                                let mut buf = [0u8; 16];
+                                buf.copy_from_slice(&bytes);
+                                return Some(SocketAddr::new(
+                                    IpAddr::V6(Ipv6Addr::from(buf)),
+                                    port,
+                                ));
+                            }
+                        }
+                    }
+                    None
+                };
+                Ok(previous_socket_6())
+            }
+        }
     }
 }
