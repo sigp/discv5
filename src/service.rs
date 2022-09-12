@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    discv5::{supports_feature, Features, ENR_KEY_NAT, ENR_KEY_NAT_6},
+    discv5::{EnrExtension, Features, ENR_KEY_NAT, ENR_KEY_NAT_6},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
@@ -351,7 +351,7 @@ impl Service {
         };
 
         let asymm_nat_votes =
-            if config.enr_update && supports_feature(&local_enr.read(), Features::Nat) {
+            if config.enr_update && local_enr.read().supports_feature(Features::Nat) {
                 Some(AsymmNatVote::new(
                     config.enr_peer_update_min,
                     config.vote_duration,
@@ -1853,7 +1853,7 @@ impl Service {
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             // It could be that this node is behind a NAT, if it supports the NAT traversal protocol we
             // give it MAX_REQUEST_ENR_ATTEMPTS to trigger us via PING request to request its ENR.
-            if supports_feature(&enr, Features::Nat) {
+            if enr.supports_feature(Features::Nat) {
                 self.awaiting_reachable_address.insert(enr.clone());
                 // In case this is a node behind a symmetric NAT we need to store the port which is unique
                 // for this connection and hence will not eventually be advertised in the peer's ENR.
@@ -2037,7 +2037,7 @@ impl Service {
                         }
                     }
                     _ => {
-                        if supports_feature(&self.local_enr.read(), Features::Nat) {
+                        if self.local_enr.read().supports_feature(Features::Nat) {
                             // Drop the request and attempt establishing the connection to the peer via the
                             // NAT traversal protocol for sending future requests to the peer, if this peer
                             // was forwarded to us in a NODES response and we hence have a relay for it.

@@ -54,6 +54,30 @@ pub enum Features {
     Nat = 1,
 }
 
+pub trait EnrExtension {
+    fn supports_feature(&self, feature: Features) -> bool;
+}
+
+impl EnrExtension for Enr {
+    /// Check if a given peer supports a given feature of the Discv5 protocol.
+    fn supports_feature(&self, feature: Features) -> bool {
+        if let Some(supported_features) = self.get(ENR_KEY_FEATURES) {
+            if let Some(supported_features_num) = supported_features.first() {
+                let feature_num = feature as u8;
+                supported_features_num & feature_num == feature_num
+            } else {
+                false
+            }
+        } else {
+            warn!(
+                "Enr of peer {} doesn't contain field 'version'",
+                self.node_id()
+            );
+            false
+        }
+    }
+}
+
 mod test;
 
 /// Events that can be produced by the `Discv5` event stream.
@@ -167,7 +191,7 @@ impl Discv5 {
             return Err(Discv5Error::ServiceAlreadyStarted);
         }
 
-        if supports_feature(&self.local_enr.read(), Features::Nat)
+        if self.local_enr.read().supports_feature(Features::Nat)
             && self.local_enr.read().ip4().is_none()
             && self.local_enr.read().ip6().is_none()
         {
@@ -661,23 +685,5 @@ impl Discv5 {
 impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
-    }
-}
-
-/// Check if a given peer supports a given feature of the Discv5 protocol.
-pub fn supports_feature(peer: &Enr, feature: Features) -> bool {
-    if let Some(supported_features) = peer.get(ENR_KEY_FEATURES) {
-        if let Some(supported_features_num) = supported_features.first() {
-            let feature_num = feature as u8;
-            supported_features_num & feature_num == feature_num
-        } else {
-            false
-        }
-    } else {
-        warn!(
-            "Enr of peer {} doesn't contain field 'version'",
-            peer.node_id()
-        );
-        false
     }
 }
