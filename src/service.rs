@@ -256,7 +256,7 @@ struct AwaitingContactableEnr {
 }
 
 impl AwaitingContactableEnr {
-    fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, String> {
+    fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, &'static str> {
         if let Some(peer) = self.peers.get_mut(node_id) {
             if peer.attempts >= MAX_ATTEMPTS_TO_REQUEST_ENR {
                 return Err(
