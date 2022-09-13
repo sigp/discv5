@@ -110,8 +110,8 @@ impl Discv5 {
 
         // NOTE: Currently we don't expose custom filter support in the configuration. Users can
         // optionally use the IP filter via the ip_limit configuration parameter and the NAT filter
-        // via the nat_limit configuration parameter. In the future, we may expose this functionality
-        // to the users if there is demand for it.
+        // via the nat_limit configuration parameter. In the future, we may expose this
+        // functionality to the users if there is demand for it.
         let (table_filter, bucket_filter) = match (config.ip_limit, config.nat_limit) {
             (true, true) => (
                 Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
@@ -654,16 +654,16 @@ pub trait EnrExtension<K> {
     fn udp4_socket_nat(&self) -> Option<SocketAddrV4>;
     /// Provides a socket (based on the UDP port), if the 'nat6' and 'udp6' fields are specified.
     fn udp6_socket_nat(&self) -> Option<SocketAddrV6>;
-    /// Set a protocol feature that node supports. Returns the previous features.
+    /// Set a protocol feature that this node supports. Returns the previous features.
     fn set_feature(&mut self, enr_key: &K, feature: Feature) -> Result<Option<u8>, EnrError>;
     /// Updates ENR to show this node is behind a NAT by setting the externally reachable IP of the
     /// node in the 'nat'/'nat6' field and removing any value in the 'ip'/'ip6' field. If this node
     /// is behind a symmetric NAT the value in the 'udp'/'udp6' field is removed. If this node is
     /// behind an asymmetric NAT the 'udp'/'udp6' field is set to the port to hole-punch this node
     /// on. Returns the previous value in the 'ip'/'ip6'field and 'udp'/'udp6' field if any (if ENR
-    /// was set in belief that it is not behind a NAT or is port-forwarded, the 'ip'/'ip6' and 'udp'/
-    /// 'udp6' fields would be set). WARNING: This update increases the ENR sequence number more
-    /// than once.
+    /// was set in belief that it is not behind a NAT or is port-forwarded, the 'ip'/'ip6' and
+    /// 'udp'/'udp6' fields would be set). WARNING: This update increases the ENR sequence number
+    /// more than once.
     fn set_udp_socket_nat(
         &mut self,
         enr_key: &CombinedKey,

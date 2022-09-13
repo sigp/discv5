@@ -220,9 +220,9 @@ impl RequestCall {
             ref from_node_enr, ..
         } = self.request.body
         {
-            // If this node is the initiator of the RELAYREQUEST, wait double the default request timeout
-            // as the rendezvous node will also be waiting for the duration of one request timeout for the
-            // receiver to return a RELAYRESPONSE.
+            // If this node is the initiator of the RELAYREQUEST, wait double the default request
+            // timeout as the rendezvous node will also be waiting for the duration of one request
+            // timeout for the receiver to return a RELAYRESPONSE.
             if from_node_enr.node_id() == *local_node_id {
                 return default_timeout * 2;
             }
@@ -242,7 +242,8 @@ impl RequestCall {
     }
 }
 
-/// Process to handle handshakes and sessions established from raw RPC communications between nodes.
+/// Process to handle handshakes and sessions established from raw RPC communications between
+/// nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
@@ -393,7 +394,8 @@ impl Handler {
                     // challenge. We process them here
                     self.send_next_request(node_address).await;
                 }
-                _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
+                // Unban nodes that are past the timeout
+                _ = banned_nodes_check.tick() => self.unban_nodes_check(),
                 _ = &mut self.exit => {
                     return;
                 }
@@ -434,7 +436,8 @@ impl Handler {
                     &ephem_pubkey,
                     enr_record,
                     &inbound_packet.message,
-                    &inbound_packet.authenticated_data, // This is required for authenticated data in decryption.
+                    &inbound_packet.authenticated_data, // This is required for authenticated data
+                                                        // in decryption.
                 )
                 .await
             }
@@ -523,7 +526,8 @@ impl Handler {
             return Err(RequestError::SelfRequest);
         }
 
-        // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
+        // If there is already an active request or an active challenge (WHOAREYOU sent) for this
+        // node, add to pending requests
         if self.active_requests.get(&node_address).is_some()
             || self.active_challenges.get(&node_address).is_some()
         {
@@ -878,9 +882,9 @@ impl Handler {
         message: &[u8],
         authenticated_data: &[u8],
     ) {
-        // Needs to match an outgoing challenge packet (so we have the required nonce to be signed). If it doesn't we drop the packet.
-        // This will lead to future outgoing challenges if they proceed to send further encrypted
-        // packets.
+        // Needs to match an outgoing challenge packet (so we have the required nonce to be
+        // signed). If it doesn't we drop the packet. This will lead to future outgoing challenges
+        // if they proceed to send further encrypted packets.
         trace!(
             "Received an Authentication header message from: {}",
             node_address
@@ -1051,9 +1055,9 @@ impl Handler {
                     }
                 },
                 Err(e) => {
-                    // We have a session, but the message could not be decrypted. It is likely the node
-                    // sending this message has dropped their session. In this case, this message is a
-                    // Random packet and we should reply with a WHOAREYOU.
+                    // We have a session, but the message could not be decrypted. It is likely the
+                    // node sending this message has dropped their session. In this case, this
+                    // message is a Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
                     trace!("Decryption failed. Error {}", e);
                     debug!(
@@ -1062,8 +1066,8 @@ impl Handler {
                     );
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
-                    // If we haven't already sent a WhoAreYou,
-                    // spawn a WHOAREYOU event to check for highest known ENR
+                    // If we haven't already sent a WhoAreYou, spawn a WHOAREYOU event to check
+                    // for highest known ENR
                     if self.active_challenges.get(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
                         if let Err(e) = self
@@ -1108,8 +1112,9 @@ impl Handler {
                                             self.verify_enr_nat(&enr, &node_address)
                                         {
                                             // Notify the application
-                                            // This can occur when we try to dial a node without an ENR and it turns out
-                                            // the node is behind a NAT. In this case we have attempted to establish the
+                                            // This can occur when we try to dial a node without
+                                            // an ENR and it turns out the node is behind a NAT.
+                                            // In this case we have attempted to establish the
                                             // connection, so this is an outgoing connection.
                                             match valid_enr {
                                                 Nat::Asymmetric => {

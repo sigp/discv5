@@ -1165,11 +1165,10 @@ impl Service {
                                 // Check if our advertised external IP address needs to be updated.
                                 if Some(socket.ip()) != self.local_enr.read().nat6().map(IpAddr::V6)
                                 {
-                                    // WARNING: In the case of a symmetric NAT the port field on
-                                    // the enr will not be removed but set to 0!
-                                    // The node receiving the connection is responsible for
-                                    // storing the port used for the connection from
-                                    // the peer behind a symmetric NAT.
+                                    // WARNING: In the case of a symmetric NAT the port field will
+                                    // be None or non-existent. The node receiving the connection
+                                    // is responsible for storing the port used for the connection
+                                    // from the peer behind a symmetric NAT.
                                     match self.local_enr.write().set_udp_socket_nat(
                                         &self.enr_key.read(),
                                         socket.ip(),
