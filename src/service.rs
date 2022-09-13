@@ -259,9 +259,7 @@ impl AwaitingContactableEnr {
     fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, &'static str> {
         if let Some(peer) = self.peers.get_mut(node_id) {
             if peer.attempts >= MAX_ATTEMPTS_TO_REQUEST_ENR {
-                return Err(
-                    "This peer has already triggered the max request enr requests.".to_owned(),
-                );
+                return Err("This peer has already triggered the max request enr requests.");
             } else {
                 peer.attempts += 1;
                 return Ok(Some(peer.enr.clone()));
