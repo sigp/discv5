@@ -173,7 +173,7 @@ pub struct Service {
     /// All the iterative queries we are currently performing.
     queries: QueryPool<QueryInfo, NodeId, Enr>,
 
-    /// RPC requests that have been sent and are awaiting a response. Some requests are linked to a
+    /// RPC requests that have been sent and are awaiting a response. Some requests are linked to
     /// query.
     active_requests: FnvHashMap<RequestId, ActiveRequest>,
 
