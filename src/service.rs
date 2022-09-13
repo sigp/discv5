@@ -57,7 +57,9 @@ mod test;
 /// NOTE: This must not be larger than 127.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
-pub(crate) const MAX_REQUEST_ENR_ATTEMPTS: u8 = 3;
+/// If a peer is in [`AwaitingContactableEnr`] it is given a max number of attempts
+/// to trigger us via a PING to request its ENR.
+pub(crate) const MAX_ATTEMPTS_TO_REQUEST_ENR: u8 = 3;
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -238,9 +240,10 @@ struct RelayedRequest {
     id: RequestId,
 }
 
-/// A peer is given a max number of PING attempts to send a contactable enr. This is relevant
-/// for peers that don't know if they are behind a NAT, to allow them to discover their externally
-/// reachable IP by ip voting and then advertising it in their ENR.
+/// A peer is given a [`MAX_ATTEMPTS_TO_REQUEST_ENR`] number of PING attempts to send a
+/// contactable enr. This is relevant for peers that don't know if they are behind a NAT,
+/// to allow them to discover their externally reachable IP by ip voting and then
+/// advertising it in their ENR.
 #[derive(Clone)]
 struct NonContactableEnr {
     enr: Enr,
@@ -255,7 +258,7 @@ struct AwaitingContactableEnr {
 impl AwaitingContactableEnr {
     fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, String> {
         if let Some(peer) = self.peers.get_mut(node_id) {
-            if peer.attempts >= MAX_REQUEST_ENR_ATTEMPTS {
+            if peer.attempts >= MAX_ATTEMPTS_TO_REQUEST_ENR {
                 return Err(
                     "This peer has already triggered the max request enr requests.".to_owned(),
                 );
@@ -269,7 +272,7 @@ impl AwaitingContactableEnr {
 
     fn awaiting(&self, node_id: &NodeId) -> bool {
         if let Some(peer) = self.peers.get(node_id) {
-            return peer.attempts < MAX_REQUEST_ENR_ATTEMPTS;
+            return peer.attempts < MAX_ATTEMPTS_TO_REQUEST_ENR;
         }
         false
     }
@@ -1655,7 +1658,7 @@ impl Service {
         enrs.retain(|enr| {
             let nat_node_id = enr.node_id();
             // Add the source of the NODES response to the potential relays for this new peer (incase
-            // it is behind a NAT)
+            // it is behind an asymmetric NAT)
             let relays = self.relays.entry(nat_node_id).or_default();
             relays.insert(source.clone());
 
@@ -1666,14 +1669,24 @@ impl Service {
                 self.peers_behind_nat.insert(enr.node_id(), enr.clone());
 
                 let key = kbucket::Key::from(enr.node_id());
-                if matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Absent(_)) {
+                let mut new_nat_peer = false;
+                match self.kbuckets.write().entry(&key) {
+                    kbucket::Entry::Absent(_) => {
+                        new_nat_peer = true;
+                    }
+                    kbucket::Entry::Present(..) | kbucket::Entry::Pending(..) => {
+                        // Keep enr and pass on to query if it is behind a NAT but has been previously contacted.
+                        return true;
+                    }
+                    _ => {}
+                }
+                if new_nat_peer {
                     let local_enr = self.local_enr.read().clone();
                     _ = self.send_relay_request(source.clone(), local_enr, nat_node_id);
                     return false;
                 }
             } else if self.config.ip_mode.get_contactable_addr(enr).is_some() {
-                // Keep enr and pass on to query if it flags it is not behind a NAT, or is not sure if it is
-                // behind a NAT or it is behind a NAT but has been previously contacted.
+                // Keep enr and pass on to query if it flags it is not behind a NAT (or port-forwarded).
                 return true;
             }
             false // Don't pass nodes we cannot make an outgoing connection to (including nodes behind a symmetric NAT) to the query
@@ -1827,7 +1840,7 @@ impl Service {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             // It could be that this node is behind a NAT, if it supports the NAT traversal protocol we
-            // give it MAX_REQUEST_ENR_ATTEMPTS to trigger us via PING request to request its ENR.
+            // give it max number of times to trigger us via PING request to request its ENR.
             if enr.supports_feature(Feature::Nat) {
                 self.awaiting_reachable_address.insert(enr.clone());
                 // In case this is a node behind a symmetric NAT we need to store the port which is unique
@@ -2019,7 +2032,8 @@ impl Service {
                             let local_enr = self.local_enr.read().clone();
                             if let Some(relays) = self.relays.get(&node_id) {
                                 if let Some(contact_relay) = relays.iter().next() {
-                                    trace!("Requests to peer, that we have learnt of in some NODES response, keep timing out. Peer may be behind an asymmetric NAT. Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", node_id, contact_relay);
+                                    // Requests to peer, that we have learnt of in some NODES response, keep timing out. Peer may be behind an asymmetric NAT.
+                                    trace!("Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", node_id, contact_relay);
                                     _ = self.send_relay_request(
                                         contact_relay.clone(),
                                         local_enr,
@@ -2027,7 +2041,8 @@ impl Service {
                                     );
                                 }
                             } else {
-                                warn!("Request {} to peer {} timed out the max retry times, but we have no relays for the peer to attempt contacting it via the NAT traversal protocol.", id, node_id);
+                                // Request to peer timed out the max retry times, but we have no relays for the peer to attempt contacting it via the NAT traversal protocol
+                                warn!("No relays for peer {}. Unable to attempt contacting it via the NAT traversal protocol.", node_id);
                             }
                         }
                     }

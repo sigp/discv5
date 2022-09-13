@@ -490,7 +490,7 @@ impl Discv5 {
     /// Request a TALK message from a node, identified via the ENR.
     pub fn talk_req(
         &self,
-        enr: &'static Enr,
+        enr: Enr,
         protocol: Vec<u8>,
         request: Vec<u8>,
     ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static {
@@ -501,7 +501,7 @@ impl Discv5 {
         let ip_mode = self.config.ip_mode;
 
         async move {
-            let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;
+            let node_contact = NodeContact::try_from_enr(&enr, ip_mode)?;
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);
