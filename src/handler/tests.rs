@@ -169,7 +169,7 @@ async fn multiple_messages() {
     let sender = async move {
         loop {
             match sender_handler_recv.recv().await {
-                Some(HandlerOut::Established(_, _, _)) => {
+                Some(HandlerOut::Established(_)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
                         let _ = sender_handler.send(HandlerIn::Request(
@@ -244,7 +244,7 @@ async fn test_active_requests_insert() {
         body: RequestBody::Ping { enr_seq: 1 },
     };
     let initiating_session = true;
-    let request_call = RequestCall::new(contact, packet, request, initiating_session);
+    let request_call = RequestCall::new(contact, packet, request, initiating_session, false);
 
     // insert the pair and verify the mapping remains in sync
     let nonce = *request_call.packet.message_nonce();
