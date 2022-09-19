@@ -110,7 +110,7 @@ pub enum HandlerIn {
 /// The type of established session is evaluated by verifying the ENR of the peer and is of
 /// importance to how they are added to the kbuckets.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionType {
+pub enum RoutingType {
     /// A session has been established with a peer.
     ///
     /// A session is only considered established once we have received a signed ENR from the
@@ -157,7 +157,7 @@ pub enum SessionType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandlerOut {
     /// A session has been established with a node.
-    Established(SessionType),
+    Established(RoutingType),
 
     /// A Request has been received from a node on the network.
     Request(NodeAddress, Box<Request>),
@@ -883,15 +883,15 @@ impl Handler {
                 let session_type = if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address)
                 {
                     match valid_enr {
-                        Nat::Asymmetric => SessionType::AsymmetricNat(
+                        Nat::Asymmetric => RoutingType::AsymmetricNat(
                             enr,
                             node_address.socket_addr,
                             connection_direction,
                         ),
-                        Nat::Symmetric => SessionType::SymmetricNat(enr, node_address.socket_addr),
+                        Nat::Symmetric => RoutingType::SymmetricNat(enr, node_address.socket_addr),
                     }
                 } else {
-                    SessionType::NoNatOrPortForward(
+                    RoutingType::NoNatOrPortForward(
                         enr,
                         node_address.socket_addr,
                         connection_direction,
@@ -1036,11 +1036,13 @@ impl Handler {
                             trace!("Node {} is behind NAT", node_address);
                             // NAT Session is valid
                             // Notify the application
-                            // The session established here are from WHOAREYOU packets that we sent.
-                            // This occurs when a node established a connection with us and the node
-                            // knows it is behind a NAT and has configured its ENR accordingly.
+                            // The session established here are from WHOAREYOU packets that we
+                            // sent.
+                            // This occurs when a node established a connection with us and the
+                            // node knows it is behind a NAT and has configured its ENR
+                            // accordingly.
                             match valid_enr {
-                                Nat::Asymmetric => Some(SessionType::AsymmetricNat(
+                                Nat::Asymmetric => Some(RoutingType::AsymmetricNat(
                                     enr,
                                     node_address.socket_addr,
                                     connection_direction,
@@ -1048,15 +1050,16 @@ impl Handler {
                                 Nat::Symmetric => {
                                     // Nodes behind symmetric NATs will only send handshakes not
                                     // receive them.
-                                    Some(SessionType::SymmetricNat(enr, node_address.socket_addr))
+                                    Some(RoutingType::SymmetricNat(enr, node_address.socket_addr))
                                 }
                             }
                         } else if self.verify_enr(&enr, &node_address) {
                             // Session is valid
                             // Notify the application
-                            // The session established here are from WHOAREYOU packets that we sent.
+                            // The session established here are from WHOAREYOU packets that we
+                            // sent.
                             // This occurs when a node established a connection with us.
-                            Some(SessionType::NoNatOrPortForward(
+                            Some(RoutingType::NoNatOrPortForward(
                                 enr,
                                 node_address.socket_addr,
                                 connection_direction,
@@ -1074,6 +1077,10 @@ impl Handler {
                             None
                         };
                     if let Some(session_type) = session_type {
+                        trace!(
+                            "Establishing session with a node of routing type {:?}",
+                            session_type
+                        );
                         if let Err(e) = self
                             .service_send
                             .send(HandlerOut::Established(session_type))
@@ -1235,19 +1242,19 @@ impl Handler {
                                         {
                                             match valid_enr {
                                                 Nat::Asymmetric => {
-                                                    Some(SessionType::AsymmetricNat(
+                                                    Some(RoutingType::AsymmetricNat(
                                                         enr,
                                                         node_address.socket_addr,
                                                         ConnectionDirection::Outgoing,
                                                     ))
                                                 }
-                                                Nat::Symmetric => Some(SessionType::SymmetricNat(
+                                                Nat::Symmetric => Some(RoutingType::SymmetricNat(
                                                     enr,
                                                     node_address.socket_addr,
                                                 )),
                                             }
                                         } else if self.verify_enr(&enr, &node_address) {
-                                            Some(SessionType::NoNatOrPortForward(
+                                            Some(RoutingType::NoNatOrPortForward(
                                                 enr,
                                                 node_address.socket_addr,
                                                 ConnectionDirection::Outgoing,

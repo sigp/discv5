@@ -20,7 +20,7 @@ use self::{
 use crate::{
     discv5::{EnrExtension, Feature},
     error::{RequestError, ResponseError},
-    handler::{Handler, HandlerIn, HandlerOut, SessionType},
+    handler::{Handler, HandlerIn, HandlerOut, RoutingType},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
@@ -225,10 +225,10 @@ pub struct Service {
     relays: HashMap<NodeId, HashSet<NodeContact>>,
 
     /// For RELAYREQUESTs for which this node is the rendezvous, the request ids of
-    /// RELAYREQUESTs to receivers are mapped to the node address of the initiator so
-    /// the RELAYRESPONSE can be returned to the initiator. The initiator could be a
-    /// peer that is not in our kbuckets, e.g. a peer behind a symmetric NAT, hence
-    /// the node address is stored.
+    /// RELAYREQUESTs to receivers are mapped to the node address of the initiator and the request
+    /// id of the request from the initiator so the RELAYRESPONSE can be returned to the
+    /// initiator. The initiator could be a peer that is not in our kbuckets, e.g. a peer behind a
+    /// symmetric NAT, hence the node address is stored.
     relayed_requests: HashMap<RequestId, RelayedRequest>,
 }
 
@@ -237,7 +237,7 @@ pub struct Service {
 /// receiver can be re-packaged and relayed to the initiator.
 struct RelayedRequest {
     initiator: NodeAddress,
-    id: RequestId,
+    req_id_from_initiator: RequestId,
 }
 
 /// A peer is given a [`MAX_ATTEMPTS_TO_REQUEST_ENR`] number of PING attempts to send a
@@ -459,15 +459,15 @@ impl Service {
                     match event {
                         HandlerOut::Established(session_type) => {
                             match session_type {
-                                SessionType::NoNatOrPortForward(enr, socket_addr, direction) => {
+                                RoutingType::NoNatOrPortForward(enr, socket_addr, direction) => {
                                     self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
                                     self.inject_session_established(enr, direction, Some(socket_addr.port()));
                                 }
-                                SessionType::AsymmetricNat(enr, socket_addr, direction) => {
+                                RoutingType::AsymmetricNat(enr, socket_addr, direction) => {
                                     info!("A new session has been established with a peer behind an asymmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
                                     self.inject_session_established_nat(enr, direction);
                                 }
-                                SessionType::SymmetricNat(enr, socket_addr) => {
+                                RoutingType::SymmetricNat(enr, socket_addr) => {
                                     info!("A new session has been established with a peer behind a symmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
                                     self.inject_session_established_nat_symmetric(enr);
                                 }
@@ -857,7 +857,7 @@ impl Service {
                     trace!("Receiver node sending PING to initiator node");
                     self.send_ping(from_node_enr, true);
                     trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
-                    self.send_relay_response(node_address, id, true);
+                    self.send_relay_response(node_address, id, RelayResponseCode::True);
                 } else if from_node_enr.node_id() != local_node_id {
                     // This node is the rendezvous
 
@@ -880,7 +880,7 @@ impl Service {
                                     req_id,
                                     RelayedRequest {
                                         initiator: node_address,
-                                        id,
+                                        req_id_from_initiator: id,
                                     },
                                 );
                             }
@@ -1271,14 +1271,55 @@ impl Service {
                 }
                 ResponseBody::RelayResponse { response } => {
                     if let RequestBody::RelayRequest {
-                        from_node_enr,
+                        ref from_node_enr,
                         to_node_id,
                     } = active_request.request_body
                     {
                         let local_node_id = self.local_enr.read().node_id();
                         if from_node_enr.node_id() == local_node_id {
                             // This node is the initiator
-                            if response {
+                            match response {
+                                RelayResponseCode::False => {
+                                    debug!("Receiver doesn't want to use this rendezvous node or doesn't want to connect to the initiator (this node)")
+                                }
+                                RelayResponseCode::True => {
+                                    if let Some(receiver_enr) =
+                                        self.peers_behind_nat.get(&to_node_id)
+                                    {
+                                        self.send_ping(receiver_enr.clone(), true);
+                                    }
+                                }
+                                RelayResponseCode::Error => {
+                                    // This node is the initiator and the request to the rendezvous node
+                                    // timed out.
+                                    if from_node_enr.node_id() == self.local_enr.read().node_id() {
+                                        debug!("RPC Request RELAYREQUEST to a relay (rendezvous node) timed out. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", to_node_id, id);
+                                        let maybe_next_relay =
+                                            self.relays.get_mut(&to_node_id).and_then(|relays| {
+                                                // Only give each rendezvous one chance per
+                                                // receiver to relay.
+                                                relays.retain(|relay| {
+                                                    relay.socket_addr()
+                                                        != active_request.contact.socket_addr()
+                                                });
+                                                relays.iter().next().cloned()
+                                            });
+
+                                        if let Some(relay) = maybe_next_relay {
+                                            trace!("Retrying NAT traversal protocol with a new relay. Peer: {}, Relay: {}", to_node_id, relay);
+                                            let local_enr = self.local_enr.read().clone();
+                                            _ = self
+                                                .send_relay_request(relay, local_enr, to_node_id);
+                                        } else {
+                                            warn!(
+                                                "No further relays stored for peer (receiver) {}",
+                                                to_node_id
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            if let RelayResponseCode::True = response {
                                 if let Some(receiver_enr) = self.peers_behind_nat.get(&to_node_id) {
                                     self.send_ping(receiver_enr.clone(), true);
                                 }
@@ -1288,7 +1329,7 @@ impl Service {
                             if let Some(initiator_req) = self.relayed_requests.remove(&id) {
                                 self.send_relay_response(
                                     initiator_req.initiator,
-                                    initiator_req.id,
+                                    initiator_req.req_id_from_initiator,
                                     response,
                                 );
                             }
@@ -1428,7 +1469,12 @@ impl Service {
 
     /// A receiver node sends a RELAYRESPONSE in response to a RELAYREQUEST to a rendezvous node,
     /// the rendezvous node relays the RELAYRESPONSE response to the initiator.
-    fn send_relay_response(&mut self, node_address: NodeAddress, id: RequestId, response: bool) {
+    fn send_relay_response(
+        &mut self,
+        node_address: NodeAddress,
+        id: RequestId,
+        response: RelayResponseCode,
+    ) {
         let response = Response {
             id,
             body: ResponseBody::RelayResponse { response },
@@ -2062,57 +2108,35 @@ impl Service {
                     match active_request.request_body {
                         RequestBody::RelayRequest {
                             ref from_node_enr,
-                            to_node_id,
+                            to_node_id: _,
                         } => {
-                            // Avoid recursive relay requesting by distinguishing between a timeout of
-                            // a RELAYREQUEST to a rendezvous node and from a rendezvous node.
-
-                            // This node is the initiator and the request to the rendezvous node timed
-                            // out.
-                            if from_node_enr.node_id() == self.local_enr.read().node_id() {
-                                debug!("RPC Request RELAYREQUEST to a relay (rendezvous node) timed out. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", to_node_id, id);
-                                let maybe_next_relay =
-                                    self.relays.get_mut(&to_node_id).and_then(|relays| {
-                                        // Only give each rendezvous one chance per receiver to relay.
-                                        relays.retain(|relay| {
-                                            relay.socket_addr()
-                                                != active_request.contact.socket_addr()
-                                        });
-                                        relays.iter().next().cloned()
-                                    });
-
-                                if let Some(relay) = maybe_next_relay {
-                                    trace!("Retrying NAT traversal protocol with a new relay. Peer: {}, Relay: {}", to_node_id, relay);
-                                    let local_enr = self.local_enr.read().clone();
-                                    _ = self.send_relay_request(relay, local_enr, to_node_id);
-                                } else {
-                                    warn!(
-                                        "No further relays stored for peer (receiver) {}",
-                                        to_node_id
+                            // Avoid recursive relay requesting by distinguishing between a
+                            // timeout of a RELAYREQUEST to a rendezvous node and from a
+                            // rendezvous node.
+                            if from_node_enr.node_id() != self.local_enr.read().node_id() {
+                                // This node is the rendezvous, return a RELAYRESPONSE to the
+                                // initiator informing it of the error.
+                                if let Some(relayed_request) = self.relayed_requests.remove(&id) {
+                                    self.send_relay_response(
+                                        relayed_request.initiator,
+                                        relayed_request.req_id_from_initiator,
+                                        RelayResponseCode::Error,
                                     );
                                 }
-                                // Don't disconnect rendezvous nodes for timed out RELAYREQUESTs, it
-                                // may be because the receiver is unresponsive.
-                                return;
-                            } else {
-                                // This node is the rendezvous, remove the info stored to return a
-                                // RELAYRESPONSE to the initiator.
-                                self.relayed_requests.remove(&id);
                             }
                         }
                         _ => {
                             if self.local_enr.read().supports_feature(Feature::Nat) {
-                                // Drop the request and attempt establishing the connection to the //
-                                // peer via the NAT traversal protocol for sending future requests to
-                                // the peer, if this peer
-                                // was forwarded to us in a NODES response and we hence have a relay
-                                // for it.
+                                // Drop the request and attempt establishing the connection to
+                                // the peer via the NAT traversal protocol for sending future
+                                // requests to the peer, if this peer was forwarded to us in a
+                                // NODES response and we hence have a relay for it.
                                 let local_enr = self.local_enr.read().clone();
                                 if let Some(relays) = self.relays.get(&node_id) {
                                     if let Some(contact_relay) = relays.iter().next() {
                                         // Requests to peer, that we have learnt of in some NODES
-                                        // response, keep timing out. Peer may be behind an asymmetric
-                                        // NAT.
+                                        // response, keep timing out. Peer may be behind an
+                                        // asymmetric NAT.
                                         trace!("Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", node_id, contact_relay);
                                         _ = self.send_relay_request(
                                             contact_relay.clone(),
@@ -2121,9 +2145,9 @@ impl Service {
                                         );
                                     }
                                 } else {
-                                    // Request to peer timed out the max retry times, but we have no
-                                    // relays for the peer to attempt contacting it via the NAT
-                                    // traversal protocol
+                                    // Request to peer timed out the max retry times, but we have
+                                    // no relays for the peer to attempt contacting it via the NAT
+                                    // traversal protocol.
                                     warn!("No relays for peer {}. Unable to attempt contacting it via the NAT traversal protocol.", node_id);
                                 }
                             }

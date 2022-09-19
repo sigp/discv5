@@ -1,9 +1,68 @@
 use crate::{enr::NodeId, Enr};
-use rlp::{DecoderError, RlpStream};
+use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
 
 type TopicHash = [u8; 32];
+
+/// A receiver decides if it wants to participate in hole-punching its asymmetric NAT for a
+/// connection with an initiator and informs the initiator of its decision with a
+/// [`RelayResponseCode`] in a [`ResponseBody::RelayResponse`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayResponseCode {
+    /// The receiver assembles this response to answer that it does not want to participate in the
+    /// hole-punching procedure with a given initiator via a given rendezvous.
+    False = 0,
+    /// The receiver has answered yes to participating in the hole-punching procedure with a given
+    /// initiator via a given rendezvous.
+    True = 1,
+    // This response is assembled by the rendezvous node when the receiver fails to respond to the
+    // RELAYREQUEST.
+    Error = 2,
+}
+
+impl Encodable for RelayResponseCode {
+    fn rlp_append(&self, s: &mut RlpStream) {
+        match *self {
+            RelayResponseCode::False => {
+                s.append(&(RelayResponseCode::False as u8));
+            }
+            RelayResponseCode::True => {
+                s.append(&(RelayResponseCode::True as u8));
+            }
+            RelayResponseCode::Error => {
+                s.append(&(RelayResponseCode::Error as u8));
+            }
+        }
+    }
+}
+
+impl Decodable for RelayResponseCode {
+    fn decode(rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+        let code = match rlp.as_val::<u8>()? {
+            0 => RelayResponseCode::False,
+            1 => RelayResponseCode::True,
+            2 => RelayResponseCode::Error,
+            _ => {
+                return Err(DecoderError::Custom(
+                    "Code is not defined for relay responses",
+                ))
+            }
+        };
+        Ok(code)
+    }
+}
+
+impl std::fmt::Display for RelayResponseCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let response_code = match *self {
+            RelayResponseCode::False => "false",
+            RelayResponseCode::True => "true",
+            RelayResponseCode::Error => "receiver failed to respond",
+        };
+        write!(f, "{}", response_code)
+    }
+}
 
 /// Type to manage the request IDs.
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
@@ -141,7 +200,7 @@ pub enum ResponseBody {
     RelayResponse {
         /// The response field set to true means the receiver has accepted the
         /// RELAYREQUEST.
-        response: bool,
+        response: RelayResponseCode,
     },
 }
 
@@ -617,7 +676,7 @@ impl Message {
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
 
-                let response = rlp.val_at::<bool>(1)?;
+                let response = rlp.val_at::<RelayResponseCode>(1)?;
 
                 Message::Response(Response {
                     id,
@@ -903,7 +962,9 @@ mod tests {
         let id = RequestId(vec![1]);
         let response = Message::Response(Response {
             id,
-            body: ResponseBody::RelayResponse { response: true },
+            body: ResponseBody::RelayResponse {
+                response: RelayResponseCode::True,
+            },
         });
 
         let encoded = response.clone().encode();
