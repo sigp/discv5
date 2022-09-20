@@ -142,10 +142,10 @@ pub enum RoutingType {
     /// received an ENR from the node and the observed `IpAddr` matches the one declared in the
     /// 'nat'/'nat6' field of the ENR.
     ///
-    /// The [`ConnectionDirection`] is always incoming as peers behind symmetric NATs only dial
-    /// out. This peer will send PINGs to this node more frequently than nodes that are not behind
-    /// a NAT do, this way the hole punched in the peer's NAT for this node will stay open and
-    /// this peer can listen for requests from this node.
+    /// The [`ConnectionDirection`] is always [`ConnectionDirection::Incoming`] as peers behind
+    /// symmetric NATs only dial out. This peer will send PINGs to this node more frequently than
+    /// nodes that are not behind a NAT do, this way the hole punched in the peer's NAT for this
+    /// node will stay open and this peer can listen for requests from this node.
     ///
     /// Peers behind symmetric NATs cannot be hole-punched as they cannot not advertise a port for
     /// new peers to hole-punch them on. The [`ConnectionDirection`] is always incoming as peers
@@ -311,7 +311,7 @@ pub struct Handler {
     /// receiver's hole-punch PING will be dropped but set the state table entry in its router for
     /// the initiator's hole-punch PING (which will actually be a random packet) to go through, in
     /// that case the receiver would send the WHOAREYOU message to the initiator.
-    sent_hole_punch_pings: HashSet<NodeId>,
+    hole_punch_pings: HashSet<NodeId>,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Requests awaiting a handshake completion.
@@ -398,7 +398,7 @@ impl Handler {
                     enr,
                     key,
                     active_requests: ActiveRequests::new(config.request_timeout),
-                    sent_hole_punch_pings: Default::default(),
+                    hole_punch_pings: Default::default(),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
@@ -447,7 +447,7 @@ impl Handler {
                                 }
                                 }
                                 Ok(_) => {
-                                    self.sent_hole_punch_pings.insert(node_id);
+                                    self.hole_punch_pings.insert(node_id);
                                 }
                             }
                         }
@@ -837,8 +837,8 @@ impl Handler {
 
         // Check if we know the ENR, if not request it and flag the session as awaiting an ENR.
         //
-        // All sent requests must have an associated node_id. Therefore the following
-        // must not panic.
+        // All sent requests must have an associated node_id. Therefore the following must not
+        // panic.
         let node_address = request_call.contact.node_address();
         match request_call.contact.enr() {
             Some(enr) => {
@@ -847,37 +847,25 @@ impl Handler {
                 // not have a session for a request) and the packet is not a PING (we are not
                 // trying to update an old session that may have expired.
                 //
-                // If this request call was initiated to hole-punch a peer's or our own NAT (or
-                // both), this is an outgoing connection. If this node is the initiator it has
-                // learned about the receiver in a NODES response from a trusted peer, the
-                // rendezvous, and decided to dial out to the receiver. This is equivalent to this
-                // node being the receiver having learned about the initiator from a trusted peer,
-                // the rendezvous, in a RELAYREQUEST and decided to dial out to the initiator.
+                // If this request call was initiated to hole-punch our (and possibly
+                // also our peer's) NAT this is an outgoing connection. If the initiator is also
+                // behind a NAT, the hole-punch PING from the receiver is dropped and the
+                // hole-punch PING from the initiator triggers the WHOAREYOU challenge which then
+                // arrives at the initiator end. If only the receiver is behind a NAT the
+                // WHOAREYOU challenge arrives at the receiver end. In both cases the connection
+                // direction will be outgoing.
                 let connection_direction = {
                     match (
                         &request_call.initiating_session,
-                        &request_call.hole_punch,
+                        self.hole_punch_pings.remove(&enr.node_id()),
                         &request_call.request.body,
                     ) {
                         (true, false, RequestBody::Ping { .. }) => ConnectionDirection::Incoming,
-                        (true, true, RequestBody::Ping { .. }) => {
-                            self.sent_hole_punch_pings.remove(&enr.node_id());
-                            ConnectionDirection::Outgoing
-                        }
+                        (_, true, RequestBody::Ping { .. }) => ConnectionDirection::Outgoing,
                         (true, _, _) => ConnectionDirection::Outgoing,
                         (false, _, _) => ConnectionDirection::Incoming,
                     }
                 };
-
-                // We already know the ENR. Send the handshake response packet
-                trace!("Sending Authentication response to node: {}", node_address);
-                request_call.packet = auth_packet.clone();
-                request_call.handshake_sent = true;
-                request_call.initiating_session = false;
-                // Reinsert the request_call
-                self.insert_active_request(request_call);
-                // Send the actual packet to the send task.
-                self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
                 let session_type = if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address)
@@ -897,6 +885,17 @@ impl Handler {
                         connection_direction,
                     )
                 };
+
+                // We already know the ENR. Send the handshake response packet
+                trace!("Sending Authentication response to node: {}", node_address);
+                request_call.packet = auth_packet.clone();
+                request_call.handshake_sent = true;
+                request_call.initiating_session = false;
+                // Reinsert the request_call
+                self.insert_active_request(request_call);
+                // Send the actual packet to the send task.
+                self.send(node_address.clone(), auth_packet).await;
+
                 self.service_send
                     .send(HandlerOut::Established(session_type))
                     .await
@@ -1015,22 +1014,31 @@ impl Handler {
             ) {
                 Ok((session, enr)) => {
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
-                    // Verify the ENR is valid either for a normal (node listens on and the same
-                    // WAN reachable socket for all peers) session or a NAT session (node behind
-                    // NAT listens on different WAN reachable ports for each peer).
+                    // Verify the ENR of peer is valid either for a node not behind a NAT or
+                    // port-forwarded, or a node behind an asymmetric NAT (node connects via the
+                    // same WAN reachable socket for all peers) or a symmetric NAT (node connects
+                    // via different WAN reachable ports for each connection).
 
                     let mut is_valid_enr = false;
 
-                    // If this handshake is the result of hole-punching a peer's or our own NAT
-                    // (or both) the connection direction is outgoing for both peers, the
-                    // initiator and the receiver. In all other cases a received handshake means
-                    // the connection was initiated by the remote peer (dial in).
-                    let connection_direction = if self.sent_hole_punch_pings.remove(&enr.node_id())
-                    {
+                    // If this handshake is the result of hole-punching a peer's (and possibly
+                    // also our own) NAT, both peers will have stored a hole-punch PING for one
+                    // another. If the initiator is also behind a NAT, the hole-punch PING from
+                    // the receiver will be dropped and the HANDSHAKE will arrive at the receiver
+                    // end. If only the receiver is behind a NAT the HANDSHAKE will arrive at the
+                    // initiator. The connection direction for the connection for both in this
+                    // case is outgoing as both parties decided to connect to each other after
+                    // learning about each other from a trusted peer (a rendezvous), the initiator
+                    // in a NODES response and the receiver in a RELAYREQUEST.
+                    //
+                    // In all other cases a received handshake means the connection was initiated
+                    // by the remote peer (dial in).
+                    let connection_direction = if self.hole_punch_pings.remove(&enr.node_id()) {
                         ConnectionDirection::Outgoing
                     } else {
                         ConnectionDirection::Incoming
                     };
+
                     let session_type =
                         if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address) {
                             trace!("Node {} is behind NAT", node_address);
@@ -1056,8 +1064,9 @@ impl Handler {
                         } else if self.verify_enr(&enr, &node_address) {
                             // Session is valid
                             // Notify the application
-                            // The session established here are from WHOAREYOU packets that we
-                            // sent.
+                            // The session established here is from a WHOAREYOU packet that we
+                            // sent in response to a packet from the peer that could not be
+                            // decrypt due to the lack of a session with the peer.
                             // This occurs when a node established a connection with us.
                             Some(RoutingType::NoNatOrPortForward(
                                 enr,
@@ -1237,6 +1246,15 @@ impl Handler {
                                         // This can occur when we try to dial a node without an
                                         // ENR. In this case we have attempted to establish the
                                         // connection, so this is an outgoing connection.
+                                        //
+                                        // In the case that the peer is behind a symmetric NAT and
+                                        // we have requested its ENR, it will surely not be due to
+                                        // the fact that we discovered it in a NODES response and
+                                        // the connection direction is hence certainly incoming.
+                                        // This may happen when the peer initially didn't know of
+                                        // its reachable address and routing situation and has now
+                                        // found out by ip voting that it is behind a symmetric
+                                        // NAT and has PINGed us with its new ENR sequence number.
                                         let session_type = if let Some(valid_enr) =
                                             self.verify_enr_nat(&enr, &node_address)
                                         {
