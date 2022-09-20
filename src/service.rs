@@ -44,7 +44,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
     task::Poll,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
@@ -60,6 +60,10 @@ pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 /// If a peer is in [`AwaitingContactableEnr`] it is given a max number of attempts
 /// to trigger us via a PING to request its ENR.
 pub(crate) const MAX_ATTEMPTS_TO_REQUEST_ENR: u8 = 3;
+
+/// Most NAT setups will keep a hole-punch connection alive if the UDP state table entry is
+/// reset every 30 seconds, hence a node behind a NAT pings its peers at this interval.
+const PING_INTERVAL_NAT: Duration = Duration::from_secs(60);
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -851,6 +855,7 @@ impl Service {
 
                         if updated {
                             self.ping_connected_peers();
+                            self.update_peers_to_ping_nat();
                         }
                     }
                     // Accept relay request
@@ -1236,6 +1241,7 @@ impl Service {
                             }
                             if updated {
                                 self.ping_connected_peers();
+                                self.update_peers_to_ping_nat();
                             }
                         }
                     }
@@ -1393,7 +1399,6 @@ impl Service {
 
     /// Ping all peers that are connected in the routing table.
     fn ping_connected_peers(&mut self) {
-        // maintain the ping interval
         let connected_peers = {
             let mut kbuckets = self.kbuckets.write();
             kbuckets
@@ -2179,6 +2184,16 @@ impl Service {
             }
         }
         None
+    }
+
+    /// If this node is behind a NAT it is responsible for pinging its peers frequently enough to
+    /// keep its NAT hole-punched for the bi-directional connection to the peer.
+    fn update_peers_to_ping_nat(&mut self) {
+        let mut peers_to_ping = HashSetDelay::new(PING_INTERVAL_NAT);
+        for peer in self.peers_to_ping.iter() {
+            peers_to_ping.insert(*peer);
+        }
+        self.peers_to_ping = peers_to_ping;
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the

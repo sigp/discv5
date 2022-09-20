@@ -12,7 +12,7 @@ categories = ["network-programming", "asynchronous"]
 exclude = [".gitignore", ".github/*"]
 
 [dependencies]
-enr = { version = "0.6.2", features = ["k256", "ed25519"] }
+enr = { git = "https://github.com/emhane/enr", branch = "single-seq-increment", features = ["k256", "ed25519"] }
 tokio = { version = "1.15.0", features = ["net", "sync", "macros", "rt"] }
 tokio-stream = "0.1.8"
 tokio-util = { version = "0.6.9", features = ["time"] }
@@ -37,7 +37,7 @@ tracing = { version = "0.1.29", features = ["log"] }
 tracing-subscriber = { version = "0.3.3", features = ["env-filter"] }
 lru = "0.7.1"
 hashlink = "0.7.0"
-delay_map = "0.1.1"
+delay_map = { git = "https://github.com/emhane/delay_map", branch = "iterator" }
 more-asserts = "0.2.2"
 
 [dev-dependencies]
