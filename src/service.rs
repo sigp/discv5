@@ -791,7 +791,6 @@ impl Service {
                             ) {
                                 Some(ConnectionDirection::Outgoing) => {
                                     is_behind_nat = true;
-                                    debug!("This node appears to be behind an asymmetric NAT");
                                 }
                                 Some(ConnectionDirection::Incoming) => {
                                     // Peer has received an incoming connection and must hence
@@ -809,6 +808,7 @@ impl Service {
                             }
 
                             if is_behind_nat {
+                                debug!("This node appears to be behind an asymmetric NAT");
                                 let mut updated = false;
                                 if let Some(socket) =
                                     self.local_enr.read().udp4_socket().map(SocketAddr::V4)
@@ -852,6 +852,7 @@ impl Service {
                                 }
 
                                 if updated {
+                                    trace!("Pinging connected peers to inform them that our ENR is updated to show this node is behind a NAT");
                                     self.ping_connected_peers();
                                     self.update_peers_to_ping_nat();
                                 }
@@ -1334,7 +1335,7 @@ impl Service {
                                             // receiver to relay.
                                             relays.remove(&active_request.contact);
                                         }
-                                        _= self.find_relay_and_send_relay_request(to_node_id);
+                                        _ = self.find_relay_and_send_relay_request(to_node_id);
                                     }
                                 }
                             }
