@@ -1328,7 +1328,7 @@ impl Service {
                                     // This node is the initiator and the request to the
                                     // rendezvous node timed out.
                                     if from_node_enr.node_id() == self.local_enr.read().node_id() {
-                                        debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", node_id, to_node_id, id);
+                                        debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed Trying with a new relay. Request id: {}.", node_id, id);
                                         if let Some(relays) = self.relays.get_mut(&to_node_id) {
                                             // Only give each rendezvous one chance per
                                             // receiver to relay.
@@ -2162,7 +2162,7 @@ impl Service {
                             } else if from_node_enr.node_id() == self.local_enr.read().node_id() {
                                 // This node is the initiator, retry NAT traversal with a new
                                 // relay.
-                                debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", node_id, to_node_id, id);
+                                debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying with a new relay. Request id: {}", node_id, id);
                                 if let Some(relays) = self.relays.get_mut(&to_node_id) {
                                     relays.remove(&active_request.contact);
                                 }
