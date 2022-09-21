@@ -810,8 +810,8 @@ impl Service {
                             if is_behind_nat {
                                 debug!("This node appears to be behind an asymmetric NAT");
                                 let mut updated = false;
-                                if let Some(socket) =
-                                    self.local_enr.read().udp4_socket().map(SocketAddr::V4)
+                                let socket = self.local_enr.read().udp4_socket().map(SocketAddr::V4);
+                                if let Some(socket) = socket
                                 {
                                     trace!("Updating local enr");
                                     match self.local_enr.write().set_udp_socket_nat(
