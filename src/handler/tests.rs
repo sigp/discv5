@@ -220,7 +220,7 @@ async fn multiple_messages() {
 #[tokio::test]
 async fn test_active_requests_insert() {
     const EXPIRY: Duration = Duration::from_secs(5);
-    let mut active_requests = ActiveRequests::new(EXPIRY);
+    let mut active_requests = ActiveRequests::new(EXPIRY, 1);
 
     // Create the test values needed
     let port = 5000;

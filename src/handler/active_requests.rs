@@ -5,6 +5,8 @@ use more_asserts::debug_unreachable;
 pub(crate) struct ActiveRequests {
     /// The default timeout for requests.
     request_timeout: Duration,
+    /// The default request retries for requests.
+    request_retries: u8,
     /// A list of raw messages we are awaiting a response from the remote.
     active_requests_mapping: HashMapDelay<NodeAddress, RequestCall>,
     // WHOAREYOU messages do not include the source node id. We therefore maintain another
@@ -15,9 +17,10 @@ pub(crate) struct ActiveRequests {
 }
 
 impl ActiveRequests {
-    pub(crate) fn new(request_timeout: Duration) -> Self {
+    pub(crate) fn new(request_timeout: Duration, request_retries: u8) -> Self {
         ActiveRequests {
             request_timeout,
+            request_retries,
             active_requests_mapping: HashMapDelay::new(request_timeout),
             active_requests_nonce_mapping: HashMap::new(),
         }
@@ -30,7 +33,8 @@ impl ActiveRequests {
         local_node_id: &NodeId,
     ) {
         let nonce = *request_call.packet.message_nonce();
-        let timeout = request_call.timeout(local_node_id, self.request_timeout);
+        let timeout =
+            request_call.timeout(local_node_id, self.request_timeout, self.request_retries);
         self.active_requests_mapping
             .insert_at(node_address.clone(), request_call, timeout);
         self.active_requests_nonce_mapping

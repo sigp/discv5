@@ -153,6 +153,39 @@ pub enum RoutingType {
     SymmetricNat(Enr, SocketAddr),
 }
 
+impl std::fmt::Display for RoutingType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RoutingType::NoNatOrPortForward(enr, socket, conn_dir) => {
+                write!(
+                    f,
+                    "No NAT or port-forwarded: enr: {}, socket: {}, connection direction: {}",
+                    enr.node_id(),
+                    socket,
+                    conn_dir
+                )
+            }
+            RoutingType::AsymmetricNat(enr, socket, conn_dir) => {
+                write!(
+                    f,
+                    "Asymmetric NAT: enr: {}, socket: {}, connection direction: {}",
+                    enr.node_id(),
+                    socket,
+                    conn_dir
+                )
+            }
+            RoutingType::SymmetricNat(enr, socket) => {
+                write!(
+                    f,
+                    "Symmetric NAT: enr: {}, socket: {}",
+                    enr.node_id(),
+                    socket
+                )
+            }
+        }
+    }
+}
+
 /// Messages sent between a node on the network and `Handler`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandlerOut {
@@ -251,29 +284,37 @@ impl RequestCall {
         &self.request.id
     }
 
-    fn timeout(&self, local_node_id: &NodeId, default_timeout: Duration) -> Duration {
+    fn timeout(
+        &self,
+        local_node_id: &NodeId,
+        default_timeout: Duration,
+        max_retires: u8,
+    ) -> Duration {
         if let RequestBody::RelayRequest {
             ref from_node_enr, ..
         } = self.request.body
         {
-            // If this node is the initiator of the RELAYREQUEST, wait double the default request
-            // timeout as the rendezvous node will also be waiting for the duration of one request
-            // timeout for the receiver to return a RELAYRESPONSE.
+            // If this node is the initiator of the RELAYREQUEST, also wait for the duration of
+            // request timeout as many times as a the RELAYREQUEST to the receiver is set to retry.
             if from_node_enr.node_id() == *local_node_id {
-                return default_timeout * 2;
+                return default_timeout * max_retires.into() + default_timeout;
             }
         }
         default_timeout
     }
 
-    fn max_retries(&self, max_retires: u8) -> u8 {
+    fn max_retries(&self, local_node_id: &NodeId, max_retires: u8) -> u8 {
         match self.request.body {
-            RequestBody::RelayRequest { .. } => {
+            RequestBody::RelayRequest {
+                ref from_node_enr, ..
+            } => {
                 // If this node is the initiator and the request to the rendezvous node timed out,
-                // a new relay (rendezvous node) should be used instead of retrying. If this node
-                // is the rendezvous, avoiding a retry minimizes the effect of malicious nodes
-                // trying to DoS us with RELAYREQUESTs to unresponsive receivers.
-                0
+                // a new relay (rendezvous node) should be used instead of retrying.
+                if *local_node_id == from_node_enr.node_id() {
+                    0
+                } else {
+                    max_retires
+                }
             }
             RequestBody::Ping { .. } => {
                 if self.hole_punch {
@@ -397,7 +438,10 @@ impl Handler {
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests::new(config.request_timeout),
+                    active_requests: ActiveRequests::new(
+                        config.request_timeout,
+                        config.request_retries,
+                    ),
                     hole_punch_pings: Default::default(),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
@@ -555,7 +599,9 @@ impl Handler {
         node_address: NodeAddress,
         mut request_call: RequestCall,
     ) {
-        if request_call.retries >= request_call.max_retries(self.request_retries) {
+        if request_call.retries
+            >= request_call.max_retries(&self.enr.read().node_id(), self.request_retries)
+        {
             // Send the timed out request to the service layer then drop (fail) this request.
             // If the NAT traversal protocol version is enabled, the timeout will trigger the
             // service layer to initiate a relay request (the NAT traversal protocol) to connect
@@ -868,7 +914,7 @@ impl Handler {
                 };
 
                 // Notify the application that the session has been established
-                let session_type = if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address)
+                let routing_type = if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address)
                 {
                     match valid_enr {
                         Nat::Asymmetric => RoutingType::AsymmetricNat(
@@ -897,7 +943,7 @@ impl Handler {
                 self.send(node_address.clone(), auth_packet).await;
 
                 self.service_send
-                    .send(HandlerOut::Established(session_type))
+                    .send(HandlerOut::Established(routing_type))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
@@ -1039,7 +1085,7 @@ impl Handler {
                         ConnectionDirection::Incoming
                     };
 
-                    let session_type =
+                    let routing_type =
                         if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address) {
                             trace!("Node {} is behind NAT", node_address);
                             // NAT Session is valid
@@ -1085,14 +1131,14 @@ impl Handler {
                                 .await;
                             None
                         };
-                    if let Some(session_type) = session_type {
+                    if let Some(routing_type) = routing_type {
                         trace!(
-                            "Establishing session with a node of routing type {:?}",
-                            session_type
+                            "Establishing session with a node of routing type {}",
+                            routing_type
                         );
                         if let Err(e) = self
                             .service_send
-                            .send(HandlerOut::Established(session_type))
+                            .send(HandlerOut::Established(routing_type))
                             .await
                         {
                             warn!("Failed to inform of established session {}", e)
@@ -1255,7 +1301,7 @@ impl Handler {
                                         // its reachable address and routing situation and has now
                                         // found out by ip voting that it is behind a symmetric
                                         // NAT and has PINGed us with its new ENR sequence number.
-                                        let session_type = if let Some(valid_enr) =
+                                        let routing_type = if let Some(valid_enr) =
                                             self.verify_enr_nat(&enr, &node_address)
                                         {
                                             match valid_enr {
@@ -1280,10 +1326,10 @@ impl Handler {
                                         } else {
                                             None
                                         };
-                                        if let Some(session_type) = session_type {
+                                        if let Some(routing_type) = routing_type {
                                             if let Err(e) = self
                                                 .service_send
-                                                .send(HandlerOut::Established(session_type))
+                                                .send(HandlerOut::Established(routing_type))
                                                 .await
                                             {
                                                 warn!("Failed to inform established outgoing connection {}", e)

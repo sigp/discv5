@@ -461,8 +461,8 @@ impl Service {
                 }
                 Some(event) = self.handler_recv.recv() => {
                     match event {
-                        HandlerOut::Established(session_type) => {
-                            match session_type {
+                        HandlerOut::Established(routing_type) => {
+                            match routing_type {
                                 RoutingType::NoNatOrPortForward(enr, socket_addr, direction) => {
                                     self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
                                     self.inject_session_established(enr, direction);
@@ -1311,32 +1311,20 @@ impl Service {
                                     }
                                 }
                                 RelayResponseCode::Error => {
-                                    // This node is the initiator and the request to the rendezvous node
-                                    // timed out.
+                                    // This node is the initiator and the request to the
+                                    // rendezvous node timed out.
                                     if from_node_enr.node_id() == self.local_enr.read().node_id() {
-                                        debug!("RPC Request RELAYREQUEST to a relay (rendezvous node) timed out. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", to_node_id, id);
-                                        let maybe_next_relay =
-                                            self.relays.get_mut(&to_node_id).and_then(|relays| {
-                                                // Only give each rendezvous one chance per
-                                                // receiver to relay.
-                                                relays.retain(|relay| {
-                                                    relay.socket_addr()
-                                                        != active_request.contact.socket_addr()
-                                                });
-                                                relays.iter().next().cloned()
+                                        debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", node_id, to_node_id, id);
+                                        self.relays.get_mut(&to_node_id).and_then(|relays| {
+                                            // Only give each rendezvous one chance per
+                                            // receiver to relay.
+                                            relays.retain(|relay| {
+                                                relay.socket_addr()
+                                                    != active_request.contact.socket_addr()
                                             });
-
-                                        if let Some(relay) = maybe_next_relay {
-                                            trace!("Retrying NAT traversal protocol with a new relay. Peer: {}, Relay: {}", to_node_id, relay);
-                                            let local_enr = self.local_enr.read().clone();
-                                            _ = self
-                                                .send_relay_request(relay, local_enr, to_node_id);
-                                        } else {
-                                            warn!(
-                                                "No further relays stored for peer (receiver) {}",
-                                                to_node_id
-                                            );
-                                        }
+                                            relays.iter().next().cloned()
+                                        });
+                                        _ = self.find_relay_and_send_relay_request(to_node_id);
                                     }
                                 }
                             }
@@ -1464,6 +1452,34 @@ impl Service {
             callback: Some(CallbackResponse::Talk(callback)),
         };
         _ = self.send_rpc_request(active_request);
+    }
+
+    /// Find first best connected relay and send it a RELAYREQUEST.
+    fn find_relay_and_send_relay_request(&mut self, receiver: NodeId) -> Result<RequestId, &str> {
+        let local_enr = self.local_enr.read().clone();
+        if let Some(active_relays) = self.relays.get_mut(&receiver) {
+            for contact_relay in active_relays.clone() {
+                let key: kbucket::Key<NodeId> = contact_relay.node_id().into();
+                let should_count = match self.kbuckets.write().entry(&key) {
+                    kbucket::Entry::Present(_, status) if status.is_connected() => {
+                        trace!("Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", receiver, contact_relay);
+                        true
+                    }
+                    _ => false,
+                };
+                if should_count {
+                    return self.send_relay_request(contact_relay.clone(), local_enr, receiver);
+                } else {
+                    active_relays.remove(&contact_relay);
+                }
+            }
+        } else {
+            // Request to peer timed out the max retry times, but we have
+            // no relays for the peer to attempt contacting it via the NAT
+            // traversal protocol.
+            warn!("No relays for peer {}. Unable to attempt contacting it via the NAT traversal protocol.", receiver);
+        }
+        Err("No relay for peer")
     }
 
     /// An initiator node sends a RELAYREQUEST request to a rendezvous node requesting it to help
@@ -2137,29 +2153,12 @@ impl Service {
                         }
                         _ => {
                             if self.local_enr.read().supports_feature(Feature::Nat) {
-                                // Drop the request and attempt establishing the connection to
-                                // the peer via the NAT traversal protocol for sending future
-                                // requests to the peer, if this peer was forwarded to us in a
-                                // NODES response and we hence have a relay for it.
-                                let local_enr = self.local_enr.read().clone();
-                                if let Some(relays) = self.relays.get(&node_id) {
-                                    if let Some(contact_relay) = relays.iter().next() {
-                                        // Requests to peer, that we have learnt of in some NODES
-                                        // response, keep timing out. Peer may be behind an
-                                        // asymmetric NAT.
-                                        trace!("Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", node_id, contact_relay);
-                                        _ = self.send_relay_request(
-                                            contact_relay.clone(),
-                                            local_enr,
-                                            node_id,
-                                        );
-                                    }
-                                } else {
-                                    // Request to peer timed out the max retry times, but we have
-                                    // no relays for the peer to attempt contacting it via the NAT
-                                    // traversal protocol.
-                                    warn!("No relays for peer {}. Unable to attempt contacting it via the NAT traversal protocol.", node_id);
-                                }
+                                // Drop the request and disconnect the peer and attempt
+                                // establishing the connection to the peer via the NAT traversal
+                                // protocol for sending future requests to the peer, if this peer
+                                // was forwarded to us in a NODES response and we hence have a
+                                // relay for it.
+                                _ = self.find_relay_and_send_relay_request(node_id);
                             }
                         }
                     }
