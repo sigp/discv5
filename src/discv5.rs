@@ -764,14 +764,14 @@ impl EnrExtension<CombinedKey> for Enr {
     ) -> Result<Option<SocketAddr>, EnrError> {
         let ip = ip.into();
 
+        trace!(
+            "Updating local enr with reachable ipv4 address {}:{:?} for node behind NAT",
+            ip,
+            port
+        );
+
         match ip {
             IpAddr::V4(ip4) => {
-                trace!(
-                    "Updating local enr with reachable ipv4 address {}:{:?} for node behind NAT",
-                    ip4,
-                    port
-                );
-
                 // Removing 'ip' field to indicate to peers that this node is behind a NAT and
                 // can't listen for incoming connections (until a hole is punched).
                 let mut remove = vec![Self::ENR_KEY_IP];
@@ -804,12 +804,6 @@ impl EnrExtension<CombinedKey> for Enr {
                 Ok(None)
             }
             IpAddr::V6(ip6) => {
-                trace!(
-                    "Updating local enr with reachable ipv6 address {}:{:?} for node behind NAT",
-                    ip6,
-                    port
-                );
-
                 // Removing 'ip6' field to indicate to peers that this node is behind a NAT and
                 // can't listen for incoming connections (until a hole is punched).
                 let mut remove = vec![Self::ENR_KEY_IP_6];

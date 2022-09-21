@@ -775,13 +775,13 @@ impl Service {
                         return;
                     }
 
-                    let mut is_behind_nat = false;
                     if let Some(ref mut votes_asymmetric_nat) = self.asymm_nat_votes {
                         // If this node is advertising that it is not behind a NAT, we do a peer
                         // vote to verify this.
                         if self.local_enr.read().udp4_socket().is_some()
                             || self.local_enr.read().udp6_socket().is_some()
                         {
+                            let mut is_behind_nat = false;
                             trace!("Peer voting to see if node is behind a asymmetric NAT");
                             match votes_asymmetric_nat.vote(
                                 self.kbuckets
@@ -807,55 +807,55 @@ impl Service {
                                     trace!("Not enough votes have been placed.")
                                 }
                             }
-                        }
-                    }
 
-                    if is_behind_nat {
-                        let mut updated = false;
-                        if let Some(socket) =
-                            self.local_enr.read().udp4_socket().map(SocketAddr::V4)
-                        {
-                            match self.local_enr.write().set_udp_socket_nat(
-                                &self.enr_key.read(),
-                                socket.ip(),
-                                Some(socket.port()),
-                            ) {
-                                Ok(_) => {
-                                    debug!(
-                                        "Updated local ENR's 'nat' and 'udp' field with socket {}",
-                                        socket
-                                    );
-                                    updated = true;
+                            if is_behind_nat {
+                                let mut updated = false;
+                                if let Some(socket) =
+                                    self.local_enr.read().udp4_socket().map(SocketAddr::V4)
+                                {
+                                    match self.local_enr.write().set_udp_socket_nat(
+                                        &self.enr_key.read(),
+                                        socket.ip(),
+                                        Some(socket.port()),
+                                    ) {
+                                        Ok(_) => {
+                                            debug!(
+                                                "Updated local ENR's 'nat' and 'udp' field with socket {}",
+                                                socket
+                                            );
+                                            updated = true;
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to update local NAT socket. socket: {}, error: {:?}", socket, e);
+                                        }
+                                    }
                                 }
-                                Err(e) => {
-                                    warn!("Failed to update local NAT socket. socket: {}, error: {:?}", socket, e);
+                                if let Some(socket6) =
+                                    self.local_enr.read().udp6_socket().map(SocketAddr::V6)
+                                {
+                                    match self.local_enr.write().set_udp_socket_nat(
+                                        &self.enr_key.read(),
+                                        socket6.ip(),
+                                        Some(socket6.port()),
+                                    ) {
+                                        Ok(_) => {
+                                            debug!(
+                                                "Updated local ENR's 'nat6' and 'udp6' field with socket {}",
+                                                socket6
+                                            );
+                                            updated = true;
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to update local NAT socket. socket: {}, error: {:?}", socket6, e);
+                                        }
+                                    }
+                                }
+
+                                if updated {
+                                    self.ping_connected_peers();
+                                    self.update_peers_to_ping_nat();
                                 }
                             }
-                        }
-                        if let Some(socket6) =
-                            self.local_enr.read().udp6_socket().map(SocketAddr::V6)
-                        {
-                            match self.local_enr.write().set_udp_socket_nat(
-                                &self.enr_key.read(),
-                                socket6.ip(),
-                                Some(socket6.port()),
-                            ) {
-                                Ok(_) => {
-                                    debug!(
-                                        "Updated local ENR's 'nat6' and 'udp6' field with socket {}",
-                                        socket6
-                                    );
-                                    updated = true;
-                                }
-                                Err(e) => {
-                                    warn!("Failed to update local NAT socket. socket: {}, error: {:?}", socket6, e);
-                                }
-                            }
-                        }
-
-                        if updated {
-                            self.ping_connected_peers();
-                            self.update_peers_to_ping_nat();
                         }
                     }
                     // Accept relay request
@@ -1149,95 +1149,108 @@ impl Service {
 
                             let mut updated = false;
 
-                            if let Some(Address::SymmetricNAT(ip)) = majority4 {
-                                trace!("A WAN reachable address {} found for this node which appears to be behind a symmetric NAT as no general port could be found", ip);
-                                // Check if our advertised external IP address needs to be updated.
-                                if Some(socket.ip()) != self.local_enr.read().nat4().map(IpAddr::V4)
-                                {
-                                    match self.local_enr.write().set_udp_socket_nat(
-                                        &self.enr_key.read(),
-                                        socket.ip(),
-                                        None,
-                                    ) {
-                                        Ok(_) => {
-                                            updated = true;
-                                            info!("Local NAT ip address updated to {}", ip);
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to update local NAT ip address. ip: {}, error: {:?}", ip, e);
-                                        }
-                                    }
-                                }
-                            } else if let Some(Address::Reachable(socket)) = majority4 {
-                                trace!("A WAN reachable address {} found for this node", socket);
-                                // Check if our advertised external IP address needs to be updated.
-                                if Some(socket)
-                                    != self.local_enr.read().udp4_socket().map(SocketAddr::V4)
-                                {
-                                    let result = self
-                                        .local_enr
-                                        .write()
-                                        .set_udp_socket(socket, &self.enr_key.read());
-                                    match result {
-                                        Ok(_) => {
-                                            updated = true;
-                                            info!("Local UDP socket updated to: {}", socket);
-                                            self.send_event(Discv5Event::SocketUpdated(socket));
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to update local UDP socket. ip: {}, error: {:?}", socket, e);
+                            match majority4 {
+                                Some(Address::SymmetricNAT(ip)) => {
+                                    trace!("A WAN reachable address {} found for this node which appears to be behind a symmetric NAT as no general port could be found", ip);
+                                    // Check if our advertised external IP address needs to be updated.
+                                    if Some(socket.ip())
+                                        != self.local_enr.read().nat4().map(IpAddr::V4)
+                                    {
+                                        match self.local_enr.write().set_udp_socket_nat(
+                                            &self.enr_key.read(),
+                                            socket.ip(),
+                                            None,
+                                        ) {
+                                            Ok(_) => {
+                                                updated = true;
+                                                info!("Local NAT ip address updated to {}", ip);
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to update local NAT ip address. ip: {}, error: {:?}", ip, e);
+                                            }
                                         }
                                     }
                                 }
+                                Some(Address::Reachable(socket)) => {
+                                    trace!(
+                                        "A WAN reachable address {} found for this node",
+                                        socket
+                                    );
+                                    // Check if our advertised external IP address needs to be updated.
+                                    if Some(socket)
+                                        != self.local_enr.read().udp4_socket().map(SocketAddr::V4)
+                                    {
+                                        let result = self
+                                            .local_enr
+                                            .write()
+                                            .set_udp_socket(socket, &self.enr_key.read());
+                                        match result {
+                                            Ok(_) => {
+                                                updated = true;
+                                                info!("Local UDP socket updated to: {}", socket);
+                                                self.send_event(Discv5Event::SocketUpdated(socket));
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to update local UDP socket. ip: {}, error: {:?}", socket, e);
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {}
                             }
 
-                            if let Some(Address::SymmetricNAT(ip)) = majority6 {
-                                trace!("A WAN reachable address ipv6 {} found for this node which appears to be behind a symmetric NAT as no general port could be found", ip);
-                                // Check if our advertised external IP address needs to be updated.
-                                if Some(socket.ip()) != self.local_enr.read().nat6().map(IpAddr::V6)
-                                {
-                                    // WARNING: In the case of a symmetric NAT the port field will
-                                    // be None or non-existent. The node receiving the connection
-                                    // is responsible for storing the port used for the connection
-                                    // from the peer behind a symmetric NAT.
-                                    match self.local_enr.write().set_udp_socket_nat(
-                                        &self.enr_key.read(),
-                                        socket.ip(),
-                                        None,
-                                    ) {
-                                        Ok(_) => {
-                                            updated = true;
-                                            info!("Local NAT ipv6 address updated to: {}", ip);
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to update local NAT ipv6 address. ipv6: {}, error: {:?}", ip, e);
-                                        }
-                                    }
-                                }
-                            } else if let Some(Address::Reachable(socket)) = majority6 {
-                                trace!(
-                                    "A WAN reachable ipv6 address {} found for this node",
-                                    socket
-                                );
-                                // Check if our advertised external IP address needs to be updated.
-                                if Some(socket)
-                                    != self.local_enr.read().udp6_socket().map(SocketAddr::V6)
-                                {
-                                    let result = self
-                                        .local_enr
-                                        .write()
-                                        .set_udp_socket(socket, &self.enr_key.read());
-                                    match result {
-                                        Ok(_) => {
-                                            updated = true;
-                                            info!("Local UDP socket updated to: {}", socket);
-                                            self.send_event(Discv5Event::SocketUpdated(socket));
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to update local UDP socket. ip: {}, error: {:?}", socket, e);
+                            match majority6 {
+                                Some(Address::SymmetricNAT(ip)) => {
+                                    trace!("A WAN reachable address ipv6 {} found for this node which appears to be behind a symmetric NAT as no general port could be found", ip);
+                                    // Check if our advertised external IP address needs to be updated.
+                                    if Some(socket.ip())
+                                        != self.local_enr.read().nat6().map(IpAddr::V6)
+                                    {
+                                        // WARNING: In the case of a symmetric NAT the port field will
+                                        // be None or non-existent. The node receiving the connection
+                                        // is responsible for storing the port used for the connection
+                                        // from the peer behind a symmetric NAT.
+                                        match self.local_enr.write().set_udp_socket_nat(
+                                            &self.enr_key.read(),
+                                            socket.ip(),
+                                            None,
+                                        ) {
+                                            Ok(_) => {
+                                                updated = true;
+                                                info!("Local NAT ipv6 address updated to: {}", ip);
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to update local NAT ipv6 address. ipv6: {}, error: {:?}", ip, e);
+                                            }
                                         }
                                     }
                                 }
+                                Some(Address::Reachable(socket)) => {
+                                    trace!(
+                                        "A WAN reachable ipv6 address {} found for this node",
+                                        socket
+                                    );
+                                    // Check if our advertised external IP address needs to be updated.
+                                    if Some(socket)
+                                        != self.local_enr.read().udp6_socket().map(SocketAddr::V6)
+                                    {
+                                        let result = self
+                                            .local_enr
+                                            .write()
+                                            .set_udp_socket(socket, &self.enr_key.read());
+                                        match result {
+                                            Ok(_) => {
+                                                updated = true;
+                                                info!("Local UDP socket updated to: {}", socket);
+                                                self.send_event(Discv5Event::SocketUpdated(socket));
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to update local UDP socket. ip: {}, error: {:?}", socket, e);
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {}
                             }
                             if updated {
                                 self.ping_connected_peers();
