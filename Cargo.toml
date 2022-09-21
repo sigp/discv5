@@ -37,7 +37,7 @@ tracing = { version = "0.1.29", features = ["log"] }
 tracing-subscriber = { version = "0.3.3", features = ["env-filter"] }
 lru = "0.7.1"
 hashlink = "0.7.0"
-delay_map = { git = "https://github.com/emhane/delay_map", branch = "iterator" }
+delay_map = { git = "https://github.com/AgeManning/delay_map" }
 more-asserts = "0.2.2"
 
 [dev-dependencies]

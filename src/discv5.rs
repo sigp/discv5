@@ -662,8 +662,7 @@ pub trait EnrExtension<K> {
     /// behind an asymmetric NAT the 'udp'/'udp6' field is set to the port to hole-punch this node
     /// on. Returns the previous value in the 'ip'/'ip6'field and 'udp'/'udp6' field if any (if ENR
     /// was set in belief that it is not behind a NAT or is port-forwarded, the 'ip'/'ip6' and
-    /// 'udp'/'udp6' fields would be set). WARNING: This update increases the ENR sequence number
-    /// more than once.
+    /// 'udp'/'udp6' fields would be set).
     fn set_udp_socket_nat(
         &mut self,
         enr_key: &CombinedKey,
@@ -767,76 +766,83 @@ impl EnrExtension<CombinedKey> for Enr {
 
         match ip {
             IpAddr::V4(ip4) => {
-                trace!("Inserting reachable address {}:{:?} for node behind NAT into local enr's 'nat' field", ip4, port);
+                trace!(
+                    "Updating local enr with reachable ipv4 address {}:{:?} for node behind NAT",
+                    ip4,
+                    port
+                );
 
-                self.insert(Self::ENR_KEY_NAT, &ip4.octets(), enr_key)?;
+                // Removing 'ip' field to indicate to peers that this node is behind a NAT and
+                // can't listen for incoming connections (until a hole is punched).
+                let mut remove = vec![Self::ENR_KEY_IP];
+                let ip_bytes = ip4.octets();
+                let mut insert: Vec<(&str, &[u8])> = vec![(Self::ENR_KEY_NAT, &ip_bytes)];
 
-                let previous_port = if let Some(port) = port {
-                    trace!("Inserting reachable port {} for node behind asymmetric NAT into local enr's 'udp' field", port);
-                    self.set_udp4(port, enr_key)?
+                let (prev_removed_values, _) = if let Some(port) = port {
+                    let port_bytes = port.to_be_bytes();
+                    insert.push((Self::ENR_KEY_UDP, &port_bytes));
+                    self.remove_insert(remove.into_iter(), insert.into_iter(), enr_key)?
                 } else {
-                    trace!(
-                        "Emptying 'udp' field in local enr to show node is behind a symmetric NAT"
-                    );
-                    self.insert(Self::ENR_KEY_UDP, b"", enr_key)?;
-                    None
+                    remove.push(Self::ENR_KEY_UDP);
+                    self.remove_insert(remove.into_iter(), insert.into_iter(), enr_key)?
                 };
 
-                trace!("Emptying 'ip' field in local enr to show node cannot receive incoming connections and node must be contacted via NAT traversal protocol");
-                let previous_ip = self.insert(Self::ENR_KEY_IP, b"", enr_key)?;
-
-                let previous_socket = move || -> Option<SocketAddr> {
-                    if let Some(bytes) = previous_ip {
-                        if let Some(port) = previous_port {
-                            if bytes.len() == 4 {
-                                let mut buf = [0u8; 4];
-                                buf.copy_from_slice(&bytes);
-                                return Some(SocketAddr::new(
-                                    IpAddr::V4(Ipv4Addr::from(buf)),
-                                    port,
-                                ));
+                if prev_removed_values.len() == 2 {
+                    if let Some(prev_ip) = &prev_removed_values[0] {
+                        if prev_ip.len() == 4 {
+                            let mut buf = [0u8; 4];
+                            buf.copy_from_slice(prev_ip);
+                            let prev_ip = IpAddr::V4(Ipv4Addr::from(buf));
+                            if let Some(prev_port) = &prev_removed_values[1] {
+                                let mut buf = [0u8; 2];
+                                buf.copy_from_slice(prev_port);
+                                return Ok(Some(SocketAddr::new(prev_ip, u16::from_be_bytes(buf))));
                             }
                         }
                     }
-                    None
-                };
-
-                Ok(previous_socket())
+                }
+                Ok(None)
             }
             IpAddr::V6(ip6) => {
-                trace!("Inserting reachable address {}:{:?} for node behind NAT into local enr's 'nat6' field", ip6, port);
+                trace!(
+                    "Updating local enr with reachable ipv6 address {}:{:?} for node behind NAT",
+                    ip6,
+                    port
+                );
 
-                self.insert(Self::ENR_KEY_NAT, &ip6.octets(), enr_key)?;
-                let previous_port = if let Some(port) = port {
-                    trace!("Inserting reachable port {} for node behind asymmetric NAT into local enr's 'udp6' field", port);
-                    self.set_udp6(port, enr_key)?
+                // Removing 'ip6' field to indicate to peers that this node is behind a NAT and
+                // can't listen for incoming connections (until a hole is punched).
+                let mut remove = vec![Self::ENR_KEY_IP_6];
+                let ip_bytes = ip6.octets();
+                let mut insert: Vec<(&str, &[u8])> = vec![(Self::ENR_KEY_NAT_6, &ip_bytes)];
+
+                let (prev_removed_values, _) = if let Some(port) = port {
+                    let port_bytes = port.to_be_bytes();
+                    insert.push((Self::ENR_KEY_UDP_6, &port_bytes));
+                    self.remove_insert(remove.into_iter(), insert.into_iter(), enr_key)?
                 } else {
-                    trace!(
-                        "Emptying 'udp6' field in local enr to show node is behind a symmetric NAT"
-                    );
-                    self.insert(Self::ENR_KEY_UDP_6, b"", enr_key)?;
-                    None
+                    remove.push(Self::ENR_KEY_UDP_6);
+                    self.remove_insert(remove.into_iter(), insert.into_iter(), enr_key)?
                 };
 
-                trace!("Emptying 'ip6' field in local enr to show node cannot receive incoming connections and node must be contacted via NAT traversal protocol");
-                let previous_ip = self.insert(Self::ENR_KEY_IP_6, b"", enr_key)?;
-
-                let previous_socket_6 = move || -> Option<SocketAddr> {
-                    if let Some(bytes) = previous_ip {
-                        if let Some(port) = previous_port {
-                            if bytes.len() == 4 {
-                                let mut buf = [0u8; 16];
-                                buf.copy_from_slice(&bytes);
-                                return Some(SocketAddr::new(
-                                    IpAddr::V6(Ipv6Addr::from(buf)),
-                                    port,
-                                ));
+                if prev_removed_values.len() == 2 {
+                    if let Some(prev_ip6) = &prev_removed_values[0] {
+                        if prev_ip6.len() == 16 {
+                            let mut buf = [0u8; 16];
+                            buf.copy_from_slice(prev_ip6);
+                            let prev_ip6 = IpAddr::V6(Ipv6Addr::from(buf));
+                            if let Some(prev_port) = &prev_removed_values[1] {
+                                let mut buf = [0u8; 2];
+                                buf.copy_from_slice(prev_port);
+                                return Ok(Some(SocketAddr::new(
+                                    prev_ip6,
+                                    u16::from_be_bytes(buf),
+                                )));
                             }
                         }
                     }
-                    None
-                };
-                Ok(previous_socket_6())
+                }
+                Ok(None)
             }
         }
     }
