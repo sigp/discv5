@@ -874,8 +874,18 @@ impl Service {
                     }
 
                     // Requests are only relayed to peers in the local routing table, i.e. that we
-                    // have possibly passed in a NODES response to the initiator.
-                    if let Some(receiver) = self.find_enr(&to_node_id) {
+                    // have possibly passed in a NODES response to the initiator, and are
+                    // connected.
+                    let key = kbucket::Key::from(to_node_id);
+                    let receiver = match self.kbuckets.write().entry(&key) {
+                        kbucket::Entry::Present(entry, status) if status.is_connected() => {
+                            Some(entry.value().clone())
+                        }
+                        _ => None,
+                    };
+                    if let Some(receiver) = receiver
+                    // check if we know this node id in our routing table
+                    {
                         if let Some(contact) = self.contact_from_enr(&receiver) {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
                             if let Ok(req_id) =
@@ -890,6 +900,10 @@ impl Service {
                                 );
                             }
                         }
+                    } else {
+                        // This node is currently not connected to the receiver and is hence not a
+                        // suitable relay.
+                        self.send_relay_response(node_address, id, RelayResponseCode::Error);
                     }
                 }
             }
@@ -1315,15 +1329,11 @@ impl Service {
                                     // rendezvous node timed out.
                                     if from_node_enr.node_id() == self.local_enr.read().node_id() {
                                         debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", node_id, to_node_id, id);
-                                        self.relays.get_mut(&to_node_id).and_then(|relays| {
+                                        if let Some(relays) = self.relays.get_mut(&to_node_id) {
                                             // Only give each rendezvous one chance per
                                             // receiver to relay.
-                                            relays.retain(|relay| {
-                                                relay.socket_addr()
-                                                    != active_request.contact.socket_addr()
-                                            });
-                                            relays.iter().next().cloned()
-                                        });
+                                            relays.remove(&active_request.contact);
+                                        }
                                         _ = self.find_relay_and_send_relay_request(to_node_id);
                                     }
                                 }
@@ -2134,7 +2144,7 @@ impl Service {
                     match active_request.request_body {
                         RequestBody::RelayRequest {
                             ref from_node_enr,
-                            to_node_id: _,
+                            to_node_id,
                         } => {
                             // Avoid recursive relay requesting by distinguishing between a
                             // timeout of a RELAYREQUEST to a rendezvous node and from a
@@ -2149,11 +2159,19 @@ impl Service {
                                         RelayResponseCode::Error,
                                     );
                                 }
+                            } else if from_node_enr.node_id() == self.local_enr.read().node_id() {
+                                // This node is the initiator, retry NAT traversal with a new
+                                // relay.
+                                debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to contact peer (receiver) {} again via a new relay. Request id: {}", node_id, to_node_id, id);
+                                if let Some(relays) = self.relays.get_mut(&to_node_id) {
+                                    relays.remove(&active_request.contact);
+                                }
+                                _ = self.find_relay_and_send_relay_request(to_node_id);
                             }
                         }
                         _ => {
                             if self.local_enr.read().supports_feature(Feature::Nat) {
-                                // Drop the request and disconnect the peer and attempt
+                                // Still drop the request and disconnect the peer but attempt
                                 // establishing the connection to the peer via the NAT traversal
                                 // protocol for sending future requests to the peer, if this peer
                                 // was forwarded to us in a NODES response and we hence have a

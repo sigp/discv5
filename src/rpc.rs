@@ -58,7 +58,7 @@ impl std::fmt::Display for RelayResponseCode {
         let response_code = match *self {
             RelayResponseCode::False => "false",
             RelayResponseCode::True => "true",
-            RelayResponseCode::Error => "receiver failed to respond",
+            RelayResponseCode::Error => "receiver error",
         };
         write!(f, "{}", response_code)
     }
