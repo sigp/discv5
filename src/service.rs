@@ -1328,13 +1328,13 @@ impl Service {
                                     // This node is the initiator and the request to the
                                     // rendezvous node timed out.
                                     if from_node_enr.node_id() == self.local_enr.read().node_id() {
-                                        debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed Trying with a new relay. Request id: {}.", node_id, id);
+                                        debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed Trying to find a new relay. Request id: {}.", node_id, id);
                                         if let Some(relays) = self.relays.get_mut(&to_node_id) {
                                             // Only give each rendezvous one chance per
                                             // receiver to relay.
                                             relays.remove(&active_request.contact);
                                         }
-                                        _ = self.find_relay_and_send_relay_request(to_node_id);
+                                        _= self.find_relay_and_send_relay_request(to_node_id);
                                     }
                                 }
                             }
@@ -1480,6 +1480,7 @@ impl Service {
                 if should_count {
                     return self.send_relay_request(contact_relay.clone(), local_enr, receiver);
                 } else {
+                    // Remove disconnected relays
                     active_relays.remove(&contact_relay);
                 }
             }
@@ -2162,7 +2163,7 @@ impl Service {
                             } else if from_node_enr.node_id() == self.local_enr.read().node_id() {
                                 // This node is the initiator, retry NAT traversal with a new
                                 // relay.
-                                debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying with a new relay. Request id: {}", node_id, id);
+                                debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to find a new relay. Request id: {}", node_id, id);
                                 if let Some(relays) = self.relays.get_mut(&to_node_id) {
                                     relays.remove(&active_request.contact);
                                 }
