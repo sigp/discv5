@@ -813,6 +813,7 @@ impl Service {
                                 if let Some(socket) =
                                     self.local_enr.read().udp4_socket().map(SocketAddr::V4)
                                 {
+                                    trace!("Updating local enr");
                                     match self.local_enr.write().set_udp_socket_nat(
                                         &self.enr_key.read(),
                                         socket.ip(),
