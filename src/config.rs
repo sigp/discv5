@@ -116,6 +116,11 @@ pub struct Discv5Config {
     /// the filter will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
+    /// The max peers that contact us without an ENR with a reachable address that we store
+    /// anticipating they find their externally reachable address (by ip voting) and set
+    /// their ENR. The default is 100.
+    pub max_awaiting_contactable_enr: usize,
+
     /// This node supports the NAT traversal protocol. Default is true.
     pub nat_feature: bool,
 
@@ -172,6 +177,7 @@ impl Default for Discv5Config {
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             ip_mode: IpMode::default(),
+            max_awaiting_contactable_enr: 100,
             nat_feature: true,
             max_relays_per_receiver: 10,
             inactive_relay_expiration: 15 * 60,
@@ -391,6 +397,11 @@ impl Discv5ConfigBuilder {
     /// to contact an ENR.
     pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
         self.config.ip_mode = ip_mode;
+        self
+    }
+
+    pub fn max_awaiting_contactable_enr(&mut self, max_peers: usize) -> &mut Self {
+        self.config.max_awaiting_contactable_enr = max_peers;
         self
     }
 

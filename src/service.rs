@@ -65,6 +65,10 @@ pub(crate) const MAX_ATTEMPTS_TO_REQUEST_ENR: u8 = 3;
 /// reset every 30 seconds, hence a node behind a NAT pings its peers at this interval.
 const PING_INTERVAL_NAT: Duration = Duration::from_secs(60);
 
+/// Peers behind a symmetric NAT are limited per kbucket as they can only be sent request not
+/// passed in NODES responses to other peers.
+const MAX_SYMMETRIC_NAT_PEERS_PER_KBUCKET: usize = 2;
+
 /// Request type for Protocols using `TalkReq` message.
 ///
 /// Automatically responds with an empty body on drop if
@@ -220,7 +224,7 @@ pub struct Service {
     /// If this Discv5 instance is configured to allow peers behind symmetric NATs
     /// (peers that requests will be sent to but that will not be included in NODES
     /// responses to other peers) then connection dependent port mapping is stored.
-    symmetric_nat_peers_ports: Option<HashMap<NodeId, u16>>,
+    symmetric_nat_peers_ports: Option<HashMap<u64, HashMap<NodeId, u16>>>,
 
     /// Nodes behind a NAT mapped to their potential relays.
     relays: Relays,
@@ -257,12 +261,13 @@ impl Relays {
     }
 
     /// Inserts a potential relay for a given peer if it doesn't already exist.
-    fn insert(&mut self, receiver: NodeId, relay: NodeContact) {
+    fn insert(&mut self, receiver: NodeId, relay: NodeContact) -> Result<(), &str> {
         self.remove_expired(&receiver);
         let now = Instant::now();
         let relays = self.relays.entry(receiver).or_default();
         if relays.len() >= self.max_relays_per_receiver {
-            return;
+            warn!("Unable to attempt storing relay {} for peer {}. Limit of {} stored relays already reached", relay.node_id(), receiver, self.max_relays_per_receiver);
+            return Err("Limit or relays for peer reached");
         }
         let node_id = relay.node_id();
         // Don't overwrite the insert time and wether the relay is active.
@@ -271,6 +276,7 @@ impl Relays {
             let expirations = self.expirations.entry(receiver).or_default();
             expirations.push_back((relay.node_id(), now));
         }
+        Ok(())
     }
 
     /// Gets a relay for a given peer in LRU order to increase chances the relay in fact does have
@@ -350,12 +356,19 @@ struct NonContactableEnr {
     attempts: u8,
 }
 
-#[derive(Default)]
 struct AwaitingContactableEnr {
     peers: HashMap<NodeId, NonContactableEnr>,
+    max_peers: usize,
 }
 
 impl AwaitingContactableEnr {
+    fn new(max_await_contactable_enr: usize) -> Self {
+        AwaitingContactableEnr {
+            peers: HashMap::default(),
+            max_peers: max_await_contactable_enr,
+        }
+    }
+
     fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, &'static str> {
         if let Some(peer) = self.peers.get_mut(node_id) {
             if peer.attempts >= MAX_ATTEMPTS_TO_REQUEST_ENR {
@@ -375,13 +388,18 @@ impl AwaitingContactableEnr {
         false
     }
 
-    fn insert(&mut self, non_contactable: Enr) {
+    fn insert(&mut self, non_contactable: Enr) -> Result<(), &str> {
+        if self.peers.len() >= self.max_peers {
+            warn!("Unable to store uncontactable enr of peer {}. Limit of {} peers to await a contactable ENR for is already reached", non_contactable.node_id(), self.max_peers);
+            return Err("Unable to store uncontactable enr of peer");
+        }
         self.peers
             .entry(non_contactable.node_id())
             .or_insert(NonContactableEnr {
                 enr: non_contactable,
                 attempts: 0,
             });
+        Ok(())
     }
 
     fn remove(&mut self, node_id: &NodeId) -> Option<NonContactableEnr> {
@@ -499,7 +517,9 @@ impl Service {
                         config.inactive_relay_expiration,
                         config.max_relays_per_receiver,
                     ),
-                    awaiting_reachable_address: Default::default(),
+                    awaiting_reachable_address: AwaitingContactableEnr::new(
+                        config.max_awaiting_contactable_enr,
+                    ),
                     symmetric_nat_peers_ports,
                     relayed_requests: Default::default(),
                 };
@@ -1926,7 +1946,7 @@ impl Service {
                 // (incase it is behind an asymmetric NAT) knowingly ('nat'/'nat6' field in ENR is
                 // set) or unknowingly (a request to the peer will time out) and the NAT traversal
                 // protocol must be used to establish a connection to it.
-                self.relays.insert(enr.node_id(), source.clone());
+                _ = self.relays.insert(enr.node_id(), source.clone());
 
                 // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
                 // request directly instead of adding it to a query (avoid waiting for a request to
@@ -2109,7 +2129,7 @@ impl Service {
             // protocol we give it max number of times to trigger us via PING request to request
             // its ENR.
             if enr.supports_feature(Feature::Nat) {
-                self.awaiting_reachable_address.insert(enr);
+                _ = self.awaiting_reachable_address.insert(enr);
             }
             return;
         }
@@ -2155,11 +2175,19 @@ impl Service {
                 return;
             }
 
-            let node_id = enr.node_id();
             // In case this is a node behind a symmetric NAT we need to store the port which
             // is unique for this connection and hence will not eventually be advertised in
             // the peer's ENR.
-            symmetric_nat_peers_ports.insert(enr.node_id(), port);
+            let node_id = enr.node_id();
+            let peer_key: kbucket::Key<NodeId> = node_id.into();
+            if let Some(distance) = peer_key.log2_distance(&enr.node_id().into()) {
+                let ports_bucket = symmetric_nat_peers_ports.entry(distance).or_default();
+                if ports_bucket.len() >= MAX_SYMMETRIC_NAT_PEERS_PER_KBUCKET {
+                    warn!("Cannot insert peer {} behind a symmetric NAT into kbuckets. Limit of {} peers behind a symmetric NAT per kbucket reached", node_id, MAX_SYMMETRIC_NAT_PEERS_PER_KBUCKET);
+                    return;
+                }
+                ports_bucket.insert(enr.node_id(), port);
+            }
 
             debug!("Session established with node behind symmetric NAT: {}, direction: Incoming (always 'Incoming' for peer behind symmetric NAT)", node_id);
             self.connection_updated(
@@ -2317,13 +2345,23 @@ impl Service {
         } else if let Ok(contact) = NodeContact::try_from_enr_nat(enr, self.config.ip_mode) {
             return Some(contact);
         } else if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
-            if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
-                match NodeContact::try_from_enr_nat_symmetric(enr, self.config.ip_mode, *port) {
-                    Ok(contact) => {
-                        return Some(contact);
-                    }
-                    Err(NonContactable { enr }) => {
-                        warn!("ENR is non-contactable {}", enr);
+            let node_id = enr.node_id();
+            let peer_key: kbucket::Key<NodeId> = node_id.into();
+            if let Some(distance) = peer_key.log2_distance(&enr.node_id().into()) {
+                if let Some(ports_bucket) = symmetric_nat_peers_ports.get(&distance) {
+                    if let Some(port) = ports_bucket.get(&node_id) {
+                        match NodeContact::try_from_enr_nat_symmetric(
+                            enr,
+                            self.config.ip_mode,
+                            *port,
+                        ) {
+                            Ok(contact) => {
+                                return Some(contact);
+                            }
+                            Err(NonContactable { enr }) => {
+                                warn!("ENR is non-contactable {}", enr);
+                            }
+                        }
                     }
                 }
             }
