@@ -112,7 +112,7 @@ impl Discv5 {
         // optionally use the IP filter via the ip_limit configuration parameter and the NAT filter
         // via the nat_limit configuration parameter. In the future, we may expose this
         // functionality to the users if there is demand for it.
-        let (table_filter, bucket_filter) = match (config.ip_limit, config.nat_limit) {
+        let (table_filter, bucket_filter) = match (config.ip_limit, config.nat_symmetric_limit) {
             (true, true) => (
                 Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
                 Some(Box::new(kbucket::IpAndSymmetricNatBucketFilter)

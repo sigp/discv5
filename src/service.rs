@@ -343,25 +343,21 @@ impl Service {
         listen_socket: SocketAddr,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
-        let ip_votes = if config.enr_update {
-            Some(IpVote::new(
-                config.enr_peer_update_min,
-                config.vote_duration,
-                config.include_symmetric_nat,
-            ))
-        } else {
-            None
-        };
-
-        let asymm_nat_votes =
-            if config.enr_update && local_enr.read().supports_feature(Feature::Nat) {
-                Some(AsymmNatVote::new(
+        let (ip_votes, asymm_nat_votes) = if config.enr_update {
+            (
+                Some(IpVote::new(
                     config.enr_peer_update_min,
                     config.vote_duration,
-                ))
-            } else {
-                None
-            };
+                    config.include_symmetric_nat,
+                )),
+                Some(AsymmNatVote::new(
+                    config.enr_peer_update_min_nat,
+                    config.vote_duration,
+                )),
+            )
+        } else {
+            (None, None)
+        };
 
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
@@ -464,12 +460,16 @@ impl Service {
                                     self.inject_session_established(enr, direction);
                                 }
                                 RoutingType::AsymmetricNat(enr, socket_addr, connection_direction) => {
-                                    info!("A new session has been established with a peer behind an asymmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
-                                    self.inject_session_established_nat(enr, connection_direction);
+                                    if self.local_enr.read().supports_feature(Feature::Nat) {
+                                        info!("A new session has been established with a peer behind an asymmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
+                                        self.inject_session_established_nat(enr, connection_direction);
+                                    }
                                 }
                                 RoutingType::SymmetricNat(enr, socket_addr) => {
-                                    info!("A new session has been established with a peer behind a symmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
-                                    self.inject_session_established_nat_symmetric(enr, socket_addr.port());
+                                    if self.local_enr.read().supports_feature(Feature::Nat) {
+                                        info!("A new session has been established with a peer behind a symmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
+                                        self.inject_session_established_nat_symmetric(enr, socket_addr.port());
+                                    }
                                 }
                             }
                         }
@@ -512,7 +512,7 @@ impl Service {
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
                         QueryEvent::Waiting(query_id, node_id, request_body) => {
-                            self.send_rpc_query(query_id, node_id, request_body);
+                            self.send_rpc_query(query_id, node_id, *request_body);
                         }
                         // Note: Currently the distinction between a timed-out query and a finished
                         // query is superfluous, however it may be useful in future versions.
@@ -768,15 +768,15 @@ impl Service {
                         return;
                     }
 
-                    if let Some(ref mut votes_asymmetric_nat) = self.asymm_nat_votes {
-                        // If this node is advertising that it is not behind a NAT, we do a peer
-                        // vote to verify this.
-                        if self.local_enr.read().udp4_socket().is_some()
-                            || self.local_enr.read().udp6_socket().is_some()
-                        {
-                            let mut is_behind_nat = false;
-                            trace!("Peer voting to see if node is behind a asymmetric NAT");
-                            match votes_asymmetric_nat.vote(
+                    // If this node is advertising that it is not behind a NAT, we do a peer
+                    // vote to verify this.
+                    if self.local_enr.read().udp4_socket().is_some()
+                        || self.local_enr.read().udp6_socket().is_some()
+                    {
+                        let mut is_behind_nat = false;
+                        trace!("Peer voting to see if node is behind a asymmetric NAT");
+                        if let Some(ref mut asymm_nat_votes) = self.asymm_nat_votes {
+                            match asymm_nat_votes.vote(
                                 self.kbuckets
                                     .write()
                                     .iter()
@@ -799,66 +799,70 @@ impl Service {
                                     trace!("Not enough votes have been placed.")
                                 }
                             }
+                        }
 
-                            if is_behind_nat {
-                                debug!("This node appears to be behind an asymmetric NAT. Updating local ENR.");
-                                let mut updated = false;
-                                let socket =
-                                    self.local_enr.read().udp4_socket().map(SocketAddr::V4);
-                                if let Some(socket) = socket {
-                                    match self.local_enr.write().set_udp_socket_nat(
-                                        &self.enr_key.read(),
-                                        socket.ip(),
-                                        Some(socket.port()),
-                                    ) {
-                                        Ok(_) => {
-                                            debug!(
+                        if is_behind_nat {
+                            debug!("This node appears to be behind an asymmetric NAT. Updating local ENR.");
+                            let mut updated = false;
+                            let socket = self.local_enr.read().udp4_socket().map(SocketAddr::V4);
+                            if let Some(socket) = socket {
+                                match self.local_enr.write().set_udp_socket_nat(
+                                    &self.enr_key.read(),
+                                    socket.ip(),
+                                    Some(socket.port()),
+                                ) {
+                                    Ok(_) => {
+                                        debug!(
                                                 "Updated local ENR's 'nat' and 'udp' field with socket {}",
                                                 socket
                                             );
-                                            updated = true;
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to update local NAT socket. socket: {}, error: {:?}", socket, e);
-                                        }
+                                        updated = true;
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to update local NAT socket. socket: {}, error: {:?}", socket, e);
                                     }
                                 }
-                                let socket =
-                                    self.local_enr.read().udp6_socket().map(SocketAddr::V6);
-                                if let Some(socket6) = socket {
-                                    match self.local_enr.write().set_udp_socket_nat(
-                                        &self.enr_key.read(),
-                                        socket6.ip(),
-                                        Some(socket6.port()),
-                                    ) {
-                                        Ok(_) => {
-                                            debug!(
+                            }
+                            let socket = self.local_enr.read().udp6_socket().map(SocketAddr::V6);
+                            if let Some(socket6) = socket {
+                                match self.local_enr.write().set_udp_socket_nat(
+                                    &self.enr_key.read(),
+                                    socket6.ip(),
+                                    Some(socket6.port()),
+                                ) {
+                                    Ok(_) => {
+                                        debug!(
                                                 "Updated local ENR's 'nat6' and 'udp6' field with socket {}",
                                                 socket6
                                             );
-                                            updated = true;
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to update local NAT socket. socket: {}, error: {:?}", socket6, e);
-                                        }
+                                        updated = true;
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to update local NAT socket. socket: {}, error: {:?}", socket6, e);
                                     }
                                 }
+                            }
 
-                                if updated {
-                                    trace!("Pinging connected peers to inform them that our ENR is updated to show this node is behind a NAT");
-                                    self.ping_connected_peers();
-                                    self.update_peers_to_ping_nat();
-                                }
+                            if updated {
+                                trace!("Pinging connected peers to inform them that our ENR is updated to show this node is behind a NAT");
+                                self.ping_connected_peers();
+                                self.update_peers_to_ping_nat();
                             }
                         }
                     }
-                    // Accept relay request
-                    trace!("Receiver node sending PING to initiator node");
-                    self.send_ping(from_enr, true);
-                    trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
-                    self.send_relay_response(node_address, id, RelayResponseCode::True);
+                    if self.local_enr.read().supports_feature(Feature::Nat) {
+                        // Accept relay request
+                        trace!("Receiver node sending PING to initiator node");
+                        self.send_ping(from_enr, true);
+                        trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
+                        self.send_relay_response(node_address, id, RelayResponseCode::True);
+                    }
                 } else if from_enr.node_id() != local_node_id {
                     // This node is the rendezvous
+
+                    if !self.local_enr.read().supports_feature(Feature::Nat) {
+                        return;
+                    }
 
                     if to_enr.node_id() == node_address.node_id {
                         debug!("Node acting as a rendezvous node for itself as receiver. Blacklisting peer: {}", node_address);
@@ -868,11 +872,14 @@ impl Service {
                     }
 
                     // Requests are only relayed to peers in the local routing table, i.e. that we
-                    // have possibly passed in a NODES response to the initiator, and are
-                    // connected.
+                    // have possibly passed in a NODES response to the initiator and are connected
+                    // and support the NAT traversal protocol.
                     let key = kbucket::Key::from(to_enr.node_id());
                     let receiver = match self.kbuckets.write().entry(&key) {
-                        kbucket::Entry::Present(entry, status) if status.is_connected() => {
+                        kbucket::Entry::Present(entry, status)
+                            if status.is_connected()
+                                && entry.value().supports_feature(Feature::Nat) =>
+                        {
                             Some(entry.value().clone())
                         }
                         _ => None,
@@ -1549,11 +1556,6 @@ impl Service {
                 self.local_enr.read().ip6()
             );
             trace!(
-                "Local ENR nat ip4 {:?} and nat ip6 {:?}",
-                self.local_enr.read().ip4(),
-                self.local_enr.read().ip6(),
-            );
-            trace!(
                 "Local ENR udp4 port {:?} and udp6 port {:?}",
                 self.local_enr.read().udp4(),
                 self.local_enr.read().udp6(),
@@ -1569,17 +1571,26 @@ impl Service {
                 .filter_map(|entry| {
                     let peer = entry.node;
                     let enr = peer.value;
-                    if enr.udp4_socket().is_none()
-                        && enr.udp6_socket().is_none()
-                        && enr.udp4_socket_nat().is_none()
-                        && enr.udp6_socket_nat().is_none()
-                    {
-                        // Only send nodes that are not behind a NAT, that are port-forwarded or
-                        // are behind an asymmetric NAT,
-                        // i.e. with a reachable port in its ENR. No port in the 'udp'/'udp6'
-                        // field and an ip in the 'nat'/'nat6'
-                        // field is associated with a node behind a symmetric NAT.
-                        return None;
+                    trace!(
+                        "Local ENR nat ip4 {:?} and nat ip6 {:?}",
+                        self.local_enr.read().ip4(),
+                        self.local_enr.read().ip6(),
+                    );
+                    if enr.udp4_socket().is_none() && enr.udp6_socket().is_none() {
+                        if enr.udp4_socket_nat().is_some() || enr.udp6_socket_nat().is_some() {
+                            // A node may be aware it is behind a NAT but still not supporting the
+                            // NAT traversal protocol. It makes no sense to recommend these nodes
+                            // to peers.
+                            if !enr.supports_feature(Feature::Nat) {
+                                return None;
+                            }
+                        } else {
+                            // Only send nodes that are not behind a NAT, that are port-forwarded
+                            // or are behind an asymmetric NAT, i.e. with a reachable port in its
+                            // ENR. No port in the 'udp'/'udp6' field and an ip in the 'nat'/'nat6'
+                            // field is associated with a node behind a symmetric NAT.
+                            return None;
+                        }
                     }
                     if peer.key.preimage() != &node_address.node_id {
                         return Some(enr.clone());
@@ -1799,40 +1810,44 @@ impl Service {
         });
 
         enrs.retain(|enr| {
-            // Add the source of the NODES response to the potential relays for this new peer
-            // (incase it is behind an asymmetric NAT)
-            let relays = self.relays.entry(enr.node_id()).or_default();
-            relays.insert(source.clone());
+            if self.local_enr.read().supports_feature(Feature::Nat) {
+                // Add the source of the NODES response to the potential relays for this new peer
+                // (incase it is behind an asymmetric NAT)
+                let relays = self.relays.entry(enr.node_id()).or_default();
+                relays.insert(source.clone());
 
-            // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
-            // request directly instead of adding it to a query (avoid waiting for a request to
-            // the new peer to timeout).
-            if self.config.ip_mode.get_contactable_addr_nat(enr).is_some() {
-                let key = kbucket::Key::from(enr.node_id());
-                let mut new_nat_peer = false;
-                match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Absent(_) => {
-                        new_nat_peer = true;
+                // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
+                // request directly instead of adding it to a query (avoid waiting for a request to
+                // the new peer to timeout).
+                if self.config.ip_mode.get_contactable_addr_nat(enr).is_some() {
+                    let key = kbucket::Key::from(enr.node_id());
+                    let mut new_nat_peer = false;
+                    match self.kbuckets.write().entry(&key) {
+                        kbucket::Entry::Absent(_) => {
+                            new_nat_peer = true;
+                        }
+                        kbucket::Entry::Present(..) | kbucket::Entry::Pending(..) => {
+                            // Keep enr and pass on to query if it is behind a NAT but has been
+                            // previously contacted.
+                            return true;
+                        }
+                        _ => {}
                     }
-                    kbucket::Entry::Present(..) | kbucket::Entry::Pending(..) => {
-                        // Keep enr and pass on to query if it is behind a NAT but has been
-                        // previously contacted.
-                        return true;
+                    if new_nat_peer {
+                        let local_enr = self.local_enr.read().clone();
+                        _ = self.send_relay_request(source.clone(), local_enr, enr.clone());
+                        return false;
                     }
-                    _ => {}
                 }
-                if new_nat_peer {
-                    let local_enr = self.local_enr.read().clone();
-                    _ = self.send_relay_request(source.clone(), local_enr, enr.clone());
-                    return false;
-                }
-            } else if self.config.ip_mode.get_contactable_addr(enr).is_some() {
+            }
+            if self.config.ip_mode.get_contactable_addr(enr).is_some() {
                 // Keep enr and pass on to query if it flags it is not behind a NAT (or
                 // port-forwarded).
                 return true;
             }
-            // Don't pass nodes we cannot make an outgoing connection to (including nodes behind a
-            // symmetric NAT) to the query
+            // Filter out enrs which are knowingly behind a NAT that we need to hole punch to
+            // make an outgoing connection to (asymmetric NAT) or that are behind a symmetric NAT
+            // (the latter shouldn't be passed in NODES responses).
             false
         });
 
@@ -2238,7 +2253,11 @@ impl Service {
             QueryPoolState::Waiting(Some((query, return_peer))) => {
                 let node_id = return_peer;
                 let request_body = query.target().rpc_request(return_peer);
-                Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
+                Poll::Ready(QueryEvent::Waiting(
+                    query.id(),
+                    node_id,
+                    Box::new(request_body),
+                ))
             }
             QueryPoolState::Timeout(query) => {
                 warn!("Query id: {:?} timed out", query.id());
@@ -2254,7 +2273,7 @@ impl Service {
 /// active query.
 enum QueryEvent {
     /// The query is waiting for a peer to be contacted.
-    Waiting(QueryId, NodeId, RequestBody),
+    Waiting(QueryId, NodeId, Box<RequestBody>),
     /// The query has timed out, possible returning peers.
     TimedOut(Box<crate::query_pool::Query<QueryInfo, NodeId, Enr>>),
     /// The query has completed successfully.

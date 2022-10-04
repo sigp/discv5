@@ -45,6 +45,10 @@ pub struct Discv5Config {
     /// local ENR. Default: 10.
     pub enr_peer_update_min: usize,
 
+    /// The minimum number of peer's who tried to engage us in the NAT traversal protocol before
+    /// updating the local ENR. Default: 10.
+    pub enr_peer_update_min_nat: usize,
+
     /// The number of peers to request in parallel in a single query. Default: 3.
     pub query_parallelism: usize,
 
@@ -65,7 +69,7 @@ pub struct Discv5Config {
     /// NODES responses to other peers. By adding them to the kbuckets they can be sent request.
     /// These nodes are identified by their ENR: their 'nat'/'nat6' field contains an ip but their
     /// 'udp' and 'udp6' fields are empty.
-    pub nat_limit: bool,
+    pub nat_symmetric_limit: bool,
 
     /// Sets a maximum limit to the number of incoming nodes (nodes that have dialed us) to exist
     /// per-bucket. This cannot be larger than the bucket size (16). By default this is disabled
@@ -144,10 +148,11 @@ impl Default for Discv5Config {
             enr_update: true,
             max_nodes_response: 16,
             enr_peer_update_min: 10,
+            enr_peer_update_min_nat: 10,
             query_parallelism: 3,
             ip_limit: false,
             include_symmetric_nat: false,
-            nat_limit: true,
+            nat_symmetric_limit: true,
             incoming_bucket_limit: MAX_NODES_PER_BUCKET,
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
@@ -248,6 +253,16 @@ impl Discv5ConfigBuilder {
         self
     }
 
+    /// The minimum number of peer's who send RELAYREQUESTs before deciding wether to update the
+    /// local ENR.
+    pub fn enr_peer_update_min_nat(&mut self, min: usize) -> &mut Self {
+        if min < 2 {
+            panic!("Setting enr_peer_update_min_nat to a value less than 2 will cause issues with discovery with peers behind NAT");
+        }
+        self.config.enr_peer_update_min = min;
+        self
+    }
+
     /// The number of peers to request in parallel in a single query.
     pub fn query_parallelism(&mut self, parallelism: usize) -> &mut Self {
         self.config.query_parallelism = parallelism;
@@ -275,7 +290,7 @@ impl Discv5ConfigBuilder {
     /// include_symmetric_nat is set to true.
     pub fn symmetric_nat_limit(&mut self, limit_nat: bool) -> &mut Self {
         if self.config.nat_feature && self.config.include_symmetric_nat {
-            self.config.nat_limit = limit_nat;
+            self.config.nat_symmetric_limit = limit_nat;
         }
         self
     }
@@ -285,7 +300,7 @@ impl Discv5ConfigBuilder {
     /// include_symmetric_nat is set to true.
     pub fn asymmetric_nat_limit(&mut self, limit_nat: bool) -> &mut Self {
         if self.config.nat_feature {
-            self.config.nat_limit = limit_nat;
+            self.config.nat_symmetric_limit = limit_nat;
         }
         self
     }
