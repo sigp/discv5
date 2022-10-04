@@ -95,7 +95,7 @@ async fn build_service(
         exit,
         relayed_requests: Default::default(),
         config,
-        relays: HashMap::new(),
+        relays: Relays::new(0, 0),
         awaiting_reachable_address: Default::default(),
         symmetric_nat_peers_ports: Default::default(),
     }

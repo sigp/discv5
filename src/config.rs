@@ -111,13 +111,22 @@ pub struct Discv5Config {
     /// `crate::PermitBanList`.
     pub permit_ban_list: PermitBanList,
 
-    /// Set the default duration for which nodes are banned for. This timeouts are checked every 5 minutes,
-    /// so the precision will be to the nearest 5 minutes. If set to `None`, bans from the filter
-    /// will last indefinitely. Default is 1 hour.
+    /// Set the default duration for which nodes are banned for. This timeouts are checked every 5
+    /// minutes, so the precision will be to the nearest 5 minutes. If set to `None`, bans from
+    /// the filter will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
     /// This node supports the NAT traversal protocol. Default is true.
     pub nat_feature: bool,
+
+    /// The max number of relays to store per peer. All of these relays may be inactive for
+    /// example if the peer hasn't successfully kept the holes in its NAT to its peers punched.
+    /// Default is 10.
+    pub max_relays_per_receiver: usize,
+
+    /// The amount of time in seconds an inactive relay is stored before it can be replaced.
+    /// Default is 15 minutes.
+    pub inactive_relay_expiration: u64,
 
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
@@ -164,6 +173,8 @@ impl Default for Discv5Config {
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             ip_mode: IpMode::default(),
             nat_feature: true,
+            max_relays_per_receiver: 10,
+            inactive_relay_expiration: 15 * 60,
             executor: None,
         }
     }
@@ -386,6 +397,19 @@ impl Discv5ConfigBuilder {
     /// Configures this node to run with or with out the NAT traversal protocol.
     pub fn nat_feature(&mut self, run_with_nat_feature: bool) -> &mut Self {
         self.config.nat_feature = run_with_nat_feature;
+        self
+    }
+
+    /// Sets the max potential relays to store per peer.
+    pub fn max_relays_per_receiver(&mut self, max_relays: usize) -> &mut Self {
+        self.config.max_relays_per_receiver = max_relays;
+        self
+    }
+
+    /// Sets the time to wait before allowing the replacement (by itself or another relay) of a
+    /// relay which failed at relaying to a given peer. Expiration is given in seconds.
+    pub fn inactive_relay_expiration(&mut self, expiration_seconds: u64) -> &mut Self {
+        self.config.inactive_relay_expiration = expiration_seconds;
         self
     }
 

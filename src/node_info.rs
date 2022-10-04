@@ -182,16 +182,13 @@ impl From<Enr> for NodeContact {
 
 impl Hash for NodeContact {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Only store one Node Contact per socket address in hashed collections
-        self.socket_addr.hash(state);
+        self.node_id().hash(state);
     }
 }
 
 impl PartialEq for NodeContact {
     fn eq(&self, other: &Self) -> bool {
-        self.socket_addr == other.socket_addr
-            && self.public_key == other.public_key
-            && self.enr == other.enr
+        self.node_id() == other.node_id()
     }
 }
 
