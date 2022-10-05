@@ -2279,34 +2279,7 @@ impl Service {
             match error {
                 RequestError::Timeout => {
                     match active_request.request_body {
-                        RequestBody::RelayRequest {
-                            ref from_enr,
-                            to_enr,
-                        } => {
-                            // Avoid recursive relay requesting by distinguishing between a
-                            // timeout of a RELAYREQUEST to a rendezvous node and from a
-                            // rendezvous node.
-                            if from_enr.node_id() != self.local_enr.read().node_id() {
-                                // This node is the rendezvous, return a RELAYRESPONSE to the
-                                // initiator informing it of the error.
-                                if let Some(relayed_request) = self.relayed_requests.remove(&id) {
-                                    self.send_relay_response(
-                                        relayed_request.initiator,
-                                        relayed_request.req_id_from_initiator,
-                                        RelayResponseCode::Error,
-                                    );
-                                }
-                            } else if from_enr.node_id() == self.local_enr.read().node_id() {
-                                // This node is the initiator, retry NAT traversal with a new
-                                // relay.
-                                debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to find a new relay. Request id: {}", node_id, id);
-                                self.relays.remove(&to_enr.node_id(), &node_id);
-                                if let Some(relay) = self.find_relay(to_enr.node_id()) {
-                                    let local_enr = self.local_enr.read().clone();
-                                    _ = self.send_relay_request(relay, local_enr, to_enr);
-                                }
-                            }
-                        }
+                        RequestBody::RelayRequest { .. } => {}
                         _ => {
                             if self.local_enr.read().supports_feature(Feature::Nat) {
                                 // Still drop the request and disconnect the peer but attempt
@@ -2335,6 +2308,36 @@ impl Service {
                 }
                 _ => {}
             }
+
+            if let RequestBody::RelayRequest {
+                ref from_enr,
+                to_enr,
+            } = active_request.request_body
+            {
+                // Avoid recursive relay requesting by distinguishing between a failed
+                // RELAYREQUEST to a rendezvous node and from a rendezvous node.
+                if from_enr.node_id() != self.local_enr.read().node_id() {
+                    // This node is the rendezvous, return a RELAYRESPONSE to the
+                    // initiator informing it of the error.
+                    if let Some(relayed_request) = self.relayed_requests.remove(&id) {
+                        self.send_relay_response(
+                            relayed_request.initiator,
+                            relayed_request.req_id_from_initiator,
+                            RelayResponseCode::Error,
+                        );
+                    }
+                } else if from_enr.node_id() == self.local_enr.read().node_id() {
+                    // This node is the initiator, retry NAT traversal with a new
+                    // relay.
+                    debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to find a new relay. Request id: {}", node_id, id);
+                    self.relays.remove(&to_enr.node_id(), &node_id);
+                    if let Some(relay) = self.find_relay(to_enr.node_id()) {
+                        let local_enr = self.local_enr.read().clone();
+                        _ = self.send_relay_request(relay, local_enr, to_enr);
+                    }
+                }
+            }
+
             self.connection_updated(node_id, ConnectionStatus::Disconnected);
         }
     }
