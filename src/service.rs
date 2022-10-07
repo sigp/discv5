@@ -262,7 +262,7 @@ impl Relays {
 
     /// Inserts a potential relay for a given peer if it doesn't already exist.
     fn insert(&mut self, receiver: NodeId, relay: NodeContact) -> Result<(), &str> {
-        self.remove_expired(&receiver);
+        self.remove_expired_inactive(&receiver);
         let now = Instant::now();
         let relays = self.relays.entry(receiver).or_default();
         if relays.len() >= self.max_relays_per_receiver {
@@ -276,6 +276,12 @@ impl Relays {
             let expirations = self.expirations.entry(receiver).or_default();
             expirations.push_back((relay.node_id(), now));
         }
+        trace!(
+            "Successfully inserted relay {} for receiver {}. Relays: {:?}",
+            relay.node_id(),
+            receiver,
+            relays
+        );
         Ok(())
     }
 
@@ -295,6 +301,7 @@ impl Relays {
                                 if let Some(entry) = expirations.remove(index) {
                                     expirations.push_back(entry);
                                 }
+                                trace!("Found relay {} for receiver {}", relay_contact, receiver);
                                 return Some(relay_contact);
                             }
                         }
@@ -307,7 +314,7 @@ impl Relays {
     }
 
     /// Removes the expired inactive relays for a given peer.
-    fn remove_expired(&mut self, receiver: &NodeId) {
+    fn remove_expired_inactive(&mut self, receiver: &NodeId) {
         if let Some(expirations) = self.expirations.get_mut(receiver) {
             if let Some(relays) = self.relays.get_mut(receiver) {
                 let expiration_time = self.expiration_time;
@@ -329,7 +336,7 @@ impl Relays {
     /// Inactivates the relay for a given receiver so that it won't be used and can't be
     /// re-inserted until it has expired.
     fn remove(&mut self, receiver: &NodeId, relay: &NodeId) {
-        self.remove_expired(receiver);
+        self.remove_expired_inactive(receiver);
         if let Some(relays) = self.relays.get_mut(receiver) {
             if let Some((_, active)) = relays.get_mut(relay) {
                 *active = false;
