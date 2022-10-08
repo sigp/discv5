@@ -294,8 +294,10 @@ impl Relays {
     fn get_relay_for(&mut self, receiver: &NodeId) -> Option<&NodeContact> {
         trace!("Getting a relay for {}", receiver);
         if let Some(expirations) = self.expirations.get_mut(receiver) {
+            trace!("Found entry in expirations for receiver {}", receiver);
             if let Some(relays) = self.relays.get(receiver) {
-                let mut index = expirations.len();
+                trace!("Found entry in relays for receiver {}", receiver);
+                let mut index = expirations.len() - 1;
                 while let Some((relay, _)) = expirations.get(index) {
                     if let Some((relay_contact, active)) = relays.get(relay) {
                         if *active {
