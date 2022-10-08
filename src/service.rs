@@ -276,15 +276,6 @@ impl Relays {
             let expirations = self.expirations.entry(receiver).or_default();
             expirations.push_back((relay.node_id(), now));
         }
-        trace!(
-            "Successfully inserted relay {} for receiver {}. Relays: {:?}",
-            relay.node_id(),
-            receiver,
-            relays
-                .iter()
-                .map(|(relay, _)| relay)
-                .collect::<Vec<&NodeId>>()
-        );
         Ok(())
     }
 
@@ -292,11 +283,8 @@ impl Relays {
     /// a connection to the peer (a hole-punched through the peer's NAT). Relays that have expired
     /// may be used.
     fn get_relay_for(&mut self, receiver: &NodeId) -> Option<&NodeContact> {
-        trace!("Getting a relay for {}", receiver);
         if let Some(expirations) = self.expirations.get_mut(receiver) {
-            trace!("Found entry in expirations for receiver {}", receiver);
             if let Some(relays) = self.relays.get(receiver) {
-                trace!("Found entry in relays for receiver {}", receiver);
                 let mut index = expirations.len() - 1;
                 while let Some((relay, _)) = expirations.get(index) {
                     if let Some((relay_contact, active)) = relays.get(relay) {
@@ -336,6 +324,9 @@ impl Relays {
                     }
                     true
                 });
+            }
+            if self.relays.is_empty() {
+                self.relays.remove(receiver);
             }
         }
     }
@@ -2312,7 +2303,7 @@ impl Service {
                     }
                 }
                 RequestError::UnusedHolePunchPingToReceiver
-                | RequestError::DroppedHolePunchPingToInitiator => {
+                | RequestError::DroppedHolePunchPing => {
                     // Don't update the connection if the request failed as expected according the
                     // NAT traversal protocol. A RequestError::UnusedHolePunchPingToReceiver means
                     // that a successful session has already been established. A

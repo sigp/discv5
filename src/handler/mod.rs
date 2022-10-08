@@ -610,11 +610,11 @@ impl Handler {
             self.remove_expected_response(node_address.socket_addr);
             // The request has timed out. We keep any established session for future use.
             // If this was a hole-punch PING from the receiver to the initiator we expected it to
-            // potentially time out. This indicates the initiator is also behind a NAT.
+            // potentially timeout. This indicates the initiator is also behind a NAT.
             if request_call.hole_punch {
                 self.fail_request(
                     request_call,
-                    RequestError::DroppedHolePunchPingToInitiator,
+                    RequestError::DroppedHolePunchPing,
                     false,
                 )
                 .await;
@@ -1128,7 +1128,7 @@ impl Handler {
                         };
                     if let Some(routing_type) = routing_type {
                         trace!(
-                            "Establishing session with a node of routing type {}",
+                            "Establishing session with a node that appears to be of routing type {}",
                             routing_type
                         );
                         if let Err(e) = self

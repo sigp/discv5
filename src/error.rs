@@ -111,10 +111,9 @@ pub enum RequestError {
     InvalidMultiaddr(&'static str),
     /// Failure generating random numbers during request.
     EntropyFailure(&'static str),
-    /// The initiator was also behind a NAT so the receiver's hole-punch PING was dropped, but set
-    /// the state table entry in its router to allow for the initiator's hole-punch PING (next in
-    /// the sequence) to go through.
-    DroppedHolePunchPingToInitiator,
+    /// A hole-punch PING was dropped, but set the state table entry in its router to allow for 
+    /// an incoming connection from the recipient of the PING to go through.
+    DroppedHolePunchPing,
     /// A superfluous hole-punch PING. Only the receiver was behind a NAT, not the initiator.
     /// Hence the first hole-punch PING in the sequence, from the receiver to the initiator will
     /// pass through to the initiator.
