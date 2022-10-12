@@ -95,7 +95,7 @@ async fn build_service(
         exit,
         relayed_requests: Default::default(),
         config,
-        relays: Relays::new(0, 0),
+        query_peer_relays: HashMap::default(),
         awaiting_reachable_address: AwaitingContactableEnr::new(0),
         symmetric_nat_peers_ports: Default::default(),
     }
@@ -161,6 +161,7 @@ async fn test_updating_connection_on_ping() {
             request_body: RequestBody::Ping { enr_seq: 2 },
             query_id: Some(QueryId(1)),
             callback: None,
+            relay: None,
         },
     );
 

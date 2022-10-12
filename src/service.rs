@@ -40,7 +40,7 @@ use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     task::Poll,
@@ -226,8 +226,9 @@ pub struct Service {
     /// responses to other peers) then connection dependent port mapping is stored.
     symmetric_nat_peers_ports: Option<HashMap<u64, HashMap<NodeId, u16>>>,
 
-    /// Nodes behind a NAT mapped to their potential relays.
-    relays: Relays,
+    /// A relay is stored for a peer added to the query so that incase it times out we can attempt
+    /// to contact it via the NAT traversal protocol if supported.
+    query_peer_relays: HashMap<NodeId, NodeId>,
 
     /// For RELAYREQUESTs for which this node is the rendezvous, the request ids of
     /// RELAYREQUESTs to receivers are mapped to the node address of the initiator and the request
@@ -235,112 +236,6 @@ pub struct Service {
     /// initiator. The initiator could be a peer that is not in our kbuckets, e.g. a peer behind a
     /// symmetric NAT, hence the node address is stored.
     relayed_requests: HashMap<RequestId, RelayedRequest>,
-}
-
-struct Relays {
-    /// A node potentially behind a NAT mapped to its potential relays and wether it has been
-    /// deemed inactive or not. The potential relays are peers that have passed the given node to
-    /// us in a NODES response.
-    relays: HashMap<NodeId, HashMap<NodeId, (NodeContact, bool)>>,
-    /// A receiver is mapped to the insert times of its relays.
-    expirations: HashMap<NodeId, VecDeque<(NodeId, Instant)>>,
-    /// The time for which relays are stored.
-    expiration_time: Duration,
-    /// The max number of relays to store per peer.
-    max_relays_per_receiver: usize,
-}
-
-impl Relays {
-    fn new(expiration_time: u64, max_relays_per_receiver: usize) -> Self {
-        Relays {
-            relays: HashMap::default(),
-            expirations: HashMap::default(),
-            expiration_time: Duration::from_secs(expiration_time),
-            max_relays_per_receiver,
-        }
-    }
-
-    /// Inserts a potential relay for a given peer if it doesn't already exist.
-    fn insert(&mut self, receiver: NodeId, relay: NodeContact) -> Result<(), &str> {
-        self.remove_expired_inactive(&receiver);
-        let now = Instant::now();
-        let relays = self.relays.entry(receiver).or_default();
-        if relays.len() >= self.max_relays_per_receiver {
-            warn!("Unable to attempt storing relay {} for peer {}. Limit of {} stored relays already reached", relay.node_id(), receiver, self.max_relays_per_receiver);
-            return Err("Limit or relays for peer reached");
-        }
-        let node_id = relay.node_id();
-        // Don't overwrite the insert time and wether the relay is active.
-        if relays.get(&node_id).is_none() {
-            relays.insert(node_id, (relay.clone(), true));
-            let expirations = self.expirations.entry(receiver).or_default();
-            expirations.push_back((relay.node_id(), now));
-        }
-        Ok(())
-    }
-
-    /// Gets a relay for a given peer in LRU order to increase chances the relay in fact does have
-    /// a connection to the peer (a hole-punched through the peer's NAT). Relays that have expired
-    /// may be used.
-    fn get_relay_for(&mut self, receiver: &NodeId) -> Option<&NodeContact> {
-        if let Some(expirations) = self.expirations.get_mut(receiver) {
-            if let Some(relays) = self.relays.get(receiver) {
-                let mut index = expirations.len() - 1;
-                while let Some((relay, _)) = expirations.get(index) {
-                    if let Some((relay_contact, active)) = relays.get(relay) {
-                        if *active {
-                            // Move the relay to the back as it is the last recently used
-                            // relay.
-                            if let Some(entry) = expirations.remove(index) {
-                                expirations.push_back(entry);
-                            }
-                            trace!("Found relay {} for receiver {}", relay_contact, receiver);
-                            return Some(relay_contact);
-                        }
-                    }
-                    if index == 0 {
-                        break;
-                    }
-                    index -= 1;
-                }
-            }
-        }
-        None
-    }
-
-    /// Removes the expired inactive relays for a given peer.
-    fn remove_expired_inactive(&mut self, receiver: &NodeId) {
-        if let Some(expirations) = self.expirations.get_mut(receiver) {
-            if let Some(relays) = self.relays.get_mut(receiver) {
-                let expiration_time = self.expiration_time;
-                expirations.retain(|(relay, insert_time)| {
-                    if insert_time.elapsed() >= expiration_time {
-                        if let Some((_, active)) = relays.get(relay) {
-                            if !*active {
-                                relays.remove(relay);
-                                return false;
-                            }
-                        }
-                    }
-                    true
-                });
-            }
-            if self.relays.is_empty() {
-                self.relays.remove(receiver);
-            }
-        }
-    }
-
-    /// Inactivates the relay for a given receiver so that it won't be used and can't be
-    /// re-inserted until it has expired.
-    fn remove(&mut self, receiver: &NodeId, relay: &NodeId) {
-        self.remove_expired_inactive(receiver);
-        if let Some(relays) = self.relays.get_mut(receiver) {
-            if let Some((_, active)) = relays.get_mut(relay) {
-                *active = false;
-            }
-        }
-    }
 }
 
 /// When this node is a rendezvous, the id of the RELAYREQUEST from the initiator is
@@ -422,6 +317,9 @@ struct ActiveRequest {
     pub query_id: Option<QueryId>,
     /// Channel callback if this request was from a user level request.
     pub callback: Option<CallbackResponse>,
+    /// If we have learnt about this peer in a FINDNODE query, we have a relay for it incase the
+    /// query times out because this peer is behind an asymmetric NAT.
+    pub relay: Option<NodeId>,
 }
 
 /// The kinds of responses we can send back to the discv5 layer.
@@ -518,10 +416,7 @@ impl Service {
                     event_stream: None,
                     exit,
                     config: config.clone(),
-                    relays: Relays::new(
-                        config.inactive_relay_expiration,
-                        config.max_relays_per_receiver,
-                    ),
+                    query_peer_relays: Default::default(),
                     awaiting_reachable_address: AwaitingContactableEnr::new(
                         config.max_awaiting_contactable_enr,
                     ),
@@ -625,6 +520,9 @@ impl Service {
                                 RequestError::Timeout => {
                                     debug!("RPC Request timed out. id: {}", request_id);
                                 }
+                                RequestError::TimedOutHolePunchPing => {
+                                    debug!("RPC Request PING to hole punch a NAT timed out. id: {}", request_id);
+                                }
                                 _ => {
                                     warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
                                 }
@@ -652,6 +550,7 @@ impl Service {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
                                     let enr = result.target.untrusted_enrs.swap_remove(position);
                                     found_enrs.push(enr);
+                                    self.query_peer_relays.remove(&node_id);
                                 } else if let Some(enr) = self.find_enr(&node_id) {
                                     // look up from the routing table
                                     found_enrs.push(enr);
@@ -1414,6 +1313,7 @@ impl Service {
                                 request_body,
                                 query_id: None,
                                 callback: None,
+                                relay: None,
                             };
                             _ = self.send_rpc_request(active_request);
                         }
@@ -1451,22 +1351,7 @@ impl Service {
                                     self.send_ping(to_enr, true);
                                 }
                                 RelayResponseCode::Error => {
-                                    // This node is the initiator and the request to the
-                                    // rendezvous node timed out.
-                                    if from_enr.node_id() == self.local_enr.read().node_id() {
-                                        debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed Trying to find a new relay. Request id: {}.", node_id, id);
-                                        // Only give each rendezvous one chance per receiver to
-                                        // relay.
-                                        self.relays.remove(
-                                            &to_enr.node_id(),
-                                            &active_request.contact.node_id(),
-                                        );
-
-                                        if let Some(relay) = self.find_relay(to_enr.node_id()) {
-                                            let local_enr = self.local_enr.read().clone();
-                                            _ = self.send_relay_request(relay, local_enr, to_enr);
-                                        }
-                                    }
+                                    debug!("Rendezvous didn't get a response from the receiver");
                                 }
                             }
                         } else if to_enr.node_id() != local_node_id {
@@ -1503,6 +1388,7 @@ impl Service {
                 request_body,
                 query_id: None,
                 callback: None,
+                relay: None,
             };
             if is_hole_punch {
                 self.send_hole_punch_ping(active_request);
@@ -1567,6 +1453,7 @@ impl Service {
             request_body,
             query_id: None,
             callback: callback.map(CallbackResponse::Enr),
+            relay: None,
         };
         _ = self.send_rpc_request(active_request);
     }
@@ -1586,38 +1473,9 @@ impl Service {
             request_body,
             query_id: None,
             callback: Some(CallbackResponse::Talk(callback)),
+            relay: None,
         };
         _ = self.send_rpc_request(active_request);
-    }
-
-    /// Find first best connected relay and send it a RELAYREQUEST.
-    fn find_relay(&mut self, receiver: NodeId) -> Option<NodeContact> {
-        loop {
-            if let Some(active_relay) = self.relays.get_relay_for(&receiver) {
-                let node_id_relay = active_relay.node_id();
-                let key: kbucket::Key<NodeId> = node_id_relay.into();
-                let should_count = match self.kbuckets.write().entry(&key) {
-                    kbucket::Entry::Present(_, status) if status.is_connected() => {
-                        trace!("Trying to connect to peer via the NAT traversal protocol. Peer: {}, Relay: {}", receiver, active_relay);
-                        true
-                    }
-                    _ => false,
-                };
-                if should_count {
-                    return Some(active_relay.clone());
-                } else {
-                    // Remove disconnected relays
-                    self.relays.remove(&receiver, &node_id_relay);
-                }
-            } else {
-                // Request to peer timed out the max retry times, but we have
-                // no relays for the peer to attempt contacting it via the NAT
-                // traversal protocol.
-                warn!("No relays for peer {}. Unable to attempt contacting it via the NAT traversal protocol.", receiver);
-                break;
-            }
-        }
-        None
     }
 
     /// An initiator node sends a RELAYREQUEST request to a rendezvous node requesting it to help
@@ -1634,6 +1492,7 @@ impl Service {
             request_body: RequestBody::RelayRequest { from_enr, to_enr },
             query_id: None,
             callback: None,
+            relay: None,
         };
         self.send_rpc_request(active_request)
     }
@@ -1832,11 +1691,13 @@ impl Service {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
             if let Some(contact) = self.contact_from_enr(&enr) {
+                let relay = self.query_peer_relays.remove(&return_peer);
                 let active_request = ActiveRequest {
                     contact,
                     request_body,
                     query_id: Some(query_id),
                     callback: None,
+                    relay,
                 };
                 _ = self.send_rpc_request(active_request);
                 // Request successfully sent
@@ -1947,12 +1808,6 @@ impl Service {
 
         enrs.retain(|enr| {
             if self.local_enr.read().supports_feature(Feature::Nat) {
-                // Add the source of the NODES response to the potential relays for this new peer
-                // (incase it is behind an asymmetric NAT) knowingly ('nat'/'nat6' field in ENR is
-                // set) or unknowingly (a request to the peer will time out) and the NAT traversal
-                // protocol must be used to establish a connection to it.
-                _ = self.relays.insert(enr.node_id(), source.clone());
-
                 // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
                 // request directly instead of adding it to a query (avoid waiting for a request to
                 // the new peer to timeout).
@@ -1999,6 +1854,8 @@ impl Service {
                         .any(|e| e.node_id() == enr_ref.node_id())
                     {
                         query.target_mut().untrusted_enrs.push(enr_ref.clone());
+                        self.query_peer_relays
+                            .insert(enr_ref.node_id(), source.node_id());
                     }
                     peer_count += 1;
                 }
@@ -2293,9 +2150,19 @@ impl Service {
                                 // was forwarded to us in a NODES response and we hence have a
                                 // relay for it.
                                 if let Some(enr) = active_request.contact.enr() {
-                                    if let Some(relay) = self.find_relay(enr.node_id()) {
-                                        let local_enr = self.local_enr.read().clone();
-                                        _ = self.send_relay_request(relay, local_enr, enr);
+                                    if let Some(relay) = active_request.relay {
+                                        if let Some(relay_enr) = self.find_enr(&relay) {
+                                            if let Some(relay_contact) =
+                                                self.contact_from_enr(&relay_enr)
+                                            {
+                                                let local_enr = self.local_enr.read().clone();
+                                                _ = self.send_relay_request(
+                                                    relay_contact,
+                                                    local_enr,
+                                                    enr,
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -2303,24 +2170,18 @@ impl Service {
                     }
                 }
                 RequestError::UnusedHolePunchPingToReceiver
-                | RequestError::DroppedHolePunchPing => {
+                | RequestError::TimedOutHolePunchPing => {
                     // Don't update the connection if the request failed as expected according the
                     // NAT traversal protocol. A RequestError::UnusedHolePunchPingToReceiver means
                     // that a successful session has already been established. A
-                    // RequestError::DroppedHolePunchPingToInitiator happens before a session is
+                    // RequestError::DroppedHolePunchPing happens before a session is
                     // established (before the peer is inserted into the kbuckets).
                     return;
                 }
                 _ => {}
             }
 
-            if let RequestBody::RelayRequest {
-                ref from_enr,
-                to_enr,
-            } = active_request.request_body
-            {
-                // Avoid recursive relay requesting by distinguishing between a failed
-                // RELAYREQUEST to a rendezvous node and from a rendezvous node.
+            if let RequestBody::RelayRequest { ref from_enr, .. } = active_request.request_body {
                 if from_enr.node_id() != self.local_enr.read().node_id() {
                     // This node is the rendezvous, return a RELAYRESPONSE to the
                     // initiator informing it of the error.
@@ -2330,15 +2191,6 @@ impl Service {
                             relayed_request.req_id_from_initiator,
                             RelayResponseCode::Error,
                         );
-                    }
-                } else if from_enr.node_id() == self.local_enr.read().node_id() {
-                    // This node is the initiator, retry NAT traversal with a new
-                    // relay.
-                    debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to find a new relay. Request id: {}", node_id, id);
-                    self.relays.remove(&to_enr.node_id(), &node_id);
-                    if let Some(relay) = self.find_relay(to_enr.node_id()) {
-                        let local_enr = self.local_enr.read().clone();
-                        _ = self.send_relay_request(relay, local_enr, to_enr);
                     }
                 }
             }

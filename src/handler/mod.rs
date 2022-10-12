@@ -612,12 +612,8 @@ impl Handler {
             // If this was a hole-punch PING from the receiver to the initiator we expected it to
             // potentially timeout. This indicates the initiator is also behind a NAT.
             if request_call.hole_punch {
-                self.fail_request(
-                    request_call,
-                    RequestError::DroppedHolePunchPing,
-                    false,
-                )
-                .await;
+                self.fail_request(request_call, RequestError::TimedOutHolePunchPing, false)
+                    .await;
             } else {
                 self.fail_request(request_call, RequestError::Timeout, false)
                     .await;
