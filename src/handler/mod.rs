@@ -476,17 +476,21 @@ impl Handler {
                            }
                         }
                         HandlerIn::HolePunch(contact, request) => {
-                            let id = request.id.clone();
                             let node_id = contact.node_id();
-                            match self.send_request(contact, *request, true).await {
-                                Err(request_error) => {
-                                    // If the sending failed report to the application
-                                if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
-                                    warn!("Failed to inform that request failed {}", e)
-                                }
-                                }
-                                Ok(_) => {
-                                    self.hole_punch_pings.insert(node_id);
+                            // Only try to establish sessions with a peer behind a NAT with one
+                            // relay at a time.
+                            if self.hole_punch_pings.get(&node_id).is_none() {
+                                let id = request.id.clone();
+                                match self.send_request(contact, *request, true).await {
+                                    Err(request_error) => {
+                                        // If the sending failed report to the application
+                                    if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
+                                        warn!("Failed to inform that request failed {}", e)
+                                    }
+                                    }
+                                    Ok(_) => {
+                                        self.hole_punch_pings.insert(node_id);
+                                    }
                                 }
                             }
                         }
