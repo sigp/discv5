@@ -40,7 +40,7 @@ use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     sync::Arc,
     task::Poll,
@@ -213,6 +213,10 @@ pub struct Service {
     /// A queue of peers that require regular ping to check connectivity.
     peers_to_ping: HashSetDelay<NodeId>,
 
+    /// A receiver/initiator peer that a hole-punch PING is sent to is stored to make sure only
+    /// one relay is used at a time when trying to hole-punch a NAT.
+    hole_punch_pings: Arc<RwLock<HashSet<NodeId>>>,
+
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 
@@ -379,10 +383,13 @@ impl Service {
             (None, None)
         };
 
+        let hole_punch_pings = Arc::new(RwLock::new(HashSet::default()));
+
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
             local_enr.clone(),
             enr_key.clone(),
+            hole_punch_pings.clone(),
             listen_socket,
             config.clone(),
         )
@@ -412,6 +419,7 @@ impl Service {
                     handler_recv,
                     handler_exit: Some(handler_exit),
                     peers_to_ping: HashSetDelay::new(config.ping_interval),
+                    hole_punch_pings,
                     discv5_recv,
                     event_stream: None,
                     exit,
@@ -1379,6 +1387,11 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr, is_hole_punch: bool) {
+        // Only try to establish sessions with a peer behind a NAT with one
+        // relay at a time.
+        if is_hole_punch && self.hole_punch_pings.read().get(&enr.node_id()).is_some() {
+            return;
+        }
         if let Some(contact) = self.contact_from_enr(&enr) {
             let request_body = RequestBody::Ping {
                 enr_seq: self.local_enr.read().seq(),
@@ -1391,6 +1404,7 @@ impl Service {
                 relay: None,
             };
             if is_hole_punch {
+                self.hole_punch_pings.write().insert(enr.node_id());
                 self.send_hole_punch_ping(active_request);
             } else {
                 _ = self.send_rpc_request(active_request);

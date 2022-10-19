@@ -47,18 +47,24 @@ async fn simple_session_message() {
         .build(&key2)
         .unwrap();
 
+    let hole_punch_pings = Arc::new(RwLock::new(HashSet::default()));
+
     let (_exit_send, sender_send, _sender_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
+        hole_punch_pings,
         sender_enr.udp4_socket().unwrap().into(),
         config.clone(),
     )
     .await
     .unwrap();
 
+    let hole_punch_pings = Arc::new(RwLock::new(HashSet::default()));
+
     let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
+        hole_punch_pings,
         receiver_enr.udp4_socket().unwrap().into(),
         config,
     )
@@ -123,18 +129,24 @@ async fn multiple_messages() {
         .build(&key2)
         .unwrap();
 
+    let hole_punch_pings = Arc::new(RwLock::new(HashSet::default()));
+
     let (_exit_send, sender_handler, mut sender_handler_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
+        hole_punch_pings,
         sender_enr.udp4_socket().unwrap().into(),
         config.clone(),
     )
     .await
     .unwrap();
 
+    let hole_punch_pings = Arc::new(RwLock::new(HashSet::default()));
+
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
+        hole_punch_pings,
         receiver_enr.udp4_socket().unwrap().into(),
         config,
     )
