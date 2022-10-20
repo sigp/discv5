@@ -1376,8 +1376,12 @@ impl Service {
                                     debug!("Receiver doesn't want to use this rendezvous node or doesn't want to connect to the initiator (this node)")
                                 }
                                 RelayResponseCode::True => {
+                                    trace!("Sending hole punch ping...");
                                     if let Some(to_enr) = self.find_enr(&to_node_id) {
+                                        trace!("Found enr {}", to_enr);
                                         self.send_ping(to_enr, true);
+                                    } else {
+                                        trace!("Couldn't find ENR");
                                     }
                                 }
                                 RelayResponseCode::Error => {
