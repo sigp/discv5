@@ -815,7 +815,7 @@ impl Service {
                         || self.local_enr.read().udp6_socket().is_some()
                     {
                         let mut is_behind_nat = false;
-                        trace!("Peer voting to see if node is behind a asymmetric NAT");
+                        trace!("Peer voting to see if node is behind an asymmetric NAT");
                         if let Some(ref mut asymm_nat_votes) = self.asymm_nat_votes {
                             match asymm_nat_votes.vote(
                                 self.kbuckets
@@ -1859,24 +1859,26 @@ impl Service {
                             new_nat_peer = true;
                         }
                         kbucket::Entry::Present(..) | kbucket::Entry::Pending(..) => {
-                            // Keep enr and pass on to query if it is behind a NAT but has been
-                            // previously contacted.
+                            // Keep enr and pass on to query if it is behind an asymmetric NAT but
+                            // has been previously contacted.
                             return true;
                         }
                         _ => {}
                     }
                     if new_nat_peer {
+                        // Try to hole-punch peer's NAT and pass to query
                         let local_enr = self.local_enr.read().clone();
                         _ = self.send_relay_request(source.clone(), local_enr, enr.node_id());
+                        return true;
                     }
                 }
             }
             if self.config.ip_mode.get_contactable_addr(enr).is_some() {
-                // Keep enr and pass on to query if it flags it is not behind a NAT (or
-                // port-forwarded).
+                // Keep enr and pass on to query if it flags it is not behind a NAT or
+                // port-forwarded.
                 return true;
             }
-            // Also filter out peers that are behind a symmetric NAT (the latter shouldn't be
+            // Filter out peers that are behind a symmetric NAT (the latter shouldn't be
             // passed in NODES responses).
             false
         });
