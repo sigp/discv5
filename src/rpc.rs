@@ -469,13 +469,6 @@ impl Message {
                 }
                 let distances = rlp.list_at::<u64>(1)?;
 
-                if distances.len() > 10 {
-                    warn!(
-                        "Rejected FindNode request asking for too many buckets {}, maximum 10",
-                        distances.len()
-                    );
-                    return Err(DecoderError::Custom("FINDNODE request too large"));
-                }
                 for distance in distances.iter() {
                     if distance > &256u64 {
                         warn!(
