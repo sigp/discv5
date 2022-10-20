@@ -47,12 +47,11 @@ async fn build_service(
         .executor(Box::new(crate::executor::TokioExecutor::default()))
         .build();
 
-    let hole_punch_pings = Arc::new(RwLock::new(HashSet::default()));
     // build the session service
     let (_handler_exit, handler_send, handler_recv) = Handler::spawn(
         local_enr.clone(),
         enr_key.clone(),
-        hole_punch_pings.clone(),
+        None,
         listen_socket,
         config.clone(),
     )
@@ -93,7 +92,7 @@ async fn build_service(
         handler_recv,
         handler_exit: Some(_handler_exit),
         peers_to_ping: HashSetDelay::new(config.ping_interval),
-        hole_punch_pings,
+        hole_punch_pings: None,
         discv5_recv,
         event_stream: None,
         exit,

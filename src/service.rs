@@ -215,7 +215,7 @@ pub struct Service {
 
     /// A receiver/initiator peer that a hole-punch PING is sent to is stored to make sure only
     /// one relay is used at a time when trying to hole-punch a NAT.
-    hole_punch_pings: Arc<RwLock<HashSet<NodeId>>>,
+    hole_punch_pings: Option<Arc<RwLock<HashSet<NodeId>>>>,
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
@@ -383,7 +383,11 @@ impl Service {
             (None, None)
         };
 
-        let hole_punch_pings = Arc::new(RwLock::new(HashSet::default()));
+        let hole_punch_pings = if config.nat_feature {
+            Some(Arc::new(RwLock::new(HashSet::default())))
+        } else {
+            None
+        };
 
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
@@ -886,10 +890,21 @@ impl Service {
                     }
                     if self.local_enr.read().supports_feature(Feature::Nat) {
                         // Accept relay request
-                        trace!("Receiver node sending PING to initiator node");
-                        self.send_ping(from_enr, true);
-                        trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
-                        self.send_relay_response(node_address, id, RelayResponseCode::True);
+                        // Only try to establish sessions with a peer behind a NAT with one
+                        // relay at a time.
+                        if let Some(true) = self
+                            .hole_punch_pings
+                            .as_ref()
+                            .map(|pings| pings.read().get(&from_enr.node_id()).is_none())
+                        {
+                            trace!("Receiver node sending PING to initiator node");
+                            self.send_ping(from_enr, true);
+                            trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
+                            self.send_relay_response(node_address, id, RelayResponseCode::True);
+                        } else {
+                            trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
+                            self.send_relay_response(node_address, id, RelayResponseCode::False);
+                        }
                     }
                 } else if from_enr.node_id() != local_node_id {
                     // This node is the rendezvous
@@ -1387,11 +1402,6 @@ impl Service {
 
     /// Sends a PING request to a node.
     fn send_ping(&mut self, enr: Enr, is_hole_punch: bool) {
-        // Only try to establish sessions with a peer behind a NAT with one
-        // relay at a time.
-        if is_hole_punch && self.hole_punch_pings.read().get(&enr.node_id()).is_some() {
-            return;
-        }
         if let Some(contact) = self.contact_from_enr(&enr) {
             let request_body = RequestBody::Ping {
                 enr_seq: self.local_enr.read().seq(),
@@ -1404,7 +1414,9 @@ impl Service {
                 relay: None,
             };
             if is_hole_punch {
-                self.hole_punch_pings.write().insert(enr.node_id());
+                if let Some(pings) = self.hole_punch_pings.as_mut() {
+                    pings.write().insert(enr.node_id());
+                }
                 self.send_hole_punch_ping(active_request);
             } else {
                 _ = self.send_rpc_request(active_request);

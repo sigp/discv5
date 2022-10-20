@@ -347,7 +347,7 @@ pub struct Handler {
     /// receiver's hole-punch PING will be dropped but set the state table entry in its router for
     /// the initiator's hole-punch PING (which will actually be a random packet) to go through, in
     /// that case the receiver would send the WHOAREYOU message to the initiator.
-    hole_punch_pings: Arc<RwLock<HashSet<NodeId>>>,
+    hole_punch_pings: Option<Arc<RwLock<HashSet<NodeId>>>>,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Requests awaiting a handshake completion.
@@ -378,7 +378,7 @@ impl Handler {
     pub async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
-        hole_punch_pings: Arc<RwLock<HashSet<NodeId>>>,
+        hole_punch_pings: Option<Arc<RwLock<HashSet<NodeId>>>>,
         listen_socket: SocketAddr,
         config: Discv5Config,
     ) -> Result<HandlerReturn, std::io::Error> {
@@ -484,7 +484,7 @@ impl Handler {
                                 if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
                                     warn!("Failed to inform that request failed {}", e)
                                 }
-                                self.hole_punch_pings.write().remove(&node_id);
+                                self.hole_punch_pings.as_mut().map(|pings| pings.write().remove(&node_id));
                             }
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
@@ -891,11 +891,15 @@ impl Handler {
                 let connection_direction = {
                     match (
                         &request_call.initiating_session,
-                        self.hole_punch_pings.write().remove(&enr.node_id()),
+                        self.hole_punch_pings
+                            .as_mut()
+                            .map(|pings| pings.write().remove(&enr.node_id())),
                         &request_call.request.body,
                     ) {
-                        (true, false, RequestBody::Ping { .. }) => ConnectionDirection::Incoming,
-                        (_, true, RequestBody::Ping { .. }) => ConnectionDirection::Outgoing,
+                        (true, None | Some(false), RequestBody::Ping { .. }) => {
+                            ConnectionDirection::Incoming
+                        }
+                        (_, Some(true), RequestBody::Ping { .. }) => ConnectionDirection::Outgoing,
                         (true, _, _) => ConnectionDirection::Outgoing,
                         (false, _, _) => ConnectionDirection::Incoming,
                     }
@@ -1067,12 +1071,14 @@ impl Handler {
                     //
                     // In all other cases a received handshake means the connection was initiated
                     // by the remote peer (dial in).
-                    let connection_direction =
-                        if self.hole_punch_pings.write().remove(&enr.node_id()) {
-                            ConnectionDirection::Outgoing
-                        } else {
-                            ConnectionDirection::Incoming
-                        };
+                    let connection_direction = match self
+                        .hole_punch_pings
+                        .as_mut()
+                        .map(|pings| pings.write().remove(&enr.node_id()))
+                    {
+                        Some(true) => ConnectionDirection::Outgoing,
+                        _ => ConnectionDirection::Incoming,
+                    };
 
                     let routing_type =
                         if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address) {
