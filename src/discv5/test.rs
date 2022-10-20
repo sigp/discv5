@@ -143,7 +143,7 @@ fn find_seed_spread_bucket() {
                 *buckets.entry(distance).or_insert_with(|| 0) += 1;
             }
         }
-        if buckets.values().find(|v| **v > 2).is_none() {
+        if !buckets.values().any(|v| *v > 2) {
             break;
         }
         if seed % 1000 == 0 {
