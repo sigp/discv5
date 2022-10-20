@@ -138,9 +138,9 @@ async fn test_updating_connection_on_ping() {
     }
 
     // Add a fake request
-    let response = rpc::Response {
+    let response = Response {
         id: RequestId(vec![1]),
-        body: rpc::ResponseBody::Pong {
+        body: ResponseBody::Pong {
             enr_seq: 2,
             ip: ip2.into(),
             port: 10002,
@@ -154,7 +154,7 @@ async fn test_updating_connection_on_ping() {
         RequestId(vec![1]),
         ActiveRequest {
             contact: node_contact,
-            request_body: rpc::RequestBody::Ping { enr_seq: 2 },
+            request_body: RequestBody::Ping { enr_seq: 2 },
             query_id: Some(QueryId(1)),
             callback: None,
         },

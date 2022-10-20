@@ -38,8 +38,8 @@ impl IpMode {
                 // NOTE: general consensus is that ipv6 addresses should be preferred.
                 let maybe_ipv6_addr = enr.udp6_socket().and_then(|socket_addr| {
                     // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
-                    // transmited in the ENR. Here we choose to enforce canonical addresses since
-                    // it simplies the logic of matching socket_addr verification. For this we prevent
+                    // transmitted in the ENR. Here we choose to enforce canonical addresses since
+                    // it simplifies the logic of matching socket_addr verification. For this we prevent
                     // communications with Ipv4 addresses advertized in the Ipv6 field.
                     if to_ipv4_mapped(socket_addr.ip()).is_some() {
                         None

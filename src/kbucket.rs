@@ -695,7 +695,7 @@ where
     }
 
     /// Returns a reference to a bucket given the key. Returns None if bucket does not exist.
-    pub fn get_bucket<'a>(&'a self, key: &Key<TNodeId>) -> Option<&'a KBucket<TNodeId, TVal>> {
+    pub fn get_bucket(&self, key: &Key<TNodeId>) -> Option<&KBucket<TNodeId, TVal>> {
         let index = BucketIndex::new(&self.local_key.distance(key));
         if let Some(i) = index {
             let bucket = &self.buckets[i.get()];

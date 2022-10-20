@@ -246,7 +246,7 @@ impl Discv5 {
         nodes_to_send
     }
 
-    /// Mark a node in the routing table as `Disconnnected`.
+    /// Mark a node in the routing table as `Disconnected`.
     ///
     /// A `Disconnected` node will be present in the routing table and will be only
     /// used if there are no other `Connected` peers in the bucket.
