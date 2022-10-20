@@ -549,7 +549,7 @@ impl Service {
                 query_event = Service::query_event_poll(&mut self.queries) => {
                     match query_event {
                         QueryEvent::Waiting(query_id, node_id, request_body) => {
-                            self.send_rpc_query(query_id, node_id, *request_body);
+                            self.send_rpc_query(query_id, node_id, request_body);
                         }
                         // Note: Currently the distinction between a timed-out query and a finished
                         // query is superfluous, however it may be useful in future versions.
@@ -794,9 +794,12 @@ impl Service {
             RequestBody::TopicQuery { .. } => {
                 debug!("Received TopicQuery request which is unimplemented");
             }
-            RequestBody::RelayRequest { from_enr, to_enr } => {
+            RequestBody::RelayRequest {
+                from_enr,
+                to_node_id,
+            } => {
                 let local_node_id = self.local_enr.read().node_id();
-                if to_enr.node_id() == local_node_id {
+                if to_node_id == local_node_id {
                     // This node is the receiver
 
                     if from_enr.node_id() == node_address.node_id {
@@ -913,7 +916,7 @@ impl Service {
                         return;
                     }
 
-                    if to_enr.node_id() == node_address.node_id {
+                    if to_node_id == node_address.node_id {
                         debug!("Node acting as a rendezvous node for itself as receiver. Blacklisting peer: {}", node_address);
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                         PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
@@ -923,7 +926,7 @@ impl Service {
                     // Requests are only relayed to peers in the local routing table, i.e. that we
                     // have possibly passed in a NODES response to the initiator and are connected
                     // and support the NAT traversal protocol.
-                    let key = kbucket::Key::from(to_enr.node_id());
+                    let key = kbucket::Key::from(to_node_id);
                     let receiver = match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(entry, status)
                             if status.is_connected()
@@ -938,7 +941,9 @@ impl Service {
                     {
                         if let Some(contact) = self.contact_from_enr(&receiver) {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
-                            if let Ok(req_id) = self.send_relay_request(contact, from_enr, to_enr) {
+                            if let Ok(req_id) =
+                                self.send_relay_request(contact, from_enr, to_node_id)
+                            {
                                 self.relayed_requests.insert(
                                     req_id,
                                     RelayedRequest {
@@ -1360,7 +1365,7 @@ impl Service {
                 ResponseBody::RelayResponse { response } => {
                     if let RequestBody::RelayRequest {
                         ref from_enr,
-                        to_enr,
+                        to_node_id,
                     } = active_request.request_body
                     {
                         let local_node_id = self.local_enr.read().node_id();
@@ -1371,13 +1376,15 @@ impl Service {
                                     debug!("Receiver doesn't want to use this rendezvous node or doesn't want to connect to the initiator (this node)")
                                 }
                                 RelayResponseCode::True => {
-                                    self.send_ping(to_enr, true);
+                                    if let Some(to_enr) = self.find_enr(&to_node_id) {
+                                        self.send_ping(to_enr, true);
+                                    }
                                 }
                                 RelayResponseCode::Error => {
                                     debug!("Rendezvous didn't get a response from the receiver");
                                 }
                             }
-                        } else if to_enr.node_id() != local_node_id {
+                        } else if to_node_id != local_node_id {
                             // This node is the rendezvous
                             if let Some(initiator_req) = self.relayed_requests.remove(&id) {
                                 self.send_relay_response(
@@ -1511,11 +1518,14 @@ impl Service {
         &mut self,
         contact: NodeContact,
         from_enr: Enr,
-        to_enr: Enr,
+        to_node_id: NodeId,
     ) -> Result<RequestId, &str> {
         let active_request = ActiveRequest {
             contact,
-            request_body: RequestBody::RelayRequest { from_enr, to_enr },
+            request_body: RequestBody::RelayRequest {
+                from_enr,
+                to_node_id,
+            },
             query_id: None,
             callback: None,
             relay: None,
@@ -1853,8 +1863,7 @@ impl Service {
                     }
                     if new_nat_peer {
                         let local_enr = self.local_enr.read().clone();
-                        _ = self.send_relay_request(source.clone(), local_enr, enr.clone());
-                        return false;
+                        _ = self.send_relay_request(source.clone(), local_enr, enr.node_id());
                     }
                 }
             }
@@ -2175,19 +2184,17 @@ impl Service {
                                 // protocol for sending future requests to the peer, if this peer
                                 // was forwarded to us in a NODES response and we hence have a
                                 // relay for it.
-                                if let Some(enr) = active_request.contact.enr() {
-                                    if let Some(relay) = active_request.relay {
-                                        if let Some(relay_enr) = self.find_enr(&relay) {
-                                            if let Some(relay_contact) =
-                                                self.contact_from_enr(&relay_enr)
-                                            {
-                                                let local_enr = self.local_enr.read().clone();
-                                                _ = self.send_relay_request(
-                                                    relay_contact,
-                                                    local_enr,
-                                                    enr,
-                                                );
-                                            }
+                                if let Some(relay) = active_request.relay {
+                                    if let Some(relay_enr) = self.find_enr(&relay) {
+                                        if let Some(relay_contact) =
+                                            self.contact_from_enr(&relay_enr)
+                                        {
+                                            let local_enr = self.local_enr.read().clone();
+                                            _ = self.send_relay_request(
+                                                relay_contact,
+                                                local_enr,
+                                                active_request.contact.node_id(),
+                                            );
                                         }
                                     }
                                 }
@@ -2292,11 +2299,7 @@ impl Service {
             QueryPoolState::Waiting(Some((query, return_peer))) => {
                 let node_id = return_peer;
                 let request_body = query.target().rpc_request(return_peer);
-                Poll::Ready(QueryEvent::Waiting(
-                    query.id(),
-                    node_id,
-                    Box::new(request_body),
-                ))
+                Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
             }
             QueryPoolState::Timeout(query) => {
                 warn!("Query id: {:?} timed out", query.id());
@@ -2312,7 +2315,7 @@ impl Service {
 /// active query.
 enum QueryEvent {
     /// The query is waiting for a peer to be contacted.
-    Waiting(QueryId, NodeId, Box<RequestBody>),
+    Waiting(QueryId, NodeId, RequestBody),
     /// The query has timed out, possible returning peers.
     TimedOut(Box<crate::query_pool::Query<QueryInfo, NodeId, Enr>>),
     /// The query has completed successfully.

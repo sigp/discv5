@@ -1,4 +1,5 @@
 use crate::Enr;
+use enr::NodeId;
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
@@ -158,8 +159,8 @@ pub enum RequestBody {
     RelayRequest {
         /// The enr of the "initiator".
         from_enr: Enr,
-        /// The enr of the "receiver".
-        to_enr: Enr,
+        /// The node id of the "receiver".
+        to_node_id: NodeId,
     },
 }
 
@@ -255,12 +256,15 @@ impl Request {
             }
             RequestBody::RegisterTopic { .. } => buf,
             RequestBody::TopicQuery { .. } => buf,
-            RequestBody::RelayRequest { from_enr, to_enr } => {
+            RequestBody::RelayRequest {
+                from_enr,
+                to_node_id,
+            } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
                 s.append(&id.as_bytes());
                 s.append(&from_enr);
-                s.append(&to_enr);
+                s.append(&to_node_id.raw().to_vec());
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -380,11 +384,14 @@ impl std::fmt::Display for RequestBody {
             ),
             RequestBody::TopicQuery { .. } => write!(f, "TOPICQUERY"),
             RequestBody::RegisterTopic { .. } => write!(f, "REGTOPIC"),
-            RequestBody::RelayRequest { from_enr, to_enr } => write!(
+            RequestBody::RelayRequest {
+                from_enr,
+                to_node_id,
+            } => write!(
                 f,
                 "RELAYREQUEST: from_node_id: {}, to_node_id: {}",
                 from_enr.node_id(),
-                to_enr.node_id(),
+                to_node_id,
             ),
         }
     }
@@ -642,11 +649,23 @@ impl Message {
                 }
 
                 let from_enr = rlp.val_at::<Enr>(1)?;
-                let to_enr = rlp.val_at::<Enr>(2)?;
+                let to_node_id = {
+                    let node_id_bytes = rlp.val_at::<Vec<u8>>(2)?;
+                    if node_id_bytes.len() > 32 {
+                        debug!("NodeId greater than 32 bytes");
+                        return Err(DecoderError::RlpIsTooBig);
+                    }
+                    let mut node_id = [0u8; 32];
+                    node_id[32 - node_id_bytes.len()..].copy_from_slice(&node_id_bytes);
+                    NodeId::new(&node_id)
+                };
 
                 Message::Request(Request {
                     id,
-                    body: RequestBody::RelayRequest { from_enr, to_enr },
+                    body: RequestBody::RelayRequest {
+                        from_enr,
+                        to_node_id,
+                    },
                 })
             }
             11 => {
@@ -926,14 +945,18 @@ mod tests {
             .udp4(500)
             .build(&key)
             .unwrap();
-        let to_enr = EnrBuilder::new("v4")
+        let to_node_id = EnrBuilder::new("v4")
             .ip4("127.0.0.1".parse().unwrap())
             .udp4(501)
             .build(&key)
-            .unwrap();
+            .unwrap()
+            .node_id();
         let request = Message::Request(Request {
             id,
-            body: RequestBody::RelayRequest { from_enr, to_enr },
+            body: RequestBody::RelayRequest {
+                from_enr,
+                to_node_id,
+            },
         });
 
         let encoded = request.clone().encode();
