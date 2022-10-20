@@ -1269,7 +1269,7 @@ pub mod tests {
         ) -> bool {
             // Initialise filter.
             let filter = SetFilter {
-                set: value_matches_filter.then(|| value).into_iter().collect(),
+                set: value_matches_filter.then_some(value).into_iter().collect(),
             };
             bucket.filter = Some(Box::new(filter));
 

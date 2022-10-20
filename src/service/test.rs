@@ -8,7 +8,6 @@ use crate::{
     kbucket::{BucketInsertResult, KBucketsTable, NodeStatus},
     node_info::NodeContact,
     query_pool::{QueryId, QueryPool},
-    rpc,
     rpc::RequestId,
     service::{ActiveRequest, Service},
     Discv5ConfigBuilder, Enr,

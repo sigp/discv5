@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{kbucket, Discv5, *};
+use crate::{Discv5, *};
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{collections::HashMap, net::Ipv4Addr};
@@ -143,7 +143,7 @@ fn find_seed_spread_bucket() {
                 *buckets.entry(distance).or_insert_with(|| 0) += 1;
             }
         }
-        if buckets.values().find(|v| **v > 2) == None {
+        if buckets.values().find(|v| **v > 2).is_none() {
             break;
         }
         if seed % 1000 == 0 {
