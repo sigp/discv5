@@ -212,9 +212,6 @@ pub struct Service {
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 
-    /// The enrs of nodes behind NAT.
-    peers_behind_nat: HashMap<NodeId, Enr>,
-
     /// The peers behind NAT that haven't yet published their reachable address
     /// in their enr (probably because they are awaiting enough connections to
     /// ip vote on their externally reachable address).
@@ -404,7 +401,6 @@ impl Service {
                     exit,
                     config: config.clone(),
                     relays: HashMap::new(),
-                    peers_behind_nat: HashMap::new(),
                     awaiting_reachable_address: Default::default(),
                     symmetric_nat_peers_ports,
                     relayed_requests: Default::default(),
@@ -684,11 +680,11 @@ impl Service {
                         }
                     }
                     kbucket::Entry::Absent(_) => {
-                        // If this is a node behind a NAT that is pinging us because it has
-                        // discovered its externally
-                        // reachable address via ip-voting (and has updated its enr accordingly),
-                        // then request its enr
-                        // unless we haven't done so too many times already.
+                        // If upon dialing out to us this node is unaware of its externally
+                        // reachable address and is now pinging us because it has discovered its //
+                        // externally reachable address via ip-voting (and has updated its enr
+                        // accordingly), then request its enr unless we haven't done so too many
+                        // times already.
                         match self
                             .awaiting_reachable_address
                             .request_enr(&node_address.node_id)
@@ -716,10 +712,10 @@ impl Service {
                     let contact = if let Some(contact) = self.contact_from_enr(&enr) {
                         contact
                     } else {
-                        // If this PING request comes from a peer behind a NAT which has just now
-                        // discovered it's externally reachable
-                        // address, trying to make a node contact from its ENR will fail as no
-                        // address is advertised in its ENR.
+                        // If this PING request comes from a peer that was initially unknowing of
+                        // its externally reachable address which has just now discovered it's
+                        // externally reachable address, trying to make a node contact from its
+                        // ENR will fail as no address is advertised in its ENR.
                         NodeContact::new_without_enr(enr.public_key(), node_address.socket_addr)
                     };
                     self.request_enr(contact, None);
@@ -760,15 +756,12 @@ impl Service {
             RequestBody::TopicQuery { .. } => {
                 debug!("Received TopicQuery request which is unimplemented");
             }
-            RequestBody::RelayRequest {
-                from_node_enr,
-                to_node_id,
-            } => {
+            RequestBody::RelayRequest { from_enr, to_enr } => {
                 let local_node_id = self.local_enr.read().node_id();
-                if to_node_id == local_node_id {
+                if to_enr.node_id() == local_node_id {
                     // This node is the receiver
 
-                    if from_node_enr.node_id() == node_address.node_id {
+                    if from_enr.node_id() == node_address.node_id {
                         debug!("Node acting as a rendezvous node for itself as initiator. Blacklisting peer: {}", node_address);
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                         PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
@@ -810,7 +803,8 @@ impl Service {
                             if is_behind_nat {
                                 debug!("This node appears to be behind an asymmetric NAT. Updating local ENR.");
                                 let mut updated = false;
-                                let socket = self.local_enr.read().udp4_socket().map(SocketAddr::V4);
+                                let socket =
+                                    self.local_enr.read().udp4_socket().map(SocketAddr::V4);
                                 if let Some(socket) = socket {
                                     match self.local_enr.write().set_udp_socket_nat(
                                         &self.enr_key.read(),
@@ -829,9 +823,9 @@ impl Service {
                                         }
                                     }
                                 }
-                                let socket = self.local_enr.read().udp6_socket().map(SocketAddr::V6);
-                                if let Some(socket6) = socket
-                                {
+                                let socket =
+                                    self.local_enr.read().udp6_socket().map(SocketAddr::V6);
+                                if let Some(socket6) = socket {
                                     match self.local_enr.write().set_udp_socket_nat(
                                         &self.enr_key.read(),
                                         socket6.ip(),
@@ -860,13 +854,13 @@ impl Service {
                     }
                     // Accept relay request
                     trace!("Receiver node sending PING to initiator node");
-                    self.send_ping(from_node_enr, true);
+                    self.send_ping(from_enr, true);
                     trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
                     self.send_relay_response(node_address, id, RelayResponseCode::True);
-                } else if from_node_enr.node_id() != local_node_id {
+                } else if from_enr.node_id() != local_node_id {
                     // This node is the rendezvous
 
-                    if to_node_id == node_address.node_id {
+                    if to_enr.node_id() == node_address.node_id {
                         debug!("Node acting as a rendezvous node for itself as receiver. Blacklisting peer: {}", node_address);
                         let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                         PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
@@ -876,7 +870,7 @@ impl Service {
                     // Requests are only relayed to peers in the local routing table, i.e. that we
                     // have possibly passed in a NODES response to the initiator, and are
                     // connected.
-                    let key = kbucket::Key::from(to_node_id);
+                    let key = kbucket::Key::from(to_enr.node_id());
                     let receiver = match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(entry, status) if status.is_connected() => {
                             Some(entry.value().clone())
@@ -888,9 +882,7 @@ impl Service {
                     {
                         if let Some(contact) = self.contact_from_enr(&receiver) {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
-                            if let Ok(req_id) =
-                                self.send_relay_request(contact, from_node_enr, to_node_id)
-                            {
+                            if let Ok(req_id) = self.send_relay_request(contact, from_enr, to_enr) {
                                 self.relayed_requests.insert(
                                     req_id,
                                     RelayedRequest {
@@ -1008,11 +1000,6 @@ impl Service {
                                     nat_peer.ip6(),
                                 );
                                 trace!(
-                                    "NAT ip of ENR of peer: nat: {:?}, nat6: {:?}",
-                                    nat_peer.nat4(),
-                                    nat_peer.nat6(),
-                                );
-                                trace!(
                                     "Port of ENR of peer: udp: {:?}, udp6: {:?}",
                                     nat_peer.udp4(),
                                     nat_peer.udp6()
@@ -1034,28 +1021,36 @@ impl Service {
                                     );
                                     return;
                                 }
-                                if nat_peer.udp4_socket_nat().is_some()
-                                    || nat_peer.udp6_socket_nat().is_some()
-                                {
+                                if self.local_enr.read().supports_feature(Feature::Nat) {
                                     trace!(
-                                            "Received a requested ENR for node {} advertising that is behind an asymmetric NAT",
-                                            node_address
-                                        );
-                                    self.inject_session_established_nat(
-                                        nat_peer.clone(),
-                                        connection_direction,
+                                        "NAT ip of ENR of peer: nat: {:?}, nat6: {:?}",
+                                        nat_peer.nat4(),
+                                        nat_peer.nat6(),
                                     );
-                                    return;
-                                } else if nat_peer.nat4().is_some() || nat_peer.nat6().is_some() {
-                                    trace!(
-                                        "Received a requested ENR for node {} advertising that it is behind a symmetric NAT",
+                                    if nat_peer.udp4_socket_nat().is_some()
+                                        || nat_peer.udp6_socket_nat().is_some()
+                                    {
+                                        trace!(
+                                        "Received a requested ENR for node {} advertising that is behind an asymmetric NAT",
                                         node_address
                                     );
-                                    self.inject_session_established_nat_symmetric(
-                                        nat_peer.clone(),
-                                        node_address.socket_addr.port(),
-                                    );
-                                    return;
+                                        self.inject_session_established_nat(
+                                            nat_peer.clone(),
+                                            connection_direction,
+                                        );
+                                        return;
+                                    } else if nat_peer.nat4().is_some() || nat_peer.nat6().is_some()
+                                    {
+                                        trace!(
+                                    "Received a requested ENR for node {} advertising that it is behind a symmetric NAT",
+                                    node_address
+                                );
+                                        self.inject_session_established_nat_symmetric(
+                                            nat_peer.clone(),
+                                            node_address.socket_addr.port(),
+                                        );
+                                        return;
+                                    }
                                 }
                             }
                         }
@@ -1150,10 +1145,7 @@ impl Service {
 
                     // Only count votes that are from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
-                    let should_count = matches!(
-                        self.kbuckets.write().entry(&key),
-                        kbucket::Entry::Present(_, status)
-                            if status.is_connected() && !status.is_incoming());
+                    let should_count = matches!(self.kbuckets.write().entry(&key), kbucket::Entry::Present(_, status) if status.is_connected() && !status.is_incoming());
 
                     if should_count {
                         trace!("Counting ip vote from peer {}", node_id);
@@ -1166,7 +1158,8 @@ impl Service {
                             match majority4 {
                                 Some(Address::SymmetricNAT(ip)) => {
                                     trace!("A WAN reachable address {} found for this node which appears to be behind a symmetric NAT as no general port could be found", ip);
-                                    // Check if our advertised external IP address needs to be updated.
+                                    // Check if our advertised external IP address needs to be
+                                    // updated.
                                     if Some(socket.ip())
                                         != self.local_enr.read().nat4().map(IpAddr::V4)
                                     {
@@ -1190,7 +1183,8 @@ impl Service {
                                         "A WAN reachable address {} found for this node",
                                         socket
                                     );
-                                    // Check if our advertised external IP address needs to be updated.
+                                    // Check if our advertised external IP address needs to be
+                                    // updated.
                                     if Some(socket)
                                         != self.local_enr.read().udp4_socket().map(SocketAddr::V4)
                                     {
@@ -1216,14 +1210,15 @@ impl Service {
                             match majority6 {
                                 Some(Address::SymmetricNAT(ip)) => {
                                     trace!("A WAN reachable address ipv6 {} found for this node which appears to be behind a symmetric NAT as no general port could be found", ip);
-                                    // Check if our advertised external IP address needs to be updated.
+                                    // Check if our advertised external IP address needs to be
+                                    // updated.
                                     if Some(socket.ip())
                                         != self.local_enr.read().nat6().map(IpAddr::V6)
                                     {
-                                        // WARNING: In the case of a symmetric NAT the port field will
-                                        // be None or non-existent. The node receiving the connection
-                                        // is responsible for storing the port used for the connection
-                                        // from the peer behind a symmetric NAT.
+                                        // WARNING: In the case of a symmetric NAT the port field
+                                        // will be None or non-existent. The node receiving the
+                                        // connection is responsible for storing the port used for
+                                        // the connection from the peer behind a symmetric NAT.
                                         match self.local_enr.write().set_udp_socket_nat(
                                             &self.enr_key.read(),
                                             socket.ip(),
@@ -1244,7 +1239,8 @@ impl Service {
                                         "A WAN reachable ipv6 address {} found for this node",
                                         socket
                                     );
-                                    // Check if our advertised external IP address needs to be updated.
+                                    // Check if our advertised external IP address needs to be
+                                    // updated.
                                     if Some(socket)
                                         != self.local_enr.read().udp6_socket().map(SocketAddr::V6)
                                     {
@@ -1306,44 +1302,36 @@ impl Service {
                 }
                 ResponseBody::RelayResponse { response } => {
                     if let RequestBody::RelayRequest {
-                        ref from_node_enr,
-                        to_node_id,
+                        ref from_enr,
+                        to_enr,
                     } = active_request.request_body
                     {
                         let local_node_id = self.local_enr.read().node_id();
-                        if from_node_enr.node_id() == local_node_id {
+                        if from_enr.node_id() == local_node_id {
                             // This node is the initiator
                             match response {
                                 RelayResponseCode::False => {
                                     debug!("Receiver doesn't want to use this rendezvous node or doesn't want to connect to the initiator (this node)")
                                 }
                                 RelayResponseCode::True => {
-                                    if let Some(receiver_enr) =
-                                        self.peers_behind_nat.get(&to_node_id)
-                                    {
-                                        self.send_ping(receiver_enr.clone(), true);
-                                    }
+                                    self.send_ping(to_enr, true);
                                 }
                                 RelayResponseCode::Error => {
                                     // This node is the initiator and the request to the
                                     // rendezvous node timed out.
-                                    if from_node_enr.node_id() == self.local_enr.read().node_id() {
+                                    if from_enr.node_id() == self.local_enr.read().node_id() {
                                         debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed Trying to find a new relay. Request id: {}.", node_id, id);
-                                        if let Some(relays) = self.relays.get_mut(&to_node_id) {
+                                        if let Some(relays) = self.relays.get_mut(&to_enr.node_id())
+                                        {
                                             // Only give each rendezvous one chance per
                                             // receiver to relay.
                                             relays.remove(&active_request.contact);
                                         }
-                                        _ = self.find_relay_and_send_relay_request(to_node_id);
+                                        _ = self.find_relay_and_send_relay_request(to_enr);
                                     }
                                 }
                             }
-                            if let RelayResponseCode::True = response {
-                                if let Some(receiver_enr) = self.peers_behind_nat.get(&to_node_id) {
-                                    self.send_ping(receiver_enr.clone(), true);
-                                }
-                            }
-                        } else if to_node_id != local_node_id {
+                        } else if to_enr.node_id() != local_node_id {
                             // This node is the rendezvous
                             if let Some(initiator_req) = self.relayed_requests.remove(&id) {
                                 self.send_relay_response(
@@ -1465,9 +1453,9 @@ impl Service {
     }
 
     /// Find first best connected relay and send it a RELAYREQUEST.
-    fn find_relay_and_send_relay_request(&mut self, receiver: NodeId) -> Result<RequestId, &str> {
+    fn find_relay_and_send_relay_request(&mut self, receiver: Enr) -> Result<RequestId, &str> {
         let local_enr = self.local_enr.read().clone();
-        if let Some(active_relays) = self.relays.get_mut(&receiver) {
+        if let Some(active_relays) = self.relays.get_mut(&receiver.node_id()) {
             for contact_relay in active_relays.clone() {
                 let key: kbucket::Key<NodeId> = contact_relay.node_id().into();
                 let should_count = match self.kbuckets.write().entry(&key) {
@@ -1499,15 +1487,12 @@ impl Service {
     fn send_relay_request(
         &mut self,
         contact: NodeContact,
-        initiator: Enr,
-        receiver: NodeId,
+        from_enr: Enr,
+        to_enr: Enr,
     ) -> Result<RequestId, &str> {
         let active_request = ActiveRequest {
             contact,
-            request_body: RequestBody::RelayRequest {
-                from_node_enr: initiator,
-                to_node_id: receiver,
-            },
+            request_body: RequestBody::RelayRequest { from_enr, to_enr },
             query_id: None,
             callback: None,
         };
@@ -1814,18 +1799,15 @@ impl Service {
         });
 
         enrs.retain(|enr| {
-            let nat_node_id = enr.node_id();
             // Add the source of the NODES response to the potential relays for this new peer
             // (incase it is behind an asymmetric NAT)
-            let relays = self.relays.entry(nat_node_id).or_default();
+            let relays = self.relays.entry(enr.node_id()).or_default();
             relays.insert(source.clone());
 
             // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
             // request directly instead of adding it to a query (avoid waiting for a request to
             // the new peer to timeout).
             if self.config.ip_mode.get_contactable_addr_nat(enr).is_some() {
-                self.peers_behind_nat.insert(enr.node_id(), enr.clone());
-
                 let key = kbucket::Key::from(enr.node_id());
                 let mut new_nat_peer = false;
                 match self.kbuckets.write().entry(&key) {
@@ -1841,7 +1823,7 @@ impl Service {
                 }
                 if new_nat_peer {
                     let local_enr = self.local_enr.read().clone();
-                    _ = self.send_relay_request(source.clone(), local_enr, nat_node_id);
+                    _ = self.send_relay_request(source.clone(), local_enr, enr.clone());
                     return false;
                 }
             } else if self.config.ip_mode.get_contactable_addr(enr).is_some() {
@@ -2144,13 +2126,13 @@ impl Service {
                 RequestError::Timeout => {
                     match active_request.request_body {
                         RequestBody::RelayRequest {
-                            ref from_node_enr,
-                            to_node_id,
+                            ref from_enr,
+                            to_enr,
                         } => {
                             // Avoid recursive relay requesting by distinguishing between a
                             // timeout of a RELAYREQUEST to a rendezvous node and from a
                             // rendezvous node.
-                            if from_node_enr.node_id() != self.local_enr.read().node_id() {
+                            if from_enr.node_id() != self.local_enr.read().node_id() {
                                 // This node is the rendezvous, return a RELAYRESPONSE to the
                                 // initiator informing it of the error.
                                 if let Some(relayed_request) = self.relayed_requests.remove(&id) {
@@ -2160,14 +2142,14 @@ impl Service {
                                         RelayResponseCode::Error,
                                     );
                                 }
-                            } else if from_node_enr.node_id() == self.local_enr.read().node_id() {
+                            } else if from_enr.node_id() == self.local_enr.read().node_id() {
                                 // This node is the initiator, retry NAT traversal with a new
                                 // relay.
                                 debug!("RPC Request RELAYREQUEST via (rendezvous node) {} failed. Trying to find a new relay. Request id: {}", node_id, id);
-                                if let Some(relays) = self.relays.get_mut(&to_node_id) {
+                                if let Some(relays) = self.relays.get_mut(&to_enr.node_id()) {
                                     relays.remove(&active_request.contact);
                                 }
-                                _ = self.find_relay_and_send_relay_request(to_node_id);
+                                _ = self.find_relay_and_send_relay_request(to_enr);
                             }
                         }
                         _ => {
@@ -2177,7 +2159,9 @@ impl Service {
                                 // protocol for sending future requests to the peer, if this peer
                                 // was forwarded to us in a NODES response and we hence have a
                                 // relay for it.
-                                _ = self.find_relay_and_send_relay_request(node_id);
+                                if let Some(enr) = active_request.contact.enr() {
+                                    _ = self.find_relay_and_send_relay_request(enr);
+                                }
                             }
                         }
                     }

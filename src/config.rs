@@ -264,20 +264,35 @@ impl Discv5ConfigBuilder {
     /// Allows nodes behind a symmetric NAT in kbuckets. These nodes are only connected
     /// to nodes they dial and will not be included in NODES responses.
     pub fn include_symmetric_nat(&mut self) -> &mut Self {
-        self.config.include_symmetric_nat = true;
+        if self.config.nat_feature {
+            self.config.include_symmetric_nat = true;
+        }
         self
     }
 
     /// Limits the number of nodes behind a symmetric NAT per bucket when set to true.
-    /// Only makes sense to set if this node supports the NAT traversal protocol, i.e.
-    /// if nat_feature is set to true, and include_symmetric_nat is set to true.
-    pub fn nat_limit(&mut self, limit_nat: bool) -> &mut Self {
-        self.config.nat_limit = limit_nat;
+    /// Only makes sense to set if this node supports the NAT traversal protocol and
+    /// include_symmetric_nat is set to true.
+    pub fn symmetric_nat_limit(&mut self, limit_nat: bool) -> &mut Self {
+        if self.config.nat_feature && self.config.include_symmetric_nat {
+            self.config.nat_limit = limit_nat;
+        }
         self
     }
 
-    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
-    /// than the bucket size (16). By default, half of every bucket (8 positions) is the largest number of nodes that we accept that dial us.
+    /// Limits the number of nodes behind an asymmetric NAT per bucket when set to true.
+    /// Only makes sense to set if this node supports the NAT traversal protocol and
+    /// include_symmetric_nat is set to true.
+    pub fn asymmetric_nat_limit(&mut self, limit_nat: bool) -> &mut Self {
+        if self.config.nat_feature {
+            self.config.nat_limit = limit_nat;
+        }
+        self
+    }
+
+    /// Sets a maximum limit to the number of incoming nodes (nodes that have dialed us) to exist
+    /// per-bucket. This cannot be larger than the bucket size (16). By default, half of every
+    /// bucket (8 positions) is the largest number of nodes that we accept that dial us.
     pub fn incoming_bucket_limit(&mut self, limit: usize) -> &mut Self {
         self.config.incoming_bucket_limit = limit;
         self
@@ -290,7 +305,9 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// The time between pings to ensure connectivity amongst connected nodes.
+    /// The time between pings to ensure connectivity amongst connected nodes. If this node
+    /// is behind a NAT setting this will have no effect as the  node is required to ping its
+    /// peers at a certain interval to ensure its NAT is hole punched.
     pub fn ping_interval(&mut self, interval: Duration) -> &mut Self {
         self.config.ping_interval = interval;
         self

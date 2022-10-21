@@ -290,13 +290,10 @@ impl RequestCall {
         default_timeout: Duration,
         max_retires: u8,
     ) -> Duration {
-        if let RequestBody::RelayRequest {
-            ref from_node_enr, ..
-        } = self.request.body
-        {
+        if let RequestBody::RelayRequest { ref from_enr, .. } = self.request.body {
             // If this node is the initiator of the RELAYREQUEST, also wait for the duration of
             // request timeout as many times as a the RELAYREQUEST to the receiver is set to retry.
-            if from_node_enr.node_id() == *local_node_id {
+            if from_enr.node_id() == *local_node_id {
                 return default_timeout * max_retires.into() + default_timeout;
             }
         }
@@ -305,12 +302,10 @@ impl RequestCall {
 
     fn max_retries(&self, local_node_id: &NodeId, max_retires: u8) -> u8 {
         match self.request.body {
-            RequestBody::RelayRequest {
-                ref from_node_enr, ..
-            } => {
+            RequestBody::RelayRequest { ref from_enr, .. } => {
                 // If this node is the initiator and the request to the rendezvous node timed out,
                 // a new relay (rendezvous node) should be used instead of retrying.
-                if *local_node_id == from_node_enr.node_id() {
+                if *local_node_id == from_enr.node_id() {
                     0
                 } else {
                     max_retires

@@ -1,4 +1,4 @@
-use crate::{enr::NodeId, Enr};
+use crate::Enr;
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
@@ -156,10 +156,10 @@ pub enum RequestBody {
     /// A RELAYREQUEST request, sent by the "initiator" to the "receiver" via the
     /// "rendezvous".
     RelayRequest {
-        /// The node id of the "initiator".
-        from_node_enr: Enr,
-        /// The node id of the "receiver".
-        to_node_id: NodeId,
+        /// The enr of the "initiator".
+        from_enr: Enr,
+        /// The enr of the "receiver".
+        to_enr: Enr,
     },
 }
 
@@ -255,15 +255,12 @@ impl Request {
             }
             RequestBody::RegisterTopic { .. } => buf,
             RequestBody::TopicQuery { .. } => buf,
-            RequestBody::RelayRequest {
-                from_node_enr,
-                to_node_id,
-            } => {
+            RequestBody::RelayRequest { from_enr, to_enr } => {
                 let mut s = RlpStream::new();
                 s.begin_list(3);
                 s.append(&id.as_bytes());
-                s.append(&from_node_enr);
-                s.append(&to_node_id.raw().to_vec());
+                s.append(&from_enr);
+                s.append(&to_enr);
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -383,14 +380,11 @@ impl std::fmt::Display for RequestBody {
             ),
             RequestBody::TopicQuery { .. } => write!(f, "TOPICQUERY"),
             RequestBody::RegisterTopic { .. } => write!(f, "REGTOPIC"),
-            RequestBody::RelayRequest {
-                from_node_enr,
-                to_node_id,
-            } => write!(
+            RequestBody::RelayRequest { from_enr, to_enr } => write!(
                 f,
                 "RELAYREQUEST: from_node_id: {}, to_node_id: {}",
-                from_node_enr.node_id(),
-                to_node_id
+                from_enr.node_id(),
+                to_enr.node_id(),
             ),
         }
     }
@@ -647,25 +641,12 @@ impl Message {
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
 
-                let from_node_enr = rlp.val_at::<Enr>(1)?;
-
-                let to_node_id = {
-                    let node_id_bytes = rlp.val_at::<Vec<u8>>(2)?;
-                    if node_id_bytes.len() > 32 {
-                        debug!("NodeId greater than 32 bytes");
-                        return Err(DecoderError::RlpIsTooBig);
-                    }
-                    let mut node_id = [0u8; 32];
-                    node_id[32 - node_id_bytes.len()..].copy_from_slice(&node_id_bytes);
-                    NodeId::new(&node_id)
-                };
+                let from_enr = rlp.val_at::<Enr>(1)?;
+                let to_enr = rlp.val_at::<Enr>(2)?;
 
                 Message::Request(Request {
                     id,
-                    body: RequestBody::RelayRequest {
-                        from_node_enr,
-                        to_node_id,
-                    },
+                    body: RequestBody::RelayRequest { from_enr, to_enr },
                 })
             }
             11 => {
@@ -940,17 +921,19 @@ mod tests {
     fn encode_decode_relay_request() {
         let id = RequestId(vec![1]);
         let key = enr::CombinedKey::generate_secp256k1();
-        let from_node_enr = EnrBuilder::new("v4")
+        let from_enr = EnrBuilder::new("v4")
             .ip4("127.0.0.1".parse().unwrap())
             .udp4(500)
             .build(&key)
             .unwrap();
+        let to_enr = EnrBuilder::new("v4")
+            .ip4("127.0.0.1".parse().unwrap())
+            .udp4(501)
+            .build(&key)
+            .unwrap();
         let request = Message::Request(Request {
             id,
-            body: RequestBody::RelayRequest {
-                from_node_enr,
-                to_node_id: NodeId::random(),
-            },
+            body: RequestBody::RelayRequest { from_enr, to_enr },
         });
 
         let encoded = request.clone().encode();
