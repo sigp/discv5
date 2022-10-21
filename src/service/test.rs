@@ -85,6 +85,7 @@ async fn build_service(
         active_requests: Default::default(),
         active_nodes_responses: HashMap::new(),
         ip_votes: None,
+        asymm_nat_votes: None,
         handler_send,
         handler_recv,
         handler_exit: Some(_handler_exit),

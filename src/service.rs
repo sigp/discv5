@@ -14,7 +14,7 @@
 //! secp256k1 keys are supported currently.
 
 use self::{
-    ip_vote::{Address, IpVote},
+    peer_vote::{Address, AsymmNatVote, IpVote, Vote},
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
@@ -41,7 +41,7 @@ use parking_lot::RwLock;
 use rpc::*;
 use std::{
     collections::{HashMap, HashSet},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     task::Poll,
     time::Instant,
@@ -49,7 +49,7 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
-mod ip_vote;
+mod peer_vote;
 mod query_info;
 mod test;
 
@@ -180,6 +180,10 @@ pub struct Service {
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
     ip_votes: Option<IpVote>,
+
+    /// A map of votes nodes have made about the connection direction of our connections helping
+    /// us determine if we are behind an asymmetric NAT.
+    asymm_nat_votes: Option<AsymmNatVote>,
 
     /// The channel to send messages to the handler.
     handler_send: mpsc::UnboundedSender<HandlerIn>,
@@ -344,6 +348,15 @@ impl Service {
             None
         };
 
+        let asymm_nat_votes = if config.enr_update && CHECK_VERSION(&local_enr.read(), vec![NAT]) {
+            Some(AsymmNatVote::new(
+                config.enr_peer_update_min,
+                config.vote_duration,
+            ))
+        } else {
+            None
+        };
+
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
             local_enr.clone(),
@@ -376,6 +389,7 @@ impl Service {
                     active_requests: Default::default(),
                     active_nodes_responses: HashMap::new(),
                     ip_votes,
+                    asymm_nat_votes,
                     handler_send,
                     handler_recv,
                     handler_exit: Some(handler_exit),
@@ -791,6 +805,70 @@ impl Service {
                 let local_node_id = self.local_enr.read().node_id();
                 if to_node_id == local_node_id {
                     // This node is the receiver
+                    let mut is_behind_nat = false;
+                    if let Some(ref mut asymm_nat_votes) = self.asymm_nat_votes {
+                        // If this node is advetising that it is not behind a NAT, we do a peer vote
+                        // to verify this.
+                        is_behind_nat = self.local_enr.read().ip4().is_some()
+                            || self.local_enr.read().ip6().is_some();
+
+                        if !is_behind_nat {
+                            asymm_nat_votes.insert(from_node_enr.node_id());
+                            is_behind_nat = asymm_nat_votes.vote().is_some();
+                        }
+                    }
+
+                    let update = |service: &mut Service| -> Option<(Ipv4Addr, u16)> {
+                        if let Some(ip4) = service.local_enr.read().ip4() {
+                            if let Some(udp4) = service.local_enr.read().udp4() {
+                                return Some((ip4, udp4));
+                            }
+                        }
+                        None
+                    };
+                    let update6 = |service: &mut Service| -> Option<(Ipv6Addr, u16)> {
+                        if let Some(ip6) = service.local_enr.read().ip6() {
+                            if let Some(udp6) = service.local_enr.read().udp6() {
+                                return Some((ip6, udp6));
+                            }
+                        }
+                        None
+                    };
+
+                    if is_behind_nat {
+                        if let Some((ip4, udp4)) = update(self) {
+                            trace!("Updating local enr based on peer votes to advertise node is behind an asymmetric NAT");
+
+                            match self.update_enr_nat(ip4, Some(udp4)) {
+                                Ok(_) => {
+                                    info!("Local NAT ipv4 address updated to: {}", ip4);
+                                    self.send_event(Discv5Event::NATUpdated(SocketAddr::V4(
+                                        SocketAddrV4::new(ip4, udp4),
+                                    )));
+                                    self.ping_connected_peers();
+                                }
+                                Err(e) => {
+                                    warn!("Failed to update local NAT ipv6 address. ipv6: {}, error: {:?}", ip4, e);
+                                }
+                            }
+                        }
+                        if let Some((ip6, udp6)) = update6(self) {
+                            trace!("Updating local enr for nat6 based on peer votes to advertise node is behind an asymmetric NAT");
+
+                            match self.update_enr_nat(ip6, Some(udp6)) {
+                                Ok(_) => {
+                                    info!("Local NAT ipv4 address updated to: {}", ip6);
+                                    self.send_event(Discv5Event::NATUpdated(SocketAddr::V6(
+                                        SocketAddrV6::new(ip6, udp6, 0, 0),
+                                    )));
+                                    self.ping_connected_peers();
+                                }
+                                Err(e) => {
+                                    warn!("Failed to update local NAT ipv6 address. ipv6: {}, error: {:?}", ip6, e);
+                                }
+                            }
+                        }
+                    }
                     // Accept relay request
                     trace!("Receiver node sending PING to initiator node");
                     self.send_ping(from_node_enr);
@@ -1096,81 +1174,9 @@ impl Service {
                         trace!("Counting ip vote from peer {}", node_id);
                         if let Some(ref mut ip_votes) = self.ip_votes {
                             ip_votes.insert(node_id, socket);
-                            let (majority4, majority6) = ip_votes.majority();
+                            let (majority4, majority6) = ip_votes.vote();
 
                             let mut updated = false;
-
-                            let update_nat = |service: &mut Service,
-                                              ip: IpAddr,
-                                              port: Option<u16>|
-                             -> Result<(), EnrError> {
-                                let mut local_enr = service.local_enr.write();
-                                match ip {
-                                    IpAddr::V4(ip4) => {
-                                        trace!("Inserting reachable address {} for node behind NAT into local enr's 'nat' field", ip4);
-                                        let res = local_enr.insert(
-                                            "nat",
-                                            &ip4.octets(),
-                                            &service.enr_key.read(),
-                                        );
-                                        if let Err(e) = res {
-                                            return Err(e);
-                                        }
-                                        trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into loal enr's 'nat' field", ip4, port);
-                                        if let Some(port) = port {
-                                            let res = local_enr.insert(
-                                                "udp",
-                                                &port.to_be_bytes(),
-                                                &service.enr_key.read(),
-                                            );
-                                            if let Err(e) = res {
-                                                return Err(e);
-                                            }
-                                        } else {
-                                            let res = local_enr.insert(
-                                                "udp",
-                                                b"",
-                                                &service.enr_key.read(),
-                                            );
-                                            if let Err(e) = res {
-                                                return Err(e);
-                                            }
-                                        }
-                                    }
-                                    IpAddr::V6(ip6) => {
-                                        trace!("Inserting reachable address {} for node behind NAT into local enr's 'nat6' field", ip6);
-                                        let res = local_enr.insert(
-                                            "nat6",
-                                            &ip6.octets(),
-                                            &service.enr_key.read(),
-                                        );
-                                        if let Err(e) = res {
-                                            return Err(e);
-                                        }
-                                        trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into loal enr's 'nat6' field", ip6, port);
-                                        if let Some(port) = port {
-                                            let res = local_enr.insert(
-                                                "udp6",
-                                                &port.to_be_bytes(),
-                                                &service.enr_key.read(),
-                                            );
-                                            if let Err(e) = res {
-                                                return Err(e);
-                                            }
-                                        } else {
-                                            let res = local_enr.insert(
-                                                "udp6",
-                                                b"",
-                                                &service.enr_key.read(),
-                                            );
-                                            if let Err(e) = res {
-                                                return Err(e);
-                                            }
-                                        }
-                                    }
-                                }
-                                Ok(())
-                            };
 
                             if let Some(Address::SymmetricNAT(ip)) = majority4 {
                                 trace!("A WAN reachable address {} found for this node which appears to be behind a symmetric NAT", ip);
@@ -1186,7 +1192,7 @@ impl Service {
                                     });
                                 // Check if our advertised external IP address needs to be updated.
                                 if Some(socket.ip()) != local_nat4.map(IpAddr::V4) {
-                                    match update_nat(self, socket.ip(), None) {
+                                    match self.update_enr_nat(socket.ip(), None) {
                                         Ok(_) => {
                                             updated = true;
                                             info!("Local NAT ip address updated to {}", ip);
@@ -1240,7 +1246,7 @@ impl Service {
                                     // WARNING: In the case of a symmetric NAT the port field on the enr will not be removed but set to 0!
                                     // The node receiving the connection is responsible for storing the port used for the connection from
                                     // the peer behind a symmetric NAT.
-                                    match update_nat(self, socket.ip(), None) {
+                                    match self.update_enr_nat(socket.ip(), None) {
                                         Ok(_) => {
                                             updated = true;
                                             info!("Local NAT ipv6 address updated to: {}", ip);
@@ -1979,6 +1985,7 @@ impl Service {
             "Session established with Node: {}, direction: {}",
             node_id, direction
         );
+
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
     }
 
@@ -2110,6 +2117,67 @@ impl Service {
             }
             self.connection_updated(node_id, ConnectionStatus::Disconnected);
         }
+    }
+
+    fn update_enr_nat(
+        &mut self,
+        ip: impl std::convert::Into<IpAddr>,
+        port: Option<u16>,
+    ) -> Result<(), EnrError> {
+        let mut local_enr = self.local_enr.write();
+        let ip = ip.into();
+
+        match ip {
+            IpAddr::V4(ip4) => {
+                trace!("Inserting reachable address {} for node behind NAT into local enr's 'nat' field", ip4);
+                let res = local_enr.insert("nat", &ip4.octets(), &self.enr_key.read());
+                if let Err(e) = res {
+                    return Err(e);
+                }
+                trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into loal enr's 'nat' field", ip4, port);
+                if let Some(port) = port {
+                    let res = local_enr.insert("udp", &port.to_be_bytes(), &self.enr_key.read());
+                    if let Err(e) = res {
+                        return Err(e);
+                    }
+                } else {
+                    let res = local_enr.insert("udp", b"", &self.enr_key.read());
+                    if let Err(e) = res {
+                        return Err(e);
+                    }
+                }
+                trace!("Emptying 'ip' field in local enr");
+                let res = local_enr.insert("ip", b"", &self.enr_key.read());
+                if let Err(e) = res {
+                    return Err(e);
+                }
+            }
+            IpAddr::V6(ip6) => {
+                trace!("Inserting reachable address {} for node behind NAT into local enr's 'nat6' field", ip6);
+                let res = local_enr.insert("nat6", &ip6.octets(), &self.enr_key.read());
+                if let Err(e) = res {
+                    return Err(e);
+                }
+                trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into loal enr's 'nat6' field", ip6, port);
+                if let Some(port) = port {
+                    let res = local_enr.insert("udp6", &port.to_be_bytes(), &self.enr_key.read());
+                    if let Err(e) = res {
+                        return Err(e);
+                    }
+                } else {
+                    let res = local_enr.insert("udp6", b"", &self.enr_key.read());
+                    if let Err(e) = res {
+                        return Err(e);
+                    }
+                }
+                trace!("Emptying 'ip6' field in local enr");
+                let res = local_enr.insert("ip6", b"", &self.enr_key.read());
+                if let Err(e) = res {
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
