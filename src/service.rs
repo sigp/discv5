@@ -40,7 +40,7 @@ use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rpc::*;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     sync::Arc,
     task::Poll,
@@ -1878,8 +1878,8 @@ impl Service {
                         let local_enr = self.local_enr.read().clone();
                         let to_node_id = enr.node_id();
                         // Finish one relay request to a given peer before starting another
-                        if !self.receiver_enrs.contains_key(&to_node_id) {
-                            self.receiver_enrs.insert(to_node_id, enr.clone());
+                        if let Entry::Vacant(e) = self.receiver_enrs.entry(to_node_id) {
+                            e.insert(enr.clone());
                             _ = self.send_relay_request(source.clone(), local_enr, to_node_id);
                         }
                         return false;
@@ -2213,8 +2213,10 @@ impl Service {
                                                 let to_node_id = enr.node_id();
                                                 // Finish one relay request to a given peer before
                                                 // starting another
-                                                if !self.receiver_enrs.contains_key(&to_node_id) {
-                                                    self.receiver_enrs.insert(to_node_id, enr);
+                                                if let Entry::Vacant(e) =
+                                                    self.receiver_enrs.entry(to_node_id)
+                                                {
+                                                    e.insert(enr);
                                                     _ = self.send_relay_request(
                                                         relay_contact,
                                                         local_enr,
