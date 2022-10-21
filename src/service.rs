@@ -1379,6 +1379,9 @@ impl Service {
                                     trace!("Sending hole punch ping...");
                                     if let Some(to_enr) = self.find_enr(&to_node_id) {
                                         trace!("Found enr {}", to_enr);
+                                        if let Some(pings) = self.hole_punch_pings.as_mut() {
+                                            pings.write().insert(to_enr.node_id());
+                                        }
                                         self.send_ping(to_enr, true);
                                     } else {
                                         trace!("Couldn't find ENR");
@@ -1425,9 +1428,6 @@ impl Service {
                 relay: None,
             };
             if is_hole_punch {
-                if let Some(pings) = self.hole_punch_pings.as_mut() {
-                    pings.write().insert(enr.node_id());
-                }
                 self.send_hole_punch_ping(active_request);
             } else {
                 _ = self.send_rpc_request(active_request);
@@ -1878,8 +1878,8 @@ impl Service {
                 // port-forwarded.
                 return true;
             }
-            // Filter out peers that are behind a symmetric NAT (the latter shouldn't be
-            // passed in NODES responses).
+            // Filter out peers that are behind a symmetric NAT or have uncontactable ENRs
+            // (shouldn't be passed in NODES responses).
             false
         });
 
