@@ -112,7 +112,7 @@ impl Socket {
     }
 }
 
-impl std::ops::Drop for Socket {
+impl Drop for Socket {
     // close the send/recv handlers
     fn drop(&mut self) {
         let _ = self

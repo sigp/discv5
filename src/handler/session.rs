@@ -65,7 +65,7 @@ impl Session {
         // If the message nonce length is ever set below 4 bytes this will explode. The packet
         // size constants shouldn't be modified.
         let random_nonce: [u8; MESSAGE_NONCE_LENGTH - 4] = rand::random();
-        let mut message_nonce: MessageNonce = [0u8; crate::packet::MESSAGE_NONCE_LENGTH];
+        let mut message_nonce: MessageNonce = [0u8; MESSAGE_NONCE_LENGTH];
         message_nonce[..4].copy_from_slice(&self.counter.to_be_bytes());
         message_nonce[4..].copy_from_slice(&random_nonce);
 

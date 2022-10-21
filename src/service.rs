@@ -300,7 +300,7 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
-        tracing::info!("{:?}", self.config.ip_mode);
+        info!("{:?}", self.config.ip_mode);
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -362,7 +362,7 @@ impl Service {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
                                 if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
-                                    warn!("Failed to send who are you to unknonw enr peer {}", e);
+                                    warn!("Failed to send who are you to unknown enr peer {}", e);
                                 }
                             }
                         }
@@ -770,14 +770,10 @@ impl Service {
 
                     // Only count votes that from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
-                    let should_count = match self.kbuckets.write().entry(&key) {
+                    let should_count = matches!(
+                        self.kbuckets.write().entry(&key),
                         kbucket::Entry::Present(_, status)
-                            if status.is_connected() && !status.is_incoming() =>
-                        {
-                            true
-                        }
-                        _ => false,
-                    };
+                            if status.is_connected() && !status.is_incoming());
 
                     if should_count {
                         // get the advertised local addresses
@@ -1043,7 +1039,7 @@ impl Service {
                 // `total` field. Also there is a 16 byte HMAC for encryption and an extra byte for
                 // RLP encoding.
                 //
-                // We could also be responding via an autheader which can take up to 282 bytes in its
+                // We could also be responding via an authheader which can take up to 282 bytes in its
                 // header.
                 // As most messages will be normal messages we will try and pack as many ENR's we
                 // can in and drop the response packet if a user requests an auth message of a very
@@ -1309,7 +1305,7 @@ impl Service {
                     None,
                 ) {
                     UpdateResult::Failed(reason) => match reason {
-                        FailureReason::KeyNonExistant => {}
+                        FailureReason::KeyNonExistent => {}
                         others => {
                             warn!(
                                 "Could not update node to disconnected. Node: {}, Reason: {:?}",

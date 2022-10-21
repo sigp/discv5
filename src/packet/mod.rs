@@ -49,7 +49,7 @@ pub struct ChallengeData([u8; 63]);
 
 impl std::fmt::Debug for ChallengeData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(&self.0))
+        write!(f, "{}", hex::encode(self.0))
     }
 }
 
@@ -244,8 +244,8 @@ impl PacketKind {
 
                 let remaining_data = &auth_data[32 + 2..];
 
-                let id_nonce_sig = remaining_data[0..sig_size as usize].to_vec();
-                let ephem_pubkey = remaining_data[sig_size as usize..total_size].to_vec();
+                let id_nonce_sig = remaining_data[0..sig_size].to_vec();
+                let ephem_pubkey = remaining_data[sig_size..total_size].to_vec();
 
                 let enr_record = if remaining_data.len() > total_size {
                     Some(
