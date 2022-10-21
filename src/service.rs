@@ -1389,6 +1389,7 @@ impl Service {
                         let local_node_id = self.local_enr.read().node_id();
                         if from_enr.node_id() == local_node_id {
                             // This node is the initiator
+                            debug!("Receiver enrs: {:?}", self.receiver_enrs);
                             let receiver_enr = self.receiver_enrs.remove(&to_node_id);
 
                             match response {
