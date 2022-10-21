@@ -95,7 +95,7 @@ impl RecvHandler {
     /// The main future driving the recv handler. This will shutdown when the exit future is fired.
     async fn start(&mut self, filter_enabled: bool) {
         // Interval to prune to rate limiter.
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
 
         loop {
             tokio::select! {

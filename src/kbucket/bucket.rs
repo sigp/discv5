@@ -217,7 +217,7 @@ pub enum FailureReason {
     /// The node didn't pass the table filter.
     TableFilter,
     /// The node didn't exist.
-    KeyNonExistant,
+    KeyNonExistent,
     /// The bucket was full.
     BucketFull,
     /// Cannot update self,
@@ -467,10 +467,10 @@ where
                 }
                 UpdateResult::UpdatedPending
             } else {
-                UpdateResult::Failed(FailureReason::KeyNonExistant)
+                UpdateResult::Failed(FailureReason::KeyNonExistent)
             }
         } else {
-            UpdateResult::Failed(FailureReason::KeyNonExistant)
+            UpdateResult::Failed(FailureReason::KeyNonExistent)
         }
     }
 
@@ -506,10 +506,10 @@ where
                 pending.node.value = value;
                 UpdateResult::UpdatedPending
             } else {
-                UpdateResult::Failed(FailureReason::KeyNonExistant)
+                UpdateResult::Failed(FailureReason::KeyNonExistent)
             }
         } else {
-            UpdateResult::Failed(FailureReason::KeyNonExistant)
+            UpdateResult::Failed(FailureReason::KeyNonExistent)
         }
     }
 
@@ -1269,7 +1269,7 @@ pub mod tests {
         ) -> bool {
             // Initialise filter.
             let filter = SetFilter {
-                set: value_matches_filter.then(|| value).into_iter().collect(),
+                set: value_matches_filter.then_some(value).into_iter().collect(),
             };
             bucket.filter = Some(Box::new(filter));
 

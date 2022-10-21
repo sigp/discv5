@@ -29,7 +29,7 @@ impl IpVote {
         }
     }
 
-    pub fn insert(&mut self, key: NodeId, socket: impl std::convert::Into<SocketAddr>) {
+    pub fn insert(&mut self, key: NodeId, socket: impl Into<SocketAddr>) {
         self.votes
             .insert(key, (socket.into(), Instant::now() + self.vote_duration));
     }

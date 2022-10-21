@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{kbucket, Discv5, *};
+use crate::{Discv5, *};
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{collections::HashMap, net::Ipv4Addr};
@@ -84,7 +84,7 @@ fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
 }
 
 fn get_distance(node1: NodeId, node2: NodeId) -> Option<u64> {
-    let node1: kbucket::Key<NodeId> = node1.into();
+    let node1: Key<NodeId> = node1.into();
     node1.log2_distance(&node2.into())
 }
 
@@ -143,7 +143,7 @@ fn find_seed_spread_bucket() {
                 *buckets.entry(distance).or_insert_with(|| 0) += 1;
             }
         }
-        if buckets.values().find(|v| **v > 2) == None {
+        if !buckets.values().any(|v| *v > 2) {
             break;
         }
         if seed % 1000 == 0 {
@@ -243,7 +243,7 @@ fn find_seed_linear_topology() {
     }
 
     for (node, previous_node) in main_result.iter().skip(1).zip(main_result.clone()) {
-        let key: kbucket::Key<NodeId> = (*node).into();
+        let key: Key<NodeId> = (*node).into();
         let distance = key.log2_distance(&previous_node.into()).unwrap();
         let target_distance = key.log2_distance(&target.into()).unwrap();
         println!(
@@ -269,7 +269,7 @@ async fn test_discovery_three_peers() {
     let target_node = nodes.pop().unwrap();
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
     println!("Target node: {}", target_node.local_enr().node_id());
-    let key: kbucket::Key<NodeId> = target_node.local_enr().node_id().into();
+    let key: Key<NodeId> = target_node.local_enr().node_id().into();
     let distance = key
         .log2_distance(&bootstrap_node.local_enr().node_id().into())
         .unwrap();
@@ -280,7 +280,7 @@ async fn test_discovery_three_peers() {
         distance
     );
     for node in nodes.iter_mut() {
-        let key: kbucket::Key<NodeId> = node.local_enr().node_id().into();
+        let key: Key<NodeId> = node.local_enr().node_id().into();
         let distance = key
             .log2_distance(&bootstrap_node.local_enr().node_id().into())
             .unwrap();
@@ -308,7 +308,7 @@ async fn test_discovery_three_peers() {
         result_nodes.len(),
         total_nodes
     );
-    assert!(result_nodes.len() == total_nodes);
+    assert_eq!(result_nodes.len(), total_nodes);
 }
 
 /// Test for a star topology with `num_nodes` connected to a `bootstrap_node`
@@ -331,7 +331,7 @@ async fn test_discovery_star_topology() {
     // target_node is not polled.
     let target_node = nodes.pop().unwrap();
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
-    let key: kbucket::Key<NodeId> = target_node.local_enr().node_id().into();
+    let key: Key<NodeId> = target_node.local_enr().node_id().into();
     let distance = key
         .log2_distance(&bootstrap_node.local_enr().node_id().into())
         .unwrap();
@@ -343,7 +343,7 @@ async fn test_discovery_star_topology() {
         distance
     );
     for node in nodes.iter_mut() {
-        let key: kbucket::Key<NodeId> = node.local_enr().node_id().into();
+        let key: Key<NodeId> = node.local_enr().node_id().into();
         let distance = key
             .log2_distance(&bootstrap_node.local_enr().node_id().into())
             .unwrap();
@@ -370,7 +370,7 @@ async fn test_discovery_star_topology() {
         result_nodes.len(),
         total_nodes
     );
-    assert!(result_nodes.len() == total_nodes);
+    assert_eq!(result_nodes.len(), total_nodes);
 }
 
 #[tokio::test]
@@ -387,7 +387,7 @@ async fn test_findnode_query() {
 
     // link the nodes together
     for (node, previous_node_enr) in nodes.iter_mut().skip(1).zip(node_enrs.clone()) {
-        let key: kbucket::Key<NodeId> = node.local_enr().node_id().into();
+        let key: Key<NodeId> = node.local_enr().node_id().into();
         let distance = key
             .log2_distance(&previous_node_enr.node_id().into())
             .unwrap();
@@ -436,7 +436,7 @@ async fn test_findnode_query_with_target() {
 
     // link the nodes together
     for (node, previous_node_enr) in nodes.iter_mut().skip(1).zip(node_enrs.clone()) {
-        let key: kbucket::Key<NodeId> = node.local_enr().node_id().into();
+        let key: Key<NodeId> = node.local_enr().node_id().into();
         let distance = key
             .log2_distance(&previous_node_enr.node_id().into())
             .unwrap();
@@ -490,7 +490,7 @@ async fn test_predicate_search() {
     println!("Target node: {}", target_node.local_enr().node_id());
 
     for (i, swarm) in nodes.iter_mut().enumerate() {
-        let key: kbucket::Key<NodeId> = swarm.local_enr().node_id().into();
+        let key: Key<NodeId> = swarm.local_enr().node_id().into();
         let distance = key
             .log2_distance(&bootstrap_node.local_enr().node_id().into())
             .unwrap();
@@ -534,13 +534,13 @@ async fn test_predicate_search() {
         total_nodes,
     );
     println!("Nodes expected to pass predicate search {}", num_nodes);
-    assert!(found_nodes.len() == num_nodes);
+    assert_eq!(found_nodes.len(), num_nodes);
 }
 
 // The kbuckets table can have maximum 10 nodes in the same /24 subnet across all buckets
 #[tokio::test]
 async fn test_table_limits() {
-    // this seed generates 12 node id's that are distributed accross buckets such that no more than
+    // this seed generates 12 node id's that are distributed across buckets such that no more than
     // 2 exist in a single bucket.
     let mut keypairs = generate_deterministic_keypair(12, 9487);
     let ip: Ipv4Addr = "127.0.0.1".parse().unwrap();
@@ -592,7 +592,7 @@ async fn test_bucket_limits() {
             loop {
                 let key = CombinedKey::generate_secp256k1();
                 let enr_new = EnrBuilder::new("v4").build(&key).unwrap();
-                let node_key: kbucket::Key<NodeId> = enr.node_id().into();
+                let node_key: Key<NodeId> = enr.node_id().into();
                 let distance = node_key.log2_distance(&enr_new.node_id().into()).unwrap();
                 if distance == 256 {
                     keys.push(key);
