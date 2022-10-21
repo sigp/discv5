@@ -214,8 +214,9 @@ pub struct Service {
     peers_to_ping: HashSetDelay<NodeId>,
 
     /// A receiver/initiator peer that a hole-punch PING is sent to is stored to make sure only
-    /// one relay is used at a time when trying to hole-punch a NAT.
-    hole_punch_pings: Option<Arc<RwLock<HashSet<NodeId>>>>,
+    /// one relay is used at a time when trying to hole-punch a NAT and to keep track of
+    /// connection direction in session establishment.
+    hole_punch_pings: Option<HashSet<NodeId>>,
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
@@ -240,6 +241,9 @@ pub struct Service {
     /// initiator. The initiator could be a peer that is not in our kbuckets, e.g. a peer behind a
     /// symmetric NAT, hence the node address is stored.
     relayed_requests: HashMap<RequestId, RelayedRequest>,
+
+    /// The ENRs of receivers for RELAYREQUESTs.
+    receiver_enrs: HashMap<NodeId, Enr>,
 }
 
 /// When this node is a rendezvous, the id of the RELAYREQUEST from the initiator is
@@ -384,7 +388,7 @@ impl Service {
         };
 
         let hole_punch_pings = if config.nat_feature {
-            Some(Arc::new(RwLock::new(HashSet::default())))
+            Some(HashSet::default())
         } else {
             None
         };
@@ -393,7 +397,6 @@ impl Service {
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
             local_enr.clone(),
             enr_key.clone(),
-            hole_punch_pings.clone(),
             listen_socket,
             config.clone(),
         )
@@ -429,6 +432,7 @@ impl Service {
                     exit,
                     config: config.clone(),
                     query_peer_relays: Default::default(),
+                    receiver_enrs: Default::default(),
                     awaiting_reachable_address: AwaitingContactableEnr::new(
                         config.max_awaiting_contactable_enr,
                     ),
@@ -491,11 +495,25 @@ impl Service {
                             match routing_type {
                                 RoutingType::NoNatOrPortForward(enr, socket_addr, direction) => {
                                     self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
-                                    self.inject_session_established(enr, direction);
+
+                                    let connection_direction = match self.hole_punch_pings.as_mut().map(|pings| pings.remove(&enr.node_id()))
+                                    {
+                                        Some(true) => ConnectionDirection::Outgoing,
+                                        _ => direction,
+                                    };
+
+                                    self.inject_session_established(enr, connection_direction);
                                 }
-                                RoutingType::AsymmetricNat(enr, socket_addr, connection_direction) => {
+                                RoutingType::AsymmetricNat(enr, socket_addr, direction) => {
                                     if self.local_enr.read().supports_feature(Feature::Nat) {
                                         info!("A new session has been established with a peer behind an asymmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
+
+                                        let connection_direction = match self.hole_punch_pings.as_mut().map(|pings| pings.remove(&enr.node_id()))
+                                        {
+                                            Some(true) => ConnectionDirection::Outgoing,
+                                            _ => direction,
+                                        };
+
                                         self.inject_session_established_nat(enr, connection_direction);
                                     }
                                 }
@@ -898,7 +916,7 @@ impl Service {
                         if let Some(true) = self
                             .hole_punch_pings
                             .as_ref()
-                            .map(|pings| pings.read().get(&from_enr.node_id()).is_none())
+                            .map(|pings| pings.get(&from_enr.node_id()).is_none())
                         {
                             trace!("Receiver node sending PING to initiator node");
                             self.send_ping(from_enr, true);
@@ -1371,16 +1389,18 @@ impl Service {
                         let local_node_id = self.local_enr.read().node_id();
                         if from_enr.node_id() == local_node_id {
                             // This node is the initiator
+                            let receiver_enr = self.receiver_enrs.remove(&to_node_id);
+
                             match response {
                                 RelayResponseCode::False => {
-                                    debug!("Receiver doesn't want to use this rendezvous node or doesn't want to connect to the initiator (this node)")
+                                    debug!("Receiver doesn't want to connect via this rendezvous, possibly it's already doing NAT traversal with another rendezvous");
                                 }
                                 RelayResponseCode::True => {
                                     trace!("Sending hole punch ping...");
-                                    if let Some(to_enr) = self.find_enr(&to_node_id) {
+                                    if let Some(to_enr) = receiver_enr {
                                         trace!("Found enr {}", to_enr);
                                         if let Some(pings) = self.hole_punch_pings.as_mut() {
-                                            pings.write().insert(to_enr.node_id());
+                                            pings.insert(to_enr.node_id());
                                         }
                                         self.send_ping(to_enr, true);
                                     } else {
@@ -1866,10 +1886,12 @@ impl Service {
                         _ => {}
                     }
                     if new_nat_peer {
-                        // Try to hole-punch peer's NAT and pass to query
+                        // Try to hole-punch peer's NAT instead of pass to query.
                         let local_enr = self.local_enr.read().clone();
-                        _ = self.send_relay_request(source.clone(), local_enr, enr.node_id());
-                        return true;
+                        let to_node_id = enr.node_id();
+                        self.receiver_enrs.insert(to_node_id, enr.clone());
+                        _ = self.send_relay_request(source.clone(), local_enr, to_node_id);
+                        return false;
                     }
                 }
             }
@@ -2179,6 +2201,20 @@ impl Service {
                 }
             }
 
+            // If a request fails to send at Handler level or fails for some reason, remove the
+            // belonging NAT traversal mappings if any.
+            match active_request.request_body {
+                RequestBody::RelayRequest { .. } => {
+                    self.receiver_enrs.remove(&active_request.contact.node_id());
+                }
+                RequestBody::Ping { .. } => {
+                    self.hole_punch_pings
+                        .as_mut()
+                        .map(|pings| pings.remove(&node_id));
+                }
+                _ => {}
+            }
+
             match error {
                 RequestError::Timeout => {
                     match active_request.request_body {
@@ -2196,11 +2232,15 @@ impl Service {
                                             self.contact_from_enr(&relay_enr)
                                         {
                                             let local_enr = self.local_enr.read().clone();
-                                            _ = self.send_relay_request(
-                                                relay_contact,
-                                                local_enr,
-                                                active_request.contact.node_id(),
-                                            );
+                                            if let Some(enr) = active_request.contact.enr() {
+                                                let to_node_id = enr.node_id();
+                                                self.receiver_enrs.insert(to_node_id, enr);
+                                                _ = self.send_relay_request(
+                                                    relay_contact,
+                                                    local_enr,
+                                                    to_node_id,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -2213,8 +2253,10 @@ impl Service {
                     // Don't update the connection if the request failed as expected according the
                     // NAT traversal protocol. A RequestError::UnusedHolePunchPingToReceiver means
                     // that a successful session has already been established. A
-                    // RequestError::DroppedHolePunchPing happens before a session is
-                    // established (before the peer is inserted into the kbuckets).
+                    // RequestError::TimedOutHolePunchPing usually happens if both nodes are
+                    // behind a NAT and this is the ping from the receiver to the initiator timing
+                    // out but setting the entry in its router's state table for the initiator's
+                    // hole punch ping coming next to enter.
                     return;
                 }
                 _ => {}

@@ -41,7 +41,7 @@ use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     convert::TryFrom,
     default::Default,
     net::SocketAddr,
@@ -338,16 +338,6 @@ pub struct Handler {
     key: Arc<RwLock<CombinedKey>>,
     /// Pending raw requests.
     active_requests: ActiveRequests,
-    /// A receiver/initiator peer that a hole-punch PING is sent to is stored to handle the
-    /// resulting session establishment, i.e. to handle the WHOAREYOU or HANDSHAKE message that is
-    /// returned, which is returned depends on wether only the receiver or both the receiver and
-    /// the initiator are behind a NAT. If only the receiver is behind a NAT its hole-punch PING
-    /// (which will actually be a random packet) will be received by the initiator and the
-    /// initiator will answer with a WHOAREYOU message. If the initiator is also behind a NAT, the
-    /// receiver's hole-punch PING will be dropped but set the state table entry in its router for
-    /// the initiator's hole-punch PING (which will actually be a random packet) to go through, in
-    /// that case the receiver would send the WHOAREYOU message to the initiator.
-    hole_punch_pings: Option<Arc<RwLock<HashSet<NodeId>>>>,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Requests awaiting a handshake completion.
@@ -378,7 +368,6 @@ impl Handler {
     pub async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
-        hole_punch_pings: Option<Arc<RwLock<HashSet<NodeId>>>>,
         listen_socket: SocketAddr,
         config: Discv5Config,
     ) -> Result<HandlerReturn, std::io::Error> {
@@ -438,7 +427,6 @@ impl Handler {
                         config.request_timeout,
                         config.request_retries,
                     ),
-                    hole_punch_pings,
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
@@ -477,14 +465,12 @@ impl Handler {
                            }
                         }
                         HandlerIn::HolePunch(contact, request) => {
-                            let node_id = contact.node_id();
                             let id = request.id.clone();
                             if let Err(request_error) = self.send_request(contact, *request, true).await {
                                 // If the sending failed report to the application
                                 if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
                                     warn!("Failed to inform that request failed {}", e)
                                 }
-                                self.hole_punch_pings.as_mut().map(|pings| pings.write().remove(&node_id));
                             }
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
@@ -609,9 +595,6 @@ impl Handler {
             // If this was a hole-punch PING from the receiver to the initiator we expected it to
             // potentially timeout. This indicates the initiator is also behind a NAT.
             if request_call.hole_punch {
-                self.hole_punch_pings
-                    .as_mut()
-                    .map(|pings| pings.write().remove(&node_address.node_id));
                 self.fail_request(request_call, RequestError::TimedOutHolePunchPing, false)
                     .await;
             } else {
@@ -894,15 +877,11 @@ impl Handler {
                 let connection_direction = {
                     match (
                         &request_call.initiating_session,
-                        self.hole_punch_pings
-                            .as_mut()
-                            .map(|pings| pings.write().remove(&enr.node_id())),
+                        request_call.hole_punch,
                         &request_call.request.body,
                     ) {
-                        (true, None | Some(false), RequestBody::Ping { .. }) => {
-                            ConnectionDirection::Incoming
-                        }
-                        (_, Some(true), RequestBody::Ping { .. }) => ConnectionDirection::Outgoing,
+                        (true, false, RequestBody::Ping { .. }) => ConnectionDirection::Incoming,
+                        (_, true, RequestBody::Ping { .. }) => ConnectionDirection::Outgoing,
                         (true, _, _) => ConnectionDirection::Outgoing,
                         (false, _, _) => ConnectionDirection::Incoming,
                     }
@@ -1062,27 +1041,6 @@ impl Handler {
 
                     let mut is_valid_enr = false;
 
-                    // If this handshake is the result of hole-punching a peer's (and possibly
-                    // also our own) NAT, both peers will have stored a hole-punch PING for one
-                    // another. If the initiator is also behind a NAT, the hole-punch PING from
-                    // the receiver will be dropped and the HANDSHAKE will arrive at the receiver
-                    // end. If only the receiver is behind a NAT the HANDSHAKE will arrive at the
-                    // initiator. The connection direction for the connection for both in this
-                    // case is outgoing as both parties decided to connect to each other after
-                    // learning about each other from a trusted peer (a rendezvous), the initiator
-                    // in a NODES response and the receiver in a RELAYREQUEST.
-                    //
-                    // In all other cases a received handshake means the connection was initiated
-                    // by the remote peer (dial in).
-                    let connection_direction = match self
-                        .hole_punch_pings
-                        .as_mut()
-                        .map(|pings| pings.write().remove(&enr.node_id()))
-                    {
-                        Some(true) => ConnectionDirection::Outgoing,
-                        _ => ConnectionDirection::Incoming,
-                    };
-
                     let routing_type =
                         if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address) {
                             trace!("Node {} is behind NAT", node_address);
@@ -1097,7 +1055,7 @@ impl Handler {
                                 Nat::Asymmetric => Some(RoutingType::AsymmetricNat(
                                     enr,
                                     node_address.socket_addr,
-                                    connection_direction,
+                                    ConnectionDirection::Incoming,
                                 )),
                                 Nat::Symmetric => {
                                     // Nodes behind symmetric NATs will only send handshakes not
@@ -1115,7 +1073,7 @@ impl Handler {
                             Some(RoutingType::NoNatOrPortForward(
                                 enr,
                                 node_address.socket_addr,
-                                connection_direction,
+                                ConnectionDirection::Incoming,
                             ))
                         } else {
                             // IP's or NodeAddress don't match. Drop the session.

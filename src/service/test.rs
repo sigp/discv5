@@ -51,7 +51,6 @@ async fn build_service(
     let (_handler_exit, handler_send, handler_recv) = Handler::spawn(
         local_enr.clone(),
         enr_key.clone(),
-        None,
         listen_socket,
         config.clone(),
     )
@@ -97,6 +96,7 @@ async fn build_service(
         event_stream: None,
         exit,
         relayed_requests: Default::default(),
+        receiver_enrs: Default::default(),
         config,
         query_peer_relays: HashMap::default(),
         awaiting_reachable_address: AwaitingContactableEnr::new(0),
