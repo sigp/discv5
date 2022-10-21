@@ -770,14 +770,10 @@ impl Service {
 
                     // Only count votes that from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
-                    let should_count = match self.kbuckets.write().entry(&key) {
+                    let should_count = matches!(
+                        self.kbuckets.write().entry(&key),
                         kbucket::Entry::Present(_, status)
-                            if status.is_connected() && !status.is_incoming() =>
-                        {
-                            true
-                        }
-                        _ => false,
-                    };
+                            if status.is_connected() && !status.is_incoming());
 
                     if should_count {
                         // get the advertised local addresses
