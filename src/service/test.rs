@@ -91,7 +91,7 @@ async fn build_service(
         handler_recv,
         handler_exit: Some(_handler_exit),
         peers_to_ping: HashSetDelay::new(config.ping_interval),
-        hole_punch_pings: None,
+        hole_punch_pings: Default::default(),
         discv5_recv,
         event_stream: None,
         exit,

@@ -216,7 +216,7 @@ pub struct Service {
     /// A receiver/initiator peer that a hole-punch PING is sent to is stored to make sure only
     /// one relay is used at a time when trying to hole-punch a NAT and to keep track of
     /// connection direction in session establishment.
-    hole_punch_pings: Option<HashSet<NodeId>>,
+    hole_punch_pings: HashSet<NodeId>,
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
@@ -387,12 +387,6 @@ impl Service {
             (None, None)
         };
 
-        let hole_punch_pings = if config.nat_feature {
-            Some(HashSet::default())
-        } else {
-            None
-        };
-
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
             local_enr.clone(),
@@ -426,7 +420,7 @@ impl Service {
                     handler_recv,
                     handler_exit: Some(handler_exit),
                     peers_to_ping: HashSetDelay::new(config.ping_interval),
-                    hole_punch_pings,
+                    hole_punch_pings: Default::default(),
                     discv5_recv,
                     event_stream: None,
                     exit,
@@ -496,9 +490,9 @@ impl Service {
                                 RoutingType::NoNatOrPortForward(enr, socket_addr, direction) => {
                                     self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
 
-                                    let connection_direction = match self.hole_punch_pings.as_mut().map(|pings| pings.remove(&enr.node_id()))
+                                    let connection_direction = match self.hole_punch_pings.remove(&enr.node_id())
                                     {
-                                        Some(true) => ConnectionDirection::Outgoing,
+                                        true => ConnectionDirection::Outgoing,
                                         _ => direction,
                                     };
 
@@ -508,9 +502,9 @@ impl Service {
                                     if self.local_enr.read().supports_feature(Feature::Nat) {
                                         info!("A new session has been established with a peer behind an asymmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
 
-                                        let connection_direction = match self.hole_punch_pings.as_mut().map(|pings| pings.remove(&enr.node_id()))
+                                        let connection_direction = match self.hole_punch_pings.remove(&enr.node_id())
                                         {
-                                            Some(true) => ConnectionDirection::Outgoing,
+                                            true => ConnectionDirection::Outgoing,
                                             _ => direction,
                                         };
 
@@ -606,7 +600,7 @@ impl Service {
                         } else { None }
                     };
                     if let Some(enr) = enr {
-                        self.send_ping(enr, false);
+                        self.send_ping(&enr, false);
                     }
                 }
             }
@@ -913,13 +907,9 @@ impl Service {
                         // Accept relay request
                         // Only try to establish sessions with a peer behind a NAT with one
                         // relay at a time.
-                        if let Some(true) = self
-                            .hole_punch_pings
-                            .as_ref()
-                            .map(|pings| pings.get(&from_enr.node_id()).is_none())
-                        {
+                        if self.hole_punch_pings.get(&from_enr.node_id()).is_none() {
                             trace!("Receiver node sending PING to initiator node");
-                            self.send_ping(from_enr, true);
+                            self.send_ping(&from_enr, true);
                             trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
                             self.send_relay_response(node_address, id, RelayResponseCode::True);
                         } else {
@@ -1389,7 +1379,6 @@ impl Service {
                         let local_node_id = self.local_enr.read().node_id();
                         if from_enr.node_id() == local_node_id {
                             // This node is the initiator
-                            debug!("Receiver enrs: {:?}", self.receiver_enrs);
                             let receiver_enr = self.receiver_enrs.remove(&to_node_id);
 
                             match response {
@@ -1400,10 +1389,7 @@ impl Service {
                                     trace!("Sending hole punch ping...");
                                     if let Some(to_enr) = receiver_enr {
                                         trace!("Found enr {}", to_enr);
-                                        if let Some(pings) = self.hole_punch_pings.as_mut() {
-                                            pings.insert(to_enr.node_id());
-                                        }
-                                        self.send_ping(to_enr, true);
+                                        self.send_ping(&to_enr, true);
                                     } else {
                                         trace!("Couldn't find ENR");
                                     }
@@ -1436,8 +1422,8 @@ impl Service {
     // Send RPC Requests //
 
     /// Sends a PING request to a node.
-    fn send_ping(&mut self, enr: Enr, is_hole_punch: bool) {
-        if let Some(contact) = self.contact_from_enr(&enr) {
+    fn send_ping(&mut self, enr: &Enr, is_hole_punch: bool) {
+        if let Some(contact) = self.contact_from_enr(enr) {
             let request_body = RequestBody::Ping {
                 enr_seq: self.local_enr.read().seq(),
             };
@@ -1449,6 +1435,7 @@ impl Service {
                 relay: None,
             };
             if is_hole_punch {
+                self.hole_punch_pings.insert(enr.node_id());
                 self.send_hole_punch_ping(active_request);
             } else {
                 _ = self.send_rpc_request(active_request);
@@ -1495,7 +1482,7 @@ impl Service {
         };
 
         for enr in connected_peers {
-            self.send_ping(enr.clone(), false);
+            self.send_ping(&enr, false);
         }
     }
 
@@ -1890,8 +1877,11 @@ impl Service {
                         // Try to hole-punch peer's NAT instead of pass to query.
                         let local_enr = self.local_enr.read().clone();
                         let to_node_id = enr.node_id();
-                        self.receiver_enrs.insert(to_node_id, enr.clone());
-                        _ = self.send_relay_request(source.clone(), local_enr, to_node_id);
+                        // Finish one relay request to a given peer before starting another
+                        if !self.receiver_enrs.contains_key(&to_node_id) {
+                            self.receiver_enrs.insert(to_node_id, enr.clone());
+                            _ = self.send_relay_request(source.clone(), local_enr, to_node_id);
+                        }
                         return false;
                     }
                 }
@@ -2041,7 +2031,7 @@ impl Service {
                 }
             };
             if let Some(enr) = optional_enr {
-                self.send_ping(enr, false)
+                self.send_ping(&enr, false)
             }
         }
     }
@@ -2202,20 +2192,6 @@ impl Service {
                 }
             }
 
-            // If a request fails to send at Handler level or fails for some reason, remove the
-            // belonging NAT traversal mappings if any.
-            match active_request.request_body {
-                RequestBody::RelayRequest { .. } => {
-                    self.receiver_enrs.remove(&active_request.contact.node_id());
-                }
-                RequestBody::Ping { .. } => {
-                    self.hole_punch_pings
-                        .as_mut()
-                        .map(|pings| pings.remove(&node_id));
-                }
-                _ => {}
-            }
-
             match error {
                 RequestError::Timeout => {
                     match active_request.request_body {
@@ -2235,12 +2211,16 @@ impl Service {
                                             let local_enr = self.local_enr.read().clone();
                                             if let Some(enr) = active_request.contact.enr() {
                                                 let to_node_id = enr.node_id();
-                                                self.receiver_enrs.insert(to_node_id, enr);
-                                                _ = self.send_relay_request(
-                                                    relay_contact,
-                                                    local_enr,
-                                                    to_node_id,
-                                                );
+                                                // Finish one relay request to a given peer before
+                                                // starting another
+                                                if !self.receiver_enrs.contains_key(&to_node_id) {
+                                                    self.receiver_enrs.insert(to_node_id, enr);
+                                                    _ = self.send_relay_request(
+                                                        relay_contact,
+                                                        local_enr,
+                                                        to_node_id,
+                                                    );
+                                                }
                                             }
                                         }
                                     }
@@ -2261,6 +2241,12 @@ impl Service {
                     return;
                 }
                 _ => {}
+            }
+
+            // If a request fails to send at Handler level or fails for some reason, remove the
+            // belonging NAT traversal mappings if any.
+            if let RequestBody::RelayRequest { .. } = active_request.request_body {
+                self.receiver_enrs.remove(&active_request.contact.node_id());
             }
 
             if let RequestBody::RelayRequest { ref from_enr, .. } = active_request.request_body {
