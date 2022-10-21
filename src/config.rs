@@ -79,7 +79,7 @@ pub struct Discv5Config {
     /// to contact an ENR.
     pub ip_mode: IpMode,
 
-    /// Reports all discovered ENR's when traversing the DHT to the event stream. Default true.
+    /// Reports all discovered ENRs when traversing the DHT to the event stream. Default true.
     pub report_discovered_peers: bool,
 
     /// A set of configuration parameters for setting inbound request rate limits. See

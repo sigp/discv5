@@ -29,7 +29,7 @@
 //!  needed and get dropped after a timeout. This section manages the creation and maintenance of
 //!  sessions between nodes and the encryption/decryption of packets from the socket. It is realised by the [`handler::Handler`] struct and it runs in its own task.
 //!  * Service - This section contains the protocol-level logic. In particular it manages the
-//!  routing table of known ENR's, topic registration/advertisement and performs various queries
+//!  routing table of known ENRs, topic registration/advertisement and performs various queries
 //!  such as peer discovery. This section is realised by the [`Service`] struct. This also runs in
 //!  it's own thread.
 //!  * Application - This section is the user-facing API which can start/stop the underlying

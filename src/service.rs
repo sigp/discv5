@@ -1,11 +1,11 @@
 //! The Discovery v5 protocol. See `lib.rs` for further details.
 //!
-//! Note: Discovered ENR's are not automatically added to the routing table. Only established
+//! Note: Discovered ENRs are not automatically added to the routing table. Only established
 //! sessions get added, ensuring only valid ENRs are added. Manual additions can be made using the
 //! `add_enr()` function.
 //!
 //! Response to queries return `PeerId`. Only the trusted (a session has been established with)
-//! `PeerId`'s are returned, as ENR's for these `PeerId`'s are stored in the routing table and as
+//! `PeerId`'s are returned, as ENRs for these `PeerId`'s are stored in the routing table and as
 //! such should have an address to connect to. Untrusted `PeerId`'s can be obtained from the
 //! `Service::Discovered` event, which is fired as peers get discovered.
 //!
@@ -224,7 +224,7 @@ pub struct Service {
 
     /// The request ids of RELAYREQUESTs from initiators, that this node acts as
     /// rendezvous for, are stored for double the request time out time so that we
-    /// can return the RELAYRESPONSE from the receiver to the initator.
+    /// can return the RELAYRESPONSE from the receiver to the initiator.
     relay_requests: HashMapDelay<NodeId, RelayedRequest>,
 }
 
@@ -549,7 +549,7 @@ impl Service {
                         QueryEvent::Finished(query) | QueryEvent::TimedOut(query) => {
                             let id = query.id();
                             let mut result = query.into_result();
-                            // obtain the ENR's for the resulting nodes
+                            // obtain the ENRs for the resulting nodes
                             let mut found_enrs = Vec::new();
                             for node_id in result.closest_peers {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
@@ -601,7 +601,7 @@ impl Service {
         {
             let mut kbuckets = self.kbuckets.write();
             for closest in kbuckets.closest_values(&target_key) {
-                // Add the known ENR's to the untrusted list
+                // Add the known ENRs to the untrusted list
                 target.untrusted_enrs.push(closest.value);
                 // Add the key to the list for the query
                 known_closest_peers.push(closest.key);
@@ -644,7 +644,7 @@ impl Service {
         {
             let mut kbuckets = self.kbuckets.write();
             for closest in kbuckets.closest_values_predicate(&target_key, &kbucket_predicate) {
-                // Add the known ENR's to the untrusted list
+                // Add the known ENRs to the untrusted list
                 target.untrusted_enrs.push(closest.value.clone());
                 // Add the key to the list for the query
                 known_closest_peers.push(closest.into());
@@ -927,7 +927,7 @@ impl Service {
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
                     // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can be returned. Datagrams have a max
-                    // size of 1280 and ENR's have a max size of 300 bytes.
+                    // size of 1280 and ENRs have a max size of 300 bytes.
                     //
                     // Bucket sizes should be 16. In this case, there should be no more than 5*DISTANCES_TO_REQUEST_PER_PEER responses, to return all required peers.
                     if total > 5 * DISTANCES_TO_REQUEST_PER_PEER as u64 {
@@ -946,7 +946,7 @@ impl Service {
                     // This could be an ENR request from the outer service. If so respond to the
                     // callback and End.
                     if let Some(CallbackResponse::Enr(callback)) = active_request.callback.take() {
-                        // Currently only support requesting for ENR's. Verify this is the case.
+                        // Currently only support requesting for ENRs. Verify this is the case.
                         if !distances_requested.is_empty() && distances_requested[0] != 0 {
                             error!("Retrieved a callback request that wasn't for a peer's ENR");
                             return;
@@ -1287,12 +1287,6 @@ impl Service {
                 ResponseBody::Ticket { .. } => {
                     error!("Received a TICKET response. This is unimplemented and should be unreachable.");
                 }
-                ResponseBody::RegisterConfirmation { .. } => {
-                    error!("Received a REGCONFIRMATION response. This is unimplemented and should be unreachable.");
-                }
-                ResponseBody::AdNodes { .. } => {
-                    error!("Received an ADNODES response. This is unimplemented and should be unreachable.");
-                }
                 ResponseBody::RelayResponse { response } => {
                     if let RequestBody::RelayRequest {
                         from_node_enr,
@@ -1444,7 +1438,7 @@ impl Service {
         }
     }
 
-    /// Sends a NODES response, given a list of found ENR's. This function splits the nodes up
+    /// Sends a NODES response, given a list of found ENRs. This function splits the nodes up
     /// into multiple responses to ensure the response stays below the maximum packet size.
     fn send_nodes_response(
         &mut self,
@@ -1453,7 +1447,7 @@ impl Service {
         mut distances: Vec<u64>,
     ) {
         // NOTE: At most we only allow 5 distances to be sent (see the decoder). If each of these
-        // buckets are full, that equates to 80 ENR's to respond with.
+        // buckets are full, that equates to 80 ENRs to respond with.
 
         let mut nodes_to_send = Vec::new();
         distances.sort_unstable();
@@ -1540,14 +1534,15 @@ impl Service {
             for enr in nodes_to_send.into_iter() {
                 let entry_size = rlp::encode(&enr).len();
                 // Responses assume that a session is established. Thus, on top of the encoded
-                // ENR's the packet should be a regular message. A regular message has an IV (16
+                // ENRs the packet should be a regular message. A regular message has an IV (16
                 // bytes), and a header of 55 bytes. The find-nodes RPC requires 16 bytes for the ID and the
                 // `total` field. Also there is a 16 byte HMAC for encryption and an extra byte for
                 // RLP encoding.
                 //
-                // We could also be responding via an authheader which can take up to 282 bytes in its
-                // header.
-                // As most messages will be normal messages we will try and pack as many ENR's we
+                // Furthermore, we could be responding via an auth-header which can take up to 282 bytes in its
+                // header. In that case we would have even less space for the ENRs.
+                //
+                // As most messages will be normal messages we will try and pack as many ENRs we
                 // can in and drop the response packet if a user requests an auth message of a very
                 // packed response.
                 //
@@ -1729,7 +1724,7 @@ impl Service {
                 }
             } else if self.config.ip_mode.get_contactable_addr(enr).is_some() {
                 // Keep enr and pass on to query if it flags it is not behind a NAT, or is not sure if it is
-                // bheind a NAT or it is behind a NAT but has been previously contacted.
+                // behind a NAT or it is behind a NAT but has been previously contacted.
                 return true;
             }
             false // Don't pass nodes we cannot make an outgoing connection to (including nodes behind a symmetric NAT) to the query
@@ -1883,7 +1878,7 @@ impl Service {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             // It could be that this node is behind a NAT, if it supports the NAT traversal protocol we
-            // give it [`MAX_REQEUST_ENR_ATTEMPTS`] to trigger us via PING request to request its ENR.
+            // give it MAX_REQUEST_ENR_ATTEMPTS to trigger us via PING request to request its ENR.
             if CHECK_VERSION(&enr, vec![NAT]) {
                 self.awaiting_reachable_address.insert(enr.clone());
                 // In case this is a node behind a symmetric NAT we need to store the port which is unique
@@ -1923,7 +1918,7 @@ impl Service {
 
     fn inject_session_established_nat_symmetric(&mut self, enr: Enr) {
         // Attempt adding the enr to the local routing table if this Discv5 instances stores remote ports
-        // for connections from nodes behind a symmetirc NAT.
+        // for connections from nodes behind a symmetric NAT.
         if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
             if let Some(port) = symmetric_nat_peers_ports.get(&enr.node_id()) {
                 // Ignore sessions with non-contactable ENRs
@@ -2076,7 +2071,7 @@ impl Service {
                 if let Err(e) = res {
                     return Err(e);
                 }
-                trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into loal enr's 'nat6' field", ip6, port);
+                trace!("Successfully inserted reachable address {}:{:?} for node behind NAT into local enr's 'nat6' field", ip6, port);
                 if let Some(port) = port {
                     let res = local_enr.insert("udp6", &port.to_be_bytes(), &self.enr_key.read());
                     if let Err(e) = res {

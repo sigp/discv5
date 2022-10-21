@@ -4,7 +4,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV
 
 /// Sets the socket type to be established and also determines the type of ENRs that we will store
 /// in our routing table.
-/// We store ENR's that have a `get_contractable_addr()` based on the `IpMode` set.
+/// We store ENRs that have a `get_contractable_addr()` based on the `IpMode` set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IpMode {
     /// IPv4 only. This creates an IPv4 only UDP socket and will only store ENRs in the local
@@ -52,8 +52,8 @@ impl IpMode {
                         let mut buf = [0u8; 16];
                         buf.copy_from_slice(nat6);
                         // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
-                        // transmited in the ENR. Here we choose to enforce canonical addresses since
-                        // it simplies the logic of matching socket_addr verification. For this we prevent
+                        // transmitted in the ENR. Here we choose to enforce canonical addresses since
+                        // it implies the logic of matching socket_addr verification. For this we prevent
                         // communications with Ipv4 addresses advertized in the Ipv6 field.
                         let ipv6 = Ipv6Addr::from(buf);
                         if to_ipv4_mapped(&ipv6).is_some() {
@@ -106,8 +106,8 @@ impl IpMode {
                         let mut buf = [0u8; 16];
                         buf.copy_from_slice(nat6);
                         // NOTE: There is nothing in the spec preventing compat/mapped addresses from being
-                        // transmited in the ENR. Here we choose to enforce canonical addresses since
-                        // it simplies the logic of matching socket_addr verification. For this we prevent
+                        // transmitted in the ENR. Here we choose to enforce canonical addresses since
+                        // it implies the logic of matching socket_addr verification. For this we prevent
                         // communications with Ipv4 addresses advertized in the Ipv6 field.
                         let ipv6 = Ipv6Addr::from(buf);
                         if to_ipv4_mapped(&ipv6).is_some() {

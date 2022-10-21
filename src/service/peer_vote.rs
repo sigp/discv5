@@ -148,7 +148,7 @@ impl Vote<(Option<Address>, Option<Address>)> for IpVote {
     }
 }
 
-/// A collection couting incoming RELAYREQUESTs from peers.
+/// A collection counting incoming RELAYREQUESTs from peers.
 pub(crate) struct AsymmNatVote {
     /// The current collection of incoming RELAYREQUESTs.
     votes: PeerVote<()>,
@@ -167,7 +167,7 @@ impl AsymmNatVote {
 }
 
 impl Vote<Option<()>> for AsymmNatVote {
-    /// If the number of relay requets in the  is above the behind an asymmetric NAT.
+    /// If the number of relay requests in the  is above the behind an asymmetric NAT.
     fn vote(&mut self) -> Option<()> {
         // remove any expired votes
         let instant = Instant::now();

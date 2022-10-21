@@ -175,7 +175,7 @@ async fn main() {
                 match discv5.find_node(target_random_node_id).await {
                     Err(e) => warn!("Find Node result failed: {:?}", e),
                     Ok(v) => {
-                        // found a list of ENR's print their NodeIds
+                        // found a list of ENRs print their NodeIds
                         let node_ids = v.iter().map(|enr| enr.node_id()).collect::<Vec<_>>();
                         info!("Nodes found: {}", node_ids.len());
                         for node_id in node_ids {

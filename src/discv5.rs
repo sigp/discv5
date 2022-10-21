@@ -79,7 +79,7 @@ pub enum Discv5Event {
     /// A node has been discovered from a FINDNODES request.
     ///
     /// The ENR of the node is returned. Various properties can be derived from the ENR.
-    /// This happen spontaneously through queries as nodes return ENR's. These ENR's are not
+    /// This happen spontaneously through queries as nodes return ENRs. These ENRs are not
     /// guaranteed to be live or contactable.
     Discovered(Enr),
     /// A new ENR was added to the routing table.
@@ -102,7 +102,7 @@ pub enum Discv5Event {
     /// this node is behind a NAT and is externally reachable on this address.
     NATUpdated(SocketAddr),
     /// Our local ENR NAT address has been updated, no single port could be found by ip voting
-    /// indicating this node is behind a symmetirc NAT and is externally reachable on this address.
+    /// indicating this node is behind a symmetric NAT and is externally reachable on this address.
     NATSymmetricUpdated(IpAddr),
     /// A node has initiated a talk request.
     TalkRequest(TalkRequest),
@@ -130,9 +130,9 @@ impl Discv5 {
         enr_key: CombinedKey,
         mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
-        // ensure the keypair matches the one that signed the enr.
+        // ensure the key-pair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
-            return Err("Provided keypair does not match the provided ENR");
+            return Err("Provided key-pair does not match the provided ENR");
         }
 
         // If an executor is not provided, assume a current tokio runtime is running. If not panic.
@@ -260,7 +260,7 @@ impl Discv5 {
     /// operations involving one of these peers, without having to dial
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
-        // only add ENR's that have a valid udp socket.
+        // only add ENRs that have a valid udp socket.
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
             warn!("ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored.");
             return Err("ENR has no compatible UDP socket to connect to");
@@ -482,7 +482,7 @@ impl Discv5 {
             .collect()
     }
 
-    /// Returns an iterator over all the ENR's of nodes currently contained in the routing table.
+    /// Returns an iterator over all the ENRs of nodes currently contained in the routing table.
     pub fn table_entries_enr(&self) -> Vec<Enr> {
         self.kbuckets
             .write()

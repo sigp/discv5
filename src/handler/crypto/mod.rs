@@ -43,7 +43,7 @@ type Key = [u8; KEY_LENGTH];
 /* Session key generation */
 
 /// Generates session and auth-response keys for a nonce and remote ENR. This currently only
-/// supports Secp256k1 signed ENR's. This returns four keys; initiator key, responder key, auth
+/// supports Secp256k1 signed ENRs. This returns four keys; initiator key, responder key, auth
 /// response key and the ephemeral public key.
 pub(crate) fn generate_session_keys(
     local_id: &NodeId,
@@ -95,7 +95,7 @@ fn derive_key(
     Ok((initiator_key, recipient_key))
 }
 
-/// Derives the session keys for a public key type that matches the local keypair.
+/// Derives the session keys for a public key type that matches the local key-pair.
 pub(crate) fn derive_keys_from_pubkey(
     local_key: &CombinedKey,
     local_id: &NodeId,
@@ -121,7 +121,7 @@ pub(crate) fn derive_keys_from_pubkey(
 
 /* Nonce Signing */
 
-/// Generates a signature of a nonce given a keypair. This prefixes the `NONCE_PREFIX` to the
+/// Generates a signature of a nonce given a key-pair. This prefixes the `NONCE_PREFIX` to the
 /// signature.
 pub(crate) fn sign_nonce(
     signing_key: &CombinedKey,

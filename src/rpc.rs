@@ -119,7 +119,7 @@ pub enum ResponseBody {
     Nodes {
         /// The total number of responses that make up this response.
         total: u64,
-        /// A list of ENR's returned by the responder.
+        /// A list of ENRs returned by the responder.
         nodes: Vec<Enr>,
     },
     /// The TALKRESP response.
@@ -136,23 +136,10 @@ pub enum ResponseBody {
         /// The topic hash for which the opaque ticket is issued.
         topic: TopicHash,
     },
-    /// The REGCONFIRMATION response.
-    RegisterConfirmation {
-        /// The topic of a successful REGTOPIC request.
-        topic: TopicHash,
-    },
-    /// A NODES response to a TOPICQUERY which also receives a NODES response
-    /// with peers to add to topic kbuckets.
-    AdNodes {
-        /// The total number of responses that make up this response.
-        total: u64,
-        /// A list of ENR's returned by the responder.
-        nodes: Vec<Enr>,
-    },
     /// A RELAYRESPONSE response to a RELAYREQUEST, sent by the "receiver" to the
     /// "initiator" via the "rendezvous".
     RelayResponse {
-        /// The repsonse field set to true means the receiver has accepted the
+        /// The response field set to true means the receiver has accepted the
         /// RELAYREQUEST.
         response: bool,
     },
@@ -165,8 +152,8 @@ impl Request {
             RequestBody::FindNode { .. } => 3,
             RequestBody::Talk { .. } => 5,
             RequestBody::RegisterTopic { .. } => 7,
-            RequestBody::TopicQuery { .. } => 10,
-            RequestBody::RelayRequest { .. } => 12,
+            RequestBody::TopicQuery { .. } => 9,
+            RequestBody::RelayRequest { .. } => 10,
         }
     }
 
@@ -230,9 +217,7 @@ impl Response {
             ResponseBody::Nodes { .. } => 4,
             ResponseBody::Talk { .. } => 6,
             ResponseBody::Ticket { .. } => 8,
-            ResponseBody::RegisterConfirmation { .. } => 9,
-            ResponseBody::AdNodes { .. } => 11,
-            ResponseBody::RelayResponse { .. } => 13,
+            ResponseBody::RelayResponse { .. } => 11,
         }
     }
 
@@ -245,15 +230,10 @@ impl Response {
                     req,
                     RequestBody::FindNode { .. }
                         | RequestBody::TopicQuery { .. }
-                        | RequestBody::RegisterTopic { .. }
                 )
             }
             ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),
             ResponseBody::Ticket { .. } => matches!(req, RequestBody::RegisterTopic { .. }),
-            ResponseBody::RegisterConfirmation { .. } => {
-                matches!(req, RequestBody::RegisterTopic { .. })
-            }
-            ResponseBody::AdNodes { .. } => matches!(req, RequestBody::TopicQuery { .. }),
             ResponseBody::RelayResponse { .. } => matches!(req, RequestBody::RelayRequest { .. }),
         }
     }
@@ -304,8 +284,6 @@ impl Response {
                 buf
             }
             ResponseBody::Ticket { .. } => buf,
-            ResponseBody::RegisterConfirmation { .. } => buf,
-            ResponseBody::AdNodes { .. } => buf,
             ResponseBody::RelayResponse { response } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
@@ -391,12 +369,6 @@ impl std::fmt::Display for ResponseBody {
             }
             ResponseBody::Ticket { .. } => {
                 write!(f, "TICKET")
-            }
-            ResponseBody::RegisterConfirmation { .. } => {
-                write!(f, "REGTOPIC")
-            }
-            ResponseBody::AdNodes { .. } => {
-                write!(f, "ADNODES")
             }
             ResponseBody::RelayResponse { response } => {
                 write!(f, "RELAYRESPONSE: response: {}", response)
@@ -604,14 +576,8 @@ impl Message {
               9 => {
                   // TopicQueryRequest
               }
-              10 => {
-                  // RegisterConfirmation
-              }
-              11 => {
-                  // AdNodes
-              }
             */
-            12 => {
+            10 => {
                 // RelayRequest
                 if list_len != 3 {
                     debug!(
@@ -642,7 +608,7 @@ impl Message {
                     },
                 })
             }
-            13 => {
+            11 => {
                 // RelayResponse
                 if list_len != 2 {
                     debug!(
