@@ -1379,7 +1379,6 @@ impl Service {
                         let local_node_id = self.local_enr.read().node_id();
                         if from_enr.node_id() == local_node_id {
                             // This node is the initiator
-                            debug!("Response: receiver_enrs: {:?}", self.receiver_enrs);
                             let receiver_enr = self.receiver_enrs.remove(&to_node_id);
 
                             match response {
@@ -1392,7 +1391,7 @@ impl Service {
                                         trace!("Found enr {}", to_enr);
                                         self.send_ping(&to_enr, true);
                                     } else {
-                                        trace!("Couldn't find ENR");
+                                        trace!("Couldn't find ENR of receiver");
                                     }
                                 }
                                 RelayResponseCode::Error => {
@@ -1881,7 +1880,6 @@ impl Service {
                         // Finish one relay request to a given peer before starting another
                         if !self.receiver_enrs.contains_key(&to_node_id) {
                             self.receiver_enrs.insert(to_node_id, enr.clone());
-                            debug!("Discovered: receiver_enrs: {:?}", self.receiver_enrs);
                             _ = self.send_relay_request(source.clone(), local_enr, to_node_id);
                         }
                         return false;
@@ -2217,7 +2215,6 @@ impl Service {
                                                 // starting another
                                                 if !self.receiver_enrs.contains_key(&to_node_id) {
                                                     self.receiver_enrs.insert(to_node_id, enr);
-                                                    debug!("Timeout: receiver_enrs: {:?}", self.receiver_enrs);
                                                     _ = self.send_relay_request(
                                                         relay_contact,
                                                         local_enr,
