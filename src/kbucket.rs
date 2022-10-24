@@ -593,7 +593,7 @@ where
                 // in those buckets won't be part of the response.
                 node_count += bucket.num_entries();
                 if node_count >= max_nodes {
-                    break
+                    break;
                 }
             }
         }
