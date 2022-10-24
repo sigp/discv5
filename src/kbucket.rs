@@ -590,7 +590,7 @@ where
                 self.applied_pending.push_back(applied);
                 // Break if we've reached the maximum number of nodes we will provide in the
                 // response. There's no need to apply pending buckets past this point, the nodes
-                // won't be part of the response.
+                // in those buckets won't be part of the response.
                 node_count += bucket.num_entries();
                 if node_count >= max_nodes {
                     break
