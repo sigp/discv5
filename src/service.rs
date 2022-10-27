@@ -52,8 +52,8 @@ pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
 /// Currently, a maximum of `DISTANCES_TO_REQUEST_PER_PEER * BUCKET_SIZE` peers
 /// can be returned. Datagrams have a max size of 1280 and ENR's have a max size
-/// of 300 bytes. Bucket sizes should be 16. Therefore, there should be no more
-/// than `5 * DISTANCES_TO_REQUEST_PER_PEER` responses, to return all required peers.
+/// of 300 bytes. Bucket sizes should be 16. Therefore, to return all required peers
+/// there should be no more than `5 * DISTANCES_TO_REQUEST_PER_PEER` responses.
 pub(crate) const MAX_RESPONSES: usize = 5 * DISTANCES_TO_REQUEST_PER_PEER;
 
 /// Request type for Protocols using `TalkReq` message.
