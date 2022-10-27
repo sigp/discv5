@@ -50,6 +50,12 @@ mod test;
 /// NOTE: This must not be larger than 127.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
+/// Currently, a maximum of `DISTANCES_TO_REQUEST_PER_PEER * BUCKET_SIZE` peers
+/// can be returned. Datagrams have a max size of 1280 and ENR's have a max size
+/// of 300 bytes. Bucket sizes should be 16. Therefore, there should be no more
+/// than `5 * DISTANCES_TO_REQUEST_PER_PEER` responses, to return all required peers.
+pub(crate) const MAX_RESPONSES: usize = 5 * DISTANCES_TO_REQUEST_PER_PEER;
+
 /// Request type for Protocols using `TalkReq` message.
 ///
 /// Automatically responds with an empty body on drop if
@@ -637,14 +643,10 @@ impl Service {
 
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
-                    // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can be returned. Datagrams have a max
-                    // size of 1280 and ENR's have a max size of 300 bytes.
-                    //
-                    // Bucket sizes should be 16. In this case, there should be no more than 5*DISTANCES_TO_REQUEST_PER_PEER responses, to return all required peers.
-                    if total > 5 * DISTANCES_TO_REQUEST_PER_PEER as u64 {
+                    if total > MAX_RESPONSES as u64 {
                         warn!(
                             "NodesResponse has a total larger than {}, nodes will be truncated",
-                            DISTANCES_TO_REQUEST_PER_PEER * 5
+                            MAX_RESPONSES
                         );
                     }
 
@@ -729,9 +731,7 @@ impl Service {
                         );
                         // if there are more requests coming, store the nodes and wait for
                         // another response
-                        // We allow for implementations to send at a minimum 3 nodes per response.
-                        // We allow for the number of nodes to be returned as the maximum we emit.
-                        if current_response.count < self.config.max_nodes_response / 3 + 1
+                        if current_response.count < MAX_RESPONSES
                             && (current_response.count as u64) < total
                         {
                             current_response.count += 1;
