@@ -583,12 +583,20 @@ where
             .collect::<Vec<_>>();
 
         // Apply pending nodes
+        let mut node_count = 0;
         for distance in &distances {
             // The log2 distance ranges from 1-256 and is always 1 more than the bucket index. For this
             // reason we subtract 1 from log2 distance to get the correct bucket index.
             let bucket = &mut self.buckets[(distance - 1) as usize];
             if let Some(applied) = bucket.apply_pending() {
-                self.applied_pending.push_back(applied)
+                self.applied_pending.push_back(applied);
+                // Break if we've reached the maximum number of nodes we will provide in the
+                // response. There's no need to apply pending buckets past this point, the nodes
+                // in those buckets won't be part of the response.
+                node_count += bucket.num_entries();
+                if node_count >= max_nodes {
+                    break;
+                }
             }
         }
 
@@ -769,7 +777,7 @@ impl ClosestBucketsIter {
     fn new(distance: Distance) -> Self {
         let state = match BucketIndex::new(&distance) {
             Some(i) => ClosestBucketsIterState::Start(i),
-            None => ClosestBucketsIterState::Done,
+            None => ClosestBucketsIterState::Start(BucketIndex(0)),
         };
         Self { distance, state }
     }
@@ -967,6 +975,35 @@ mod tests {
             expected_keys.sort_by_key(|k| k.distance(&target_key));
             assert_eq!(keys, expected_keys);
         }
+    }
+
+    #[test]
+    fn closest_local() {
+        let local_key = Key::from(NodeId::random());
+        let mut table = KBucketsTable::<_, ()>::new(
+            local_key,
+            Duration::from_secs(5),
+            MAX_NODES_PER_BUCKET,
+            None,
+            None,
+        );
+        let mut count = 0;
+        loop {
+            if count == 100 {
+                break;
+            }
+            let key = Key::from(NodeId::random());
+            if let Entry::Absent(e) = table.entry(&key) {
+                match e.insert((), connected_state()) {
+                    BucketInsertResult::Inserted => count += 1,
+                    _ => continue,
+                }
+            } else {
+                panic!("entry exists")
+            }
+        }
+        let local_key = table.local_key.clone();
+        assert_eq!(table.closest_keys(&local_key).count(), count);
     }
 
     #[test]
