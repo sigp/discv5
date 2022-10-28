@@ -376,7 +376,7 @@ impl Service {
                 Some(IpVote::new(
                     config.enr_peer_update_min,
                     config.vote_duration,
-                    config.include_symmetric_nat,
+                    config.nat_symmetric_limit.map(|v| v > 0).unwrap_or(false),
                 )),
                 Some(AsymmNatVote::new(
                     config.enr_peer_update_min_nat,
@@ -400,7 +400,11 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
-        let symmetric_nat_peers_ports = config.include_symmetric_nat.then(HashMap::default);
+        let symmetric_nat_peers_ports = config
+            .nat_symmetric_limit
+            .map(|v| v > 0)
+            .unwrap_or(false)
+            .then(HashMap::default);
 
         config
             .executor

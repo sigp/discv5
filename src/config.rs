@@ -56,20 +56,14 @@ pub struct Discv5Config {
     /// /24 subnet in the kbuckets table. This is to mitigate eclipse attacks. Default: false.
     pub ip_limit: bool,
 
-    /// If the NAT version of Discv5 is enabled, this includes nodes that are behind a symmetric
-    /// NAT in the kbuckets so that they can be sent requests. Peers behind a symmetric NAT use
-    /// a new port mapping for each connection so they can dial peers but peers cannot dial them
-    /// and hence they are useless to pass along in NODES responses to other peers. These nodes
-    /// are identified by their ENR: their 'nat'/'nat6' field contains an ip but their 'udp' and
-    /// 'udp6' fields are empty.
-    pub include_symmetric_nat: bool,
-
-    /// When the NAT feature of Discv5 is enabled, if set to true this limits the number
-    /// of nodes behind a symmetric NAT in the kbuckets as these peers are not passed around in
-    /// NODES responses to other peers. By adding them to the kbuckets they can be sent request.
-    /// These nodes are identified by their ENR: their 'nat'/'nat6' field contains an ip but their
-    /// 'udp' and 'udp6' fields are empty.
-    pub nat_symmetric_limit: bool,
+    /// When the NAT feature of Discv5 is enabled, this specifies the maximum number of nodes
+    /// behind a symmetric NAT that are allowed per bucket. If set to None, no limit is applied.
+    /// These peers are not passed around in NODES responses to other peers. By adding them to the
+    /// kbuckets they can be sent requests which is useful for discovery queries. These nodes are
+    /// identified by their ENR: their 'nat'/'nat6' field contains an ip but their 'udp' and 'udp6'
+    /// fields are empty. The default value is to exclude these peers from the routing table. A
+    /// reasonable default to include symmetric NAT'd peers is 2. Default: Some(0).
+    pub nat_symmetric_limit: Option<usize>,
 
     /// Sets a maximum limit to the number of incoming nodes (nodes that have dialed us) to exist
     /// per-bucket. This cannot be larger than the bucket size (16). By default this is disabled
@@ -165,8 +159,7 @@ impl Default for Discv5Config {
             enr_peer_update_min_nat: 10,
             query_parallelism: 3,
             ip_limit: false,
-            include_symmetric_nat: false,
-            nat_symmetric_limit: true,
+            nat_symmetric_limit: Some(0),
             incoming_bucket_limit: MAX_NODES_PER_BUCKET,
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
@@ -293,32 +286,10 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Allows nodes behind a symmetric NAT in kbuckets. These nodes are only connected
-    /// to nodes they dial and will not be included in NODES responses.
-    pub fn include_symmetric_nat(&mut self) -> &mut Self {
-        if self.config.nat_feature {
-            self.config.include_symmetric_nat = true;
-        }
-        self
-    }
-
-    /// Limits the number of nodes behind a symmetric NAT per bucket when set to true.
-    /// Only makes sense to set if this node supports the NAT traversal protocol and
-    /// include_symmetric_nat is set to true.
-    pub fn symmetric_nat_limit(&mut self, limit_nat: bool) -> &mut Self {
-        if self.config.nat_feature && self.config.include_symmetric_nat {
-            self.config.nat_symmetric_limit = limit_nat;
-        }
-        self
-    }
-
-    /// Limits the number of nodes behind an asymmetric NAT per bucket when set to true.
-    /// Only makes sense to set if this node supports the NAT traversal protocol and
-    /// include_symmetric_nat is set to true.
-    pub fn asymmetric_nat_limit(&mut self, limit_nat: bool) -> &mut Self {
-        if self.config.nat_feature {
-            self.config.nat_symmetric_limit = limit_nat;
-        }
+    /// Limits the number of nodes behind a symmetric NAT per bucket when set to a value.
+    /// Only makes sense to set if this node supports the NAT traversal protocol.
+    pub fn symmetric_nat_limit(&mut self, limit_nat: Option<usize>) -> &mut Self {
+        self.config.nat_symmetric_limit = limit_nat;
         self
     }
 

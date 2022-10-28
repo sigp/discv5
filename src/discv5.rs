@@ -15,8 +15,9 @@
 use crate::{
     error::{Discv5Error, QueryError, RequestError},
     kbucket::{
-        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        NodeStatus, UpdateResult,
+        self, CombinedFilter, ConnectionDirection, ConnectionState, FailureReason, Filter,
+        InsertResult, IpBucketFilter, IpTableFilter, KBucketsTable, NodeStatus,
+        SymmetricNatBucketFilter, UpdateResult,
     },
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
@@ -113,20 +114,22 @@ impl Discv5 {
         // via the nat_limit configuration parameter. In the future, we may expose this
         // functionality to the users if there is demand for it.
         let (table_filter, bucket_filter) = match (config.ip_limit, config.nat_symmetric_limit) {
-            (true, true) => (
-                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-                Some(Box::new(kbucket::IpAndSymmetricNatBucketFilter)
-                    as Box<dyn kbucket::Filter<Enr>>),
+            (true, Some(nat_limit)) => (
+                Some(Box::new(IpTableFilter) as Box<dyn Filter<Enr>>),
+                Some(Box::new(CombinedFilter(
+                    IpBucketFilter,
+                    SymmetricNatBucketFilter::new(nat_limit),
+                )) as Box<dyn kbucket::Filter<Enr>>),
             ),
-            (false, true) => (
+            (false, Some(nat_limit)) => (
                 None,
-                Some(Box::new(kbucket::SymmetricNatBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(SymmetricNatBucketFilter::new(nat_limit)) as Box<dyn Filter<Enr>>),
             ),
-            (true, false) => (
-                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-                Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            (true, None) => (
+                Some(Box::new(IpTableFilter) as Box<dyn Filter<Enr>>),
+                Some(Box::new(IpBucketFilter) as Box<dyn Filter<Enr>>),
             ),
-            (false, false) => (None, None),
+            (false, None) => (None, None),
         };
 
         // This node supports NAT traversal request RELAYREQUEST, and its response RELAYRESPONSE.
