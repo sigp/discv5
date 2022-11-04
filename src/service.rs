@@ -17,8 +17,7 @@ use self::{
     peer_vote::{Address, AsymmNatVote, IpVote},
     query_info::{QueryInfo, QueryType},
 };
-use crate::{
-    discv5::{EnrExtension, Feature},
+use crate::{EnrNat, Feature,
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut, RoutingType},
     kbucket::{

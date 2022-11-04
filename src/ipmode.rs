@@ -1,4 +1,4 @@
-use crate::{discv5::EnrExtension, Enr};
+use crate::{Enr, EnrNat};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 ///! A set of configuration parameters to tune the discovery protocol.
 

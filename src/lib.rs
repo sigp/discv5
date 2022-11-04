@@ -104,6 +104,7 @@
 
 mod config;
 mod discv5;
+pub mod enr_nat;
 mod error;
 mod executor;
 pub mod handler;
@@ -126,6 +127,7 @@ pub type Enr = enr::Enr<enr::CombinedKey>;
 
 pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
+pub use enr_nat::{EnrNat, Feature};
 pub use error::{Discv5Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
 pub use ipmode::IpMode;

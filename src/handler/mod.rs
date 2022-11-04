@@ -26,9 +26,9 @@
 //! Responses from the application layer can be made via the receive channel using a [`HandlerIn`].
 //! Messages from a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
 //! and can be forwarded to the application layer via the send channel.
-use crate::{
+use crate::{EnrNat,
     config::Discv5Config,
-    discv5::{EnrExtension, PERMIT_BAN_LIST},
+    discv5::{PERMIT_BAN_LIST},
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},

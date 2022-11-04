@@ -1,6 +1,6 @@
 //! Provides a trait that can be implemented to apply a filter to a table or bucket.
 
-use crate::{discv5::EnrExtension, Enr};
+use crate::{Enr, EnrNat};
 pub trait Filter<TVal: Eq>: FilterClone<TVal> + Send + Sync {
     /// Determines which if the value can be inserted.
     fn filter(
