@@ -22,6 +22,7 @@ use crate::{
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Discv5Config, Enr,
+    enr_nat::EnrNat,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
@@ -44,7 +45,6 @@ lazy_static! {
         RwLock::new(crate::PermitBanList::default());
 }
 
-use crate::{EnrNat, Feature};
 
 mod test;
 
@@ -129,7 +129,7 @@ impl Discv5 {
 
         // This node supports NAT traversal request RELAYREQUEST, and its response RELAYRESPONSE.
         if config.nat_feature {
-            if let Err(e) = local_enr.set_feature(&enr_key, Feature::Nat) {
+            if let Err(e) = local_enr.set_nat_feature(&enr_key) {
                 error!("Failed to set field 'features' in local enr. Error: {}", e);
                 return Err("Failed to set field 'features' in local enr");
             }

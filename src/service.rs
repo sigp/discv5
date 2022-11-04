@@ -17,7 +17,8 @@ use self::{
     peer_vote::{Address, AsymmNatVote, IpVote},
     query_info::{QueryInfo, QueryType},
 };
-use crate::{EnrNat, Feature,
+use crate::{
+    enr_nat::{EnrNat},
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut, RoutingType},
     kbucket::{
@@ -509,7 +510,7 @@ impl Service {
                                     self.inject_session_established(enr, connection_direction);
                                 }
                                 RoutingType::AsymmetricNat(enr, socket_addr, direction) => {
-                                    if self.local_enr.read().supports_feature(Feature::Nat) {
+                                    if self.local_enr.read().supports_nat() {
                                         info!("A new session has been established with a peer behind an asymmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
 
                                         let connection_direction = match self.hole_punch_pings.remove(&enr.node_id())
@@ -522,7 +523,7 @@ impl Service {
                                     }
                                 }
                                 RoutingType::SymmetricNat(enr, socket_addr) => {
-                                    if self.local_enr.read().supports_feature(Feature::Nat) {
+                                    if self.local_enr.read().supports_nat() {
                                         info!("A new session has been established with a peer behind a symmetric NAT. Peer: enr: {}, socket: {}", enr, socket_addr);
                                         self.inject_session_established_nat_symmetric(enr, socket_addr.port());
                                     }
@@ -913,7 +914,7 @@ impl Service {
                             }
                         }
                     }
-                    if self.local_enr.read().supports_feature(Feature::Nat) {
+                    if self.local_enr.read().supports_nat() {
                         // Accept relay request
                         // Only try to establish sessions with a peer behind a NAT with one
                         // relay at a time.
@@ -930,7 +931,7 @@ impl Service {
                 } else if from_enr.node_id() != local_node_id {
                     // This node is the rendezvous
 
-                    if !self.local_enr.read().supports_feature(Feature::Nat) {
+                    if !self.local_enr.read().supports_nat() {
                         return;
                     }
 
@@ -948,7 +949,7 @@ impl Service {
                     let receiver = match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(entry, status)
                             if status.is_connected()
-                                && entry.value().supports_feature(Feature::Nat) =>
+                                && entry.value().supports_nat() =>
                         {
                             Some(entry.value().clone())
                         }
@@ -1094,7 +1095,7 @@ impl Service {
                                     );
                                     return;
                                 }
-                                if self.local_enr.read().supports_feature(Feature::Nat) {
+                                if self.local_enr.read().supports_nat() {
                                     trace!(
                                         "NAT ip of ENR of peer: nat: {:?}, nat6: {:?}",
                                         nat_peer.nat4(),
@@ -1629,7 +1630,7 @@ impl Service {
                             // Only send peers behind asymmetric NATs which we have a good
                             // chance of immediately being able to play relays for because we are
                             // connected to them.
-                            if !enr.supports_feature(Feature::Nat) || !entry.status.is_connected() {
+                            if !enr.supports_nat() || !entry.status.is_connected() {
                                 return None;
                             }
                         } else {
@@ -1860,7 +1861,7 @@ impl Service {
         });
 
         enrs.retain(|enr| {
-            if self.local_enr.read().supports_feature(Feature::Nat) {
+            if self.local_enr.read().supports_nat() {
                 // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
                 // request directly instead of adding it to a query (avoid waiting for a request to
                 // the new peer to timeout).
@@ -2049,7 +2050,7 @@ impl Service {
             // It could be that this node is behind a NAT, if it supports the NAT traversal
             // protocol we give it max number of times to trigger us via PING request to request
             // its ENR.
-            if enr.supports_feature(Feature::Nat) {
+            if enr.supports_nat() {
                 _ = self.awaiting_reachable_address.insert(enr);
             }
             return;
@@ -2202,7 +2203,7 @@ impl Service {
                     match active_request.request_body {
                         RequestBody::RelayRequest { .. } => {}
                         _ => {
-                            if self.local_enr.read().supports_feature(Feature::Nat) {
+                            if self.local_enr.read().supports_nat() {
                                 // Still drop the request and disconnect the peer but attempt
                                 // establishing the connection to the peer via the NAT traversal
                                 // protocol for sending future requests to the peer, if this peer

@@ -1,14 +1,64 @@
 //! Provides an extension for ENRs to implement extended NAT-based functions.
 use crate::Enr;
 use enr::{CombinedKey, EnrError};
-use tracing::{trace, warn};
+use tracing::{debug, trace};
 
-/// Discv5 features.
-pub enum Feature {
-    /// The protocol for NAT traversal using UDP hole-punching is supported
-    /// by this node.
-    Nat = 1,
+/// The kind of feature that can be supported.
+pub type Feature = u8;
+
+/// Represents the decimal notation of the bitfield location for the feature.
+pub const NAT_FEATURE: Feature = 1;
+
+/// Discv5 Capable Features.
+///
+/// This is a bitfield that is stored inside ENRs to indicate which features of Discv5 are
+/// supported.
+/// Currently the only optional feature is NAT support. This consumes the first bit location.
+/// We currently store a single u8, which is fine as RLP encoding strips the leading 0s.
+#[derive(Clone, Debug)]
+pub struct FeatureBitfield {
+    bitfield: u8, // Supports up to 256 unique features
 }
+
+impl FeatureBitfield {
+    pub fn new() -> Self {
+        Self { bitfield: 0 }
+    }
+
+    /// Sets the bitfield to indicate support for the NAT feature.
+    pub fn set_nat(&mut self) {
+        self.bitfield |= NAT_FEATURE;
+    }
+
+    /// Returns true if the NAT feature is set.
+    pub fn nat(&self) -> bool {
+        self.bitfield & NAT_FEATURE == NAT_FEATURE
+    }
+
+    /// Enables one or many features.
+    pub fn set_features(&mut self, features: Feature) {
+        self.bitfield |= features;
+    }
+
+    /// Returns if the feature is supported.
+    pub fn supports_feature(&self, feature: Feature) -> bool {
+        self.bitfield & feature == feature
+    }
+
+    /// Returns the decimal representation of the features supported.
+    pub fn features(&self) -> Feature {
+        self.bitfield
+    }
+}
+
+impl From<&[u8]> for FeatureBitfield {
+    fn from(src: &[u8]) -> Self {
+        Self {
+            bitfield: src.first().unwrap_or(&0).clone(),
+        }
+    }
+}
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 pub trait EnrNat<K> {
@@ -22,6 +72,10 @@ pub trait EnrNat<K> {
 
     /// Check if node supports a given feature.
     fn supports_feature(&self, feature: Feature) -> bool;
+    /// Specific helper function to determine if the ENR supports the NAT feature.
+    fn supports_nat(&self) -> bool;
+    /// Specific helper function to set NAT support in the ENR.
+    fn set_nat_feature(&mut self, enr_key: &K) -> Result<Option<Feature>, EnrError>;
     /// Returns the IPv4 address in the 'nat' field if it is defined.
     fn nat4(&self) -> Option<Ipv4Addr>;
     /// Returns the IPv6 address in the 'nat6' field if it is defined.
@@ -31,7 +85,7 @@ pub trait EnrNat<K> {
     /// Provides a socket (based on the UDP port), if the 'nat6' and 'udp6' fields are specified.
     fn udp6_socket_nat(&self) -> Option<SocketAddrV6>;
     /// Set a protocol feature that this node supports. Returns the previous features.
-    fn set_feature(&mut self, enr_key: &K, feature: Feature) -> Result<Option<u8>, EnrError>;
+    fn set_features(&mut self, enr_key: &K, feature: Feature) -> Result<Option<Feature>, EnrError>;
     /// Updates ENR to show this node is behind a NAT by setting the externally reachable IP of the
     /// node in the 'nat'/'nat6' field and removing any value in the 'ip'/'ip6' field. If this node
     /// is behind a symmetric NAT the value in the 'udp'/'udp6' field is removed. If this node is
@@ -50,19 +104,23 @@ pub trait EnrNat<K> {
 impl EnrNat<CombinedKey> for Enr {
     fn supports_feature(&self, feature: Feature) -> bool {
         if let Some(supported_features) = self.get(Self::ENR_KEY_FEATURES) {
-            if let Some(supported_features_num) = supported_features.first() {
-                let feature_num = feature as u8;
-                supported_features_num & feature_num == feature_num
-            } else {
-                false
-            }
+            let bitfield = FeatureBitfield::from(supported_features);
+            bitfield.supports_feature(feature)
         } else {
-            warn!(
-                "Enr of peer {} doesn't contain field 'version'",
+            debug!(
+                "ENR of peer {} doesn't contain field 'feature'",
                 self.node_id()
             );
             false
         }
+    }
+
+    fn supports_nat(&self) -> bool {
+        self.supports_feature(NAT_FEATURE)
+    }
+
+    fn set_nat_feature(&mut self, enr_key: &CombinedKey) -> Result<Option<Feature>, EnrError> {
+        self.set_features(enr_key, NAT_FEATURE)
     }
 
     fn nat4(&self) -> Option<Ipv4Addr> {
@@ -111,25 +169,24 @@ impl EnrNat<CombinedKey> for Enr {
         None
     }
 
-    fn set_feature(
+    fn set_features(
         &mut self,
         enr_key: &CombinedKey,
-        feature: Feature,
+        features: Feature,
     ) -> Result<Option<u8>, EnrError> {
-        let mut previous_features = None;
-
-        if let Some(features) = self.get(Self::ENR_KEY_FEATURES) {
-            if let Some(features_num) = features.first() {
-                previous_features = Some(*features_num);
+        let bitfield = {
+            if let Some(features) = self.get(Self::ENR_KEY_FEATURES) {
+                Some(FeatureBitfield::from(features))
+            } else {
+                None
             }
-        }
-        let new_features_num = if let Some(previous_features) = previous_features {
-            previous_features | feature as u8
-        } else {
-            feature as u8
         };
-        self.insert(Self::ENR_KEY_FEATURES, &[new_features_num], enr_key)?;
-        Ok(previous_features)
+
+        let mut new_bitfield = bitfield.clone().unwrap_or_else(|| FeatureBitfield::new());
+        new_bitfield.set_features(features);
+
+        self.insert(Self::ENR_KEY_FEATURES, &[new_bitfield.features()], enr_key)?;
+        Ok(bitfield.map(|field| field.features()))
     }
 
     fn set_udp_socket_nat(
