@@ -125,7 +125,7 @@ pub struct Discv5Config {
 
     /// The amount of time in seconds an inactive relay is stored before it can be replaced.
     /// Default is 15 minutes.
-    pub inactive_relay_expiration: u64,
+    pub inactive_relay_expiration: Duration,
 
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
@@ -173,7 +173,7 @@ impl Default for Discv5Config {
             max_awaiting_contactable_enr: 100,
             nat_feature: true,
             max_relays_per_receiver: 10,
-            inactive_relay_expiration: 15 * 60,
+            inactive_relay_expiration: Duration::from_secs(15 * 60),
             executor: None,
         }
     }
@@ -389,8 +389,8 @@ impl Discv5ConfigBuilder {
     }
 
     /// Sets the time to wait before allowing the replacement (by itself or another relay) of a
-    /// relay which failed at relaying to a given peer. Expiration is given in seconds.
-    pub fn inactive_relay_expiration(&mut self, expiration_seconds: u64) -> &mut Self {
+    /// relay which failed at relaying to a given peer.
+    pub fn inactive_relay_expiration(&mut self, expiration_seconds: Duration) -> &mut Self {
         self.config.inactive_relay_expiration = expiration_seconds;
         self
     }
@@ -413,21 +413,34 @@ impl std::fmt::Debug for Discv5Config {
             .field("filter_enabled", &self.enable_packet_filter)
             .field("request_timeout", &self.request_timeout)
             .field("vote_duration", &self.vote_duration)
-            .field("query_timeout", &self.query_timeout)
             .field("query_peer_timeout", &self.query_peer_timeout)
+            .field("query_timeout", &self.query_timeout)
             .field("request_retries", &self.request_retries)
             .field("session_timeout", &self.session_timeout)
             .field("session_cache_capacity", &self.session_cache_capacity)
             .field("enr_update", &self.enr_update)
+            .field("max_nodes_response", &self.max_nodes_response)
+            .field("enr_peer_update_min", &self.enr_peer_update_min)
+            .field("enr_peer_update_min_nat", &self.enr_peer_update_min_nat)
             .field("query_parallelism", &self.query_parallelism)
-            .field("report_discovered_peers", &self.report_discovered_peers)
             .field("ip_limit", &self.ip_limit)
-            .field("filter_max_nodes_per_ip", &self.filter_max_nodes_per_ip)
-            .field("filter_max_bans_per_ip", &self.filter_max_bans_per_ip)
-            .field("ip_limit", &self.ip_limit)
+            .field("nat_symmetric_limit", &self.nat_symmetric_limit)
             .field("incoming_bucket_limit", &self.incoming_bucket_limit)
             .field("ping_interval", &self.ping_interval)
+            .field("ip_mode", &self.ip_mode)
+            .field("report_discovered_peers", &self.report_discovered_peers)
+            .field("filter_rate_limiter", &self.filter_rate_limiter)
+            .field("filter_max_nodes_per_ip", &self.filter_max_nodes_per_ip)
+            .field("filter_max_bans_per_ip", &self.filter_max_bans_per_ip)
+            .field("permit_ban_list", &self.permit_ban_list)
             .field("ban_duration", &self.ban_duration)
+            .field(
+                "max_awaiting_contactable_enr",
+                &self.max_awaiting_contactable_enr,
+            )
+            .field("nat_feature", &self.nat_feature)
+            .field("max_relays_per_receiver", &self.max_relays_per_receiver)
+            .field("inactive_relay_expiration", &self.inactive_relay_expiration)
             .finish()
     }
 }
