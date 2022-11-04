@@ -247,7 +247,7 @@ async fn test_active_requests_insert() {
     let request_call = RequestCall::new(contact, packet, request, initiating_session, false);
 
     // insert the pair and verify the mapping remains in sync
-    let nonce = *request_call.packet.message_nonce();
+    let nonce = *request_call.packet().message_nonce();
     active_requests.insert(node_address, request_call, &node_id);
     active_requests.check_invariant();
     active_requests.remove_by_nonce(&nonce);

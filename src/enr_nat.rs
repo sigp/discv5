@@ -15,14 +15,14 @@ pub const NAT_FEATURE: Feature = 1;
 /// supported.
 /// Currently the only optional feature is NAT support. This consumes the first bit location.
 /// We currently store a single u8, which is fine as RLP encoding strips the leading 0s.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FeatureBitfield {
     bitfield: u8, // Supports up to 256 unique features
 }
 
 impl FeatureBitfield {
     pub fn new() -> Self {
-        Self { bitfield: 0 }
+        Self::default()
     }
 
     /// Sets the bitfield to indicate support for the NAT feature.
@@ -54,7 +54,7 @@ impl FeatureBitfield {
 impl From<&[u8]> for FeatureBitfield {
     fn from(src: &[u8]) -> Self {
         Self {
-            bitfield: src.first().unwrap_or(&0).clone(),
+            bitfield: *src.first().unwrap_or(&0),
         }
     }
 }
@@ -174,15 +174,9 @@ impl EnrNat<CombinedKey> for Enr {
         enr_key: &CombinedKey,
         features: Feature,
     ) -> Result<Option<u8>, EnrError> {
-        let bitfield = {
-            if let Some(features) = self.get(Self::ENR_KEY_FEATURES) {
-                Some(FeatureBitfield::from(features))
-            } else {
-                None
-            }
-        };
+        let bitfield = self.get(Self::ENR_KEY_FEATURES).map(FeatureBitfield::from);
 
-        let mut new_bitfield = bitfield.clone().unwrap_or_else(|| FeatureBitfield::new());
+        let mut new_bitfield = bitfield.clone().unwrap_or_else(FeatureBitfield::new);
         new_bitfield.set_features(features);
 
         self.insert(Self::ENR_KEY_FEATURES, &[new_bitfield.features()], enr_key)?;
