@@ -18,7 +18,7 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
-    enr_nat::{EnrNat},
+    enr_nat::EnrNat,
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut, RoutingType},
     kbucket::{
@@ -948,8 +948,7 @@ impl Service {
                     let key = kbucket::Key::from(to_node_id);
                     let receiver = match self.kbuckets.write().entry(&key) {
                         kbucket::Entry::Present(entry, status)
-                            if status.is_connected()
-                                && entry.value().supports_nat() =>
+                            if status.is_connected() && entry.value().supports_nat() =>
                         {
                             Some(entry.value().clone())
                         }

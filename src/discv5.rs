@@ -13,6 +13,7 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
+    enr_nat::EnrNat,
     error::{Discv5Error, QueryError, RequestError},
     kbucket::{
         self, CombinedFilter, ConnectionDirection, ConnectionState, FailureReason, Filter,
@@ -22,15 +23,14 @@ use crate::{
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Discv5Config, Enr,
-    enr_nat::EnrNat,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
+    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
-    net::SocketAddr,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
@@ -44,7 +44,6 @@ lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
 }
-
 
 mod test;
 
@@ -632,4 +631,3 @@ impl Drop for Discv5 {
         self.shutdown();
     }
 }
-
