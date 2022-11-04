@@ -23,7 +23,7 @@ use crate::{
     handler::{Handler, HandlerIn, HandlerOut, RoutingType},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        NodeStatus, UpdateResult,
+        NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
     packet::MAX_PACKET_SIZE,
@@ -68,6 +68,13 @@ const PING_INTERVAL_NAT: Duration = Duration::from_secs(60);
 /// Peers behind a symmetric NAT are limited per kbucket as they can only be sent request not
 /// passed in NODES responses to other peers.
 const MAX_SYMMETRIC_NAT_PEERS_PER_KBUCKET: usize = 2;
+
+/// Currently, a maximum of `DISTANCES_TO_REQUEST_PER_PEER * BUCKET_SIZE` peers
+/// can be returned. Datagrams have a max size of 1280 and ENR's have a max size
+/// of 300 bytes. Bucket sizes should be 16. Therefore, to return all required peers
+/// there should be no more than `5 * DISTANCES_TO_REQUEST_PER_PEER` responses.
+pub(crate) const MAX_NODES_RESPONSES: usize =
+    (MAX_NODES_PER_BUCKET / 4 + 1) * DISTANCES_TO_REQUEST_PER_PEER;
 
 /// Request type for Protocols using `TalkReq` message.
 ///
@@ -1007,16 +1014,10 @@ impl Service {
 
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
-                    // Currently a maximum of DISTANCES_TO_REQUEST_PER_PEER*BUCKET_SIZE peers can
-                    // be returned. Datagrams have a max
-                    // size of 1280 and ENRs have a max size of 300 bytes.
-                    //
-                    // Bucket sizes should be 16. In this case, there should be no more than
-                    // 5*DISTANCES_TO_REQUEST_PER_PEER responses, to return all required peers.
-                    if total > 5 * DISTANCES_TO_REQUEST_PER_PEER as u64 {
+                    if total > MAX_NODES_RESPONSES as u64 {
                         warn!(
                             "NodesResponse has a total larger than {}, nodes will be truncated",
-                            DISTANCES_TO_REQUEST_PER_PEER * 5
+                            MAX_NODES_RESPONSES
                         );
                     }
 
@@ -1175,12 +1176,13 @@ impl Service {
                             "Nodes Response: {} of {} received",
                             current_response.count, total
                         );
-                        // if there are more requests coming, store the nodes and wait for
+                        // If there are more requests coming, store the nodes and wait for
                         // another response
-                        // We allow for implementations to send at a minimum 3 nodes per response.
-                        // We allow for the number of nodes to be returned as the maximum we emit.
-                        if current_response.count < self.config.max_nodes_response / 3 + 1
+                        // If we have already received all our required nodes, drop any extra
+                        // rpc messages.
+                        if current_response.received_nodes.len() < self.config.max_nodes_response
                             && (current_response.count as u64) < total
+                            && current_response.count < MAX_NODES_RESPONSES
                         {
                             current_response.count += 1;
 
