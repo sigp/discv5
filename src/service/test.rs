@@ -74,6 +74,8 @@ async fn build_service(
         bucket_filter,
     )));
 
+    let peer_votes = PeerVotes::new(3, 3, Duration::from_secs(1), false);
+
     // create the required channels
     let (_discv5_send, discv5_recv) = mpsc::channel(30);
     let (_exit_send, exit) = oneshot::channel();
@@ -85,8 +87,7 @@ async fn build_service(
         queries: QueryPool::new(config.query_timeout),
         active_requests: Default::default(),
         active_nodes_responses: HashMap::new(),
-        ip_votes: None,
-        asymm_nat_votes: None,
+        peer_votes,
         handler_send,
         handler_recv,
         handler_exit: Some(_handler_exit),
