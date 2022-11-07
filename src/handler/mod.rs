@@ -54,8 +54,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
 
 mod active_requests;
-mod request_call;
 mod crypto;
+mod request_call;
 mod session;
 mod tests;
 
@@ -1263,7 +1263,9 @@ impl Handler {
             if let ResponseBody::Nodes { total, .. } = response.body {
                 if total > 1 {
                     // This is a multi-response Nodes response
-                    if let Some(remaining_responses) = request_call.remaining_responses_mut().as_mut() {
+                    if let Some(remaining_responses) =
+                        request_call.remaining_responses_mut().as_mut()
+                    {
                         *remaining_responses -= 1;
                         if remaining_responses != &0 {
                             // more responses remaining, add back the request and send the response
