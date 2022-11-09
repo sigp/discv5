@@ -100,7 +100,6 @@ async fn build_service(
         receiver_enrs: Default::default(),
         config,
         query_peer_relays: HashMap::default(),
-        awaiting_reachable_address: AwaitingContactableEnr::new(0),
         symmetric_nat_peers_ports: Default::default(),
     }
 }

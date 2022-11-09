@@ -57,10 +57,6 @@ mod test;
 /// NOTE: This must not be larger than 127.
 pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
-/// If a peer is in [`AwaitingContactableEnr`] it is given a max number of attempts
-/// to trigger us via a PING to request its ENR.
-pub(crate) const MAX_ATTEMPTS_TO_REQUEST_ENR: u8 = 3;
-
 /// Most NAT setups will keep a hole-punch connection alive if the UDP state table entry is
 /// reset every 30 seconds, hence a node behind a NAT pings its peers at this interval.
 const PING_INTERVAL_NAT: Duration = Duration::from_secs(60);
@@ -225,11 +221,6 @@ pub struct Service {
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 
-    /// The peers behind NAT that haven't yet published their reachable address
-    /// in their ENR (probably because they are awaiting enough connections to
-    /// ip vote on their externally reachable address).
-    awaiting_reachable_address: AwaitingContactableEnr,
-
     /// If this Discv5 instance is configured to allow peers behind symmetric NATs
     /// (peers that requests will be sent to but that will not be included in NODES
     /// responses to other peers) then connection dependent port mapping is stored.
@@ -256,67 +247,6 @@ pub struct Service {
 struct RelayedRequest {
     initiator: NodeAddress,
     req_id_from_initiator: RequestId,
-}
-
-/// A peer is given a [`MAX_ATTEMPTS_TO_REQUEST_ENR`] number of PING attempts to send a
-/// contactable ENR. This is relevant for peers that don't know if they are behind a NAT,
-/// to allow them to discover their externally reachable IP by ip voting and then
-/// advertising it in their ENR.
-#[derive(Clone)]
-struct NonContactableEnr {
-    enr: Enr,
-    attempts: u8,
-}
-
-struct AwaitingContactableEnr {
-    peers: HashMap<NodeId, NonContactableEnr>,
-    max_peers: usize,
-}
-
-impl AwaitingContactableEnr {
-    fn new(max_await_contactable_enr: usize) -> Self {
-        AwaitingContactableEnr {
-            peers: HashMap::default(),
-            max_peers: max_await_contactable_enr,
-        }
-    }
-
-    fn request_enr(&mut self, node_id: &NodeId) -> Result<Option<Enr>, &'static str> {
-        if let Some(peer) = self.peers.get_mut(node_id) {
-            if peer.attempts >= MAX_ATTEMPTS_TO_REQUEST_ENR {
-                return Err("This peer has already triggered the max request enr requests.");
-            } else {
-                peer.attempts += 1;
-                return Ok(Some(peer.enr.clone()));
-            }
-        }
-        Ok(None)
-    }
-
-    fn awaiting(&self, node_id: &NodeId) -> bool {
-        if let Some(peer) = self.peers.get(node_id) {
-            return peer.attempts < MAX_ATTEMPTS_TO_REQUEST_ENR;
-        }
-        false
-    }
-
-    fn insert(&mut self, non_contactable: Enr) -> Result<(), &str> {
-        if self.peers.len() >= self.max_peers {
-            warn!("Unable to store uncontactable ENR of peer {}. Limit of {} peers to await a contactable ENR for is already reached", non_contactable.node_id(), self.max_peers);
-            return Err("Unable to store uncontactable ENR of peer");
-        }
-        self.peers
-            .entry(non_contactable.node_id())
-            .or_insert(NonContactableEnr {
-                enr: non_contactable,
-                attempts: 0,
-            });
-        Ok(())
-    }
-
-    fn remove(&mut self, node_id: &NodeId) -> Option<NonContactableEnr> {
-        self.peers.remove(node_id)
-    }
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -425,9 +355,6 @@ impl Service {
                     config: config.clone(),
                     query_peer_relays: Default::default(),
                     receiver_enrs: Default::default(),
-                    awaiting_reachable_address: AwaitingContactableEnr::new(
-                        config.max_awaiting_contactable_enr,
-                    ),
                     symmetric_nat_peers_ports,
                     relayed_requests: Default::default(),
                 };
@@ -728,45 +655,28 @@ impl Service {
                         }
                     }
                     kbucket::Entry::Absent(_) => {
-                        // If upon dialing out to us this node is unaware of its externally
-                        // reachable address and is now pinging us because it has discovered its //
-                        // externally reachable address via ip-voting (and has updated its ENR
-                        // accordingly), then request its ENR unless we haven't done so too many
-                        // times already.
-                        match self
-                            .awaiting_reachable_address
-                            .request_enr(&node_address.node_id)
-                        {
-                            Ok(Some(nat_peer)) => {
-                                to_request_enr = Some(nat_peer);
-                            }
-                            Err(e) => {
-                                warn!("Enr of peer {} that is not in kbuckets will not be requested. Error: {}", node_address.node_id, e);
-                                let ban_timeout =
-                                    self.config.ban_duration.map(|v| Instant::now() + v);
-                                PERMIT_BAN_LIST
-                                    .write()
-                                    .ban(node_address.clone(), ban_timeout);
-                                self.awaiting_reachable_address
-                                    .remove(&node_address.node_id);
-                            }
-                            // If we are not awaiting a PING from this node, don't request its ENR
-                            Ok(None) => {}
-                        }
+                        // We do not have a record of their ENR. So we do not care about the ENR
+                        // update.
+                        // If this ENR has updated its ENR to indicate it is now behind a NAT, we
+                        // do not bother with re-evaluating whether it can fit into our routing
+                        // table. It may get another chance once it's session expires.
                     }
-                    _ => {}
+                    kbucket::Entry::SelfEntry => {} // Shouldn't be possible, but don't update
+                                                    // our own ENR.
                 }
                 if let Some(enr) = to_request_enr {
-                    let contact = if let Some(contact) = self.contact_from_enr(&enr) {
-                        contact
-                    } else {
-                        // If this PING request comes from a peer that was initially unknowing of
-                        // its externally reachable address which has just now discovered it's
-                        // externally reachable address, trying to make a node contact from its
-                        // ENR will fail as no address is advertised in its ENR.
-                        NodeContact::new_without_enr(enr.public_key(), node_address.socket_addr)
-                    };
-                    self.request_enr(contact, None);
+                    match NodeContact::try_from_enr(&enr, self.config.ip_mode) {
+                        Ok(contact) => {
+                            self.request_enr(contact, None);
+                        }
+                        Err(NonContactable { enr }) => {
+                            debug_unreachable!("Stored ENR is not contactable. {}", enr);
+                            error!(
+                                "Stored ENR is not contactable! This should never happen {}",
+                                enr
+                            );
+                        }
+                    }
                 }
 
                 // build the PONG response
@@ -1015,85 +925,6 @@ impl Service {
                             warn!("Failed to send response in callback {:?}", e)
                         }
                         return;
-                    }
-
-                    // If this is a single ENR behind a NAT, that we are waiting on for an ENR
-                    // updated with a reachable address, attempt adding it to our kbuckets.
-                    if distances_requested.is_empty() || distances_requested[0] == 0 {
-                        trace!("Received a NODES response with a single node, checking if this is the ENR with a reachable address for a node behind a NAT that we are waiting on...");
-                        if let Some(nat_peer) = nodes.get(0) {
-                            if self
-                                .awaiting_reachable_address
-                                .awaiting(&nat_peer.node_id())
-                            {
-                                // If we are awaiting an ENR with a reachable address from this
-                                // node it is an incoming direction, initiated by the peer behind
-                                // a NAT.
-                                let connection_direction = ConnectionDirection::Incoming;
-                                trace!(
-                                    "Received a requested ENR for node {} that we are waiting on for a reachable address",
-                                    node_address
-                                );
-                                trace!(
-                                    "Ip of ENR of peer: ip: {:?}, ip6: {:?}",
-                                    nat_peer.ip4(),
-                                    nat_peer.ip6(),
-                                );
-                                trace!(
-                                    "Port of ENR of peer: udp: {:?}, udp6: {:?}",
-                                    nat_peer.udp4(),
-                                    nat_peer.udp6()
-                                );
-                                if nat_peer.udp4_socket().is_some()
-                                    || nat_peer.udp6_socket().is_some()
-                                {
-                                    // If this peer has a reachable address in its 'ip'/'ip6' and
-                                    // 'udp'/'udp6' fields, its considered to be publicly
-                                    // reachable. The 'ip'/'ip6' field has precedence over the
-                                    // 'nat'/'nat6' field.
-                                    trace!(
-                                        "Received a requested ENR for node {} advertising that it is publicly reachable",
-                                        node_address
-                                    );
-                                    self.inject_session_established(
-                                        nat_peer.clone(),
-                                        connection_direction,
-                                    );
-                                    return;
-                                }
-                                if self.local_enr.read().supports_nat() {
-                                    trace!(
-                                        "NAT ip of ENR of peer: nat: {:?}, nat6: {:?}",
-                                        nat_peer.nat4(),
-                                        nat_peer.nat6(),
-                                    );
-                                    if nat_peer.udp4_socket_nat().is_some()
-                                        || nat_peer.udp6_socket_nat().is_some()
-                                    {
-                                        trace!(
-                                        "Received a requested ENR for node {} advertising that is behind an asymmetric NAT",
-                                        node_address
-                                    );
-                                        self.inject_session_established_nat(
-                                            nat_peer.clone(),
-                                            connection_direction,
-                                        );
-                                        return;
-                                    } else if nat_peer.nat4().is_some() || nat_peer.nat6().is_some()
-                                    {
-                                        trace!(
-                                    "Received a requested ENR for node {} advertising that it is behind a symmetric NAT",
-                                    node_address
-                                );
-                                        self.inject_session_established_nat_symmetric(
-                                            nat_peer.clone(),
-                                            node_address.socket_addr.port(),
-                                        );
-                                        return;
-                                    }
-                                }
-                            }
-                        }
                     }
 
                     // Filter out any nodes that are not of the correct distance
@@ -2006,12 +1837,6 @@ impl Service {
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
-            // It could be that this node is behind a NAT, if it supports the NAT traversal
-            // protocol we give it max number of times to trigger us via PING request to request
-            // its ENR.
-            if enr.supports_nat() {
-                _ = self.awaiting_reachable_address.insert(enr);
-            }
             return;
         }
 
