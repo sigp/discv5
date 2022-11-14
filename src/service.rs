@@ -241,11 +241,14 @@ pub struct Service {
     receiver_enrs: HashMap<NodeId, Enr>,
 }
 
+/// Represents a request that we are relaying onto another node.
 /// When this node is a rendezvous, the id of the RELAYREQUEST from the initiator is
 /// stored along with the node address of the initiator, so the RELAYRESPONSE from the
 /// receiver can be re-packaged and relayed to the initiator.
 struct RelayedRequest {
+    /// The node that initiated the relay request.
     initiator: NodeAddress,
+    /// The [`RequestId`] associated with the request from the initiator.
     req_id_from_initiator: RequestId,
 }
 
@@ -831,9 +834,11 @@ impl Service {
                         }
                         _ => None,
                     };
-                    if let Some(receiver) = receiver
-                    // check if we know this node id in our routing table
-                    {
+                    if let Some(receiver) = receiver {
+                        // check if we know this node id in our routing table
+                        // The node should exist in our routing table as this would be the only way
+                        // other nodes would know to use us as a rendezvous node (via a NODES
+                        // response).
                         if let Some(contact) = self.contact_from_enr(&receiver) {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
                             if let Ok(req_id) =
@@ -849,8 +854,11 @@ impl Service {
                             }
                         }
                     } else {
-                        // This node is currently not connected to the receiver and is hence not a
-                        // suitable relay.
+                        // Our node may still have a connection to the receiver but it is no longer
+                        // in our routing table. We therefore do not attempt to check any of our
+                        // sessions and just end the relay request.
+                        // This is likely a fault of the requesting node.
+                        warn!("Requested to relay to unknown node: {}", receiver);
                         self.send_relay_response(node_address, id, RelayResponseCode::Error);
                     }
                 }

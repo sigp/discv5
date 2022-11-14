@@ -114,6 +114,7 @@ impl RequestCall {
         &mut self.remaining_responses
     }
 
+    /// Returns the timeout for this particular request.
     pub fn timeout(
         &self,
         local_node_id: &NodeId,
@@ -122,7 +123,7 @@ impl RequestCall {
     ) -> Duration {
         if let RequestBody::RelayRequest { ref from_enr, .. } = self.request.body {
             // If this node is the initiator of the RELAYREQUEST, also wait for the duration of
-            // request timeout as many times as a the RELAYREQUEST to the receiver is set to retry.
+            // request timeout as many times as the RELAYREQUEST to the receiver is set to retry.
             if from_enr.node_id() == *local_node_id {
                 return default_timeout * max_retires.into() + default_timeout;
             }
@@ -130,6 +131,7 @@ impl RequestCall {
         default_timeout
     }
 
+    /// The maximum number of retries we should attempt for this request.
     pub fn max_retries(&self, local_node_id: &NodeId, max_retires: u8) -> u8 {
         match self.request.body {
             RequestBody::RelayRequest { ref from_enr, .. } => {
