@@ -409,7 +409,7 @@ impl Service {
                             }
                         HandlerOut::WhoAreYou(whoareyou_ref) => {
                             // check what our latest known ENR is for this node.
-                            if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
+                            if let Some((known_enr, _)) = self.find_enr(&whoareyou_ref.0.node_id) {
                                 if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
                                     warn!("Failed to send whoareyou {}", e);
                                 };
@@ -457,7 +457,7 @@ impl Service {
                                     let enr = result.target.untrusted_enrs.swap_remove(position);
                                     found_enrs.push(enr);
                                     self.query_peer_relays.remove(&node_id);
-                                } else if let Some(enr) = self.find_enr(&node_id) {
+                                } else if let Some((enr, _)) = self.find_enr(&node_id) {
                                     // look up from the routing table
                                     found_enrs.push(enr);
                                 }
@@ -475,14 +475,14 @@ impl Service {
                     // If the node is in the routing table, Ping it and re-queue the node.
                     let key = kbucket::Key::from(node_id);
                     let enr = {
-                        if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
+                        if let kbucket::Entry::Present(entry, status) = self.kbuckets.write().entry(&key) {
                         // The peer is in the routing table, ping it and re-queue the ping
                         self.peers_to_ping.insert(node_id);
-                        Some(entry.value().clone())
+                        Some((entry.value().clone(), status.state.symmetric_port()))
                         } else { None }
                     };
-                    if let Some(enr) = enr {
-                        self.send_ping(&enr, false);
+                    if let Some((enr, symmetric_port)) = enr {
+                        self.send_ping(&enr, symmetric_port, false);
                     }
                 }
             }
@@ -566,12 +566,13 @@ impl Service {
         }
     }
 
-    /// Returns an ENR if one is known for the given NodeId.
-    pub fn find_enr(&self, node_id: &NodeId) -> Option<Enr> {
+    /// Returns an ENR if one is known for the given NodeId along with any symmetric port that may
+    /// be associated with the node.
+    pub fn find_enr(&self, node_id: &NodeId) -> Option<(Enr, Option<u16>)> {
         // check if we know this node id in our routing table
         let key = kbucket::Key::from(*node_id);
-        if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
-            return Some(entry.value().clone());
+        if let kbucket::Entry::Present(entry, status) = self.kbuckets.write().entry(&key) {
+            return Some((entry.value().clone(), status.state.symmetric_port()));
         }
         // check the untrusted addresses for ongoing queries
         for query in self.queries.iter() {
@@ -581,7 +582,7 @@ impl Service {
                 .iter()
                 .find(|v| v.node_id() == *node_id)
             {
-                return Some(enr.clone());
+                return Some((enr.clone(), None));
             }
         }
         None
@@ -754,7 +755,8 @@ impl Service {
                         // relay at a time.
                         if self.hole_punch_pings.get(&from_enr.node_id()).is_none() {
                             trace!("Receiver node sending PING to initiator node");
-                            self.send_ping(&from_enr, true);
+                            // TODO: Add symmetric_port?
+                            self.send_ping(&from_enr,None, true);
                             trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
                             self.send_relay_response(node_address, id, RelayResponseCode::True);
                         } else {
@@ -784,16 +786,16 @@ impl Service {
                         kbucket::Entry::Present(entry, status)
                             if status.is_connected() && entry.value().supports_nat() =>
                         {
-                            Some(entry.value().clone())
+                            Some((entry.value().clone(), status.state.symmetric_port()))
                         }
                         _ => None,
                     };
-                    if let Some(receiver) = receiver {
+                    if let Some((receiver, symmetric_port)) = receiver {
                         // check if we know this node id in our routing table
                         // The node should exist in our routing table as this would be the only way
                         // other nodes would know to use us as a rendezvous node (via a NODES
                         // response).
-                        if let Some(contact) = self.contact_from_enr(&receiver) {
+                        if let Some(contact) = self.contact_from_enr(&receiver, symmetric_port) {
                             trace!("Rendezvous node sending RELAYREQUEST to receiver node");
                             if let Ok(req_id) =
                                 self.send_relay_request(contact, from_enr, to_node_id)
@@ -1100,7 +1102,7 @@ impl Service {
                     }
 
                     // check if we need to request a new ENR
-                    if let Some(enr) = self.find_enr(&node_id) {
+                    if let Some((enr, _)) = self.find_enr(&node_id) {
                         if enr.seq() < enr_seq {
                             // request an ENR update
                             debug!("Requesting an ENR update from: {}", node_contact);
@@ -1150,7 +1152,8 @@ impl Service {
                                     trace!("Sending hole punch ping...");
                                     if let Some(to_enr) = receiver_enr {
                                         trace!("Found enr {}", to_enr);
-                                        self.send_ping(&to_enr, true);
+                                        // TODO: Add symmetric port
+                                        self.send_ping(&to_enr, None, true);
                                     } else {
                                         trace!("Couldn't find ENR of receiver");
                                     }
@@ -1183,8 +1186,8 @@ impl Service {
     // Send RPC Requests //
 
     /// Sends a PING request to a node.
-    fn send_ping(&mut self, enr: &Enr, is_hole_punch: bool) {
-        if let Some(contact) = self.contact_from_enr(enr) {
+    fn send_ping(&mut self, enr: &Enr, symmetric_port: Option<u16>, is_hole_punch: bool) {
+        if let Some(contact) = self.contact_from_enr(enr, symmetric_port) {
             let request_body = RequestBody::Ping {
                 enr_seq: self.local_enr.read().seq(),
             };
@@ -1234,7 +1237,7 @@ impl Service {
                 .iter()
                 .filter_map(|entry| {
                     if entry.status.is_connected() {
-                        Some(entry.node.value.clone())
+                        Some((entry.node.value.clone(), entry.status.state.symmetric_port()))
                     } else {
                         None
                     }
@@ -1242,8 +1245,8 @@ impl Service {
                 .collect::<Vec<_>>()
         };
 
-        for enr in connected_peers {
-            self.send_ping(&enr, false);
+        for (enr, symmetric_port) in connected_peers {
+            self.send_ping(&enr, symmetric_port, false);
         }
     }
 
@@ -1495,8 +1498,8 @@ impl Service {
         request_body: RequestBody,
     ) {
         // find the ENR associated with the query
-        if let Some(enr) = self.find_enr(&return_peer) {
-            if let Some(contact) = self.contact_from_enr(&enr) {
+        if let Some((enr, symmetric_port)) = self.find_enr(&return_peer) {
+            if let Some(contact) = self.contact_from_enr(&enr, symmetric_port) {
                 let relay = self.query_peer_relays.remove(&return_peer);
                 let active_request = ActiveRequest {
                     contact,
@@ -1790,18 +1793,18 @@ impl Service {
 
         if let Some(node_key) = ping_peer {
             let optional_enr = {
-                if let kbucket::Entry::Present(entry, _status) =
+                if let kbucket::Entry::Present(entry, status) =
                     self.kbuckets.write().entry(&node_key)
                 {
                     // NOTE: We don't check the status of this peer. We try and ping outdated
                     // peers.
-                    Some(entry.value().clone())
+                    Some((entry.value().clone(), status.state.symmetric_port()))
                 } else {
                     None
                 }
             };
-            if let Some(enr) = optional_enr {
-                self.send_ping(&enr, false)
+            if let Some((enr, symmetric_port)) = optional_enr {
+                self.send_ping(&enr, symmetric_port, false)
             }
         }
     }
@@ -1962,9 +1965,9 @@ impl Service {
                                 // was forwarded to us in a NODES response and we hence have a
                                 // relay for it.
                                 if let Some(relay) = active_request.relay {
-                                    if let Some(relay_enr) = self.find_enr(&relay) {
+                                    if let Some((relay_enr, symmetric_port)) = self.find_enr(&relay) {
                                         if let Some(relay_contact) =
-                                            self.contact_from_enr(&relay_enr)
+                                            self.contact_from_enr(&relay_enr, symmetric_port)
                                         {
                                             let local_enr = self.local_enr.read().clone();
                                             if let Some(enr) = active_request.contact.enr() {
@@ -2033,7 +2036,9 @@ impl Service {
         }
     }
 
-    fn contact_from_enr(&self, enr: &Enr) -> Option<NodeContact> {
+    /// Attempts to construct a NodeContact from an ENR and optionally a symmetric port, if one is
+    /// known.
+    fn contact_from_enr(&self, enr: &Enr, symmetric_port: Option<u16>) -> Option<NodeContact> {
         match NodeContact::try_from_enr(enr, self.config.ip_mode, true) {
             Ok(contact) => Some(contact),
             Err(_) => {
@@ -2045,18 +2050,13 @@ impl Service {
                     .map(|v| v > 0)
                     .unwrap_or(true)
                 {
-                    let key = kbucket::Key::from(enr.node_id());
-                    if let kbucket::Entry::Present(_entry, status) =
-                        self.kbuckets.write().entry(&key)
-                    {
-                        if let ConnectionState::ConnectedSymmetricNat(port) = status.state {
-                            return NodeContact::try_from_enr_symmetric_nat(
-                                enr,
-                                self.config.ip_mode,
-                                port,
-                            )
-                            .ok();
-                        }
+                    if let Some(port) = symmetric_port {
+                        return NodeContact::try_from_enr_symmetric_nat(
+                            enr,
+                            self.config.ip_mode,
+                            port,
+                        )
+                        .ok();
                     }
                 }
                 None

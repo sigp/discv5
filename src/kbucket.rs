@@ -168,7 +168,7 @@ pub enum InsertResult<TNodeId> {
         /// disconnected and whose corresponding peer should be checked for connectivity
         /// in order to prevent it from being evicted. If connectivity to the peer is
         /// re-established, the corresponding entry should be updated with
-        /// [`bucket::ConnectionState::Connected`].
+        /// [`ConnectionState::Connected`].
         disconnected: Key<TNodeId>,
     },
     /// The node existed and the status was updated.

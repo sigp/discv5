@@ -74,6 +74,17 @@ pub enum ConnectionState {
     ConnectedSymmetricNat(u16),
 }
 
+impl ConnectionState {
+    // Returns a port if we are connected to this node via a symmetric NAT.
+    pub fn symmetric_port(&self) -> Option<u16> {
+        if let ConnectionState::ConnectedSymmetricNat(port) = self {
+            Some(*port)
+        } else {
+            None
+        }
+    }
+}
+
 /// Whether the connection has been formed from an inbound or outbound initiating connection.
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum ConnectionDirection {
