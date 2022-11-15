@@ -756,7 +756,7 @@ impl Service {
                         if self.hole_punch_pings.get(&from_enr.node_id()).is_none() {
                             trace!("Receiver node sending PING to initiator node");
                             // TODO: Add symmetric_port?
-                            self.send_ping(&from_enr,None, true);
+                            self.send_ping(&from_enr, None, true);
                             trace!("Receiver node sending RELAYRESPONSE to rendezvous node");
                             self.send_relay_response(node_address, id, RelayResponseCode::True);
                         } else {
@@ -1237,7 +1237,10 @@ impl Service {
                 .iter()
                 .filter_map(|entry| {
                     if entry.status.is_connected() {
-                        Some((entry.node.value.clone(), entry.status.state.symmetric_port()))
+                        Some((
+                            entry.node.value.clone(),
+                            entry.status.state.symmetric_port(),
+                        ))
                     } else {
                         None
                     }
@@ -1965,7 +1968,8 @@ impl Service {
                                 // was forwarded to us in a NODES response and we hence have a
                                 // relay for it.
                                 if let Some(relay) = active_request.relay {
-                                    if let Some((relay_enr, symmetric_port)) = self.find_enr(&relay) {
+                                    if let Some((relay_enr, symmetric_port)) = self.find_enr(&relay)
+                                    {
                                         if let Some(relay_contact) =
                                             self.contact_from_enr(&relay_enr, symmetric_port)
                                         {
