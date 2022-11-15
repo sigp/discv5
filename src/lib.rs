@@ -103,6 +103,7 @@
 //! [`Session`]: session/struct.Session.html
 
 mod config;
+mod connection;
 mod discv5;
 pub mod enr_nat;
 mod error;
@@ -127,11 +128,12 @@ pub type Enr = enr::Enr<enr::CombinedKey>;
 
 pub use crate::discv5::{Discv5, Discv5Event};
 pub use config::{Discv5Config, Discv5ConfigBuilder};
+pub use connection::{ConnectionDirection, ConnectionState};
 pub use enr_nat::{EnrNat, Feature};
 pub use error::{Discv5Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
 pub use ipmode::IpMode;
-pub use kbucket::{ConnectionDirection, ConnectionState, Key};
+pub use kbucket::Key;
 pub use permit_ban::PermitBanList;
 pub use service::TalkRequest;
 pub use socket::{RateLimiter, RateLimiterBuilder};

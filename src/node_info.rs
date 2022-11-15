@@ -77,41 +77,42 @@ impl NodeContact {
         }
     }
 
-    pub fn try_from_enr_nat_symmetric(
+    /// Attempt to get a NodeContact from an ENR. This optionally includes NAT'd peers.
+    pub fn try_from_enr(
+        enr: &Enr,
+        ip_mode: IpMode,
+        include_nat: bool,
+    ) -> Result<Self, NonContactable<'_>> {
+        let socket_addr = match ip_mode.get_contactable_addr(enr) {
+            Some(socket_addr) => socket_addr,
+            None => {
+                if include_nat {
+                    ip_mode
+                        .get_contactable_addr_nat(enr, None)
+                        .ok_or(NonContactable { enr })?
+                } else {
+                    Err(NonContactable { enr })?
+                }
+            }
+        };
+
+        Ok(NodeContact {
+            public_key: enr.public_key(),
+            socket_addr,
+            enr: Some(enr.clone()),
+        })
+    }
+
+    /// Attempts to get a NodeContact from an ENR assuming this is an ENR that describes a Node
+    /// behind a symmetric NAT.
+    pub fn try_from_enr_symmetric_nat(
         enr: &Enr,
         ip_mode: IpMode,
         port: u16,
     ) -> Result<Self, NonContactable<'_>> {
-        let socket_addr = match ip_mode.get_contactable_addr_nat_symmetric(enr, port) {
-            Some(socket_addr) => socket_addr,
-            None => return Err(NonContactable { enr }),
-        };
-
-        Ok(NodeContact {
-            public_key: enr.public_key(),
-            socket_addr,
-            enr: Some(enr.clone()),
-        })
-    }
-
-    pub fn try_from_enr_nat(enr: &Enr, ip_mode: IpMode) -> Result<Self, NonContactable<'_>> {
-        let socket_addr = match ip_mode.get_contactable_addr_nat(enr) {
-            Some(socket_addr) => socket_addr,
-            None => return Err(NonContactable { enr }),
-        };
-
-        Ok(NodeContact {
-            public_key: enr.public_key(),
-            socket_addr,
-            enr: Some(enr.clone()),
-        })
-    }
-
-    pub fn try_from_enr(enr: &Enr, ip_mode: IpMode) -> Result<Self, NonContactable<'_>> {
-        let socket_addr = match ip_mode.get_contactable_addr(enr) {
-            Some(socket_addr) => socket_addr,
-            None => return Err(NonContactable { enr }),
-        };
+        let socket_addr = ip_mode
+            .get_contactable_addr_nat(enr, Some(port))
+            .ok_or(NonContactable { enr })?;
 
         Ok(NodeContact {
             public_key: enr.public_key(),
@@ -176,7 +177,7 @@ impl NodeContact {
 impl From<Enr> for NodeContact {
     #[track_caller]
     fn from(enr: Enr) -> Self {
-        NodeContact::try_from_enr(&enr, IpMode::default()).unwrap()
+        NodeContact::try_from_enr(&enr, IpMode::default(), false).unwrap()
     }
 }
 

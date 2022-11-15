@@ -60,19 +60,11 @@ pub struct NodeStatus {
     pub state: ConnectionState,
 }
 
-/// The connection state of a node.
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
-pub enum ConnectionState {
-    /// The node is connected.
-    Connected,
-    /// The node is considered disconnected.
-    Disconnected,
-}
-
 impl NodeStatus {
     pub fn is_connected(&self) -> bool {
         match self.state {
             ConnectionState::Connected => true,
+            ConnectionState::ConnectedSymmetricNat(_) => true,
             ConnectionState::Disconnected => false,
         }
     }
@@ -409,7 +401,7 @@ where
 
             // Adjust `first_connected_pos` accordingly.
             match old_status.state {
-                ConnectionState::Connected => {
+                ConnectionState::Connected | ConnectionState::ConnectedSymmetricNat(_) => {
                     if self.first_connected_pos.map_or(false, |p| p == pos.0)
                         && pos.0 == self.nodes.len()
                     {
@@ -554,7 +546,7 @@ where
             .unwrap_or_default();
 
         let insert_result = match node.status.state {
-            ConnectionState::Connected => {
+            ConnectionState::Connected | ConnectionState::ConnectedSymmetricNat(_) => {
                 if node.status.is_incoming() {
                     // check the maximum counter
                     if self.is_max_incoming() {
@@ -704,15 +696,6 @@ impl<TNodeId: std::fmt::Debug, TVal: Eq + std::fmt::Debug> std::fmt::Debug
             .field("filter", &self.filter.is_some())
             .field("max_incoming", &self.max_incoming)
             .finish()
-    }
-}
-
-impl std::fmt::Display for ConnectionDirection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self {
-            ConnectionDirection::Incoming => write!(f, "Incoming"),
-            ConnectionDirection::Outgoing => write!(f, "Outgoing"),
-        }
     }
 }
 

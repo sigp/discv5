@@ -13,6 +13,7 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
+    connection::Connection,
     enr_nat::EnrNat,
     error::{Discv5Error, QueryError, RequestError},
     kbucket::{
@@ -64,7 +65,7 @@ pub enum Discv5Event {
         replaced: Option<NodeId>,
     },
     /// A new session has been established with a node.
-    SessionEstablished(Enr, SocketAddr),
+    SessionEstablished(Enr, Connection),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
     /// A node has initiated a talk request.
@@ -498,7 +499,8 @@ impl Discv5 {
         let ip_mode = self.config.ip_mode;
 
         async move {
-            let node_contact = NodeContact::try_from_enr(&enr, ip_mode)?;
+            // TODO: Permit NAT nodes in TALKREQ
+            let node_contact = NodeContact::try_from_enr(&enr, ip_mode, false)?;
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);

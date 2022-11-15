@@ -28,6 +28,7 @@
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
     config::Discv5Config,
+    connection::{Connection, ConnectionDirection, NatKind},
     discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
@@ -109,90 +110,11 @@ pub enum HandlerIn {
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 }
 
-/// The type of established session is evaluated by verifying the ENR of the peer and is of
-/// importance to how they are added to the kbuckets.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RoutingType {
-    /// A session has been established with a peer.
-    ///
-    /// A session is only considered established once we have received a signed ENR from the
-    /// peer and either the observed `SocketAddr` matches the one declared in the ENR or the
-    /// ENR declares no `SocketAddr`.
-    NoNatOrPortForward(Enr, SocketAddr, ConnectionDirection),
-    /// A session has been established with a peer behind an asymmetric NAT, either via the peer
-    /// simply dialing out to this node, via the NAT traversal protocol.
-    ///
-    /// A session with a peer behind an asymmetric NAT is only considered established once we have
-    /// received an ENR from the peer and the observed `SocketAddr` matches the one declared in
-    /// the 'nat'/'nat6' and 'udp'/'udp6' fields of the ENR.
-    ///
-    /// The [`ConnectionDirection`] is incoming if the peer dialed out to us directly without use
-    /// of the NAT traversal protocol. This peer will send PINGs to this node more frequently than
-    /// nodes that are not behind a NAT do, this way the hole punched in the peer's NAT for this
-    /// node will stay open and this peer can listen for requests from this node.
-    ///
-    /// Using the NAT traversal protocol to get the peer to dial out to us will always result in a
-    /// [`ConnectionDirection::Outgoing`] direction for both parties, the initiator and the
-    /// receiver. The initiator learns about the receiver in a NODES response from the rendezvous
-    /// node and attempts to connect to it via the rendezvous node. The receiver learns about the
-    /// initiator in a RELAYREQUEST from the rendezvous node and dials out to the initiator (this
-    /// first message is dropped by the initiator if it is also behind a NAT).
-    AsymmetricNat(Enr, SocketAddr, ConnectionDirection),
-    /// A session has been established with a peer behind a symmetric NAT.
-    ///
-    /// A session with a peer behind a symmetric NAT is only considered established once we have
-    /// received an ENR from the node and the observed `IpAddr` matches the one declared in the
-    /// 'nat'/'nat6' field of the ENR.
-    ///
-    /// The [`ConnectionDirection`] is always [`ConnectionDirection::Incoming`] as peers behind
-    /// symmetric NATs only dial out. This peer will send PINGs to this node more frequently than
-    /// nodes that are not behind a NAT do, this way the hole punched in the peer's NAT for this
-    /// node will stay open and this peer can listen for requests from this node.
-    ///
-    /// Peers behind symmetric NATs cannot be hole-punched as they cannot not advertise a port for
-    /// new peers to hole-punch them on. The [`ConnectionDirection`] is always incoming as peers
-    /// behind symmetric NATs only dial out.
-    SymmetricNat(Enr, SocketAddr),
-}
-
-impl std::fmt::Display for RoutingType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RoutingType::NoNatOrPortForward(enr, socket, conn_dir) => {
-                write!(
-                    f,
-                    "No NAT or port-forwarded: enr: {}, socket: {}, connection direction: {}",
-                    enr.node_id(),
-                    socket,
-                    conn_dir
-                )
-            }
-            RoutingType::AsymmetricNat(enr, socket, conn_dir) => {
-                write!(
-                    f,
-                    "Asymmetric NAT: enr: {}, socket: {}, connection direction: {}",
-                    enr.node_id(),
-                    socket,
-                    conn_dir
-                )
-            }
-            RoutingType::SymmetricNat(enr, socket) => {
-                write!(
-                    f,
-                    "Symmetric NAT: enr: {}, socket: {}",
-                    enr.node_id(),
-                    socket
-                )
-            }
-        }
-    }
-}
-
 /// Messages sent between a node on the network and `Handler`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandlerOut {
     /// A session has been established with a node.
-    Established(RoutingType),
+    Established(Enr, Connection),
 
     /// A Request has been received from a node on the network.
     Request(NodeAddress, Box<Request>),
@@ -208,21 +130,6 @@ pub enum HandlerOut {
     ///
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
-}
-
-/// How we connected to the node.
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
-pub enum ConnectionDirection {
-    /// The node contacted us.
-    Incoming,
-    /// We contacted the node.
-    Outgoing,
-}
-
-/// Two types of NAT that are acknowledged.
-pub enum Nat {
-    Symmetric,
-    Asymmetric,
 }
 
 /// A reference for the application layer to send back when the handler requests any known
@@ -789,36 +696,43 @@ impl Handler {
                 // arrives at the initiator end. If only the receiver is behind a NAT the
                 // WHOAREYOU challenge arrives at the receiver end. In both cases the connection
                 // direction will be outgoing.
-                let connection_direction = {
-                    match (
-                        request_call.initiating_session(),
-                        request_call.hole_punch(),
-                        &request_call.request().body,
-                    ) {
-                        (true, false, RequestBody::Ping { .. }) => ConnectionDirection::Incoming,
-                        (_, true, RequestBody::Ping { .. }) => ConnectionDirection::Outgoing,
-                        (true, _, _) => ConnectionDirection::Outgoing,
-                        (false, _, _) => ConnectionDirection::Incoming,
-                    }
-                };
+                let connection = {
+                    let direction = {
+                        if matches!(request_call.request().body, RequestBody::Ping { .. }) {
+                            // If the request body is a PING and we are hole-punching, this is an outgoing
+                            // connection
+                            if request_call.hole_punch() {
+                                ConnectionDirection::Outgoing
+                            } else {
+                                // TODO: Check this logic. This seems like all pings are incoming?
+                                ConnectionDirection::Incoming
+                            }
+                        } else if request_call.initiating_session() {
+                            // We are initiation the session
+                            ConnectionDirection::Outgoing
+                        } else {
+                            // This is an incoming connection
+                            ConnectionDirection::Incoming
+                        }
+                    };
 
-                // Notify the application that the session has been established
-                let routing_type = if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address)
-                {
-                    match valid_enr {
-                        Nat::Asymmetric => RoutingType::AsymmetricNat(
-                            enr,
-                            node_address.socket_addr,
-                            connection_direction,
-                        ),
-                        Nat::Symmetric => RoutingType::SymmetricNat(enr, node_address.socket_addr),
+                    let nat_kind = match self.determine_nat_kind(&enr, &node_address) {
+                        Some(kind) => kind,
+                        None => {
+                            warn!("Could not determine Nat from node: {}", node_address);
+                            // We should have used this ENR to start the connection, it should be
+                            // contactable and the response should reflect this.
+                            // Default to a Direct NAT type in this case and let the service handle
+                            // whether we wish to persist this connection
+                            NatKind::Direct
+                        }
+                    };
+
+                    Connection {
+                        direction,
+                        socket: node_address.socket_addr,
+                        nat_kind,
                     }
-                } else {
-                    RoutingType::NoNatOrPortForward(
-                        enr,
-                        node_address.socket_addr,
-                        connection_direction,
-                    )
                 };
 
                 // We already know the ENR. Send the handshake response packet
@@ -832,7 +746,7 @@ impl Handler {
                 self.send(node_address.clone(), auth_packet).await;
 
                 self.service_send
-                    .send(HandlerOut::Established(routing_type))
+                    .send(HandlerOut::Established(enr, connection))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
             }
@@ -863,58 +777,77 @@ impl Handler {
         self.new_session(node_address, session);
     }
 
-    /// Verifies a Node ENR to it's observed address. If it fails, any associated session is also
-    /// considered failed. If it succeeds, we notify the application.
-    fn verify_enr(&self, enr: &Enr, node_address: &NodeAddress) -> bool {
+    /// Determines the kind of NAT this peer may be behind, given the ENR and socket address that
+    /// is connected to us on. If there is not enough information to determine the NAT kind, this
+    /// returns None. If the node_address does not match the expected node address, this also
+    /// returns none.
+    fn determine_nat_kind(&self, enr: &Enr, node_address: &NodeAddress) -> Option<NatKind> {
+        // TODO: Shift the majority of this logic into ENR extension trait or ENR itself.
+
         // If the ENR does not match the observed IP addresses, we consider the Session
         // failed.
-        enr.node_id() == node_address.node_id
-            && match node_address.socket_addr {
-                SocketAddr::V4(socket_addr) => enr
-                    .udp4_socket()
-                    .map_or(true, |advertised_addr| socket_addr == advertised_addr),
-                SocketAddr::V6(socket_addr) => enr
-                    .udp6_socket()
-                    .map_or(true, |advertised_addr| socket_addr == advertised_addr),
-            }
-    }
+        if enr.node_id() != node_address.node_id {
+            warn!(
+                "Node ID mismatch: {} {}",
+                enr.node_id(),
+                node_address.node_id
+            );
+            return None;
+        }
 
-    fn verify_enr_nat(&self, enr: &Enr, node_address: &NodeAddress) -> Option<Nat> {
-        // If the ENR does not match the observed IP addresses, we consider the NAT Session
-        // failed.
-        if enr.node_id() == node_address.node_id {
-            match node_address.socket_addr {
-                SocketAddr::V4(socket_addr) => {
-                    if let Some(advertised_socket) = enr.udp4_socket_nat() {
-                        trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket {}", node_address, advertised_socket);
-                        if socket_addr == advertised_socket {
-                            return Some(Nat::Asymmetric);
-                        }
-                    } else if let Some(advertised_ip) = enr.nat4() {
-                        trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip {}", node_address, advertised_ip);
-                        if socket_addr.ip() == &advertised_ip {
-                            return Some(Nat::Symmetric);
-                        }
+        match node_address.socket_addr {
+            SocketAddr::V4(socket_addr) => {
+                // Check for direct connections
+                if let Some(advertised_socket) = enr.udp4_socket() {
+                    if advertised_socket == socket_addr {
+                        return Some(NatKind::Direct);
+                    }
+                } else if enr.nat4().is_none() {
+                    // It is also permitted to leave all fields blank
+                    return Some(NatKind::Direct);
+                }
+
+                // Check for FullCone NAT
+                if let Some(advertised_socket) = enr.udp4_socket_nat() {
+                    trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket {}", node_address, advertised_socket);
+                    if socket_addr == advertised_socket {
+                        return Some(NatKind::FullCone);
+                    }
+                    // Check for Symmetric NAT.
+                } else if let Some(advertised_ip) = enr.nat4() {
+                    trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip {}", node_address, advertised_ip);
+                    if socket_addr.ip() == &advertised_ip {
+                        return Some(NatKind::Symmetric);
                     }
                 }
-                SocketAddr::V6(socket_addr) => {
-                    if let Some(advertised_socket) = enr.udp6_socket_nat() {
-                        trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket6 {}", node_address, advertised_socket);
-                        if socket_addr == advertised_socket {
-                            return Some(Nat::Asymmetric);
-                        }
-                    } else if let Some(advertised_ip) = enr.nat6() {
-                        trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip6 {}", node_address, advertised_ip);
-                        if socket_addr.ip() == &advertised_ip {
-                            return Some(Nat::Symmetric);
-                        }
+                None
+            }
+            SocketAddr::V6(socket_addr) => {
+                // Check for direct connections
+                if let Some(advertised_socket) = enr.udp6_socket() {
+                    if advertised_socket == socket_addr {
+                        return Some(NatKind::Direct);
+                    }
+                } else if enr.nat6().is_none() {
+                    // It is also permitted to leave all fields blank
+                    return Some(NatKind::Direct);
+                }
+
+                // Check for Full Cone Nat
+                if let Some(advertised_socket) = enr.udp6_socket_nat() {
+                    trace!("Verifying address of node {} behind asymmetric NAT. Advertised externally reachable socket6 {}", node_address, advertised_socket);
+                    if socket_addr == advertised_socket {
+                        return Some(NatKind::FullCone);
+                    }
+                } else if let Some(advertised_ip) = enr.nat6() {
+                    trace!("Verifying address of node {} behind symmetric NAT. Advertised externally reachable ip6 {}", node_address, advertised_ip);
+                    if socket_addr.ip() == &advertised_ip {
+                        return Some(NatKind::Symmetric);
                     }
                 }
+                None
             }
         }
-        // If the ENR does not advertise any externally reachable address, we consider
-        // the NAT Session failed.
-        None
     }
 
     /// Handle a message that contains an authentication header.
@@ -949,75 +882,33 @@ impl Handler {
             ) {
                 Ok((session, enr)) => {
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
-                    // Verify the ENR of peer is valid either for a node not behind a NAT or
-                    // port-forwarded, or a node behind an asymmetric NAT (node connects via the
-                    // same WAN reachable socket for all peers) or a symmetric NAT (node connects
-                    // via different WAN reachable ports for each connection).
 
-                    let mut is_valid_enr = false;
+                    // Verify the ENR and determine the nat type.
 
-                    let routing_type =
-                        if let Some(valid_enr) = self.verify_enr_nat(&enr, &node_address) {
-                            trace!("Node {} is behind NAT", node_address);
-                            // NAT Session is valid
-                            // Notify the application
-                            // The session established here are from WHOAREYOU packets that we
-                            // sent.
-                            // This occurs when a node established a connection with us and the
-                            // node knows it is behind a NAT and has configured its ENR
-                            // accordingly.
-                            match valid_enr {
-                                Nat::Asymmetric => Some(RoutingType::AsymmetricNat(
-                                    enr,
-                                    node_address.socket_addr,
-                                    ConnectionDirection::Incoming,
-                                )),
-                                Nat::Symmetric => {
-                                    // Nodes behind symmetric NATs will only send handshakes not
-                                    // receive them.
-                                    Some(RoutingType::SymmetricNat(enr, node_address.socket_addr))
-                                }
-                            }
-                        } else if self.verify_enr(&enr, &node_address) {
-                            // Session is valid
-                            // Notify the application
-                            // The session established here is from a WHOAREYOU packet that we
-                            // sent in response to a packet from the peer that could not be
-                            // decrypt due to the lack of a session with the peer.
-                            // This occurs when a node established a connection with us.
-                            Some(RoutingType::NoNatOrPortForward(
-                                enr,
-                                node_address.socket_addr,
-                                ConnectionDirection::Incoming,
-                            ))
-                        } else {
-                            // IP's or NodeAddress don't match. Drop the session.
-                            warn!(
-                                "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
-                                enr.udp4_socket(),
-                                enr.udp6_socket(),
-                                node_address
-                            );
-                            self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
-                                .await;
-                            None
+                    if let Some(nat_kind) = self.determine_nat_kind(&enr, &node_address) {
+                        // Session is valid
+                        // Notify the application
+                        // The session established here is from a WHOAREYOU packet that we
+                        // sent in response to a packet from the peer that was either random, or
+                        // that could not bed decrypted due to the lack of a session with the peer.
+
+                        // This occurs when a node established a connection with us and thus we
+                        // consider it an incoming connection.
+                        let connection = Connection {
+                            direction: ConnectionDirection::Incoming,
+                            socket: node_address.socket_addr,
+                            nat_kind,
                         };
-                    if let Some(routing_type) = routing_type {
-                        trace!(
-                            "Establishing session with a node that appears to be of routing type {}",
-                            routing_type
-                        );
+
+                        // Inform the application of the new session
                         if let Err(e) = self
                             .service_send
-                            .send(HandlerOut::Established(routing_type))
+                            .send(HandlerOut::Established(enr, connection))
                             .await
                         {
                             warn!("Failed to inform of established session {}", e)
                         }
-                        is_valid_enr = true;
-                    }
 
-                    if is_valid_enr {
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
                             node_address.clone(),
@@ -1029,6 +920,16 @@ impl Handler {
                         // We could have pending messages that were awaiting this session to be
                         // established. If so process them.
                         self.send_next_request(node_address).await;
+                    } else {
+                        // IP's or NodeAddress don't match and there is no reasonable NAT configuration. Drop the session.
+                        warn!(
+                            "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
+                            enr.udp4_socket(),
+                            enr.udp6_socket(),
+                            node_address
+                        );
+                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
+                            .await;
                     }
                 }
                 Err(Discv5Error::InvalidChallengeSignature(challenge)) => {
@@ -1172,35 +1073,19 @@ impl Handler {
                                         // its reachable address and routing situation and has now
                                         // found out by ip voting that it is behind a symmetric
                                         // NAT and has PINGed us with its new ENR sequence number.
-                                        let routing_type = if let Some(valid_enr) =
-                                            self.verify_enr_nat(&enr, &node_address)
+                                        if let Some(nat_kind) =
+                                            self.determine_nat_kind(&enr, &node_address)
                                         {
-                                            match valid_enr {
-                                                Nat::Asymmetric => {
-                                                    Some(RoutingType::AsymmetricNat(
-                                                        enr,
-                                                        node_address.socket_addr,
-                                                        ConnectionDirection::Outgoing,
-                                                    ))
-                                                }
-                                                Nat::Symmetric => Some(RoutingType::SymmetricNat(
-                                                    enr,
-                                                    node_address.socket_addr,
-                                                )),
-                                            }
-                                        } else if self.verify_enr(&enr, &node_address) {
-                                            Some(RoutingType::NoNatOrPortForward(
-                                                enr,
-                                                node_address.socket_addr,
-                                                ConnectionDirection::Outgoing,
-                                            ))
-                                        } else {
-                                            None
-                                        };
-                                        if let Some(routing_type) = routing_type {
+                                            // ENR is valid, inform the service.
+                                            let connection = Connection {
+                                                direction: ConnectionDirection::Outgoing,
+                                                socket: node_address.socket_addr,
+                                                nat_kind,
+                                            };
+
                                             if let Err(e) = self
                                                 .service_send
-                                                .send(HandlerOut::Established(routing_type))
+                                                .send(HandlerOut::Established(enr, connection))
                                                 .await
                                             {
                                                 warn!("Failed to inform established outgoing connection {}", e)

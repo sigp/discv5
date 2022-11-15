@@ -100,7 +100,6 @@ async fn build_service(
         receiver_enrs: Default::default(),
         config,
         query_peer_relays: HashMap::default(),
-        symmetric_nat_peers_ports: Default::default(),
     }
 }
 

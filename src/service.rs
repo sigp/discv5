@@ -18,12 +18,13 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
+    connection::{Connection, ConnectionDirection, ConnectionState, NatKind},
     enr_nat::EnrNat,
     error::{RequestError, ResponseError},
-    handler::{Handler, HandlerIn, HandlerOut, RoutingType},
+    handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
-        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
+        self, FailureReason, InsertResult, KBucketsTable, NodeStatus, UpdateResult,
+        MAX_NODES_PER_BUCKET,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
     packet::MAX_PACKET_SIZE,
@@ -60,10 +61,6 @@ pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 /// Most NAT setups will keep a hole-punch connection alive if the UDP state table entry is
 /// reset every 30 seconds, hence a node behind a NAT pings its peers at this interval.
 const PING_INTERVAL_NAT: Duration = Duration::from_secs(60);
-
-/// Peers behind a symmetric NAT are limited per kbucket as they can only be sent request not
-/// passed in NODES responses to other peers.
-const MAX_SYMMETRIC_NAT_PEERS_PER_KBUCKET: usize = 2;
 
 /// Currently, a maximum of `DISTANCES_TO_REQUEST_PER_PEER * BUCKET_SIZE` peers
 /// can be returned. Datagrams have a max size of 1280 and ENR's have a max size
@@ -221,11 +218,6 @@ pub struct Service {
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
 
-    /// If this Discv5 instance is configured to allow peers behind symmetric NATs
-    /// (peers that requests will be sent to but that will not be included in NODES
-    /// responses to other peers) then connection dependent port mapping is stored.
-    symmetric_nat_peers_ports: Option<HashMap<u64, HashMap<NodeId, u16>>>,
-
     /// A relay is stored for a peer added to the query so that incase it times out we can attempt
     /// to contact it via the NAT traversal protocol if supported.
     query_peer_relays: HashMap<NodeId, NodeId>,
@@ -328,12 +320,6 @@ impl Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
-        let symmetric_nat_peers_ports = config
-            .nat_symmetric_limit
-            .map(|v| v > 0)
-            .unwrap_or(false)
-            .then(HashMap::default);
-
         config
             .executor
             .clone()
@@ -358,7 +344,6 @@ impl Service {
                     config: config.clone(),
                     query_peer_relays: Default::default(),
                     receiver_enrs: Default::default(),
-                    symmetric_nat_peers_ports,
                     relayed_requests: Default::default(),
                 };
 
@@ -413,39 +398,8 @@ impl Service {
                 }
                 Some(event) = self.handler_recv.recv() => {
                     match event {
-                        HandlerOut::Established(routing_type) => {
-                            match routing_type {
-                                RoutingType::NoNatOrPortForward(enr, socket_addr, direction) => {
-                                    self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
-
-                                    let connection_direction = match self.hole_punch_pings.remove(&enr.node_id())
-                                    {
-                                        true => ConnectionDirection::Outgoing,
-                                        _ => direction,
-                                    };
-
-                                    self.inject_session_established(enr, connection_direction);
-                                }
-                                RoutingType::AsymmetricNat(enr, socket_addr, direction) => {
-                                    if self.local_enr.read().supports_nat() {
-                                        info!("A new session has been established with a peer behind an asymmetric NAT. Peer: ENR: {}, socket: {}", enr, socket_addr);
-
-                                        let connection_direction = match self.hole_punch_pings.remove(&enr.node_id())
-                                        {
-                                            true => ConnectionDirection::Outgoing,
-                                            _ => direction,
-                                        };
-
-                                        self.inject_session_established_nat(enr, connection_direction);
-                                    }
-                                }
-                                RoutingType::SymmetricNat(enr, socket_addr) => {
-                                    if self.local_enr.read().supports_nat() {
-                                        info!("A new session has been established with a peer behind a symmetric NAT. Peer: ENR: {}, socket: {}", enr, socket_addr);
-                                        self.inject_session_established_nat_symmetric(enr, socket_addr.port());
-                                    }
-                                }
-                            }
+                        HandlerOut::Established(enr, connection) => {
+                            self.inject_session_established(enr, connection);
                         }
                         HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
@@ -668,7 +622,7 @@ impl Service {
                                                     // our own ENR.
                 }
                 if let Some(enr) = to_request_enr {
-                    match NodeContact::try_from_enr(&enr, self.config.ip_mode) {
+                    match NodeContact::try_from_enr(&enr, self.config.ip_mode, false) {
                         Ok(contact) => {
                             self.request_enr(contact, None);
                         }
@@ -858,7 +812,7 @@ impl Service {
                         // in our routing table. We therefore do not attempt to check any of our
                         // sessions and just end the relay request.
                         // This is likely a fault of the requesting node.
-                        warn!("Requested to relay to unknown node: {}", receiver);
+                        warn!("Requested to relay to unknown node: {}", node_address);
                         self.send_relay_response(node_address, id, RelayResponseCode::Error);
                     }
                 }
@@ -1663,7 +1617,7 @@ impl Service {
                 // If a discovered node flags that it is behind an asymmetric NAT, send it a relay
                 // request directly instead of adding it to a query (avoid waiting for a request to
                 // the new peer to timeout).
-                if self.config.ip_mode.get_contactable_addr_nat(enr).is_some() {
+                if self.config.ip_mode.is_contactable_nat(enr, false) {
                     let key = kbucket::Key::from(enr.node_id());
                     let mut new_nat_peer = false;
                     match self.kbuckets.write().entry(&key) {
@@ -1735,12 +1689,24 @@ impl Service {
 
         let key = kbucket::Key::from(node_id);
         match new_status {
-            ConnectionStatus::Connected(enr, direction) => {
-                // attempt to update or insert the new ENR.
-                let status = NodeStatus {
-                    state: ConnectionState::Connected,
-                    direction,
+            ConnectionStatus::Connected(enr, connection) => {
+                // A new peer has been established.
+
+                // Build the connection state, storing the port if we have connected via a
+                // symmetric NAT.
+                let state = if matches!(connection.nat_kind, NatKind::Symmetric) {
+                    // If the node has connected via symmetric NAT connection, we store the
+                    // port for the connection in the status of the node.
+                    ConnectionState::ConnectedSymmetricNat(connection.socket.port())
+                } else {
+                    ConnectionState::Connected
                 };
+                let status = NodeStatus {
+                    state,
+                    direction: connection.direction,
+                };
+
+                // Attempt to update or insert the new ENR.
                 match self.kbuckets.write().insert_or_update(&key, enr, status) {
                     InsertResult::Inserted => {
                         // We added this peer to the table
@@ -1842,78 +1808,67 @@ impl Service {
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
-        // Ignore sessions with non-contactable ENRs
-        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
-            return;
-        }
+    fn inject_session_established(&mut self, enr: Enr, mut connection: Connection) {
+        // Ignore sessions based on the connection type
+        match connection.nat_kind {
+            NatKind::Direct => {
+                // This is a normal connection, with a node that is not behind a NAT.
 
-        let node_id = enr.node_id();
-        debug!(
-            "Session established with Node: {}, direction: {}",
-            node_id, direction
-        );
+                // Remove any hole punch pings.
+                // TODO: Come back to this.
+                if self.hole_punch_pings.remove(&enr.node_id()) {
+                    connection.direction = ConnectionDirection::Outgoing;
+                }
 
-        // Register the incoming connection if required.
-        if let ConnectionDirection::Incoming = direction {
-            self.peer_votes.register_incoming_connection();
-        }
-
-        self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
-    }
-
-    fn inject_session_established_nat(
-        &mut self,
-        enr: Enr,
-        connection_direction: ConnectionDirection,
-    ) {
-        // Ignore sessions with non-contactable ENRs
-        if self.config.ip_mode.get_contactable_addr_nat(&enr).is_none() {
-            return;
-        }
-
-        let node_id = enr.node_id();
-        debug!("Session established with node behind NAT: {}", node_id);
-        self.connection_updated(
-            node_id,
-            ConnectionStatus::Connected(enr, connection_direction),
-        );
-    }
-
-    fn inject_session_established_nat_symmetric(&mut self, enr: Enr, port: u16) {
-        // Attempt adding the enr to the local routing table if this Discv5 instances stores
-        // remote ports for connections from nodes behind a symmetric NAT.
-        if let Some(ref mut symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
-            // Ignore sessions with non-contactable ENRs
-            if self
-                .config
-                .ip_mode
-                .get_contactable_addr_nat_symmetric(&enr, port)
-                .is_none()
-            {
-                return;
-            }
-
-            // In case this is a node behind a symmetric NAT we need to store the port which
-            // is unique for this connection and hence will not eventually be advertised in
-            // the peer's ENR.
-            let node_id = enr.node_id();
-            let peer_key: kbucket::Key<NodeId> = node_id.into();
-            if let Some(distance) = peer_key.log2_distance(&enr.node_id().into()) {
-                let ports_bucket = symmetric_nat_peers_ports.entry(distance).or_default();
-                if ports_bucket.len() >= MAX_SYMMETRIC_NAT_PEERS_PER_KBUCKET {
-                    warn!("Cannot insert peer {} behind a symmetric NAT into kbuckets. Limit of {} peers behind a symmetric NAT per kbucket reached", node_id, MAX_SYMMETRIC_NAT_PEERS_PER_KBUCKET);
+                // Ignore sessions with non-contactable ENRs
+                if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
                     return;
                 }
-                ports_bucket.insert(enr.node_id(), port);
+                // Register the incoming connection if required.
+                if connection.is_incoming() {
+                    self.peer_votes.register_incoming_connection();
+                }
             }
+            NatKind::FullCone => {
+                // This node is behind a NAT.
 
-            debug!("Session established with node behind symmetric NAT: {}, direction: Incoming (always 'Incoming' for peer behind symmetric NAT)", node_id);
-            self.connection_updated(
-                node_id,
-                ConnectionStatus::Connected(enr, ConnectionDirection::Incoming),
-            );
+                // Only support this kind if NAT support is enabled and the ENR is contactable via
+                // NAT hole-punching
+                if !self.config.nat_feature && !self.config.ip_mode.is_contactable_nat(&enr, false)
+                {
+                    return;
+                }
+
+                // TODO: Come back to this
+                if self.hole_punch_pings.remove(&enr.node_id()) {
+                    connection.direction = ConnectionDirection::Outgoing;
+                }
+            }
+            NatKind::Symmetric => {
+                // This node is behind a symmetric NAT.
+
+                // Only support this kind if NAT support is enabled and the ENR is contactable via
+                // NAT hole-punching
+                if !self.config.nat_feature
+                    && self
+                        .config
+                        .nat_symmetric_limit
+                        .map(|v| v == 0)
+                        .unwrap_or(false)
+                    && !self.config.ip_mode.is_contactable_nat(&enr, true)
+                {
+                    return;
+                }
+            }
         }
+
+        let node_id = enr.node_id();
+        info!(
+            "Session established with Node: {}, kind: {}",
+            node_id, connection
+        );
+        self.send_event(Discv5Event::SessionEstablished(enr.clone(), connection));
+        self.connection_updated(node_id, ConnectionStatus::Connected(enr, connection));
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
@@ -2079,33 +2034,34 @@ impl Service {
     }
 
     fn contact_from_enr(&self, enr: &Enr) -> Option<NodeContact> {
-        if let Ok(contact) = NodeContact::try_from_enr(enr, self.config.ip_mode) {
-            return Some(contact);
-        } else if let Ok(contact) = NodeContact::try_from_enr_nat(enr, self.config.ip_mode) {
-            return Some(contact);
-        } else if let Some(ref symmetric_nat_peers_ports) = self.symmetric_nat_peers_ports {
-            let node_id = enr.node_id();
-            let peer_key: kbucket::Key<NodeId> = node_id.into();
-            if let Some(distance) = peer_key.log2_distance(&enr.node_id().into()) {
-                if let Some(ports_bucket) = symmetric_nat_peers_ports.get(&distance) {
-                    if let Some(port) = ports_bucket.get(&node_id) {
-                        match NodeContact::try_from_enr_nat_symmetric(
-                            enr,
-                            self.config.ip_mode,
-                            *port,
-                        ) {
-                            Ok(contact) => {
-                                return Some(contact);
-                            }
-                            Err(NonContactable { enr }) => {
-                                warn!("ENR is non-contactable {}", enr);
-                            }
+        match NodeContact::try_from_enr(enr, self.config.ip_mode, true) {
+            Ok(contact) => Some(contact),
+            Err(_) => {
+                // This could be a Node connected via Symmetric NAT.
+                // We check the local routing table to see if it contains a connected port number.
+                if self
+                    .config
+                    .nat_symmetric_limit
+                    .map(|v| v > 0)
+                    .unwrap_or(true)
+                {
+                    let key = kbucket::Key::from(enr.node_id());
+                    if let kbucket::Entry::Present(_entry, status) =
+                        self.kbuckets.write().entry(&key)
+                    {
+                        if let ConnectionState::ConnectedSymmetricNat(port) = status.state {
+                            return NodeContact::try_from_enr_symmetric_nat(
+                                enr,
+                                self.config.ip_mode,
+                                port,
+                            )
+                            .ok();
                         }
                     }
                 }
+                None
             }
         }
-        None
     }
 
     /// If this node is behind a NAT it is responsible for pinging its peers frequently enough to
@@ -2184,7 +2140,7 @@ pub enum QueryKind {
 /// Reporting the connection status of a node.
 enum ConnectionStatus {
     /// A node has started a new connection with us.
-    Connected(Enr, ConnectionDirection),
+    Connected(Enr, Connection),
     /// We received a Pong from a new node. Do not have the connection direction.
     PongReceived(Enr),
     /// The node has disconnected

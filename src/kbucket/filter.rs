@@ -134,13 +134,13 @@ impl Filter<Enr> for SymmetricNatBucketFilter {
         value_to_be_inserted: &Enr,
         other_vals: &mut dyn Iterator<Item = &Enr>,
     ) -> bool {
-        // Determines if the ENR is a behind a nat
+        // Determines if the ENR is a behind a symmetric nat
         let enr_behind_nat = |enr: &Enr| {
             enr.udp4().is_none() && enr.nat4().is_some()
                 || enr.udp6().is_none() && enr.nat6().is_some()
         };
 
-        // If this ENR isn't behind a NAT, we have no reason to filter it.
+        // If this ENR isn't behind a symmetric NAT, we have no reason to filter it.
         if !enr_behind_nat(value_to_be_inserted) {
             return true;
         }
