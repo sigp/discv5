@@ -5,9 +5,9 @@ use tracing::{debug, warn};
 
 type TopicHash = [u8; 32];
 
-/// A receiver decides if it wants to participate in hole-punching its asymmetric NAT for a
-/// connection with an initiator and informs the initiator of its decision with a
-/// [`RelayResponseCode`] in a [`ResponseBody::RelayResponse`].
+/// A receiver decides if it wants to participate in hole-punching its NAT for a connection with an
+/// initiator and informs the initiator of its decision with a [`RelayResponseCode`] in a
+/// [`ResponseBody::RelayResponse`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayResponseCode {
     /// The receiver assembles this response to answer that it does not want to participate in the
@@ -148,8 +148,7 @@ pub enum RequestBody {
     },
     /// A TOPICQUERY request.
     TopicQuery { topic: TopicHash },
-    /// A RELAYREQUEST request, sent by the "initiator" to the "receiver" via the
-    /// "rendezvous".
+    /// A RELAYREQUEST request, sent by the "initiator" to the "receiver" via the "rendezvous".
     RelayRequest {
         /// The enr of the "initiator".
         from_enr: Enr<CombinedKey>,
@@ -191,13 +190,13 @@ pub enum ResponseBody {
     RegisterConfirmation {
         topic: Vec<u8>,
     },
-    /// A RELAYRESPONSE response to a RELAYREQUEST, sent by the "receiver" to the
-    /// "initiator" via the "rendezvous".
+    /// A RELAYRESPONSE response to a RELAYREQUEST, sent by the "receiver" to the "initiator" via
+    /// the "rendezvous".
     RelayResponse {
-        /// The response field informs the initiator if the receiver (peer behind asymmetric NAT)
-        /// accepted the request to hole-punch its NAT or rejected it. In the case that the
-        /// receiver fails to respond, the rendezvous assembles the RELAYRESPONSE and sets the
-        /// response field to inform the initiator of an error on the receiver end.
+        /// The response field informs the initiator if the receiver (peer behind NAT) accepted the
+        /// request to hole-punch its NAT or rejected it. In the case that the receiver fails to
+        /// respond, the rendezvous assembles the RELAYRESPONSE and sets the response field to
+        /// inform the initiator of an error on the receiver end.
         response: RelayResponseCode,
     },
 }
