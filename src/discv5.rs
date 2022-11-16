@@ -87,7 +87,7 @@ pub struct Discv5 {
 
 impl Discv5 {
     pub fn new(
-        local_enr: Enr,
+        mut local_enr: Enr,
         enr_key: CombinedKey,
         mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
@@ -112,6 +112,13 @@ impl Discv5 {
         } else {
             (None, None)
         };
+
+        // This node supports NAT hole punching.
+        if config.nat_feature {
+            if local_enr.set_nat_feature(&enr_key).is_err() {
+                return Err("Failed to set nat feature in local enr");
+            }
+        }
 
         let local_enr = Arc::new(RwLock::new(local_enr));
         let enr_key = Arc::new(RwLock::new(enr_key));
