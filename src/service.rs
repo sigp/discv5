@@ -891,7 +891,7 @@ impl Service {
                     error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
                 }
                 ResponseBody::RelayResponse { response } => {
-                    error!("Received a RelayResponse response. This is unimplemented and should be unreachable. Response {response}");
+                    error!("Received a RelayResponse response. This is unimplemented. Response {response}");
                 }
             }
         } else {
