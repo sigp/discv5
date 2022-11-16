@@ -114,7 +114,7 @@ impl Discv5 {
         };
 
         // This node supports NAT hole punching.
-        if config.nat_feature {
+        if config.enable_nat_relay {
             if local_enr.set_nat_feature(&enr_key).is_err() {
                 return Err("Failed to set nat feature in local enr");
             }

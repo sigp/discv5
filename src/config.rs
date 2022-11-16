@@ -96,8 +96,27 @@ pub struct Discv5Config {
     /// will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
-    /// This node supports the NAT traversal protocol. Default is true.
-    pub nat_feature: bool,
+    /// This node supports acting as a relay in NAT traversal protocol.
+    ///
+    /// Default is `true`.
+    pub enable_nat_relay: bool,
+
+    /// If enabled, this node will attempt to hole-punch its NAT in the NAT traversal protocol.
+    ///
+    /// In the context of the NAT hole punching protocol, this enables the receiver role of the
+    /// protocol for this node. It will also declare and update the NAT-related local ENR fields.
+    ///
+    /// Default is `true`.
+    pub enable_nat_hole_punching: bool,
+
+    /// If enabled, this node will attempt to connect to peers that declare to be behind a NAT in
+    /// their ENR using the NAT hole punching protocol.
+    ///
+    /// In the context of the NAT hole punching protocol, this enables the initiator role of the
+    /// protocol for this node.
+    ///
+    /// Default is `true`.
+    pub contact_nat_peers: bool,
 
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
@@ -140,7 +159,9 @@ impl Default for Discv5Config {
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             ip_mode: IpMode::default(),
-            nat_feature: true,
+            enable_nat_relay: true,
+            enable_nat_hole_punching: true,
+            contact_nat_peers: true,
             executor: None,
         }
     }
@@ -318,9 +339,26 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Configures this node to run with or without the NAT traversal protocol.
-    pub fn nat_feature(&mut self, run_with_nat_feature: bool) -> &mut Self {
-        self.config.nat_feature = run_with_nat_feature;
+    /// Configures this node to act as a relayer in the nat hole punching protocol.
+    pub fn enable_nat_relay(&mut self, enable_nat_relay: bool) -> &mut Self {
+        self.config.enable_nat_relay = enable_nat_relay;
+        self
+    }
+
+    /// If enabled, this node will attempt to hole-punch its NAT in the NAT traversal protocol.
+    ///
+    /// Refer to [`Discv5Config::enable_nat_hole_punching`]
+    pub fn enable_nat_hole_punching(&mut self, enable_nat_hole_punching: bool) -> &mut Self {
+        self.config.enable_nat_hole_punching = enable_nat_hole_punching;
+        self
+    }
+
+    /// If enabled, this node will attempt to connect to peers that declare to be behind a NAT in
+    /// their ENR using the NAT hole punching protocol.
+    ///
+    /// Refer to [`Discv5Config::contact_nat_peers`]
+    pub fn contact_nat_peers(&mut self, contact_nat_peers: bool) -> &mut Self {
+        self.config.contact_nat_peers = contact_nat_peers;
         self
     }
 
@@ -357,7 +395,7 @@ impl std::fmt::Debug for Discv5Config {
             .field("incoming_bucket_limit", &self.incoming_bucket_limit)
             .field("ping_interval", &self.ping_interval)
             .field("ban_duration", &self.ban_duration)
-            .field("nat_feature", &self.nat_feature)
+            .field("enable_nat_relay", &self.enable_nat_relay)
             .finish()
     }
 }

@@ -615,6 +615,60 @@ impl Service {
                 to_node_id,
             } => {
                 debug!("Received RelayRequest request which is unimplemented. Requested from {from_enr} to {to_node_id}");
+                let local_node_id = self.local_enr.read().node_id();
+                let receiver_node_id = to_node_id;
+                let initiator_node_id = from_enr.node_id();
+                let sender_node_id = node_address.node_id;
+
+                /// Nat hole punching role. Used for code readability
+                enum Role {
+                    Relayer,
+                    Receiver,
+                }
+
+                // Sanity checks that apply regardless of the role
+                if receiver_node_id == initiator_node_id {
+                    // A peer can't request to be relayed to itself
+                    return;
+                }
+                if receiver_node_id == sender_node_id {
+                    // A peer can't request to be relayed to itself
+                    return;
+                }
+
+                if initiator_node_id == local_node_id {
+                    // A relay request will never contain the local node as initiator
+                    return;
+                }
+
+                let role = if receiver_node_id == local_node_id {
+                    // We are the receiver. Check that the request is valid
+                    if sender_node_id == initiator_node_id {
+                        // Sender and initiator must be different
+                        return;
+                    }
+                    Role::Receiver
+                } else {
+                    // We are not the receiver, but the relayer. Check that the request is valid
+                    // TODO: any remaining bad configurations?
+                    Role::Relayer
+                };
+
+                match role {
+                    Role::Relayer if !self.config.enable_nat_relay => {
+                        // we were asked to be a relay but the feature is off. Reject the request.
+                    }
+                    Role::Receiver if !self.config.enable_nat_hole_punching => {
+                        // a peer wants us to hole punch to then but it's not enabled. Reject the
+                        // request.
+                    }
+                    Role::Relayer => {
+                        // relay the request.
+                    }
+                    Role::Receiver => {
+                        // Do the receiver dutties.
+                    }
+                }
             }
         }
     }
