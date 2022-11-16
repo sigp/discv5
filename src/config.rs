@@ -45,10 +45,6 @@ pub struct Discv5Config {
     /// local ENR. Default: 10.
     pub enr_peer_update_min: usize,
 
-    /// The minimum number of peer's who tried to engage us in the NAT traversal protocol before
-    /// updating the local ENR. Default: 10.
-    pub enr_peer_update_min_nat: usize,
-
     /// The number of peers to request in parallel in a single query. Default: 3.
     pub query_parallelism: usize,
 
@@ -56,18 +52,8 @@ pub struct Discv5Config {
     /// /24 subnet in the kbuckets table. This is to mitigate eclipse attacks. Default: false.
     pub ip_limit: bool,
 
-    /// When the NAT feature of Discv5 is enabled, this specifies the maximum number of nodes
-    /// behind a symmetric NAT that are allowed per bucket. If set to None, no limit is applied.
-    /// These peers are not passed around in NODES responses to other peers. By adding them to the
-    /// kbuckets they can be sent requests which is useful for discovery queries. These nodes are
-    /// identified by their ENR: their 'nat'/'nat6' field contains an ip but their 'udp' and 'udp6'
-    /// fields are empty. The default value is to exclude these peers from the routing table. A
-    /// reasonable default to include symmetric NAT'd peers is 2. Default: Some(0).
-    pub nat_symmetric_limit: Option<usize>,
-
-    /// Sets a maximum limit to the number of incoming nodes (nodes that have dialed us) to exist
-    /// per-bucket. This cannot be larger than the bucket size (16). By default this is disabled
-    /// (set to the maximum bucket size, 16).
+    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
+    /// than the bucket size (16). By default this is disabled (set to the maximum bucket size, 16).
     pub incoming_bucket_limit: usize,
 
     /// A filter used to decide whether to insert nodes into our local routing table. Nodes can be
@@ -82,7 +68,7 @@ pub struct Discv5Config {
     /// to contact an ENR.
     pub ip_mode: IpMode,
 
-    /// Reports all discovered ENRs when traversing the DHT to the event stream. Default true.
+    /// Reports all discovered ENR's when traversing the DHT to the event stream. Default true.
     pub report_discovered_peers: bool,
 
     /// A set of configuration parameters for setting inbound request rate limits. See
@@ -105,27 +91,13 @@ pub struct Discv5Config {
     /// `crate::PermitBanList`.
     pub permit_ban_list: PermitBanList,
 
-    /// Set the default duration for which nodes are banned for. This timeouts are checked every 5
-    /// minutes, so the precision will be to the nearest 5 minutes. If set to `None`, bans from
-    /// the filter will last indefinitely. Default is 1 hour.
+    /// Set the default duration for which nodes are banned for. This timeouts are checked every 5 minutes,
+    /// so the precision will be to the nearest 5 minutes. If set to `None`, bans from the filter
+    /// will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
-
-    /// The max peers that contact us without an ENR with a reachable address that we store
-    /// anticipating they find their externally reachable address (by ip voting) and set
-    /// their ENR. The default is 100.
-    pub max_awaiting_contactable_enr: usize,
 
     /// This node supports the NAT traversal protocol. Default is true.
     pub nat_feature: bool,
-
-    /// The max number of relays to store per peer. All of these relays may be inactive for
-    /// example if the peer hasn't successfully kept the holes in its NAT to its peers punched.
-    /// Default is 10.
-    pub max_relays_per_receiver: usize,
-
-    /// The amount of time in seconds an inactive relay is stored before it can be replaced.
-    /// Default is 15 minutes.
-    pub inactive_relay_expiration: Duration,
 
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
@@ -156,10 +128,8 @@ impl Default for Discv5Config {
             enr_update: true,
             max_nodes_response: 16,
             enr_peer_update_min: 10,
-            enr_peer_update_min_nat: 10,
             query_parallelism: 3,
             ip_limit: false,
-            nat_symmetric_limit: Some(0),
             incoming_bucket_limit: MAX_NODES_PER_BUCKET,
             table_filter: |_| true,
             ping_interval: Duration::from_secs(300),
@@ -170,10 +140,7 @@ impl Default for Discv5Config {
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             ip_mode: IpMode::default(),
-            max_awaiting_contactable_enr: 100,
             nat_feature: true,
-            max_relays_per_receiver: 10,
-            inactive_relay_expiration: Duration::from_secs(15 * 60),
             executor: None,
         }
     }
@@ -263,16 +230,6 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// The minimum number of peer's who send RELAYREQUESTs before deciding wether to update the
-    /// local ENR.
-    pub fn enr_peer_update_min_nat(&mut self, min: usize) -> &mut Self {
-        if min < 2 {
-            panic!("Setting enr_peer_update_min_nat to a value less than 2 will cause issues with discovery with peers behind NAT");
-        }
-        self.config.enr_peer_update_min = min;
-        self
-    }
-
     /// The number of peers to request in parallel in a single query.
     pub fn query_parallelism(&mut self, parallelism: usize) -> &mut Self {
         self.config.query_parallelism = parallelism;
@@ -286,16 +243,8 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Limits the number of nodes behind a symmetric NAT per bucket when set to a value.
-    /// Only makes sense to set if this node supports the NAT traversal protocol.
-    pub fn symmetric_nat_limit(&mut self, limit_nat: Option<usize>) -> &mut Self {
-        self.config.nat_symmetric_limit = limit_nat;
-        self
-    }
-
-    /// Sets a maximum limit to the number of incoming nodes (nodes that have dialed us) to exist
-    /// per-bucket. This cannot be larger than the bucket size (16). By default, half of every
-    /// bucket (8 positions) is the largest number of nodes that we accept that dial us.
+    /// Sets a maximum limit to the number of  incoming nodes (nodes that have dialed us) to exist per-bucket. This cannot be larger
+    /// than the bucket size (16). By default, half of every bucket (8 positions) is the largest number of nodes that we accept that dial us.
     pub fn incoming_bucket_limit(&mut self, limit: usize) -> &mut Self {
         self.config.incoming_bucket_limit = limit;
         self
@@ -308,9 +257,7 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// The time between pings to ensure connectivity amongst connected nodes. If this node
-    /// is behind a NAT setting this will have no effect as the  node is required to ping its
-    /// peers at a certain interval to ensure its NAT is hole punched.
+    /// The time between pings to ensure connectivity amongst connected nodes.
     pub fn ping_interval(&mut self, interval: Duration) -> &mut Self {
         self.config.ping_interval = interval;
         self
@@ -371,27 +318,9 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    pub fn max_awaiting_contactable_enr(&mut self, max_peers: usize) -> &mut Self {
-        self.config.max_awaiting_contactable_enr = max_peers;
-        self
-    }
-
-    /// Configures this node to run with or with out the NAT traversal protocol.
+    /// Configures this node to run with or without the NAT traversal protocol.
     pub fn nat_feature(&mut self, run_with_nat_feature: bool) -> &mut Self {
         self.config.nat_feature = run_with_nat_feature;
-        self
-    }
-
-    /// Sets the max potential relays to store per peer.
-    pub fn max_relays_per_receiver(&mut self, max_relays: usize) -> &mut Self {
-        self.config.max_relays_per_receiver = max_relays;
-        self
-    }
-
-    /// Sets the time to wait before allowing the replacement (by itself or another relay) of a
-    /// relay which failed at relaying to a given peer.
-    pub fn inactive_relay_expiration(&mut self, expiration_seconds: Duration) -> &mut Self {
-        self.config.inactive_relay_expiration = expiration_seconds;
         self
     }
 
@@ -413,34 +342,22 @@ impl std::fmt::Debug for Discv5Config {
             .field("filter_enabled", &self.enable_packet_filter)
             .field("request_timeout", &self.request_timeout)
             .field("vote_duration", &self.vote_duration)
-            .field("query_peer_timeout", &self.query_peer_timeout)
             .field("query_timeout", &self.query_timeout)
+            .field("query_peer_timeout", &self.query_peer_timeout)
             .field("request_retries", &self.request_retries)
             .field("session_timeout", &self.session_timeout)
             .field("session_cache_capacity", &self.session_cache_capacity)
             .field("enr_update", &self.enr_update)
-            .field("max_nodes_response", &self.max_nodes_response)
-            .field("enr_peer_update_min", &self.enr_peer_update_min)
-            .field("enr_peer_update_min_nat", &self.enr_peer_update_min_nat)
             .field("query_parallelism", &self.query_parallelism)
-            .field("ip_limit", &self.ip_limit)
-            .field("nat_symmetric_limit", &self.nat_symmetric_limit)
-            .field("incoming_bucket_limit", &self.incoming_bucket_limit)
-            .field("ping_interval", &self.ping_interval)
-            .field("ip_mode", &self.ip_mode)
             .field("report_discovered_peers", &self.report_discovered_peers)
-            .field("filter_rate_limiter", &self.filter_rate_limiter)
+            .field("ip_limit", &self.ip_limit)
             .field("filter_max_nodes_per_ip", &self.filter_max_nodes_per_ip)
             .field("filter_max_bans_per_ip", &self.filter_max_bans_per_ip)
-            .field("permit_ban_list", &self.permit_ban_list)
+            .field("ip_limit", &self.ip_limit)
+            .field("incoming_bucket_limit", &self.incoming_bucket_limit)
+            .field("ping_interval", &self.ping_interval)
             .field("ban_duration", &self.ban_duration)
-            .field(
-                "max_awaiting_contactable_enr",
-                &self.max_awaiting_contactable_enr,
-            )
             .field("nat_feature", &self.nat_feature)
-            .field("max_relays_per_receiver", &self.max_relays_per_receiver)
-            .field("inactive_relay_expiration", &self.inactive_relay_expiration)
             .finish()
     }
 }
