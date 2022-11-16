@@ -1,5 +1,4 @@
-use crate::Enr;
-use enr::NodeId;
+use enr::{CombinedKey, Enr, NodeId};
 use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
@@ -133,32 +132,27 @@ pub enum RequestBody {
         /// The distance(s) of peers we expect to be returned in the response.
         distances: Vec<u64>,
     },
-    /// A TALKREQ request.
+    /// A Talk request.
     Talk {
         /// The protocol requesting.
         protocol: Vec<u8>,
         /// The request.
         request: Vec<u8>,
     },
-    /// A REGTOPIC request.
+    /// A REGISTERTOPIC request.
     RegisterTopic {
-        /// The hashed topic we want to advertise at the node receiving this request.
-        topic: TopicHash,
-        // Current node record of sender.
+        topic: Vec<u8>,
         enr: crate::Enr,
         // Ticket content of ticket from a previous registration attempt or empty.
         ticket: Vec<u8>,
     },
     /// A TOPICQUERY request.
-    TopicQuery {
-        /// The hashed topic we want NODES response(s) for.
-        topic: TopicHash,
-    },
+    TopicQuery { topic: TopicHash },
     /// A RELAYREQUEST request, sent by the "initiator" to the "receiver" via the
     /// "rendezvous".
     RelayRequest {
         /// The enr of the "initiator".
-        from_enr: Enr,
+        from_enr: Enr<CombinedKey>,
         /// The node id of the "receiver".
         to_node_id: NodeId,
     },
@@ -175,16 +169,16 @@ pub enum ResponseBody {
         /// Our external UDP port as observed by the responder.
         port: u16,
     },
-    /// A NODES response to a FINDNODE or TOPICQUERY request.
+    /// A NODES response.
     Nodes {
         /// The total number of responses that make up this response.
         total: u64,
-        /// A list of ENRs returned by the responder.
-        nodes: Vec<Enr>,
+        /// A list of ENR's returned by the responder.
+        nodes: Vec<Enr<CombinedKey>>,
     },
-    /// The TALKRESP response.
+    /// The TALK response.
     Talk {
-        /// The response for the TALKREQ request.
+        /// The response for the talk.
         response: Vec<u8>,
     },
     /// The TICKET response.
@@ -193,8 +187,9 @@ pub enum ResponseBody {
         ticket: Vec<u8>,
         /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
-        /// The topic hash for which the opaque ticket is issued.
-        topic: TopicHash,
+    },
+    RegisterConfirmation {
+        topic: Vec<u8>,
     },
     /// A RELAYRESPONSE response to a RELAYREQUEST, sent by the "receiver" to the
     /// "initiator" via the "rendezvous".
@@ -214,8 +209,8 @@ impl Request {
             RequestBody::FindNode { .. } => 3,
             RequestBody::Talk { .. } => 5,
             RequestBody::RegisterTopic { .. } => 7,
-            RequestBody::TopicQuery { .. } => 9,
-            RequestBody::RelayRequest { .. } => 10,
+            RequestBody::TopicQuery { .. } => 10,
+            RequestBody::RelayRequest { .. } => 11,
         }
     }
 
@@ -254,8 +249,24 @@ impl Request {
                 buf.extend_from_slice(&s.out());
                 buf
             }
-            RequestBody::RegisterTopic { .. } => buf,
-            RequestBody::TopicQuery { .. } => buf,
+            RequestBody::RegisterTopic { topic, enr, ticket } => {
+                let mut s = RlpStream::new();
+                s.begin_list(4);
+                s.append(&id.as_bytes());
+                s.append(&topic);
+                s.append(&enr);
+                s.append(&ticket);
+                buf.extend_from_slice(&s.out());
+                buf
+            }
+            RequestBody::TopicQuery { topic } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(&id.as_bytes());
+                s.append(&(&topic as &[u8]));
+                buf.extend_from_slice(&s.out());
+                buf
+            }
             RequestBody::RelayRequest {
                 from_enr,
                 to_node_id,
@@ -279,7 +290,8 @@ impl Response {
             ResponseBody::Nodes { .. } => 4,
             ResponseBody::Talk { .. } => 6,
             ResponseBody::Ticket { .. } => 8,
-            ResponseBody::RelayResponse { .. } => 11,
+            ResponseBody::RegisterConfirmation { .. } => 9,
+            ResponseBody::RelayResponse { .. } => 12,
         }
     }
 
@@ -295,6 +307,9 @@ impl Response {
             }
             ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),
             ResponseBody::Ticket { .. } => matches!(req, RequestBody::RegisterTopic { .. }),
+            ResponseBody::RegisterConfirmation { .. } => {
+                matches!(req, RequestBody::RegisterTopic { .. })
+            }
             ResponseBody::RelayResponse { .. } => matches!(req, RequestBody::RelayRequest { .. }),
         }
     }
@@ -344,7 +359,23 @@ impl Response {
                 buf.extend_from_slice(&s.out());
                 buf
             }
-            ResponseBody::Ticket { .. } => buf,
+            ResponseBody::Ticket { ticket, wait_time } => {
+                let mut s = RlpStream::new();
+                s.begin_list(3);
+                s.append(&id.as_bytes());
+                s.append(&ticket);
+                s.append(&wait_time);
+                buf.extend_from_slice(&s.out());
+                buf
+            }
+            ResponseBody::RegisterConfirmation { topic } => {
+                let mut s = RlpStream::new();
+                s.begin_list(2);
+                s.append(&id.as_bytes());
+                s.append(&topic);
+                buf.extend_from_slice(&s.out());
+                buf
+            }
             ResponseBody::RelayResponse { response } => {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
@@ -360,6 +391,59 @@ impl Response {
 impl std::fmt::Display for RequestId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
+    }
+}
+
+impl std::fmt::Display for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Message::Request(request) => write!(f, "{}", request),
+            Message::Response(response) => write!(f, "{}", response),
+        }
+    }
+}
+
+impl std::fmt::Display for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Response: id: {}: {}", self.id, self.body)
+    }
+}
+
+impl std::fmt::Display for ResponseBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseBody::Pong { enr_seq, ip, port } => write!(
+                f,
+                "PONG: Enr-seq: {}, Ip: {:?},  Port: {}",
+                enr_seq, ip, port
+            ),
+            ResponseBody::Nodes { total, nodes } => {
+                write!(f, "NODES: total: {}, Nodes: [", total)?;
+                let mut first = true;
+                for id in nodes {
+                    if !first {
+                        write!(f, ", {}", id)?;
+                    } else {
+                        write!(f, "{}", id)?;
+                    }
+                    first = false;
+                }
+
+                write!(f, "]")
+            }
+            ResponseBody::Talk { response } => {
+                write!(f, "Response: Response {}", hex::encode(response))
+            }
+            ResponseBody::Ticket { ticket, wait_time } => {
+                write!(f, "TICKET: Ticket: {:?}, Wait time: {}", ticket, wait_time)
+            }
+            ResponseBody::RegisterConfirmation { topic } => {
+                write!(f, "REGTOPIC: Registered: {}", hex::encode(topic))
+            }
+            ResponseBody::RelayResponse { response } => {
+                write!(f, "RELAYRESPONSE: response: {}", response)
+            }
+        }
     }
 }
 
@@ -382,8 +466,14 @@ impl std::fmt::Display for RequestBody {
                 hex::encode(protocol),
                 hex::encode(request)
             ),
-            RequestBody::TopicQuery { .. } => write!(f, "TOPICQUERY"),
-            RequestBody::RegisterTopic { .. } => write!(f, "REGTOPIC"),
+            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
+            RequestBody::RegisterTopic { topic, enr, ticket } => write!(
+                f,
+                "RegisterTopic: topic: {}, enr: {}, ticket: {}",
+                hex::encode(topic),
+                enr.to_base64(),
+                hex::encode(ticket)
+            ),
             RequestBody::RelayRequest {
                 from_enr,
                 to_node_id,
@@ -396,57 +486,6 @@ impl std::fmt::Display for RequestBody {
         }
     }
 }
-
-impl std::fmt::Display for Response {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Response: id: {}: {}", self.id, self.body)
-    }
-}
-
-impl std::fmt::Display for ResponseBody {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ResponseBody::Pong { enr_seq, ip, port } => write!(
-                f,
-                "PONG: enr-seq: {}, ip: {:?}, port: {}",
-                enr_seq, ip, port
-            ),
-            ResponseBody::Nodes { total, nodes } => {
-                write!(f, "NODES: total: {}, nodes: [", total)?;
-                let mut first = true;
-                for id in nodes {
-                    if !first {
-                        write!(f, ", {}", id)?;
-                    } else {
-                        write!(f, "{}", id)?;
-                    }
-                    first = false;
-                }
-
-                write!(f, "]")
-            }
-            ResponseBody::Talk { response } => {
-                write!(f, "Response: response {}", hex::encode(response))
-            }
-            ResponseBody::Ticket { .. } => {
-                write!(f, "TICKET")
-            }
-            ResponseBody::RelayResponse { response } => {
-                write!(f, "RELAYRESPONSE: response: {}", response)
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Message::Request(request) => write!(f, "{}", request),
-            Message::Response(response) => write!(f, "{}", response),
-        }
-    }
-}
-
 #[allow(dead_code)]
 impl Message {
     pub fn encode(self) -> Vec<u8> {
@@ -576,7 +615,7 @@ impl Message {
                         // no records
                         vec![]
                     } else {
-                        enr_list_rlp.as_list::<Enr>()?
+                        enr_list_rlp.as_list::<Enr<CombinedKey>>()?
                     }
                 };
                 Message::Response(Response {
@@ -618,20 +657,7 @@ impl Message {
                     body: ResponseBody::Talk { response },
                 })
             }
-            /*
-               * All other RPC messages are currently not supported as per the 5.1 specification.
-
-              7 => {
-                  // RegisterTopicRequest
-              }
-              8 => {
-                  // RegisterTopicResponse
-              }
-              9 => {
-                  // TopicQueryRequest
-              }
-            */
-            10 => {
+            11 => {
                 // RelayRequest
                 if list_len != 3 {
                     debug!(
@@ -641,7 +667,7 @@ impl Message {
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
 
-                let from_enr = rlp.val_at::<Enr>(1)?;
+                let from_enr = rlp.val_at::<Enr<CombinedKey>>(1)?;
                 let to_node_id = {
                     let node_id_bytes = rlp.val_at::<Vec<u8>>(2)?;
                     if node_id_bytes.len() > 32 {
@@ -661,7 +687,7 @@ impl Message {
                     },
                 })
             }
-            11 => {
+            12 => {
                 // RelayResponse
                 if list_len != 2 {
                     debug!(
@@ -680,7 +706,59 @@ impl Message {
             }
             _ => {
                 return Err(DecoderError::Custom("Unknown RPC message type"));
-            }
+            } /*
+               * All other RPC messages are currently not supported as per the 5.1 specification.
+
+              7 => {
+                  // RegisterTopicRequest
+                  if list_len != 2 {
+                      debug!("RegisterTopic Request has an invalid RLP list length. Expected 2, found {}", list_len);
+                      return Err(DecoderError::RlpIncorrectListLen);
+                  }
+                  let ticket = rlp.val_at::<Vec<u8>>(1)?;
+                  Message::Request(Request {
+                      id,
+                      body: RequestBody::RegisterTopic { ticket },
+                  })
+              }
+              8 => {
+                  // RegisterTopicResponse
+                  if list_len != 2 {
+                      debug!("RegisterTopic Response has an invalid RLP list length. Expected 2, found {}", list_len);
+                      return Err(DecoderError::RlpIncorrectListLen);
+                  }
+                  Message::Response(Response {
+                      id,
+                      body: ResponseBody::RegisterTopic {
+                          registered: rlp.val_at::<bool>(1)?,
+                      },
+                  })
+              }
+              9 => {
+                  // TopicQueryRequest
+                  if list_len != 2 {
+                      debug!(
+                          "TopicQuery Request has an invalid RLP list length. Expected 2, found {}",
+                          list_len
+                      );
+                      return Err(DecoderError::RlpIncorrectListLen);
+                  }
+                  let topic = {
+                      let topic_bytes = rlp.val_at::<Vec<u8>>(1)?;
+                      if topic_bytes.len() > 32 {
+                          debug!("Ticket Request has a topic greater than 32 bytes");
+                          return Err(DecoderError::RlpIsTooBig);
+                      }
+                      let mut topic = [0u8; 32];
+                      topic[32 - topic_bytes.len()..].copy_from_slice(&topic_bytes);
+                      topic
+                  };
+                  Message::Request(Request {
+                      id,
+                      body: RequestBody::TopicQuery { topic },
+                  })
+              }
+              */
         };
 
         Ok(message)
@@ -770,7 +848,7 @@ mod tests {
         let id = RequestId(vec![1]);
         let total = 1;
 
-        let enr = "-HW4QCjfjuCfSmIJHxqLYfGKrSz-Pq3G81DVJwd_muvFYJiIOkf0bGtJu7kZVCOPnhSTMneyvR4MRbF3G5TNB4wy2ssBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
+        let enr = "-HW4QCjfjuCfSmIJHxqLYfGKrSz-Pq3G81DVJwd_muvFYJiIOkf0bGtJu7kZVCOPnhSTMneyvR4MRbF3G5TNB4wy2ssBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
         // expected hex output
         let expected_output = hex::decode("04f87b0101f877f875b84028df8ee09f4a62091f1a8b61f18aad2cfe3eadc6f350d527077f9aebc56098883a47f46c6b49bbb91954238f9e14933277b2bd1e0c45b1771b94cd078c32dacb0182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138").unwrap();
 
@@ -790,9 +868,9 @@ mod tests {
         // reference input
         let id = RequestId(vec![1]);
         let total = 1;
-        let enr = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
+        let enr = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
 
-        let enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr>().unwrap();
+        let enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
 
         // expected hex output
         let expected_output = hex::decode("04f8f20101f8eef875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138f875b840d7f1c39e376297f81d7297758c64cb37dcc5c3beea9f57f7ce9695d7d5a67553417d719539d6ae4b445946de4d99e680eb8063f29485b555d45b7df16a1850130182696482763489736563703235366b31a1030e2cb74241c0c4fc8e8166f1a79a05d5b0dd95813a74b094529f317d5c39d235").unwrap();
@@ -812,8 +890,8 @@ mod tests {
     fn ref_decode_response_nodes_multiple() {
         let input = hex::decode("04f8f20101f8eef875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138f875b840d7f1c39e376297f81d7297758c64cb37dcc5c3beea9f57f7ce9695d7d5a67553417d719539d6ae4b445946de4d99e680eb8063f29485b555d45b7df16a1850130182696482763489736563703235366b31a1030e2cb74241c0c4fc8e8166f1a79a05d5b0dd95813a74b094529f317d5c39d235").unwrap();
 
-        let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr>().unwrap();
-        let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr>().unwrap();
+        let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
+        let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
 
         let decoded = Message::decode(&input).unwrap();
 
@@ -880,7 +958,7 @@ mod tests {
 
     #[test]
     fn encode_decode_nodes_response() {
-        let key = enr::CombinedKey::generate_secp256k1();
+        let key = CombinedKey::generate_secp256k1();
         let enr1 = EnrBuilder::new("v4")
             .ip4("127.0.0.1".parse().unwrap())
             .udp4(500)
@@ -973,4 +1051,168 @@ mod tests {
 
         assert_eq!(response, decoded);
     }
+
+    /*
+     * These RPC messages are not in use yet
+     *
+    #[test]
+    fn ref_test_encode_request_ticket() {
+        // reference input
+        let id = 1;
+        let hash_bytes =
+            hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
+                .unwrap();
+
+        // expected hex output
+        let expected_output =
+            hex::decode("05e201a0fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
+                .unwrap();
+
+        let mut topic_hash = [0; 32];
+        topic_hash.copy_from_slice(&hash_bytes);
+
+        let message = Message::Request(Request {
+            id,
+            body: RequestBody::Ticket { topic: topic_hash },
+        });
+        assert_eq!(message.encode(), expected_output);
+    }
+
+    #[test]
+    fn ref_test_encode_request_register_topic() {
+        // reference input
+        let id = 1;
+        let ticket =
+            hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
+                .unwrap();
+
+        // expected hex output
+        let expected_output =
+            hex::decode("07e201a0fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
+                .unwrap();
+
+        let message = Message::Request(Request {
+            id,
+            body: RequestBody::RegisterTopic { ticket },
+        });
+        assert_eq!(message.encode(), expected_output);
+    }
+
+    #[test]
+    fn ref_test_encode_request_topic_query() {
+        // reference input
+        let id = 1;
+        let hash_bytes =
+            hex::decode("fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
+                .unwrap();
+
+        // expected hex output
+        let expected_output =
+            hex::decode("09e201a0fb757dc581730490a1d7a00deea65e9b1936924caaea8f44d476014856b68736")
+                .unwrap();
+
+        let mut topic_hash = [0; 32];
+        topic_hash.copy_from_slice(&hash_bytes);
+
+        let message = Message::Request(Request {
+            id,
+            body: RequestBody::TopicQuery { topic: topic_hash },
+        });
+        assert_eq!(message.encode(), expected_output);
+    }
+
+    #[test]
+    fn ref_test_encode_response_register_topic() {
+        // reference input
+        let id = 1;
+        let registered = true;
+
+        // expected hex output
+        let expected_output = hex::decode("08c20101").unwrap();
+        let message = Message::Response(Response {
+            id,
+            body: ResponseBody::RegisterTopic { registered },
+        });
+        assert_eq!(message.encode(), expected_output);
+    }
+
+    #[test]
+    fn encode_decode_register_topic_request() {
+        let request = Message::Request(Request {
+            id: 1,
+            body: RequestBody::RegisterTopic {
+                topic: vec![1,2,3],
+                ticket: vec![1, 2, 3, 4, 5],
+            },
+        });
+
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(encoded).unwrap();
+
+        assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn encode_decode_register_topic_response() {
+        let request = Message::Response(Response {
+            id: 0,
+            body: ResponseBody::RegisterTopic { registered: true },
+        });
+
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(encoded).unwrap();
+
+        assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn encode_decode_topic_query_request() {
+        let request = Message::Request(Request {
+            id: 1,
+            body: RequestBody::TopicQuery { topic: [17u8; 32] },
+        });
+
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(encoded).unwrap();
+
+        assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn ref_test_encode_response_ticket() {
+        // reference input
+        let id = 1;
+        let ticket = [0; 32].to_vec(); // all 0's
+        let wait_time = 5;
+
+        // expected hex output
+        let expected_output = hex::decode(
+            "06e301a0000000000000000000000000000000000000000000000000000000000000000005",
+        )
+        .unwrap();
+
+        let message = Message::Response(Response {
+            id,
+            body: ResponseBody::Ticket { ticket, wait_time },
+        });
+        assert_eq!(message.encode(), expected_output);
+    }
+
+    #[test]
+    fn encode_decode_ticket_response() {
+        let request = Message::Response(Response {
+            id: 0,
+            body: ResponseBody::Ticket {
+                ticket: vec![1, 2, 3, 4, 5],
+                wait_time: 5,
+            },
+        });
+
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(encoded).unwrap();
+
+        assert_eq!(request, decoded);
+    }
+
+    */
 }

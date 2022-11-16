@@ -610,6 +610,12 @@ impl Service {
             RequestBody::TopicQuery { .. } => {
                 debug!("Received TopicQuery request which is unimplemented");
             }
+            RequestBody::RelayRequest {
+                from_enr,
+                to_node_id,
+            } => {
+                debug!("Received RelayRequest request which is unimplemented. Requested from {from_enr} to {to_node_id}");
+            }
         }
     }
 
@@ -883,6 +889,9 @@ impl Service {
                 }
                 ResponseBody::RegisterConfirmation { .. } => {
                     error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
+                }
+                ResponseBody::RelayResponse { response } => {
+                    error!("Received a RelayResponse response. This is unimplemented and should be unreachable. Response {response}");
                 }
             }
         } else {
