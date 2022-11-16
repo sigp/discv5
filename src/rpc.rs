@@ -143,7 +143,6 @@ pub enum RequestBody {
     RegisterTopic {
         topic: Vec<u8>,
         enr: crate::Enr,
-        // Ticket content of ticket from a previous registration attempt or empty.
         ticket: Vec<u8>,
     },
     /// A TOPICQUERY request.
@@ -180,11 +179,8 @@ pub enum ResponseBody {
         /// The response for the talk.
         response: Vec<u8>,
     },
-    /// The TICKET response.
     Ticket {
-        /// The response to a REGTOPIC request.
         ticket: Vec<u8>,
-        /// The time in seconds to wait before attempting to register again.
         wait_time: u64,
     },
     RegisterConfirmation {
