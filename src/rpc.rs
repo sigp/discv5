@@ -16,8 +16,8 @@ pub enum RelayResponseCode {
     /// The receiver has answered yes to participating in the hole-punching procedure with a given
     /// initiator via a given rendezvous.
     True = 1,
-    // This response is assembled by the rendezvous node when the receiver fails to respond to the
-    // RELAYREQUEST.
+    /// This response is assembled by the rendezvous node when the receiver fails to respond to the
+    /// RELAYREQUEST.
     Error = 2,
 }
 
