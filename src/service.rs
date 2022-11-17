@@ -1,11 +1,11 @@
 //! The Discovery v5 protocol. See `lib.rs` for further details.
 //!
-//! Note: Discovered ENRs are not automatically added to the routing table. Only established
+//! Note: Discovered ENR's are not automatically added to the routing table. Only established
 //! sessions get added, ensuring only valid ENRs are added. Manual additions can be made using the
 //! `add_enr()` function.
 //!
 //! Response to queries return `PeerId`. Only the trusted (a session has been established with)
-//! `PeerId`'s are returned, as ENRs for these `PeerId`'s are stored in the routing table and as
+//! `PeerId`'s are returned, as ENR's for these `PeerId`'s are stored in the routing table and as
 //! such should have an address to connect to. Untrusted `PeerId`'s can be obtained from the
 //! `Service::Discovered` event, which is fired as peers get discovered.
 //!
@@ -181,7 +181,7 @@ pub struct Service {
     /// All the iterative queries we are currently performing.
     queries: QueryPool<QueryInfo, NodeId, Enr>,
 
-    /// RPC requests that have been sent and are awaiting a response. Some requests are linked to
+    /// RPC requests that have been sent and are awaiting a response. Some requests are linked to a
     /// query.
     active_requests: FnvHashMap<RequestId, ActiveRequest>,
 
@@ -288,8 +288,7 @@ impl Default for NodesResponse {
 impl Service {
     /// Builds the `Service` main struct.
     ///
-    /// `local_enr` is the `ENR` representing the local node. This contains node identifying
-    /// information, such
+    /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
     /// as IP addresses and ports which we wish to broadcast to other nodes via this discovery
     /// mechanism.
     pub async fn spawn(
@@ -450,7 +449,7 @@ impl Service {
                         QueryEvent::Finished(query) | QueryEvent::TimedOut(query) => {
                             let id = query.id();
                             let mut result = query.into_result();
-                            // obtain the ENRs for the resulting nodes
+                            // obtain the ENR's for the resulting nodes
                             let mut found_enrs = Vec::new();
                             for node_id in result.closest_peers {
                                 if let Some(position) = result.target.untrusted_enrs.iter().position(|enr| enr.node_id() == node_id) {
@@ -503,7 +502,7 @@ impl Service {
         {
             let mut kbuckets = self.kbuckets.write();
             for closest in kbuckets.closest_values(&target_key) {
-                // Add the known ENRs to the untrusted list
+                // Add the known ENR's to the untrusted list
                 target.untrusted_enrs.push(closest.value);
                 // Add the key to the list for the query
                 known_closest_peers.push(closest.key);
@@ -546,7 +545,7 @@ impl Service {
         {
             let mut kbuckets = self.kbuckets.write();
             for closest in kbuckets.closest_values_predicate(&target_key, &kbucket_predicate) {
-                // Add the known ENRs to the untrusted list
+                // Add the known ENR's to the untrusted list
                 target.untrusted_enrs.push(closest.value.clone());
                 // Add the key to the list for the query
                 known_closest_peers.push(closest.into());
@@ -870,7 +869,7 @@ impl Service {
                     // This could be an ENR request from the outer service. If so respond to the
                     // callback and End.
                     if let Some(CallbackResponse::Enr(callback)) = active_request.callback.take() {
-                        // Currently only support requesting for ENRs. Verify this is the case.
+                        // Currently only support requesting for ENR's. Verify this is the case.
                         if !distances_requested.is_empty() && distances_requested[0] != 0 {
                             error!("Retrieved a callback request that wasn't for a peer's ENR");
                             return;
@@ -894,7 +893,7 @@ impl Service {
                     // Filter out any nodes that are not of the correct distance
                     let peer_key: kbucket::Key<NodeId> = node_id.into();
 
-                    // The distances we send are sanitized and ordered.
+                    // The distances we send are sanitized an ordered.
                     // We never send an ENR request in combination of other requests.
                     if distances_requested.len() == 1 && distances_requested[0] == 0 {
                         // we requested an ENR update
@@ -979,7 +978,7 @@ impl Service {
                     let socket = SocketAddr::new(ip, port);
                     // perform ENR majority-based update if required.
 
-                    // Only count votes that are from peers we have contacted.
+                    // Only count votes that from peers we have contacted.
                     let key: kbucket::Key<NodeId> = node_id.into();
                     let should_count = matches!(
                         self.kbuckets.write().entry(&key),
@@ -1133,6 +1132,9 @@ impl Service {
                 ResponseBody::Ticket { .. } => {
                     error!("Received a TICKET response. This is unimplemented and should be unreachable.");
                 }
+                ResponseBody::RegisterConfirmation { .. } => {
+                    error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
+                }
                 ResponseBody::RelayResponse { response } => {
                     if let RequestBody::RelayRequest {
                         ref from_enr,
@@ -1231,6 +1233,7 @@ impl Service {
 
     /// Ping all peers that are connected in the routing table.
     fn ping_connected_peers(&mut self) {
+        // maintain the ping interval
         let connected_peers = {
             let mut kbuckets = self.kbuckets.write();
             kbuckets
@@ -1437,15 +1440,14 @@ impl Service {
             for enr in nodes_to_send.into_iter() {
                 let entry_size = rlp::encode(&enr).len();
                 // Responses assume that a session is established. Thus, on top of the encoded
-                // ENRs the packet should be a regular message. A regular message has an IV (16
-                // bytes), and a header of 55 bytes. The find-nodes RPC requires 16 bytes for the
-                // ID and the `total` field. Also there is a 16 byte HMAC for encryption and an
-                // extra byte for RLP encoding.
+                // ENR's the packet should be a regular message. A regular message has an IV (16
+                // bytes), and a header of 55 bytes. The find-nodes RPC requires 16 bytes for the ID and the
+                // `total` field. Also there is a 16 byte HMAC for encryption and an extra byte for
+                // RLP encoding.
                 //
-                // Furthermore, we could be responding via an auth-header which can take up to 282
-                // bytes in its header. In that case we would have even less space for the ENRs.
-                //
-                // As most messages will be normal messages we will try and pack as many ENRs we
+                // We could also be responding via an authheader which can take up to 282 bytes in its
+                // header.
+                // As most messages will be normal messages we will try and pack as many ENR's we
                 // can in and drop the response packet if a user requests an auth message of a very
                 // packed response.
                 //
@@ -1574,8 +1576,7 @@ impl Service {
                 return false;
             }
 
-            // If any of the discovered nodes are in the routing table, and there contains an
-            // older ENR, update it.
+            // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
             if self.config.report_discovered_peers {
                 self.send_event(Discv5Event::Discovered(enr.clone()));
@@ -1603,8 +1604,8 @@ impl Service {
                             "Failed to update discovered ENR. Node: {}, Reason: {:?}",
                             source, reason
                         );
-                        // Remove this peer from the discovered list if the update failed
-                        return false;
+
+                        return false; // Remove this peer from the discovered list if the update failed
                     }
                 }
             } else {
