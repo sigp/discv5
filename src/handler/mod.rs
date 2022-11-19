@@ -3,7 +3,7 @@
 //! The [`Handler`] is responsible for establishing and maintaining sessions with
 //! connected/discovered nodes. Each node, identified by it's [`NodeId`] is associated with a
 //! `Session`. This service drives the handshakes for establishing the sessions and associated
-//! logic for sending/requesting initial connections/ENRs to/from unknown peers.
+//! logic for sending/requesting initial connections/ENR's to/from unknown peers.
 //!
 //! The [`Handler`] also manages the timeouts for each request and reports back RPC failures,
 //! and received messages. Messages are encrypted and decrypted using the
@@ -146,8 +146,7 @@ pub struct Challenge {
     remote_enr: Option<Enr>,
 }
 
-/// Process to handle handshakes and sessions established from raw RPC communications between
-/// nodes.
+/// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
     /// Configuration for the discv5 service.
     request_retries: u8,
@@ -310,8 +309,7 @@ impl Handler {
                     // challenge. We process them here
                     self.send_next_request(node_address).await;
                 }
-                // Unban nodes that are past the timeout
-                _ = banned_nodes_check.tick() => self.unban_nodes_check(),
+                _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
                     return;
                 }
@@ -352,8 +350,7 @@ impl Handler {
                     &ephem_pubkey,
                     enr_record,
                     &inbound_packet.message,
-                    &inbound_packet.authenticated_data, // This is required for authenticated data
-                                                        // in decryption.
+                    &inbound_packet.authenticated_data, // This is required for authenticated data in decryption.
                 )
                 .await
             }
@@ -679,8 +676,8 @@ impl Handler {
 
         // Check if we know the ENR, if not request it and flag the session as awaiting an ENR.
         //
-        // All sent requests must have an associated node_id. Therefore the following must not
-        // panic.
+        // All sent requests must have an associated node_id. Therefore the following
+        // must not panic.
         let node_address = request_call.contact().node_address();
         match request_call.contact().enr() {
             Some(enr) => {
@@ -862,9 +859,9 @@ impl Handler {
         message: &[u8],
         authenticated_data: &[u8],
     ) {
-        // Needs to match an outgoing challenge packet (so we have the required nonce to be
-        // signed). If it doesn't we drop the packet. This will lead to future outgoing challenges
-        // if they proceed to send further encrypted packets.
+        // Needs to match an outgoing challenge packet (so we have the required nonce to be signed). If it doesn't we drop the packet.
+        // This will lead to future outgoing challenges if they proceed to send further encrypted
+        // packets.
         trace!(
             "Received an Authentication header message from: {}",
             node_address
@@ -1007,9 +1004,9 @@ impl Handler {
                     }
                 },
                 Err(e) => {
-                    // We have a session, but the message could not be decrypted. It is likely the
-                    // node sending this message has dropped their session. In this case, this
-                    // message is a Random packet and we should reply with a WHOAREYOU.
+                    // We have a session, but the message could not be decrypted. It is likely the node
+                    // sending this message has dropped their session. In this case, this message is a
+                    // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
                     trace!("Decryption failed. Error {}", e);
                     debug!(
@@ -1018,8 +1015,8 @@ impl Handler {
                     );
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
-                    // If we haven't already sent a WhoAreYou, spawn a WHOAREYOU event to check
-                    // for highest known ENR
+                    // If we haven't already sent a WhoAreYou,
+                    // spawn a WHOAREYOU event to check for highest known ENR
                     if self.active_challenges.get(&node_address).is_none() {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
                         if let Err(e) = self
