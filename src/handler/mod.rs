@@ -449,8 +449,7 @@ impl Handler {
             return Err(RequestError::SelfRequest);
         }
 
-        // If there is already an active request or an active challenge (WHOAREYOU sent) for this
-        // node, add to pending requests
+        // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
         if self.active_requests.get(&node_address).is_some()
             || self.active_challenges.get(&node_address).is_some()
         {
@@ -742,6 +741,7 @@ impl Handler {
                 // Send the actual packet to the send task.
                 self.send(node_address.clone(), auth_packet).await;
 
+                // Notify the application that the session has been established
                 self.service_send
                     .send(HandlerOut::Established(enr, connection))
                     .await
@@ -905,7 +905,6 @@ impl Handler {
                         {
                             warn!("Failed to inform of established session {}", e)
                         }
-
                         self.new_session(node_address.clone(), session);
                         self.handle_message(
                             node_address.clone(),
@@ -1145,9 +1144,7 @@ impl Handler {
             if let ResponseBody::Nodes { total, .. } = response.body {
                 if total > 1 {
                     // This is a multi-response Nodes response
-                    if let Some(remaining_responses) =
-                        request_call.remaining_responses_mut().as_mut()
-                    {
+                    if let Some(remaining_responses) = request_call.remaining_responses_mut() {
                         *remaining_responses -= 1;
                         if remaining_responses != &0 {
                             // more responses remaining, add back the request and send the response
