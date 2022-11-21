@@ -22,6 +22,7 @@ pub use filter::{
 };
 pub use recv::InboundPacket;
 pub use send::OutboundPacket;
+
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig {
     /// The executor to spawn the tasks.
@@ -30,6 +31,8 @@ pub struct SocketConfig {
     pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
+    /// Type of socket to create.
+    pub ip_mode: IpMode,
     /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
     pub ban_duration: Option<Duration>,
     /// The expected responses reference.
@@ -49,7 +52,7 @@ pub struct Socket {
 impl Socket {
     /// This creates and binds a new UDP socket.
     // In general this function can be expanded to handle more advanced socket creation.
-    pub(crate) async fn new_socket(
+    async fn new_socket(
         socket_addr: &SocketAddr,
         ip_mode: IpMode,
     ) -> Result<tokio::net::UdpSocket, Error> {
@@ -84,7 +87,9 @@ impl Socket {
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
     /// This needs to be run inside of a tokio executor.
-    pub(crate) fn new(socket: tokio::net::UdpSocket, config: SocketConfig) -> Result<Self, Error> {
+    pub(crate) async fn new(config: SocketConfig) -> Result<Self, Error> {
+        let socket = Socket::new_socket(&config.socket_addr, config.ip_mode).await?;
+
         // Arc the udp socket for the send/recv tasks.
         let recv_udp = Arc::new(socket);
         let send_udp = recv_udp.clone();
