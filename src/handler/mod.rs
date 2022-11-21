@@ -228,24 +228,17 @@ impl Handler {
             local_node_id: node_id,
             expected_responses: filter_expected_responses.clone(),
             ban_duration: config.ban_duration,
+            ip_mode: config.ip_mode,
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
-        let socket = Socket::new_socket(&socket_config.socket_addr, config.ip_mode).await?;
+        let socket = Socket::new(socket_config).await?;
 
         config
             .executor
             .clone()
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
-                let socket = match Socket::new(socket, socket_config) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        error!("Could not bind UDP socket. {}", e);
-                        return;
-                    }
-                };
-
                 let mut handler = Handler {
                     request_retries: config.request_retries,
                     node_id,
