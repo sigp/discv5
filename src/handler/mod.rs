@@ -55,6 +55,7 @@ use tracing::{debug, error, trace, warn};
 
 mod active_requests;
 mod crypto;
+mod request_call;
 mod session;
 mod tests;
 
@@ -64,6 +65,7 @@ use crate::metrics::METRICS;
 
 use crate::lru_time_cache::LruTimeCache;
 use active_requests::ActiveRequests;
+use request_call::RequestCall;
 use session::Session;
 
 // The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
@@ -149,49 +151,6 @@ pub struct Challenge {
     data: ChallengeData,
     /// The remote's ENR if we know it. We can receive a challenge from an unknown node.
     remote_enr: Option<Enr>,
-}
-
-/// A request to a node that we are waiting for a response.
-#[derive(Debug)]
-pub(crate) struct RequestCall {
-    contact: NodeContact,
-    /// The raw discv5 packet sent.
-    packet: Packet,
-    /// The unencrypted message. Required if need to re-encrypt and re-send.
-    request: Request,
-    /// Handshakes attempted.
-    handshake_sent: bool,
-    /// The number of times this request has been re-sent.
-    retries: u8,
-    /// If we receive a Nodes Response with a total greater than 1. This keeps track of the
-    /// remaining responses expected.
-    remaining_responses: Option<u64>,
-    /// Signifies if we are initiating the session with a random packet. This is only used to
-    /// determine the connection direction of the session.
-    initiating_session: bool,
-}
-
-impl RequestCall {
-    fn new(
-        contact: NodeContact,
-        packet: Packet,
-        request: Request,
-        initiating_session: bool,
-    ) -> Self {
-        RequestCall {
-            contact,
-            packet,
-            request,
-            handshake_sent: false,
-            retries: 1,
-            remaining_responses: None,
-            initiating_session,
-        }
-    }
-
-    fn id(&self) -> &RequestId {
-        &self.request.id
-    }
 }
 
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
@@ -432,7 +391,7 @@ impl Handler {
         node_address: NodeAddress,
         mut request_call: RequestCall,
     ) {
-        if request_call.retries >= self.request_retries {
+        if request_call.retries() >= self.request_retries {
             trace!("Request timed out with {}", node_address);
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);
@@ -443,12 +402,12 @@ impl Handler {
             // increment the request retry count and restart the timeout
             trace!(
                 "Resending message: {} to {}",
-                request_call.request,
+                request_call.request(),
                 node_address
             );
-            self.send(node_address.clone(), request_call.packet.clone())
+            self.send(node_address.clone(), request_call.packet().clone())
                 .await;
-            request_call.retries += 1;
+            request_call.increment_retries();
             self.active_requests.insert(node_address, request_call);
         }
     }
@@ -599,26 +558,26 @@ impl Handler {
         };
 
         // double check the message nonces match
-        if request_call.packet.message_nonce() != &request_nonce {
+        if request_call.packet().message_nonce() != &request_nonce {
             // This could theoretically happen if a peer uses the same node id across
             // different connections.
-            warn!("Received a WHOAREYOU from a non expected source. Source: {}, message_nonce {} , expected_nonce: {}", request_call.contact, hex::encode(request_call.packet.message_nonce()), hex::encode(request_nonce));
+            warn!("Received a WHOAREYOU from a non expected source. Source: {}, message_nonce {} , expected_nonce: {}", request_call.contact(), hex::encode(request_call.packet().message_nonce()), hex::encode(request_nonce));
             // NOTE: Both mappings are removed in this case.
             return;
         }
 
         trace!(
             "Received a WHOAREYOU packet response. Source: {}",
-            request_call.contact
+            request_call.contact()
         );
 
         // We do not allow multiple WHOAREYOU packets for a single challenge request. If we have
         // already sent a WHOAREYOU ourselves, we drop sessions who send us a WHOAREYOU in
         // response.
-        if request_call.handshake_sent {
+        if request_call.handshake_sent() {
             warn!(
                 "Authentication response already sent. Dropping session. Node: {}",
-                request_call.contact
+                request_call.contact()
             );
             self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                 .await;
@@ -636,12 +595,12 @@ impl Handler {
 
         // Generate a new session and authentication packet
         let (auth_packet, mut session) = match Session::encrypt_with_header(
-            &request_call.contact,
+            request_call.contact(),
             self.key.clone(),
             updated_enr,
             &self.node_id,
             &challenge_data,
-            &(request_call.request.clone().encode()),
+            &(request_call.request().clone().encode()),
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -665,15 +624,18 @@ impl Handler {
         //
         // All sent requests must have an associated node_id. Therefore the following
         // must not panic.
-        let node_address = request_call.contact.node_address();
-        match request_call.contact.enr() {
+        let node_address = request_call.contact().node_address();
+        match request_call.contact().enr() {
             Some(enr) => {
                 // NOTE: Here we decide if the session is outgoing or ingoing. The condition for an
                 // outgoing session is that we originally sent a RANDOM packet (signifying we did
                 // not have a session for a request) and the packet is not a PING (we are not
                 // trying to update an old session that may have expired.
                 let connection_direction = {
-                    match (&request_call.initiating_session, &request_call.request.body) {
+                    match (
+                        request_call.initiating_session(),
+                        &request_call.request().body,
+                    ) {
                         (true, RequestBody::Ping { .. }) => ConnectionDirection::Incoming,
                         (true, _) => ConnectionDirection::Outgoing,
                         (false, _) => ConnectionDirection::Incoming,
@@ -682,9 +644,9 @@ impl Handler {
 
                 // We already know the ENR. Send the handshake response packet
                 trace!("Sending Authentication response to node: {}", node_address);
-                request_call.packet = auth_packet.clone();
-                request_call.handshake_sent = true;
-                request_call.initiating_session = false;
+                request_call.update_packet(auth_packet.clone());
+                request_call.set_handshake_sent();
+                request_call.set_initiating_session(false);
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
                 // Send the actual packet to the send task.
@@ -704,10 +666,10 @@ impl Handler {
                 // Don't know the ENR. Establish the session, but request an ENR also
 
                 // Send the Auth response
-                let contact = request_call.contact.clone();
+                let contact = request_call.contact().clone();
                 trace!("Sending Authentication response to node: {}", node_address);
-                request_call.packet = auth_packet.clone();
-                request_call.handshake_sent = true;
+                request_call.update_packet(auth_packet.clone());
+                request_call.set_handshake_sent();
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
                 self.send(node_address.clone(), auth_packet).await;
@@ -1016,7 +978,7 @@ impl Handler {
             if let ResponseBody::Nodes { total, .. } = response.body {
                 if total > 1 {
                     // This is a multi-response Nodes response
-                    if let Some(remaining_responses) = request_call.remaining_responses.as_mut() {
+                    if let Some(remaining_responses) = request_call.remaining_responses_mut() {
                         *remaining_responses -= 1;
                         if remaining_responses != &0 {
                             // more responses remaining, add back the request and send the response
@@ -1034,7 +996,7 @@ impl Handler {
                         }
                     } else {
                         // This is the first instance
-                        request_call.remaining_responses = Some(total - 1);
+                        *request_call.remaining_responses_mut() = Some(total - 1);
                         // add back the request and send the response
                         self.active_requests
                             .insert(node_address.clone(), request_call);
@@ -1074,7 +1036,7 @@ impl Handler {
 
     /// Inserts a request and associated auth_tag mapping.
     fn insert_active_request(&mut self, request_call: RequestCall) {
-        let node_address = request_call.contact.node_address();
+        let node_address = request_call.contact().node_address();
 
         // adds the mapping of message nonce to node address
         self.active_requests.insert(node_address, request_call);
@@ -1100,7 +1062,7 @@ impl Handler {
     ) {
         // The Request has expired, remove the session.
         // Fail the current request
-        let request_id = request_call.request.id;
+        let request_id = request_call.request().id.clone();
         if let Err(e) = self
             .service_send
             .send(HandlerOut::RequestFailed(request_id, error.clone()))
@@ -1109,7 +1071,7 @@ impl Handler {
             warn!("Failed to inform request failure {}", e)
         }
 
-        let node_address = request_call.contact.node_address();
+        let node_address = request_call.contact().node_address();
         self.fail_session(&node_address, error, remove_session)
             .await;
     }
