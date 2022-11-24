@@ -122,6 +122,12 @@ pub struct PredicateValue<TNodeId, TVal> {
     pub value: TVal,
 }
 
+impl<TNodeId, TVal> AsRef<Key<TNodeId>> for PredicateValue<TNodeId, TVal> {
+    fn as_ref(&self) -> &Key<TNodeId> {
+        &self.key
+    }
+}
+
 impl<TNodeId, TVal> PredicateValue<TNodeId, TVal> {
     pub fn to_key_value(self) -> (PredicateKey<TNodeId>, TVal) {
         let PredicateValue {
@@ -134,12 +140,6 @@ impl<TNodeId, TVal> PredicateValue<TNodeId, TVal> {
             predicate_match,
         };
         (key, value)
-    }
-}
-
-impl<TNodeId, TVal> AsRef<Key<TNodeId>> for PredicateValue<TNodeId, TVal> {
-    fn as_ref(&self) -> &Key<TNodeId> {
-        &self.key
     }
 }
 
