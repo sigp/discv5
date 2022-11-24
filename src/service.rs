@@ -492,11 +492,11 @@ impl Service {
         {
             let mut kbuckets = self.kbuckets.write();
             for closest in kbuckets.closest_values_predicate(&target_key, &kbucket_predicate) {
-                let (key, value) = closest.to_key_value();
+                let (node_id_predicate, enr) = closest.to_key_value();
                 // Add the known ENR's to the untrusted list
-                target.untrusted_enrs.push(value);
+                target.untrusted_enrs.push(enr);
                 // Add the key to the list for the query
-                known_closest_peers.push(key);
+                known_closest_peers.push(node_id_predicate);
             }
         };
 
