@@ -143,12 +143,6 @@ impl<TNodeId, TVal> AsRef<Key<TNodeId>> for PredicateValue<TNodeId, TVal> {
     }
 }
 
-impl<TNodeId, TVal> From<PredicateValue<TNodeId, TVal>> for Key<TNodeId> {
-    fn from(key: PredicateValue<TNodeId, TVal>) -> Self {
-        key.key
-    }
-}
-
 /// A `KBucketsTable` represents a Kademlia routing table.
 #[derive(Clone)]
 pub struct KBucketsTable<TNodeId, TVal: Eq> {
