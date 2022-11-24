@@ -109,7 +109,7 @@ pub struct PredicateKey<TNodeId> {
     pub predicate_match: bool,
 }
 
-impl<TNodeId: Clone> From<PredicateKey<TNodeId>> for Key<TNodeId> {
+impl<TNodeId> From<PredicateKey<TNodeId>> for Key<TNodeId> {
     fn from(key: PredicateKey<TNodeId>) -> Self {
         key.key
     }
@@ -137,13 +137,13 @@ impl<TNodeId, TVal> PredicateValue<TNodeId, TVal> {
     }
 }
 
-impl<TNodeId: Clone, TVal> AsRef<Key<TNodeId>> for PredicateValue<TNodeId, TVal> {
+impl<TNodeId, TVal> AsRef<Key<TNodeId>> for PredicateValue<TNodeId, TVal> {
     fn as_ref(&self) -> &Key<TNodeId> {
         &self.key
     }
 }
 
-impl<TNodeId: Clone, TVal> From<PredicateValue<TNodeId, TVal>> for Key<TNodeId> {
+impl<TNodeId, TVal> From<PredicateValue<TNodeId, TVal>> for Key<TNodeId> {
     fn from(key: PredicateValue<TNodeId, TVal>) -> Self {
         key.key
     }
