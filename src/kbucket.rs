@@ -104,7 +104,7 @@ impl<TNodeId, TVal> AsRef<Key<TNodeId>> for ClosestValue<TNodeId, TVal> {
 
 /// A key that can be returned from the `closest_keys` function, which indicates if the key matches the
 /// predicate or not.
-pub struct PredicateKey<TNodeId: Clone> {
+pub struct PredicateKey<TNodeId> {
     pub key: Key<TNodeId>,
     pub predicate_match: bool,
 }
@@ -115,20 +115,26 @@ impl<TNodeId: Clone> From<PredicateKey<TNodeId>> for Key<TNodeId> {
     }
 }
 
-impl<TNodeId: Clone, TVal> From<PredicateValue<TNodeId, TVal>> for PredicateKey<TNodeId> {
-    fn from(value: PredicateValue<TNodeId, TVal>) -> Self {
-        PredicateKey {
-            key: value.key,
-            predicate_match: value.predicate_match,
-        }
-    }
-}
-
 /// A value being returned from a predicate closest iterator.
-pub struct PredicateValue<TNodeId: Clone, TVal> {
+pub struct PredicateValue<TNodeId, TVal> {
     pub key: Key<TNodeId>,
     pub predicate_match: bool,
     pub value: TVal,
+}
+
+impl<TNodeId, TVal> PredicateValue<TNodeId, TVal> {
+    pub fn to_key_value(self) -> (PredicateKey<TNodeId>, TVal) {
+        let PredicateValue {
+            key,
+            predicate_match,
+            value,
+        } = self;
+        let key = PredicateKey {
+            key,
+            predicate_match,
+        };
+        (key, value)
+    }
 }
 
 impl<TNodeId: Clone, TVal> AsRef<Key<TNodeId>> for PredicateValue<TNodeId, TVal> {
