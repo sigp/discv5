@@ -4,7 +4,7 @@ use crate::{
     rpc::{Request, RequestBody},
 };
 
-use super::RequestIdX;
+use super::HandlerReqId;
 
 /// A request to a node that we are waiting for a response.
 #[derive(Debug)]
@@ -13,7 +13,7 @@ pub(super) struct RequestCall {
     /// The raw discv5 packet sent.
     packet: Packet,
     /// Request id
-    request_id: RequestIdX,
+    request_id: HandlerReqId,
     /// The message body. Required if need to re-encrypt and re-send.
     request: RequestBody,
     /// Handshakes attempted.
@@ -32,7 +32,7 @@ impl RequestCall {
     pub fn new(
         contact: NodeContact,
         packet: Packet,
-        request_id: RequestIdX,
+        request_id: HandlerReqId,
         request: RequestBody,
         initiating_session: bool,
     ) -> Self {
@@ -54,7 +54,7 @@ impl RequestCall {
     }
 
     /// Returns the id associated with this call.
-    pub fn id(&self) -> &RequestIdX {
+    pub fn id(&self) -> &HandlerReqId {
         &self.request_id
     }
 
@@ -70,7 +70,7 @@ impl RequestCall {
 
     pub fn encode(&self) -> Vec<u8> {
         match &self.request_id {
-            RequestIdX::Internal(id) | RequestIdX::External(id) => {
+            HandlerReqId::Internal(id) | HandlerReqId::External(id) => {
                 let request = Request {
                     id: id.clone(),
                     body: self.request.clone(),

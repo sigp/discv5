@@ -239,7 +239,7 @@ async fn test_active_requests_insert() {
     let node_address = contact.node_address();
 
     let packet = Packet::new_random(&node_id).unwrap();
-    let id = RequestIdX::Internal(RequestId::random());
+    let id = HandlerReqId::Internal(RequestId::random());
     let request = RequestBody::Ping { enr_seq: 1 };
     let initiating_session = true;
     let request_call = RequestCall::new(contact, packet, id, request, initiating_session);

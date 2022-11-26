@@ -153,8 +153,9 @@ pub struct Challenge {
     remote_enr: Option<Enr>,
 }
 
+/// Request ID from the handler's perspective.
 #[derive(Debug, Clone)]
-enum RequestIdX {
+enum HandlerReqId {
     /// Requests made by the handler.
     Internal(RequestId),
     /// Requests made from outside the handler.
@@ -164,7 +165,7 @@ enum RequestIdX {
 /// A request queued for sending.
 struct PendingRequest {
     contact: NodeContact,
-    request_id: RequestIdX,
+    request_id: HandlerReqId,
     request: RequestBody,
 }
 
@@ -206,6 +207,7 @@ type HandlerReturn = (
     mpsc::UnboundedSender<HandlerIn>,
     mpsc::Receiver<HandlerOut>,
 );
+
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
     pub async fn spawn(
@@ -290,7 +292,7 @@ impl Handler {
                     match handler_request {
                         HandlerIn::Request(contact, request) => {
                             let Request { id, body: request } = *request;
-                            if let Err(request_error) =  self.send_request(contact, RequestIdX::External(id.clone()), request).await {
+                            if let Err(request_error) =  self.send_request(contact, HandlerReqId::External(id.clone()), request).await {
                                 // If the sending failed report to the application
                                 if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
                                     warn!("Failed to inform that request failed {}", e)
@@ -424,7 +426,7 @@ impl Handler {
     async fn send_request(
         &mut self,
         contact: NodeContact,
-        request_id: RequestIdX,
+        request_id: HandlerReqId,
         request: RequestBody,
     ) -> Result<(), RequestError> {
         let node_address = contact.node_address();
@@ -454,7 +456,7 @@ impl Handler {
             if let Some(session) = self.sessions.get_mut(&node_address) {
                 // Encrypt the message and send
                 let request = match &request_id {
-                    RequestIdX::Internal(id) | RequestIdX::External(id) => Request {
+                    HandlerReqId::Internal(id) | HandlerReqId::External(id) => Request {
                         id: id.clone(),
                         body: request.clone(),
                     },
@@ -700,7 +702,7 @@ impl Handler {
                 let request = RequestBody::FindNode { distances: vec![0] };
                 session.awaiting_enr = Some(id.clone());
                 if let Err(e) = self
-                    .send_request(contact, RequestIdX::Internal(id), request)
+                    .send_request(contact, HandlerReqId::Internal(id), request)
                     .await
                 {
                     warn!("Failed to send Enr request {}", e)
@@ -843,15 +845,14 @@ impl Handler {
                     .send_request(contact, request_id.clone(), request)
                     .await
                 {
-                    // TODO: when will the next one get removed from pending if this fails?
                     warn!("Failed to send next awaiting request {}", request_error);
                     // Inform the service that the request failed
                     match request_id {
-                        RequestIdX::Internal(_) => {
-                            // TODO: do we care? what to do?
-                            // here for now we only have FindNode requests
+                        HandlerReqId::Internal(_) => {
+                            // An internal request could not be sent. For now we do nothing about
+                            // this.
                         }
-                        RequestIdX::External(id) => {
+                        HandlerReqId::External(id) => {
                             if let Err(e) = self
                                 .service_send
                                 .send(HandlerOut::RequestFailed(id, request_error))
@@ -998,7 +999,7 @@ impl Handler {
         // Find a matching request, if any
         if let Some(mut request_call) = self.active_requests.remove(&node_address) {
             let id = match request_call.id() {
-                RequestIdX::Internal(id) | RequestIdX::External(id) => id,
+                HandlerReqId::Internal(id) | HandlerReqId::External(id) => id,
             };
             if id != &response.id {
                 trace!(
@@ -1102,10 +1103,10 @@ impl Handler {
         // The Request has expired, remove the session.
         // Fail the current request
         match request_call.id() {
-            RequestIdX::Internal(_) => {
-                // TODO: do nothing for now? we might care in the future
+            HandlerReqId::Internal(_) => {
+                // Do not report failures on requests belonging to the handler.
             }
-            RequestIdX::External(id) => {
+            HandlerReqId::External(id) => {
                 if let Err(e) = self
                     .service_send
                     .send(HandlerOut::RequestFailed(id.clone(), error.clone()))
@@ -1137,11 +1138,10 @@ impl Handler {
         if let Some(to_remove) = self.pending_requests.remove(node_address) {
             for PendingRequest { request_id, .. } in to_remove {
                 match request_id {
-                    RequestIdX::Internal(_) => {
-                        // TODO: here:
-                        // Ex: a queued FindNode request for a session without an ENR
+                    HandlerReqId::Internal(_) => {
+                        // Do not report failures on requests belonging to the handler.
                     }
-                    RequestIdX::External(id) => {
+                    HandlerReqId::External(id) => {
                         if let Err(e) = self
                             .service_send
                             .send(HandlerOut::RequestFailed(id, error.clone()))
