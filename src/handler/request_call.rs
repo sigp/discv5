@@ -1,17 +1,21 @@
 pub use crate::node_info::{NodeAddress, NodeContact};
 use crate::{
     packet::Packet,
-    rpc::{Request, RequestId},
+    rpc::{Request, RequestBody},
 };
+
+use super::RequestIdX;
 
 /// A request to a node that we are waiting for a response.
 #[derive(Debug)]
-pub(crate) struct RequestCall {
+pub(super) struct RequestCall {
     contact: NodeContact,
     /// The raw discv5 packet sent.
     packet: Packet,
-    /// The unencrypted message. Required if need to re-encrypt and re-send.
-    request: Request,
+    /// Request id
+    request_id: RequestIdX,
+    /// The message body. Required if need to re-encrypt and re-send.
+    request: RequestBody,
     /// Handshakes attempted.
     handshake_sent: bool,
     /// The number of times this request has been re-sent.
@@ -28,12 +32,14 @@ impl RequestCall {
     pub fn new(
         contact: NodeContact,
         packet: Packet,
-        request: Request,
+        request_id: RequestIdX,
+        request: RequestBody,
         initiating_session: bool,
     ) -> Self {
         RequestCall {
             contact,
             packet,
+            request_id,
             request,
             handshake_sent: false,
             retries: 1,
@@ -48,18 +54,30 @@ impl RequestCall {
     }
 
     /// Returns the id associated with this call.
-    pub fn id(&self) -> &RequestId {
-        &self.request.id
+    pub fn id(&self) -> &RequestIdX {
+        &self.request_id
     }
 
     /// Returns the associated request for this call.
-    pub fn request(&self) -> &Request {
+    pub fn body(&self) -> &RequestBody {
         &self.request
     }
 
     /// Returns the packet associated with this call.
     pub fn packet(&self) -> &Packet {
         &self.packet
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        match &self.request_id {
+            RequestIdX::Internal(id) | RequestIdX::External(id) => {
+                let request = Request {
+                    id: id.clone(),
+                    body: self.request.clone(),
+                };
+                request.encode()
+            }
+        }
     }
 
     /// The number of times this request has been resent.
