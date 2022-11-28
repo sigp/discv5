@@ -2,7 +2,7 @@ use super::*;
 use delay_map::HashMapDelay;
 use more_asserts::debug_unreachable;
 
-pub(crate) struct ActiveRequests {
+pub(super) struct ActiveRequests {
     /// A list of raw messages we are awaiting a response from the remote.
     active_requests_mapping: HashMapDelay<NodeAddress, RequestCall>,
     // WHOAREYOU messages do not include the source node id. We therefore maintain another
@@ -13,14 +13,14 @@ pub(crate) struct ActiveRequests {
 }
 
 impl ActiveRequests {
-    pub(crate) fn new(request_timeout: Duration) -> Self {
+    pub fn new(request_timeout: Duration) -> Self {
         ActiveRequests {
             active_requests_mapping: HashMapDelay::new(request_timeout),
             active_requests_nonce_mapping: HashMap::new(),
         }
     }
 
-    pub(crate) fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
+    pub fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
         let nonce = *request_call.packet().message_nonce();
         self.active_requests_mapping
             .insert(node_address.clone(), request_call);
@@ -28,14 +28,11 @@ impl ActiveRequests {
             .insert(nonce, node_address);
     }
 
-    pub(crate) fn get(&self, node_address: &NodeAddress) -> Option<&RequestCall> {
+    pub fn get(&self, node_address: &NodeAddress) -> Option<&RequestCall> {
         self.active_requests_mapping.get(node_address)
     }
 
-    pub(crate) fn remove_by_nonce(
-        &mut self,
-        nonce: &MessageNonce,
-    ) -> Option<(NodeAddress, RequestCall)> {
+    pub fn remove_by_nonce(&mut self, nonce: &MessageNonce) -> Option<(NodeAddress, RequestCall)> {
         match self.active_requests_nonce_mapping.remove(nonce) {
             Some(node_address) => match self.active_requests_mapping.remove(&node_address) {
                 Some(request_call) => Some((node_address, request_call)),
@@ -49,7 +46,7 @@ impl ActiveRequests {
         }
     }
 
-    pub(crate) fn remove(&mut self, node_address: &NodeAddress) -> Option<RequestCall> {
+    pub fn remove(&mut self, node_address: &NodeAddress) -> Option<RequestCall> {
         match self.active_requests_mapping.remove(node_address) {
             Some(request_call) => {
                 // Remove the associated nonce mapping.
@@ -75,7 +72,7 @@ impl ActiveRequests {
     // this makes is so that if there is a panic, the error is printed in the caller of this
     // function.
     #[track_caller]
-    pub(crate) fn check_invariant(&self) {
+    pub fn check_invariant(&self) {
         // First check that for every `MessageNonce` there is an associated `NodeAddress`.
         for (nonce, address) in self.active_requests_nonce_mapping.iter() {
             if !self.active_requests_mapping.contains_key(address) {
