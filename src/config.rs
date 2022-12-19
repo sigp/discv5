@@ -317,7 +317,7 @@ impl Discv5ConfigBuilder {
     pub fn build(&mut self) -> Discv5Config {
         // If an executor is not provided, assume a current tokio runtime is running.
         if self.config.executor.is_none() {
-            self.config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
+            self.config.executor = Some(Box::<crate::executor::TokioExecutor>::default());
         };
 
         assert!(self.config.incoming_bucket_limit <= MAX_NODES_PER_BUCKET);

@@ -534,7 +534,7 @@ impl std::fmt::Display for PacketHeader {
 impl std::fmt::Display for PacketKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PacketKind::Message { src_id } => write!(f, "Message {{ src_id: {} }}", src_id),
+            PacketKind::Message { src_id } => write!(f, "Message {{ src_id: {src_id} }}"),
             PacketKind::WhoAreYou { id_nonce, enr_seq } => write!(
                 f,
                 "WhoAreYou {{ id_nonce: {}, enr_seq: {} }}",

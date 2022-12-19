@@ -57,7 +57,11 @@ impl<T> ReceivedPacketCache<T> {
     /// Remove expired packets. We only keep, `CACHE_TIME` of data in the cache.
     pub fn reset(&mut self) {
         while let Some(packet) = self.inner.pop_front() {
-            if packet.received > Instant::now() - Duration::from_secs(self.time_window) {
+            if packet.received
+                > Instant::now()
+                    .checked_sub(Duration::from_secs(self.time_window))
+                    .unwrap()
+            {
                 // add the packet back and end
                 self.inner.push_front(packet);
                 break;
@@ -66,7 +70,11 @@ impl<T> ReceivedPacketCache<T> {
         // update the within_enforced_time
         let mut count = 0;
         for packet in self.inner.iter().rev() {
-            if packet.received > Instant::now() - Duration::from_secs(ENFORCED_SIZE_TIME) {
+            if packet.received
+                > Instant::now()
+                    .checked_sub(Duration::from_secs(ENFORCED_SIZE_TIME))
+                    .unwrap()
+            {
                 count += 1;
             } else {
                 break;

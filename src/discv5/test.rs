@@ -95,7 +95,7 @@ fn find_seed_same_bucket() {
     let mut seed = 1;
     'main: loop {
         if seed % 1000 == 0 {
-            println!("Seed: {}", seed);
+            println!("Seed: {seed}");
         }
 
         let keys = generate_deterministic_keypair(11, seed);
@@ -116,7 +116,7 @@ fn find_seed_same_bucket() {
         }
         break;
     }
-    println!("Found Seed: {}", seed);
+    println!("Found Seed: {seed}");
 }
 
 #[allow(dead_code)]
@@ -147,12 +147,12 @@ fn find_seed_spread_bucket() {
             break;
         }
         if seed % 1000 == 0 {
-            println!("Seed: {}", seed);
+            println!("Seed: {seed}");
         }
     }
-    println!("Found Seed: {}", seed);
+    println!("Found Seed: {seed}");
     for (k, v) in buckets.iter() {
-        println!("{}, {}", k, v);
+        println!("{k}, {v}");
     }
 }
 
@@ -172,7 +172,7 @@ fn find_seed_linear_topology() {
     'main: loop {
         seed += 1;
         if seed % 1000 == 0 {
-            println!("Trying seed: {}", seed);
+            println!("Trying seed: {seed}");
         }
 
         let keys = generate_deterministic_keypair(11, seed);
@@ -233,13 +233,13 @@ fn find_seed_linear_topology() {
         break;
     }
     // We've found a solution. Check it.
-    println!("Found Seed: {}", seed);
-    println!("Ordering: {:?}", ordering);
+    println!("Found Seed: {seed}");
+    println!("Ordering: {ordering:?}");
     let target = main_result.remove(0);
     // remove the target
-    println!("Target: {}", target);
+    println!("Target: {target}");
     for (x, id) in main_result.iter().enumerate() {
-        println!("Node{}: {}", x, id);
+        println!("Node{x}: {id}");
     }
 
     for (node, previous_node) in main_result.iter().skip(1).zip(main_result.clone()) {
@@ -247,8 +247,7 @@ fn find_seed_linear_topology() {
         let distance = key.log2_distance(&previous_node.into()).unwrap();
         let target_distance = key.log2_distance(&target.into()).unwrap();
         println!(
-            "Distance of node {} relative to next node: {} is: {},  relative to target {}",
-            previous_node, node, distance, target_distance
+            "Distance of node {previous_node} relative to next node: {node} is: {distance},  relative to target {target_distance}"
         );
     }
 }
@@ -391,7 +390,7 @@ async fn test_findnode_query() {
         let distance = key
             .log2_distance(&previous_node_enr.node_id().into())
             .unwrap();
-        println!("Distance of node relative to next: {}", distance);
+        println!("Distance of node relative to next: {distance}");
         node.add_enr(previous_node_enr).unwrap();
     }
 
@@ -533,7 +532,7 @@ async fn test_predicate_search() {
         found_nodes.len(),
         total_nodes,
     );
-    println!("Nodes expected to pass predicate search {}", num_nodes);
+    println!("Nodes expected to pass predicate search {num_nodes}");
     assert_eq!(found_nodes.len(), num_nodes);
 }
 

@@ -463,7 +463,7 @@ impl Handler {
                 };
                 let packet = session
                     .encrypt_message(self.node_id, &request.encode())
-                    .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?;
+                    .map_err(|e| RequestError::EncryptionFailed(format!("{e:?}")))?;
                 (packet, false)
             } else {
                 // No session exists, start a new handshake

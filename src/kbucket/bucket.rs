@@ -1084,7 +1084,7 @@ pub mod tests {
 
             // Apply the pending node.
             let pending = bucket.pending_mut().expect("No pending node.");
-            pending.set_ready_at(Instant::now() - Duration::from_secs(1));
+            pending.set_ready_at(Instant::now().checked_sub(Duration::from_secs(1)).unwrap());
             let result = bucket.apply_pending();
             assert_eq!(
                 result,
@@ -1210,7 +1210,7 @@ pub mod tests {
 
         // Speed up the pending time
         if let Some(pending) = bucket.pending.as_mut() {
-            pending.replace = Instant::now() - Duration::from_secs(1);
+            pending.replace = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
         }
 
         // At some later time apply pending

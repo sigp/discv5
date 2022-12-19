@@ -56,10 +56,10 @@ async fn main() {
         Ok(enr) => {
             println!("ENR Found:");
             println!("Base64:{}", enr.to_base64());
-            println!("{}", enr);
+            println!("{enr}");
         }
         Err(e) => {
-            println!("Error:{:?}", e);
+            println!("Error:{e:?}");
         }
     }
 }
