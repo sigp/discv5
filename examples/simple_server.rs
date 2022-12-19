@@ -85,7 +85,7 @@ async fn main() {
                     enr.tcp4()
                 );
                 if let Err(e) = discv5.add_enr(enr) {
-                    println!("ENR was not added: {}", e);
+                    println!("ENR was not added: {e}");
                 }
             }
             Err(e) => panic!("Decoding ENR failed: {}", e),
@@ -102,7 +102,7 @@ async fn main() {
     loop {
         match event_stream.recv().await {
             Some(Discv5Event::SocketUpdated(addr)) => {
-                println!("Nodes ENR socket address has been updated to: {:?}", addr);
+                println!("Nodes ENR socket address has been updated to: {addr:?}");
             }
             Some(Discv5Event::Discovered(enr)) => {
                 println!("A peer has been discovered: {}", enr.node_id());

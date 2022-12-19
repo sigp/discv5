@@ -136,7 +136,7 @@ pub(crate) fn sign_nonce(
             let message = Sha256::new().chain(signing_message);
             let signature: Signature = key
                 .try_sign_digest(message)
-                .map_err(|e| Discv5Error::Error(format!("Failed to sign message: {}", e)))?;
+                .map_err(|e| Discv5Error::Error(format!("Failed to sign message: {e}")))?;
             Ok(signature.as_bytes().to_vec())
         }
         CombinedKey::Ed25519(_) => Err(Discv5Error::KeyTypeNotSupported("Ed25519")),
@@ -305,7 +305,7 @@ mod tests {
                 .unwrap();
         let dst_id: NodeId = node_key_2().public().into();
 
-        println!("{}", dst_id);
+        println!("{dst_id}");
 
         let expected_sig = hex::decode("94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6").unwrap();
 
@@ -409,6 +409,6 @@ mod tests {
         dbg!(hex::encode(&message));
         let rpc = crate::rpc::Message::decode(&message).unwrap();
 
-        println!("{}", rpc);
+        println!("{rpc}");
     }
 }

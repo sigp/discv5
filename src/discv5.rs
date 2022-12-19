@@ -98,7 +98,7 @@ impl Discv5 {
 
         // If an executor is not provided, assume a current tokio runtime is running. If not panic.
         if config.executor.is_none() {
-            config.executor = Some(Box::new(crate::executor::TokioExecutor::default()));
+            config.executor = Some(Box::<crate::executor::TokioExecutor>::default());
         };
 
         // NOTE: Currently we don't expose custom filter support in the configuration. Users can

@@ -44,7 +44,7 @@ async fn build_service(
     filters: bool,
 ) -> Service {
     let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(crate::executor::TokioExecutor::default()))
+        .executor(Box::<crate::executor::TokioExecutor>::default())
         .build();
     // build the session service
     let (_handler_exit, handler_send, handler_recv) = Handler::spawn(

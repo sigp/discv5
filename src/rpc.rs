@@ -294,8 +294,8 @@ impl std::fmt::Display for RequestId {
 impl std::fmt::Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Message::Request(request) => write!(f, "{}", request),
-            Message::Response(response) => write!(f, "{}", response),
+            Message::Request(request) => write!(f, "{request}"),
+            Message::Response(response) => write!(f, "{response}"),
         }
     }
 }
@@ -309,19 +309,17 @@ impl std::fmt::Display for Response {
 impl std::fmt::Display for ResponseBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResponseBody::Pong { enr_seq, ip, port } => write!(
-                f,
-                "PONG: Enr-seq: {}, Ip: {:?},  Port: {}",
-                enr_seq, ip, port
-            ),
+            ResponseBody::Pong { enr_seq, ip, port } => {
+                write!(f, "PONG: Enr-seq: {enr_seq}, Ip: {ip:?},  Port: {port}")
+            }
             ResponseBody::Nodes { total, nodes } => {
-                write!(f, "NODES: total: {}, Nodes: [", total)?;
+                write!(f, "NODES: total: {total}, Nodes: [")?;
                 let mut first = true;
                 for id in nodes {
                     if !first {
-                        write!(f, ", {}", id)?;
+                        write!(f, ", {id}")?;
                     } else {
-                        write!(f, "{}", id)?;
+                        write!(f, "{id}")?;
                     }
                     first = false;
                 }
@@ -332,7 +330,7 @@ impl std::fmt::Display for ResponseBody {
                 write!(f, "Response: Response {}", hex::encode(response))
             }
             ResponseBody::Ticket { ticket, wait_time } => {
-                write!(f, "TICKET: Ticket: {:?}, Wait time: {}", ticket, wait_time)
+                write!(f, "TICKET: Ticket: {ticket:?}, Wait time: {wait_time}")
             }
             ResponseBody::RegisterConfirmation { topic } => {
                 write!(f, "REGTOPIC: Registered: {}", hex::encode(topic))
@@ -350,9 +348,9 @@ impl std::fmt::Display for Request {
 impl std::fmt::Display for RequestBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestBody::Ping { enr_seq } => write!(f, "PING: enr_seq: {}", enr_seq),
+            RequestBody::Ping { enr_seq } => write!(f, "PING: enr_seq: {enr_seq}"),
             RequestBody::FindNode { distances } => {
-                write!(f, "FINDNODE Request: distance: {:?}", distances)
+                write!(f, "FINDNODE Request: distance: {distances:?}")
             }
             RequestBody::Talk { protocol, request } => write!(
                 f,
@@ -360,7 +358,7 @@ impl std::fmt::Display for RequestBody {
                 hex::encode(protocol),
                 hex::encode(request)
             ),
-            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
+            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {topic:?}"),
             RequestBody::RegisterTopic { topic, enr, ticket } => write!(
                 f,
                 "RegisterTopic: topic: {}, enr: {}, ticket: {}",
