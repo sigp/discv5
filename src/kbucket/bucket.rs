@@ -653,7 +653,7 @@ where
     ///
     /// Returns `None` if the given key does not refer to an node in the
     /// bucket.
-    fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
+    pub fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
         self.nodes.iter_mut().find(move |p| &p.key == key)
     }
 
