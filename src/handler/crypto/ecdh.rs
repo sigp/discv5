@@ -7,12 +7,13 @@ use super::k256::{
 
 pub fn ecdh(public_key: &VerifyingKey, secret_key: &SigningKey) -> Vec<u8> {
     k256::PublicKey::from_affine(
-        (&k256::PublicKey::from_sec1_bytes(public_key.to_bytes().as_ref())
+        (k256::PublicKey::from_sec1_bytes(public_key.to_bytes().as_ref())
             .unwrap()
             .to_projective()
-            * k256::SecretKey::from_bytes(secret_key.to_bytes())
+            * k256::SecretKey::from_be_bytes(&secret_key.to_bytes())
                 .unwrap()
-                .secret_scalar())
+                .to_nonzero_scalar()
+                .as_ref())
         .to_affine(),
     )
     .unwrap()

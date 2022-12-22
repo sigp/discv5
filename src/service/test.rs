@@ -8,19 +8,13 @@ use crate::{
     kbucket::{BucketInsertResult, KBucketsTable, NodeStatus},
     node_info::NodeContact,
     query_pool::{QueryId, QueryPool},
-    rpc,
     rpc::RequestId,
     service::{ActiveRequest, Service},
     Discv5ConfigBuilder, Enr,
 };
 use enr::{CombinedKey, EnrBuilder};
 use parking_lot::RwLock;
-use std::{
-    collections::HashMap,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 fn _connected_state() -> NodeStatus {
@@ -50,7 +44,7 @@ async fn build_service(
     filters: bool,
 ) -> Service {
     let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(crate::executor::TokioExecutor::default()))
+        .executor(Box::<crate::executor::TokioExecutor>::default())
         .build();
     // build the session service
     let (_handler_exit, handler_send, handler_recv) = Handler::spawn(
@@ -106,26 +100,26 @@ async fn build_service(
 async fn test_updating_connection_on_ping() {
     init();
     let enr_key1 = CombinedKey::generate_secp256k1();
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(10001)
+        .ip4(ip)
+        .udp4(10001)
         .build(&enr_key1)
         .unwrap();
-    let ip2: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip2 = "127.0.0.1".parse().unwrap();
     let enr_key2 = CombinedKey::generate_secp256k1();
     let enr2 = EnrBuilder::new("v4")
-        .ip(ip2)
-        .udp(10002)
+        .ip4(ip2)
+        .udp4(10002)
         .build(&enr_key2)
         .unwrap();
 
-    let socket_addr = enr.udp_socket().unwrap();
+    let socket_addr = enr.udp4_socket().unwrap();
 
     let mut service = build_service(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
-        socket_addr,
+        socket_addr.into(),
         false,
     )
     .await;
@@ -143,23 +137,23 @@ async fn test_updating_connection_on_ping() {
     }
 
     // Add a fake request
-    let response = rpc::Response {
+    let response = Response {
         id: RequestId(vec![1]),
-        body: rpc::ResponseBody::Pong {
+        body: ResponseBody::Pong {
             enr_seq: 2,
-            ip: ip2,
+            ip: ip2.into(),
             port: 10002,
         },
     };
 
-    let node_contact = NodeContact::Enr(Box::new(enr2));
-    let expected_return_addr = node_contact.node_address().unwrap();
+    let node_contact: NodeContact = enr2.into();
+    let expected_return_addr = node_contact.node_address();
 
     service.active_requests.insert(
         RequestId(vec![1]),
         ActiveRequest {
             contact: node_contact,
-            request_body: rpc::RequestBody::Ping { enr_seq: 2 },
+            request_body: RequestBody::Ping { enr_seq: 2 },
             query_id: Some(QueryId(1)),
             callback: None,
         },

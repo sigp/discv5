@@ -49,7 +49,7 @@ pub struct ChallengeData([u8; 63]);
 
 impl std::fmt::Debug for ChallengeData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(&self.0))
+        write!(f, "{}", hex::encode(self.0))
     }
 }
 
@@ -72,7 +72,7 @@ impl AsRef<[u8]> for ChallengeData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packet {
     /// Random data unique to the packet.
     pub iv: u128,
@@ -82,7 +82,7 @@ pub struct Packet {
     pub message: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PacketHeader {
     /// The nonce of the associated message
     pub message_nonce: MessageNonce,
@@ -106,7 +106,7 @@ impl PacketHeader {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PacketKind {
     /// An ordinary message.
     Message {
@@ -244,8 +244,8 @@ impl PacketKind {
 
                 let remaining_data = &auth_data[32 + 2..];
 
-                let id_nonce_sig = remaining_data[0..sig_size as usize].to_vec();
-                let ephem_pubkey = remaining_data[sig_size as usize..total_size].to_vec();
+                let id_nonce_sig = remaining_data[0..sig_size].to_vec();
+                let ephem_pubkey = remaining_data[sig_size..total_size].to_vec();
 
                 let enr_record = if remaining_data.len() > total_size {
                     Some(
@@ -514,7 +514,7 @@ impl std::fmt::Display for Packet {
             f,
             "Packet {{ iv: {}, header: {}, message {} }}",
             hex::encode(self.iv.to_be_bytes()),
-            self.header.to_string(),
+            self.header,
             hex::encode(&self.message)
         )
     }
@@ -526,7 +526,7 @@ impl std::fmt::Display for PacketHeader {
             f,
             "PacketHeader {{ message_nonce: {}, kind: {} }}",
             hex::encode(self.message_nonce),
-            self.kind.to_string()
+            self.kind
         )
     }
 }
@@ -534,7 +534,7 @@ impl std::fmt::Display for PacketHeader {
 impl std::fmt::Display for PacketKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PacketKind::Message { src_id } => write!(f, "Message {{ src_id: {} }}", src_id),
+            PacketKind::Message { src_id } => write!(f, "Message {{ src_id: {src_id} }}"),
             PacketKind::WhoAreYou { id_nonce, enr_seq } => write!(
                 f,
                 "WhoAreYou {{ id_nonce: {}, enr_seq: {} }}",

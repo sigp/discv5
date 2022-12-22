@@ -4,8 +4,10 @@ use crate::{
     rpc::{Request, Response},
     Discv5ConfigBuilder,
 };
+
+use active_requests::ActiveRequests;
 use enr::EnrBuilder;
-use std::{net::IpAddr, time::Duration};
+use std::time::Duration;
 use tokio::time::sleep;
 
 fn init() {
@@ -27,7 +29,7 @@ async fn simple_session_message() {
 
     let sender_port = 5000;
     let receiver_port = 5001;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip = "127.0.0.1".parse().unwrap();
 
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
@@ -35,20 +37,20 @@ async fn simple_session_message() {
     let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
 
     let sender_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(sender_port)
+        .ip4(ip)
+        .udp4(sender_port)
         .build(&key1)
         .unwrap();
     let receiver_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(receiver_port)
+        .ip4(ip)
+        .udp4(receiver_port)
         .build(&key2)
         .unwrap();
 
     let (_exit_send, sender_send, _sender_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
-        sender_enr.udp_socket().unwrap(),
+        sender_enr.udp4_socket().unwrap().into(),
         config.clone(),
     )
     .await
@@ -57,7 +59,7 @@ async fn simple_session_message() {
     let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
-        receiver_enr.udp_socket().unwrap(),
+        receiver_enr.udp4_socket().unwrap().into(),
         config,
     )
     .await
@@ -68,7 +70,7 @@ async fn simple_session_message() {
         body: RequestBody::Ping { enr_seq: 1 },
     });
 
-    let _ = sender_send.send(HandlerRequest::Request(
+    let _ = sender_send.send(HandlerIn::Request(
         receiver_enr.into(),
         send_message.clone(),
     ));
@@ -77,11 +79,11 @@ async fn simple_session_message() {
         loop {
             if let Some(message) = receiver_recv.recv().await {
                 match message {
-                    HandlerResponse::WhoAreYou(wru_ref) => {
-                        let _ = recv_send
-                            .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())));
+                    HandlerOut::WhoAreYou(wru_ref) => {
+                        let _ =
+                            recv_send.send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())));
                     }
-                    HandlerResponse::Request(_, request) => {
+                    HandlerOut::Request(_, request) => {
                         assert_eq!(request, send_message);
                         return;
                     }
@@ -105,26 +107,26 @@ async fn multiple_messages() {
     init();
     let sender_port = 5002;
     let receiver_port = 5003;
-    let ip: IpAddr = "127.0.0.1".parse().unwrap();
+    let ip = "127.0.0.1".parse().unwrap();
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
     let config = Discv5ConfigBuilder::new().build();
     let sender_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(sender_port)
+        .ip4(ip)
+        .udp4(sender_port)
         .build(&key1)
         .unwrap();
     let receiver_enr = EnrBuilder::new("v4")
-        .ip(ip)
-        .udp(receiver_port)
+        .ip4(ip)
+        .udp4(receiver_port)
         .build(&key2)
         .unwrap();
 
     let (_exit_send, sender_handler, mut sender_handler_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
-        sender_enr.udp_socket().unwrap(),
+        sender_enr.udp4_socket().unwrap().into(),
         config.clone(),
     )
     .await
@@ -133,7 +135,7 @@ async fn multiple_messages() {
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
-        receiver_enr.udp_socket().unwrap(),
+        receiver_enr.udp4_socket().unwrap().into(),
         config,
     )
     .await
@@ -145,7 +147,7 @@ async fn multiple_messages() {
     });
 
     // sender to send the first message then await for the session to be established
-    let _ = sender_handler.send(HandlerRequest::Request(
+    let _ = sender_handler.send(HandlerIn::Request(
         receiver_enr.clone().into(),
         send_message.clone(),
     ));
@@ -154,7 +156,7 @@ async fn multiple_messages() {
         id: RequestId(vec![1]),
         body: ResponseBody::Pong {
             enr_seq: 1,
-            ip,
+            ip: ip.into(),
             port: sender_port,
         },
     };
@@ -167,10 +169,10 @@ async fn multiple_messages() {
     let sender = async move {
         loop {
             match sender_handler_recv.recv().await {
-                Some(HandlerResponse::Established(_, _)) => {
+                Some(HandlerOut::Established(_, _, _)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
-                        let _ = sender_handler.send(HandlerRequest::Request(
+                        let _ = sender_handler.send(HandlerIn::Request(
                             receiver_enr.clone().into(),
                             send_message.clone(),
                         ));
@@ -184,18 +186,15 @@ async fn multiple_messages() {
     let receiver = async move {
         loop {
             match receiver_handler.recv().await {
-                Some(HandlerResponse::WhoAreYou(wru_ref)) => {
-                    let _ = recv_send
-                        .send(HandlerRequest::WhoAreYou(wru_ref, Some(sender_enr.clone())));
+                Some(HandlerOut::WhoAreYou(wru_ref)) => {
+                    let _ = recv_send.send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())));
                 }
-                Some(HandlerResponse::Request(addr, request)) => {
+                Some(HandlerOut::Request(addr, request)) => {
                     assert_eq!(request, recv_send_message);
                     message_count += 1;
                     // required to send a pong response to establish the session
-                    let _ = recv_send.send(HandlerRequest::Response(
-                        addr,
-                        Box::new(pong_response.clone()),
-                    ));
+                    let _ =
+                        recv_send.send(HandlerIn::Response(addr, Box::new(pong_response.clone())));
                     if message_count == messages_to_send {
                         return;
                     }
@@ -216,4 +215,39 @@ async fn multiple_messages() {
             panic!("Test timed out");
         }
     }
+}
+
+#[tokio::test]
+async fn test_active_requests_insert() {
+    const EXPIRY: Duration = Duration::from_secs(5);
+    let mut active_requests = ActiveRequests::new(EXPIRY);
+
+    // Create the test values needed
+    let port = 5000;
+    let ip = "127.0.0.1".parse().unwrap();
+
+    let key = CombinedKey::generate_secp256k1();
+
+    let enr = EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(port)
+        .build(&key)
+        .unwrap();
+    let node_id = enr.node_id();
+
+    let contact: NodeContact = enr.into();
+    let node_address = contact.node_address();
+
+    let packet = Packet::new_random(&node_id).unwrap();
+    let id = HandlerReqId::Internal(RequestId::random());
+    let request = RequestBody::Ping { enr_seq: 1 };
+    let initiating_session = true;
+    let request_call = RequestCall::new(contact, packet, id, request, initiating_session);
+
+    // insert the pair and verify the mapping remains in sync
+    let nonce = *request_call.packet().message_nonce();
+    active_requests.insert(node_address, request_call);
+    active_requests.check_invariant();
+    active_requests.remove_by_nonce(&nonce);
+    active_requests.check_invariant();
 }

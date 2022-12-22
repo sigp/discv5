@@ -90,7 +90,7 @@ impl Filter {
         // Add the un-solicited request to the cache
         // If this is over the maximum requests per ENFORCED_SIZE_TIME, it will not be added, we
         // leave the rate limiter to enforce the rate limits..
-        let _ = self.raw_packets_received.cache_insert(*src);
+        self.raw_packets_received.cache_insert(*src);
 
         // build the metrics
         METRICS

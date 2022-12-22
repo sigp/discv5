@@ -1,4 +1,4 @@
-use crate::handler::Challenge;
+use crate::{handler::Challenge, node_info::NonContactable};
 use rlp::DecoderError;
 use std::fmt;
 
@@ -47,7 +47,7 @@ impl From<std::io::Error> for Discv5Error {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Types of packet errors.
 pub enum PacketError {
     /// The packet type is unknown.
@@ -70,7 +70,7 @@ pub enum PacketError {
     InvalidEnr(DecoderError),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ResponseError {
     /// The channel used to send the response has already been closed.
@@ -89,7 +89,7 @@ impl fmt::Display for ResponseError {
 
 impl std::error::Error for ResponseError {}
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestError {
     /// The request timed out.
     Timeout,
@@ -100,7 +100,7 @@ pub enum RequestError {
     /// The channel to the underlying threads failed.
     ChannelFailed(String),
     /// An invalid ENR was provided.
-    InvalidEnr(String),
+    InvalidEnr(&'static str),
     /// The remote's ENR is invalid.
     InvalidRemoteEnr,
     /// The remote returned and invalid packet.
@@ -108,12 +108,12 @@ pub enum RequestError {
     /// Failed attempting to encrypt the request.
     EncryptionFailed(String),
     /// The multiaddr provided is invalid.
-    InvalidMultiaddr(String),
+    InvalidMultiaddr(&'static str),
     /// Failure generating random numbers during request.
     EntropyFailure(&'static str),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryError {
     /// The discv5 service is not currently running.
     ServiceNotStarted,
@@ -129,18 +129,24 @@ pub enum QueryError {
 
 impl fmt::Display for Discv5Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
 impl fmt::Display for RequestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
 impl fmt::Display for QueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
+    }
+}
+
+impl From<NonContactable> for RequestError {
+    fn from(_: NonContactable) -> Self {
+        RequestError::InvalidEnr("ENR is not contactable")
     }
 }

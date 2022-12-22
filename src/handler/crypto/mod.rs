@@ -19,14 +19,15 @@ use enr::{
     k256::{
         self,
         ecdsa::{
+            digest::Update,
             signature::{DigestSigner, DigestVerifier, Signature as _},
             Signature,
         },
+        sha2::{Digest, Sha256},
     },
     CombinedKey, CombinedPublicKey, NodeId,
 };
 use hkdf::Hkdf;
-use sha2::{Digest, Sha256};
 use std::convert::TryFrom;
 
 mod ecdh;
@@ -54,7 +55,7 @@ pub(crate) fn generate_session_keys(
             CombinedPublicKey::Secp256k1(remote_pk) => {
                 let ephem_sk = k256::ecdsa::SigningKey::random(rand::thread_rng());
                 let secret = ecdh(&remote_pk, &ephem_sk);
-                let ephem_pk = ephem_sk.verify_key();
+                let ephem_pk = ephem_sk.verifying_key();
                 (secret, ephem_pk.to_bytes().to_vec())
             }
             CombinedPublicKey::Ed25519(_) => {
@@ -135,7 +136,7 @@ pub(crate) fn sign_nonce(
             let message = Sha256::new().chain(signing_message);
             let signature: Signature = key
                 .try_sign_digest(message)
-                .map_err(|e| Discv5Error::Error(format!("Failed to sign message: {}", e)))?;
+                .map_err(|e| Discv5Error::Error(format!("Failed to sign message: {e}")))?;
             Ok(signature.as_bytes().to_vec())
         }
         CombinedKey::Ed25519(_) => Err(Discv5Error::KeyTypeNotSupported("Ed25519")),
@@ -179,7 +180,7 @@ fn generate_signing_nonce(
     let mut data = ID_SIGNATURE_TEXT.as_bytes().to_vec();
     data.extend_from_slice(challenge_data.as_ref());
     data.extend_from_slice(ephem_pubkey);
-    data.extend_from_slice(&dst_id.raw().to_vec());
+    data.extend_from_slice(dst_id.raw().as_ref());
     data
 }
 
@@ -304,7 +305,7 @@ mod tests {
                 .unwrap();
         let dst_id: NodeId = node_key_2().public().into();
 
-        println!("{}", dst_id);
+        println!("{dst_id}");
 
         let expected_sig = hex::decode("94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6").unwrap();
 
@@ -341,8 +342,16 @@ mod tests {
         let node1_key = CombinedKey::generate_secp256k1();
         let node2_key = CombinedKey::generate_secp256k1();
 
-        let node1_enr = EnrBuilder::new("v4").build(&node1_key).unwrap();
-        let node2_enr = EnrBuilder::new("v4").build(&node2_key).unwrap();
+        let node1_enr = EnrBuilder::new("v4")
+            .ip("127.0.0.1".parse().unwrap())
+            .udp4(9000)
+            .build(&node1_key)
+            .unwrap();
+        let node2_enr = EnrBuilder::new("v4")
+            .ip("127.0.0.1".parse().unwrap())
+            .udp4(9000)
+            .build(&node2_key)
+            .unwrap();
 
         let challenge_data = vec![1; 63];
         let challenge_data = ChallengeData::try_from(challenge_data.as_slice()).unwrap();
@@ -400,6 +409,6 @@ mod tests {
         dbg!(hex::encode(&message));
         let rpc = crate::rpc::Message::decode(&message).unwrap();
 
-        println!("{}", rpc);
+        println!("{rpc}");
     }
 }

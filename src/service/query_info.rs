@@ -1,6 +1,5 @@
 use crate::{kbucket::Key, rpc::RequestBody, Enr};
-use enr::NodeId;
-use sha2::digest::generic_array::GenericArray;
+use enr::{k256::sha2::digest::generic_array::GenericArray, NodeId};
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
@@ -17,6 +16,7 @@ pub struct QueryInfo {
     pub callback: oneshot::Sender<Vec<Enr>>,
 
     /// The number of distances we request for each peer.
+    /// NOTE: This must not be larger than 127.
     pub distances_to_request: usize,
 }
 
@@ -29,16 +29,14 @@ pub enum QueryType {
 
 impl QueryInfo {
     /// Builds an RPC Request, given the QueryInfo
-    pub(crate) fn rpc_request(&self, peer: NodeId) -> Result<RequestBody, &'static str> {
-        let request = match self.query_type {
+    pub(crate) fn rpc_request(&self, peer: NodeId) -> RequestBody {
+        match self.query_type {
             QueryType::FindNode(node_id) => {
                 let distances = findnode_log2distance(node_id, peer, self.distances_to_request)
-                    .ok_or("Requested a node find itself")?;
+                    .unwrap_or_else(|| vec![0]);
                 RequestBody::FindNode { distances }
             }
-        };
-
-        Ok(request)
+        }
     }
 }
 

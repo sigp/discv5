@@ -217,7 +217,7 @@ pub enum FailureReason {
     /// The node didn't pass the table filter.
     TableFilter,
     /// The node didn't exist.
-    KeyNonExistant,
+    KeyNonExistent,
     /// The bucket was full.
     BucketFull,
     /// Cannot update self,
@@ -467,10 +467,10 @@ where
                 }
                 UpdateResult::UpdatedPending
             } else {
-                UpdateResult::Failed(FailureReason::KeyNonExistant)
+                UpdateResult::Failed(FailureReason::KeyNonExistent)
             }
         } else {
-            UpdateResult::Failed(FailureReason::KeyNonExistant)
+            UpdateResult::Failed(FailureReason::KeyNonExistent)
         }
     }
 
@@ -506,10 +506,10 @@ where
                 pending.node.value = value;
                 UpdateResult::UpdatedPending
             } else {
-                UpdateResult::Failed(FailureReason::KeyNonExistant)
+                UpdateResult::Failed(FailureReason::KeyNonExistent)
             }
         } else {
-            UpdateResult::Failed(FailureReason::KeyNonExistant)
+            UpdateResult::Failed(FailureReason::KeyNonExistent)
         }
     }
 
@@ -653,7 +653,7 @@ where
     ///
     /// Returns `None` if the given key does not refer to an node in the
     /// bucket.
-    fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
+    pub fn get_mut(&mut self, key: &Key<TNodeId>) -> Option<&mut Node<TNodeId, TVal>> {
         self.nodes.iter_mut().find(move |p| &p.key == key)
     }
 
@@ -696,14 +696,14 @@ impl<TNodeId: std::fmt::Debug, TVal: Eq + std::fmt::Debug> std::fmt::Debug
     for KBucket<TNodeId, TVal>
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut builder = f.debug_struct("KBucket");
-        let _ = builder.field("nodes", &self.nodes);
-        let _ = builder.field("first_connected_pos", &self.first_connected_pos);
-        let _ = builder.field("pending", &self.pending);
-        let _ = builder.field("pending_timeout", &self.pending_timeout);
-        let _ = builder.field("filter", &self.filter.is_some());
-        let _ = builder.field("max_incoming", &self.max_incoming);
-        builder.finish()
+        f.debug_struct("KBucket")
+            .field("nodes", &self.nodes)
+            .field("first_connected_pos", &self.first_connected_pos)
+            .field("pending", &self.pending)
+            .field("pending_timeout", &self.pending_timeout)
+            .field("filter", &self.filter.is_some())
+            .field("max_incoming", &self.max_incoming)
+            .finish()
     }
 }
 
@@ -818,7 +818,7 @@ pub mod tests {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             let key = Key::from(arbitrary_node_id(g));
             Node {
-                key: key.clone(),
+                key,
                 value: V::arbitrary(g),
                 status: NodeStatus::arbitrary(g),
             }
@@ -920,30 +920,46 @@ pub mod tests {
     where
         V: Eq + std::fmt::Debug,
     {
-        fn apply_action(&mut self, action: Action<V>) {
+        fn apply_action(&mut self, action: Action<V>) -> Result<(), FailureReason> {
             match action {
-                Action::Insert(node) => {
-                    let _ = self.insert(node);
-                }
+                Action::Insert(node) => match self.insert(node) {
+                    InsertResult::FailedFilter => Err(FailureReason::BucketFilter),
+                    InsertResult::TooManyIncoming => Err(FailureReason::TooManyIncoming),
+                    InsertResult::Full => Err(FailureReason::BucketFull),
+                    _ => Ok(()),
+                },
                 Action::Remove(pos) => {
                     if let Some(key) = self.key_of_pos(pos) {
                         self.remove(&key);
                     }
+                    Ok(())
                 }
                 Action::UpdatePending(status) => {
                     self.update_pending(status);
+                    Ok(())
                 }
                 Action::ApplyPending => {
                     self.apply_pending();
+                    Ok(())
                 }
                 Action::UpdateStatus(pos, status) => {
                     if let Some(key) = self.key_of_pos(pos) {
-                        let _ = self.update_status(&key, status.state, Some(status.direction));
+                        match self.update_status(&key, status.state, Some(status.direction)) {
+                            UpdateResult::Failed(reason) => Err(reason),
+                            _ => Ok(()),
+                        }
+                    } else {
+                        Ok(())
                     }
                 }
                 Action::UpdateValue(pos, value) => {
                     if let Some(key) = self.key_of_pos(pos) {
-                        let _ = self.update_value(&key, value);
+                        match self.update_value(&key, value) {
+                            UpdateResult::Failed(reason) => Err(reason),
+                            _ => Ok(()),
+                        }
+                    } else {
+                        Ok(())
                     }
                 }
             }
@@ -1068,7 +1084,7 @@ pub mod tests {
 
             // Apply the pending node.
             let pending = bucket.pending_mut().expect("No pending node.");
-            pending.set_ready_at(Instant::now() - Duration::from_secs(1));
+            pending.set_ready_at(Instant::now().checked_sub(Duration::from_secs(1)).unwrap());
             let result = bucket.apply_pending();
             assert_eq!(
                 result,
@@ -1168,7 +1184,7 @@ pub mod tests {
         // Add a connected pending node.
         let key = Key::from(NodeId::random());
         let node = Node {
-            key: key.clone(),
+            key,
             value: (),
             status: connected_state(),
         };
@@ -1194,7 +1210,7 @@ pub mod tests {
 
         // Speed up the pending time
         if let Some(pending) = bucket.pending.as_mut() {
-            pending.replace = Instant::now() - Duration::from_secs(1);
+            pending.replace = Instant::now().checked_sub(Duration::from_secs(1)).unwrap();
         }
 
         // At some later time apply pending
@@ -1253,7 +1269,7 @@ pub mod tests {
         ) -> bool {
             // Initialise filter.
             let filter = SetFilter {
-                set: value_matches_filter.then(|| value).into_iter().collect(),
+                set: value_matches_filter.then_some(value).into_iter().collect(),
             };
             bucket.filter = Some(Box::new(filter));
 
@@ -1311,7 +1327,10 @@ pub mod tests {
             }
 
             for action in actions {
-                kbucket.apply_action(action);
+                // Throwing random nodes into a bucket will likely cause some actions to fail as
+                // they don't pass the filter. We ignore these errors and rely on the
+                // `check_invariants()` to ensure the insert/update action failed appropriately.
+                let _ = kbucket.apply_action(action);
                 kbucket.check_invariants();
             }
             true

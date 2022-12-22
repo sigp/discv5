@@ -128,10 +128,33 @@ where
             .value
     }
 
+    /// Returns mutable access value associated with the key.
+    pub fn value_mut(&mut self) -> &mut TVal {
+        &mut self
+            .0
+            .bucket
+            .get_mut(self.0.key)
+            .expect("We can only build a ConnectedEntry if the entry is in the bucket; QED")
+            .value
+    }
+
     /// Sets the status of the entry.
-    pub fn update(self, state: ConnectionState, direction: Option<ConnectionDirection>) -> Self {
-        let _ = self.0.bucket.update_status(self.0.key, state, direction);
-        Self::new(self.0.bucket, self.0.key)
+    /// This can fail if the new state violates buckets or table conditions.
+    pub fn update(
+        self,
+        state: ConnectionState,
+        direction: Option<ConnectionDirection>,
+    ) -> Result<Self, FailureReason> {
+        match self.0.bucket.update_status(self.0.key, state, direction) {
+            UpdateResult::Failed(reason) => Err(reason),
+            UpdateResult::UpdatedAndPromoted
+            | UpdateResult::Updated
+            | UpdateResult::UpdatedPending
+            | UpdateResult::NotModified => {
+                // Successful update, return the new entry
+                Ok(Self::new(self.0.bucket, self.0.key))
+            }
+        }
     }
 
     /// Removes the entry from the table.

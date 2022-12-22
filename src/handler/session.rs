@@ -19,9 +19,12 @@ pub(crate) struct Keys {
 pub(crate) struct Session {
     /// The current keys used to encrypt/decrypt messages.
     keys: Keys,
-    /// If a new handshake is being established, these keys can be tried to determine if this new
-    /// set of keys is canon.
-    awaiting_keys: Option<Keys>,
+    /// If a new handshake is being established, the older keys are maintained as race
+    /// conditions in the handshake can give different views of which keys are canon.
+    /// The key that worked to decrypt our last message (or are freshly established) exist in
+    /// `keys` and previous keys are optionally stored in `old_keys`. We attempt to decrypt
+    /// messages with `keys` before optionally trying `old_keys`.
+    old_keys: Option<Keys>,
     /// If we contacted this node without an ENR, i.e. via a multiaddr, during the session
     /// establishment we request the nodes ENR. Once the ENR is received and verified, this session
     /// becomes established.
@@ -37,7 +40,7 @@ impl Session {
     pub fn new(keys: Keys) -> Self {
         Session {
             keys,
-            awaiting_keys: None,
+            old_keys: None,
             awaiting_enr: None,
             counter: 0,
         }
@@ -45,8 +48,8 @@ impl Session {
 
     /// A new session has been established. Update this session based on the new session.
     pub fn update(&mut self, new_session: Session) {
-        // Await the new sessions keys
-        self.awaiting_keys = Some(new_session.keys);
+        // Optimistically assume the new keys are canonical.
+        self.old_keys = Some(std::mem::replace(&mut self.keys, new_session.keys));
         self.awaiting_enr = new_session.awaiting_enr;
     }
 
@@ -62,7 +65,7 @@ impl Session {
         // If the message nonce length is ever set below 4 bytes this will explode. The packet
         // size constants shouldn't be modified.
         let random_nonce: [u8; MESSAGE_NONCE_LENGTH - 4] = rand::random();
-        let mut message_nonce: MessageNonce = [0u8; crate::packet::MESSAGE_NONCE_LENGTH];
+        let mut message_nonce: MessageNonce = [0u8; MESSAGE_NONCE_LENGTH];
         message_nonce[..4].copy_from_slice(&self.counter.to_be_bytes());
         message_nonce[4..].copy_from_slice(&random_nonce);
 
@@ -100,17 +103,26 @@ impl Session {
         message: &[u8],
         aad: &[u8],
     ) -> Result<Vec<u8>, Discv5Error> {
-        // try with the new keys
-        if let Some(new_keys) = self.awaiting_keys.take() {
-            let result =
-                crypto::decrypt_message(&new_keys.decryption_key, message_nonce, message, aad);
-            if result.is_ok() {
-                self.keys = new_keys;
-                return result;
-            }
+        // First try with the canonical keys.
+        let result_canon =
+            crypto::decrypt_message(&self.keys.decryption_key, message_nonce, message, aad);
+
+        // If decryption is fine, nothing more to do.
+        if result_canon.is_ok() {
+            return result_canon;
         }
-        // if it failed try with the old keys
-        crypto::decrypt_message(&self.keys.decryption_key, message_nonce, message, aad)
+
+        // If these keys did not work, try old_keys
+        if let Some(old_keys) = self.old_keys.take() {
+            let result =
+                crypto::decrypt_message(&old_keys.decryption_key, message_nonce, message, aad);
+            if result.is_ok() {
+                // rotate the keys
+                self.old_keys = Some(std::mem::replace(&mut self.keys, old_keys));
+            }
+            return result;
+        }
+        result_canon
     }
 
     /* Session Helper Functions */

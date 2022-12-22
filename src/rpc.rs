@@ -34,7 +34,7 @@ impl RequestId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// A combined type representing requests and responses.
 pub enum Message {
     /// A request, which contains its [`RequestId`].
@@ -43,7 +43,7 @@ pub enum Message {
     Response(Response),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// A request sent between nodes.
 pub struct Request {
     /// The [`RequestId`] of the request.
@@ -52,7 +52,7 @@ pub struct Request {
     pub body: RequestBody,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// A response sent in response to a [`Request`]
 pub struct Response {
     /// The [`RequestId`] of the request that triggered this response.
@@ -61,7 +61,7 @@ pub struct Response {
     pub body: ResponseBody,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestBody {
     /// A PING request.
     Ping {
@@ -90,7 +90,7 @@ pub enum RequestBody {
     TopicQuery { topic: TopicHash },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResponseBody {
     /// A PONG response.
     Pong {
@@ -322,8 +322,8 @@ impl std::fmt::Display for RequestId {
 impl std::fmt::Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Message::Request(request) => write!(f, "{}", request),
-            Message::Response(response) => write!(f, "{}", response),
+            Message::Request(request) => write!(f, "{request}"),
+            Message::Response(response) => write!(f, "{response}"),
         }
     }
 }
@@ -337,19 +337,17 @@ impl std::fmt::Display for Response {
 impl std::fmt::Display for ResponseBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResponseBody::Pong { enr_seq, ip, port } => write!(
-                f,
-                "PONG: Enr-seq: {}, Ip: {:?},  Port: {}",
-                enr_seq, ip, port
-            ),
+            ResponseBody::Pong { enr_seq, ip, port } => {
+                write!(f, "PONG: Enr-seq: {enr_seq}, Ip: {ip:?},  Port: {port}")
+            }
             ResponseBody::Nodes { total, nodes } => {
-                let _ = write!(f, "NODES: total: {}, Nodes: [", total);
+                write!(f, "NODES: total: {total}, Nodes: [")?;
                 let mut first = true;
                 for id in nodes {
                     if !first {
-                        write!(f, ", {}", id)?;
+                        write!(f, ", {id}")?;
                     } else {
-                        write!(f, "{}", id)?;
+                        write!(f, "{id}")?;
                     }
                     first = false;
                 }
@@ -374,7 +372,7 @@ impl std::fmt::Display for ResponseBody {
                 write!(f, "Response: Response {}", hex::encode(response))
             }
             ResponseBody::Ticket { ticket, wait_time } => {
-                write!(f, "TICKET: Ticket: {:?}, Wait time: {}", ticket, wait_time)
+                write!(f, "TICKET: Ticket: {ticket:?}, Wait time: {wait_time}")
             }
             ResponseBody::RegisterConfirmation { topic } => {
                 write!(f, "REGTOPIC: Registered: {}", hex::encode(topic))
@@ -392,9 +390,9 @@ impl std::fmt::Display for Request {
 impl std::fmt::Display for RequestBody {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestBody::Ping { enr_seq } => write!(f, "PING: enr_seq: {}", enr_seq),
+            RequestBody::Ping { enr_seq } => write!(f, "PING: enr_seq: {enr_seq}"),
             RequestBody::FindNode { distances } => {
-                write!(f, "FINDNODE Request: distance: {:?}", distances)
+                write!(f, "FINDNODE Request: distance: {distances:?}")
             }
             RequestBody::Talk { protocol, request } => write!(
                 f,
@@ -402,7 +400,7 @@ impl std::fmt::Display for RequestBody {
                 hex::encode(protocol),
                 hex::encode(request)
             ),
-            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {:?}", topic),
+            RequestBody::TopicQuery { topic } => write!(f, "TOPICQUERY: topic: {topic:?}"),
             RequestBody::RegisterTopic { topic, enr, ticket } => write!(
                 f,
                 "RegisterTopic: topic: {}, enr: {}, ticket: {}",
@@ -511,13 +509,6 @@ impl Message {
                 }
                 let distances = rlp.list_at::<u64>(1)?;
 
-                if distances.len() > 10 {
-                    warn!(
-                        "Rejected FindNode request asking for too many buckets {}, maximum 10",
-                        distances.len()
-                    );
-                    return Err(DecoderError::Custom("FINDNODE request too large"));
-                }
                 for distance in distances.iter() {
                     if distance > &256u64 {
                         warn!(
@@ -847,13 +838,13 @@ mod tests {
     fn encode_decode_nodes_response() {
         let key = CombinedKey::generate_secp256k1();
         let enr1 = EnrBuilder::new("v4")
-            .ip("127.0.0.1".parse().unwrap())
-            .udp(500)
+            .ip4("127.0.0.1".parse().unwrap())
+            .udp4(500)
             .build(&key)
             .unwrap();
         let enr2 = EnrBuilder::new("v4")
-            .ip("10.0.0.1".parse().unwrap())
-            .tcp(8080)
+            .ip4("10.0.0.1".parse().unwrap())
+            .tcp4(8080)
             .build(&key)
             .unwrap();
         let enr3 = EnrBuilder::new("v4")
