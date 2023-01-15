@@ -60,7 +60,7 @@ pub(crate) const DISTANCES_TO_REQUEST_PER_PEER: usize = 3;
 
 /// Most NAT setups will keep a hole-punch connection alive if the UDP state table entry is
 /// reset every 30 seconds, hence a node behind a NAT pings its peers at this interval.
-const PING_INTERVAL_NAT: Duration = Duration::from_secs(60);
+const PING_INTERVAL_NAT: Duration = Duration::from_secs(30);
 
 /// Currently, a maximum of `DISTANCES_TO_REQUEST_PER_PEER * BUCKET_SIZE` peers
 /// can be returned. Datagrams have a max size of 1280 and ENR's have a max size
