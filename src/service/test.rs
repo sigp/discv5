@@ -1,6 +1,10 @@
 #![cfg(test)]
 
-use super::*;
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+
+use enr::{CombinedKey, EnrBuilder};
+use parking_lot::RwLock;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     handler::Handler,
@@ -12,10 +16,8 @@ use crate::{
     service::{ActiveRequest, Service},
     Discv5ConfigBuilder, Enr,
 };
-use enr::{CombinedKey, EnrBuilder};
-use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::sync::{mpsc, oneshot};
+
+use super::*;
 
 fn _connected_state() -> NodeStatus {
     NodeStatus {
@@ -44,7 +46,7 @@ async fn build_service(
     filters: bool,
 ) -> Service {
     let config = Discv5ConfigBuilder::new()
-        .executor(Box::new(crate::executor::TokioExecutor::default()))
+        .executor(Box::<crate::executor::TokioExecutor>::default())
         .build();
     // build the session service
     let (_handler_exit, handler_send, handler_recv) = Handler::spawn(

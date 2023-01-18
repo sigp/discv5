@@ -22,6 +22,11 @@ macro_rules! arc_rw {
     };
 }
 
+/// Protocol ID sent with each message.
+const DEFAULT_PROTOCOL_ID: &str = "discv5";
+/// The version sent with each handshake.
+const DEFAULT_PROTOCOL_VERSION: u16 = 0x0001;
+
 #[tokio::test]
 // Tests the construction and sending of a simple message
 async fn simple_session_message() {
@@ -221,6 +226,7 @@ async fn multiple_messages() {
 async fn test_active_requests_insert() {
     const EXPIRY: Duration = Duration::from_secs(5);
     let mut active_requests = ActiveRequests::new(EXPIRY);
+    let protocol = (DEFAULT_PROTOCOL_ID, DEFAULT_PROTOCOL_VERSION);
 
     // Create the test values needed
     let port = 5000;
@@ -238,7 +244,7 @@ async fn test_active_requests_insert() {
     let contact: NodeContact = enr.into();
     let node_address = contact.node_address();
 
-    let packet = Packet::new_random(&node_id).unwrap();
+    let packet = Packet::new_random(protocol, &node_id).unwrap();
     let id = HandlerReqId::Internal(RequestId::random());
     let request = RequestBody::Ping { enr_seq: 1 };
     let initiating_session = true;

@@ -34,6 +34,7 @@ pub struct InboundPacket {
 
 /// Convenience objects for setting up the recv handler.
 pub struct RecvHandlerConfig {
+    pub protocol: (&'static str, u16),
     pub filter_config: FilterConfig,
     /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
     pub ban_duration: Option<Duration>,
@@ -45,6 +46,8 @@ pub struct RecvHandlerConfig {
 
 /// The main task that handles inbound UDP packets.
 pub(crate) struct RecvHandler {
+    /// The Discv5 protocol id and version.
+    protocol: (&'static str, u16),
     /// The UDP recv socket.
     recv: Arc<UdpSocket>,
     /// The list of waiting responses. These are used to allow incoming packets from sources
@@ -75,6 +78,7 @@ impl RecvHandler {
         let (handler, handler_recv) = mpsc::channel(30);
 
         let mut recv_handler = RecvHandler {
+            protocol: config.protocol,
             recv: config.recv,
             filter: Filter::new(config.filter_config, config.ban_duration),
             recv_buffer: [0; MAX_PACKET_SIZE],
@@ -140,7 +144,7 @@ impl RecvHandler {
         }
         // Decodes the packet
         let (packet, authenticated_data) =
-            match Packet::decode(&self.node_id, &self.recv_buffer[..length]) {
+            match Packet::decode(self.protocol, &self.node_id, &self.recv_buffer[..length]) {
                 Ok(p) => p,
                 Err(e) => {
                     debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it

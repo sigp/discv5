@@ -17,6 +17,8 @@ pub(crate) struct Keys {
 /// A Session containing the encryption/decryption keys. These are kept individually for a given
 /// node.
 pub(crate) struct Session {
+    /// The Discv5 protocol id and version.
+    protocol: (&'static str, u16),
     /// The current keys used to encrypt/decrypt messages.
     keys: Keys,
     /// If a new handshake is being established, the older keys are maintained as race
@@ -37,8 +39,9 @@ pub(crate) struct Session {
 }
 
 impl Session {
-    pub fn new(keys: Keys) -> Self {
+    pub fn new(protocol_id: (&'static str, u16), keys: Keys) -> Self {
         Session {
+            protocol: protocol_id,
             keys,
             old_keys: None,
             awaiting_enr: None,
@@ -71,7 +74,10 @@ impl Session {
 
         // the authenticated data is the IV concatenated with the packet header
         let iv: u128 = rand::random();
+        let (protocol_id, protocol_version) = self.protocol;
         let header = PacketHeader {
+            protocol_id,
+            protocol_version,
             message_nonce,
             kind: PacketKind::Message { src_id },
         };
@@ -130,7 +136,9 @@ impl Session {
     /// Generates session keys from an authentication header. If the IP of the ENR does not match the
     /// source IP address, we consider this session untrusted. The output returns a boolean which
     /// specifies if the Session is trusted or not.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn establish_from_challenge(
+        protocol: (&'static str, u16),
         local_key: Arc<RwLock<CombinedKey>>,
         local_id: &NodeId,
         remote_id: &NodeId,
@@ -207,11 +215,12 @@ impl Session {
             (None, None) => unreachable!("Checked in the first match above"),
         };
 
-        Ok((Session::new(keys), session_enr))
+        Ok((Session::new(protocol, keys), session_enr))
     }
 
     /// Encrypts a message and produces an AuthMessage.
     pub(crate) fn encrypt_with_header(
+        protocol: (&'static str, u16),
         remote_contact: &NodeContact,
         local_key: Arc<RwLock<CombinedKey>>,
         updated_enr: Option<Enr>,
@@ -240,6 +249,7 @@ impl Session {
         // build an authentication packet
         let message_nonce: MessageNonce = rand::random();
         let mut packet = Packet::new_authheader(
+            protocol,
             *local_node_id,
             message_nonce,
             sig,
@@ -258,7 +268,7 @@ impl Session {
 
         packet.message = message_ciphertext;
 
-        let session = Session::new(keys);
+        let session = Session::new(protocol, keys);
 
         Ok((packet, session))
     }

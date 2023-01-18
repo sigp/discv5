@@ -25,6 +25,8 @@ pub use send::OutboundPacket;
 
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig {
+    /// The Discv5 protocol id and version.
+    pub protocol: (&'static str, u16),
     /// The executor to spawn the tasks.
     pub executor: Box<dyn Executor + Send + Sync>,
     /// The listening socket.
@@ -96,6 +98,7 @@ impl Socket {
 
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {
+            protocol: config.protocol,
             filter_config: config.filter_config,
             executor: config.executor.clone(),
             recv: recv_udp,

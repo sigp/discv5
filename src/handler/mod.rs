@@ -26,20 +26,6 @@
 //! Responses from the application layer can be made via the receive channel using a [`HandlerIn`].
 //! Messages from a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
 //! and can be forwarded to the application layer via the send channel.
-use crate::{
-    config::Discv5Config,
-    discv5::PERMIT_BAN_LIST,
-    error::{Discv5Error, RequestError},
-    packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
-    rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
-    socket,
-    socket::{FilterConfig, Socket},
-    Enr,
-};
-use delay_map::HashMapDelay;
-use enr::{CombinedKey, NodeId};
-use futures::prelude::*;
-use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -50,23 +36,36 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
+
+use crate::{lru_time_cache::LruTimeCache, metrics::METRICS};
+use delay_map::HashMapDelay;
+use enr::{CombinedKey, NodeId};
+use futures::prelude::*;
+use parking_lot::RwLock;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
+
+use active_requests::ActiveRequests;
+use request_call::RequestCall;
+use session::Session;
+
+pub use crate::node_info::{NodeAddress, NodeContact};
+use crate::{
+    config::Discv5Config,
+    discv5::PERMIT_BAN_LIST,
+    error::{Discv5Error, RequestError},
+    packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
+    rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
+    socket,
+    socket::{FilterConfig, Socket},
+    Enr,
+};
 
 mod active_requests;
 mod crypto;
 mod request_call;
 mod session;
 mod tests;
-
-pub use crate::node_info::{NodeAddress, NodeContact};
-
-use crate::metrics::METRICS;
-
-use crate::lru_time_cache::LruTimeCache;
-use active_requests::ActiveRequests;
-use request_call::RequestCall;
-use session::Session;
 
 // The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
 // seconds).
@@ -171,6 +170,8 @@ struct PendingRequest {
 
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
 pub struct Handler {
+    /// The Discv5 protocol id and version.
+    protocol: (&'static str, u16),
     /// Configuration for the discv5 service.
     request_retries: u8,
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
@@ -239,6 +240,7 @@ impl Handler {
         };
 
         let socket_config = socket::SocketConfig {
+            protocol: config.protocol,
             executor: config.executor.clone().expect("Executor must exist"),
             socket_addr: listen_socket,
             filter_config,
@@ -259,6 +261,7 @@ impl Handler {
                 let mut handler = Handler {
                     request_retries: config.request_retries,
                     node_id,
+                    protocol: config.protocol,
                     enr,
                     key,
                     active_requests: ActiveRequests::new(config.request_timeout),
@@ -471,8 +474,8 @@ impl Handler {
                     "Starting session. Sending random packet to: {}",
                     node_address
                 );
-                let packet =
-                    Packet::new_random(&self.node_id).map_err(RequestError::EntropyFailure)?;
+                let packet = Packet::new_random(self.protocol, &self.node_id)
+                    .map_err(RequestError::EntropyFailure)?;
                 // We are initiating a new session
                 (packet, true)
             }
@@ -540,7 +543,7 @@ impl Handler {
         // send the challenge
         let enr_seq = remote_enr.clone().map_or_else(|| 0, |enr| enr.seq());
         let id_nonce: IdNonce = rand::random();
-        let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
+        let packet = Packet::new_whoareyou(self.protocol, message_nonce, id_nonce, enr_seq);
         let challenge_data = ChallengeData::try_from(packet.authenticated_data().as_slice())
             .expect("Must be the correct challenge size");
         debug!("Sending WHOAREYOU to {}", node_address);
@@ -622,6 +625,7 @@ impl Handler {
 
         // Generate a new session and authentication packet
         let (auth_packet, mut session) = match Session::encrypt_with_header(
+            self.protocol,
             request_call.contact(),
             self.key.clone(),
             updated_enr,
@@ -750,6 +754,7 @@ impl Handler {
 
         if let Some(challenge) = self.active_challenges.remove(&node_address) {
             match Session::establish_from_challenge(
+                self.protocol,
                 self.key.clone(),
                 &self.node_id,
                 &node_address.node_id,
