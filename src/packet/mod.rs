@@ -36,15 +36,15 @@ pub const ID_NONCE_LENGTH: usize = 16;
 
 /// Protocol ID bytes sent with each message.
 #[cfg(not(test))]
-pub(crate) const PROTOCOL_ID: OnceCell<[u8; PROTOCOL_ID_LENGTH]> = OnceCell::new();
+pub(crate) static PROTOCOL_ID: OnceCell<[u8; PROTOCOL_ID_LENGTH]> = OnceCell::new();
 #[cfg(test)]
-pub(crate) const PROTOCOL_ID: OnceCell<[u8; PROTOCOL_ID_LENGTH]> =
+pub(crate) static PROTOCOL_ID: OnceCell<[u8; PROTOCOL_ID_LENGTH]> =
     OnceCell::with_value(crate::config::DEFAULT_PROTOCOL_ID);
 /// The version bytes sent with each handshake.
 #[cfg(not(test))]
-pub(crate) const VERSION: OnceCell<[u8; PROTOCOL_VERSION_LENGTH]> = OnceCell::new();
+pub(crate) static VERSION: OnceCell<[u8; PROTOCOL_VERSION_LENGTH]> = OnceCell::new();
 #[cfg(test)]
-pub(crate) const VERSION: OnceCell<[u8; PROTOCOL_VERSION_LENGTH]> =
+pub(crate) static VERSION: OnceCell<[u8; PROTOCOL_VERSION_LENGTH]> =
     OnceCell::with_value(crate::config::DEFAULT_PROTOCOL_VERSION);
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
@@ -453,7 +453,7 @@ impl Packet {
         }
 
         // Check the protocol id
-        if &&static_header[..PROTOCOL_ID_LENGTH] != PROTOCOL_ID.wait() {
+        if &static_header[..PROTOCOL_ID_LENGTH] != PROTOCOL_ID.wait() {
             return Err(PacketError::HeaderDecryptionFailed);
         }
 
