@@ -31,7 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 #[cfg(feature = "libp2p")]
 use libp2p_core::Multiaddr;
@@ -91,30 +91,33 @@ impl Discv5 {
         enr_key: CombinedKey,
         mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
-        use crate::config::{DEFAULT_PROTOCOL_ID, DEFAULT_PROTOCOL_VERSION};
-        use crate::packet::{PROTOCOL_ID, VERSION};
-        // initiallize the protocol id and version
-        let (protocol_id_bytes, protocol_version_bytes) = config.protocol;
-        PROTOCOL_ID
-            .set(protocol_id_bytes)
-            .map_err(|_old_val| "PROTOCOL_ID has already been initialized")?;
-        VERSION
-            .set(protocol_version_bytes)
-            .map_err(|_old_val| "protocol's VERSION has already been initialized")?;
-
-        if protocol_id_bytes != DEFAULT_PROTOCOL_ID
-            || protocol_version_bytes != DEFAULT_PROTOCOL_VERSION
+        #[cfg(not(test))]
         {
-            let protocol_version = u16::from_be_bytes(protocol_version_bytes);
-            match std::str::from_utf8(&protocol_id_bytes) {
-                Ok(pretty_protocol_id) => info!(
+            use crate::config::{DEFAULT_PROTOCOL_ID, DEFAULT_PROTOCOL_VERSION};
+            use crate::packet::{PROTOCOL_ID, VERSION};
+            // initialize the protocol id and version
+            let (protocol_id_bytes, protocol_version_bytes) = config.protocol;
+            PROTOCOL_ID
+                .set(protocol_id_bytes)
+                .map_err(|_old_val| "PROTOCOL_ID has already been initialized")?;
+            VERSION
+                .set(protocol_version_bytes)
+                .map_err(|_old_val| "protocol's VERSION has already been initialized")?;
+
+            if protocol_id_bytes != DEFAULT_PROTOCOL_ID
+                || protocol_version_bytes != DEFAULT_PROTOCOL_VERSION
+            {
+                let protocol_version = u16::from_be_bytes(protocol_version_bytes);
+                match std::str::from_utf8(&protocol_id_bytes) {
+                Ok(pretty_protocol_id) => tracing::info!(
                     "Discv5 using custom protocol id and version. Id: {} Version: {}",
                     pretty_protocol_id, protocol_version
                 ),
-                Err(_) => info!(
+                Err(_) => tracing::info!(
                     "Discv5 using custom protocol id and version, with non utf8 protocol id. Id: {:?} Version: {}",
                     protocol_id_bytes, protocol_version
                 ),
+            }
             }
         }
 
