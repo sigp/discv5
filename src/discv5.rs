@@ -94,8 +94,10 @@ impl Discv5 {
         // tests use the default value, so we ignore initializing the protocol.
         #[cfg(not(test))]
         {
-            use crate::config::{DEFAULT_PROTOCOL_ID, DEFAULT_PROTOCOL_VERSION};
-            use crate::packet::{PROTOCOL_ID, VERSION};
+            use crate::{
+                config::{DEFAULT_PROTOCOL_ID, DEFAULT_PROTOCOL_VERSION},
+                packet::{PROTOCOL_ID, VERSION},
+            };
             // initialize the protocol id and version
             let (protocol_id_bytes, protocol_version_bytes) = config.protocol;
             PROTOCOL_ID

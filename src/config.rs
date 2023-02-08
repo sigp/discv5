@@ -1,12 +1,12 @@
-use crate::packet::{PROTOCOL_ID_LENGTH, PROTOCOL_VERSION_LENGTH};
 use crate::{
-    ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter,
-    RateLimiterBuilder,
+    ipmode::IpMode,
+    kbucket::MAX_NODES_PER_BUCKET,
+    packet::{PROTOCOL_ID_LENGTH, PROTOCOL_VERSION_LENGTH},
+    Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
 };
-use std::convert::TryInto;
-use std::num::NonZeroU16;
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
+use std::{convert::TryInto, num::NonZeroU16};
 
 /// Protocol ID sent with each message.
 pub(crate) const DEFAULT_PROTOCOL_ID: [u8; PROTOCOL_ID_LENGTH] = *b"discv5";
