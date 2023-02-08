@@ -91,6 +91,7 @@ impl Discv5 {
         enr_key: CombinedKey,
         mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
+        // tests use the default value, so we ignore initializing the protocol.
         #[cfg(not(test))]
         {
             use crate::config::{DEFAULT_PROTOCOL_ID, DEFAULT_PROTOCOL_VERSION};
