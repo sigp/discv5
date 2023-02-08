@@ -9,9 +9,9 @@ use std::num::NonZeroU16;
 use std::time::Duration;
 
 /// Protocol ID sent with each message.
-const DEFAULT_PROTOCOL_ID: [u8; PROTOCOL_ID_LENGTH] = *b"discv5";
+pub(crate) const DEFAULT_PROTOCOL_ID: [u8; PROTOCOL_ID_LENGTH] = *b"discv5";
 /// The version sent with each handshake.
-const DEFAULT_PROTOCOL_VERSION: [u8; PROTOCOL_VERSION_LENGTH] = 0x0001_u16.to_be_bytes();
+pub(crate) const DEFAULT_PROTOCOL_VERSION: [u8; PROTOCOL_VERSION_LENGTH] = 0x0001_u16.to_be_bytes();
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
