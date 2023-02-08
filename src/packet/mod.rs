@@ -22,6 +22,10 @@ use zeroize::Zeroize;
 
 /// The packet IV length (u128).
 pub const IV_LENGTH: usize = 16;
+/// Length of the protocol id.
+pub const PROTOCOL_ID_LENGTH: usize = 6;
+/// Length of the protocol version.
+pub const PROTOCOL_VERSION_LENGTH: usize = 2;
 /// The length of the static header. (6 byte protocol id, 2 bytes version, 1 byte kind, 12 byte
 /// message nonce and a 2 byte authdata-size).
 pub const STATIC_HEADER_LENGTH: usize = 23;
@@ -31,9 +35,9 @@ pub const MESSAGE_NONCE_LENGTH: usize = 12;
 pub const ID_NONCE_LENGTH: usize = 16;
 
 /// Protocol ID bytes sent with each message.
-pub(crate) const PROTOCOL_ID: OnceCell<&'static [u8]> = OnceCell::new();
+pub(crate) const PROTOCOL_ID: OnceCell<[u8; PROTOCOL_ID_LENGTH]> = OnceCell::new();
 /// The version bytes sent with each handshake.
-pub(crate) const VERSION: OnceCell<[u8; 2]> = OnceCell::new();
+pub(crate) const VERSION: OnceCell<[u8; PROTOCOL_VERSION_LENGTH]> = OnceCell::new();
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 // The smallest packet must be at least this large
@@ -441,12 +445,13 @@ impl Packet {
         }
 
         // Check the protocol id
-        if &&static_header[..6] != PROTOCOL_ID.wait() {
+        if &&static_header[..PROTOCOL_ID_LENGTH] != PROTOCOL_ID.wait() {
             return Err(PacketError::HeaderDecryptionFailed);
         }
 
         // Check the version matches
-        let version_bytes = &static_header[6..8];
+        let version_bytes =
+            &static_header[PROTOCOL_ID_LENGTH..PROTOCOL_ID_LENGTH + PROTOCOL_VERSION_LENGTH];
         if version_bytes != VERSION.wait() {
             let version =
                 u16::from_be_bytes(version_bytes.try_into().expect("Must be correct size"));
