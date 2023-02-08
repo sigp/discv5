@@ -1,15 +1,17 @@
+use crate::packet::{PROTOCOL_ID_LENGTH, PROTOCOL_VERSION_LENGTH};
 use crate::{
     ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter,
     RateLimiterBuilder,
 };
+use std::convert::TryInto;
 use std::num::NonZeroU16;
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
 /// Protocol ID sent with each message.
-const DEFAULT_PROTOCOL_ID: &str = "discv5";
+const DEFAULT_PROTOCOL_ID: [u8; PROTOCOL_ID_LENGTH] = *b"discv5";
 /// The version sent with each handshake.
-const DEFAULT_PROTOCOL_VERSION: u16 = 0x0001;
+const DEFAULT_PROTOCOL_VERSION: [u8; PROTOCOL_VERSION_LENGTH] = 0x0001_u16.to_be_bytes();
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
@@ -106,8 +108,8 @@ pub struct Discv5Config {
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
 
-    /// The Discv5 protocol id and version.
-    pub protocol: (&'static str, u16),
+    /// The Discv5 protocol id and version, in bytes.
+    pub protocol: ([u8; PROTOCOL_ID_LENGTH], [u8; PROTOCOL_VERSION_LENGTH]),
 }
 
 impl Default for Discv5Config {
@@ -326,9 +328,10 @@ impl Discv5ConfigBuilder {
 
     /// Set the discv5 wire protocol id.
     pub fn protocol_id(&mut self, protocol_id: &'static str) -> &mut Self {
-        if protocol_id.as_bytes().len() != 6 {
-            panic!("The protocol ID must be 6 bytes long");
-        }
+        let protocol_id: [u8; PROTOCOL_ID_LENGTH] =
+            protocol_id.as_bytes().try_into().unwrap_or_else(|_| {
+                panic!("The protocol id must be {} bytes long", PROTOCOL_ID_LENGTH)
+            });
 
         self.config.protocol = (protocol_id, DEFAULT_PROTOCOL_VERSION);
         self
@@ -340,11 +343,10 @@ impl Discv5ConfigBuilder {
         protocol_id: &'static str,
         protocol_version: NonZeroU16,
     ) -> &mut Self {
-        if protocol_id.as_bytes().len() != 6 {
-            panic!("The protocol ID must be 6 bytes long");
-        }
+        self.protocol_id(protocol_id);
+        let protocol_version = protocol_version.get().to_be_bytes();
 
-        self.config.protocol = (protocol_id, protocol_version.get());
+        self.config.protocol.1 = protocol_version;
         self
     }
 
