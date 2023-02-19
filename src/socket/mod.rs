@@ -1,11 +1,11 @@
-use crate::{Executor, IpMode};
+use crate::Executor;
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
 use socket2::{Domain, Protocol, Socket as Socket2, Type};
 use std::{
     collections::HashMap,
-    io::{Error, ErrorKind},
+    io::Error,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -78,7 +78,7 @@ impl Socket {
                 let socket = Socket2::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
                 socket.set_only_v6(true)?;
                 socket.set_nonblocking(true)?;
-                socket.bind(ip6.into())?;
+                socket.bind(&SocketAddr::V6(*ip6).into())?;
                 tokio::net::UdpSocket::from_std(socket.into())
             }
         }
@@ -88,7 +88,16 @@ impl Socket {
     /// If this struct is dropped, the send/recv tasks will shutdown.
     /// This needs to be run inside of a tokio executor.
     pub(crate) async fn new(config: SocketConfig) -> Result<Self, Error> {
-        let socket = Socket::new_socket(&config.socket_addr, config.ip_mode).await?;
+        let SocketConfig {
+            executor,
+            socket_addr,
+            filter_config,
+            listen_config,
+            ban_duration,
+            expected_responses,
+            local_node_id,
+        } = config;
+        let socket = Socket::new_socket(&config.socket_addr).await?;
 
         // Arc the udp socket for the send/recv tasks.
         let recv_udp = Arc::new(socket);
@@ -96,17 +105,17 @@ impl Socket {
 
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {
-            filter_config: config.filter_config,
-            executor: config.executor.clone(),
+            filter_config,
+            executor: executor.clone(),
             recv: recv_udp,
-            local_node_id: config.local_node_id,
-            expected_responses: config.expected_responses,
-            ban_duration: config.ban_duration,
+            local_node_id,
+            expected_responses,
+            ban_duration,
         };
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);
         // spawn the sender handler
-        let (send, sender_exit) = SendHandler::spawn(config.executor.clone(), send_udp);
+        let (send, sender_exit) = SendHandler::spawn(executor, send_udp);
 
         Ok(Socket {
             send,

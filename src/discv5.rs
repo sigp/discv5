@@ -137,7 +137,7 @@ impl Discv5 {
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
-    pub async fn start(&mut self, listen_socket: SocketAddr) -> Result<(), Discv5Error> {
+    pub async fn start(&mut self) -> Result<(), Discv5Error> {
         if self.service_channel.is_some() {
             warn!("Service is already started");
             return Err(Discv5Error::ServiceAlreadyStarted);

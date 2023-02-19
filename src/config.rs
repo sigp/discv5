@@ -64,10 +64,6 @@ pub struct Discv5Config {
     /// seconds.
     pub ping_interval: Duration,
 
-    /// Configures the type of socket to bind to. This also affects the selection of address to use
-    /// to contact an ENR.
-    pub ip_mode: IpMode,
-
     /// Reports all discovered ENR's when traversing the DHT to the event stream. Default true.
     pub report_discovered_peers: bool,
 
@@ -136,7 +132,6 @@ impl Default for Discv5Config {
             filter_max_bans_per_ip: Some(5),
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
-            ip_mode: IpMode::default(),
             executor: None,
         }
     }
