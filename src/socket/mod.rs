@@ -6,7 +6,7 @@ use socket2::{Domain, Protocol, Socket as Socket2, Type};
 use std::{
     collections::HashMap,
     io::{Error, ErrorKind},
-    net::SocketAddr,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
@@ -15,6 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 mod filter;
 mod recv;
 mod send;
+mod two_sockets;
 
 pub use filter::{
     rate_limiter::{RateLimiter, RateLimiterBuilder},
@@ -22,6 +23,24 @@ pub use filter::{
 };
 pub use recv::InboundPacket;
 pub use send::OutboundPacket;
+
+/// Configuration for the sockets to listen on.
+pub enum ListenConfig {
+    Ipv4 {
+        ip: Ipv4Addr,
+        port: u16,
+    },
+    Ipv6 {
+        ip: Ipv6Addr,
+        port: u16,
+    },
+    DualStack {
+        ipv4: Ipv4Addr,
+        ipv4_port: u16,
+        ipv6: Ipv6Addr,
+        ipv6_port: u16,
+    },
+}
 
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig {
@@ -32,7 +51,7 @@ pub struct SocketConfig {
     /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
     /// Type of socket to create.
-    pub ip_mode: IpMode,
+    pub listen_config: ListenConfig,
     /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
     pub ban_duration: Option<Duration>,
     /// The expected responses reference.
@@ -52,33 +71,14 @@ pub struct Socket {
 impl Socket {
     /// This creates and binds a new UDP socket.
     // In general this function can be expanded to handle more advanced socket creation.
-    async fn new_socket(
-        socket_addr: &SocketAddr,
-        ip_mode: IpMode,
-    ) -> Result<tokio::net::UdpSocket, Error> {
-        match ip_mode {
-            IpMode::Ip4 => match socket_addr {
-                SocketAddr::V6(_) => Err(Error::new(
-                    ErrorKind::InvalidInput,
-                    "Cannot create an ipv4 socket from an ipv6 address",
-                )),
-                ip4 => tokio::net::UdpSocket::bind(ip4).await,
-            },
-            IpMode::Ip6 {
-                enable_mapped_addresses,
-            } => {
-                let addr = match socket_addr {
-                    SocketAddr::V4(_) => Err(Error::new(
-                        ErrorKind::InvalidInput,
-                        "Cannot create an ipv6 socket from an ipv4 address",
-                    )),
-                    SocketAddr::V6(ip6) => Ok((*ip6).into()),
-                }?;
+    async fn new_socket(socket_addr: &SocketAddr) -> Result<tokio::net::UdpSocket, Error> {
+        match socket_addr {
+            SocketAddr::V4(ip4) => tokio::net::UdpSocket::bind(ip4).await,
+            SocketAddr::V6(ip6) => {
                 let socket = Socket2::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-                let only_v6 = !enable_mapped_addresses;
-                socket.set_only_v6(only_v6)?;
+                socket.set_only_v6(true)?;
                 socket.set_nonblocking(true)?;
-                socket.bind(&addr)?;
+                socket.bind(ip6.into())?;
                 tokio::net::UdpSocket::from_std(socket.into())
             }
         }
