@@ -1,6 +1,7 @@
 #![cfg(test)]
 use super::*;
 use crate::{
+    packet::DefaultProtocolId,
     rpc::{Request, Response},
     Discv5ConfigBuilder,
 };
@@ -47,7 +48,7 @@ async fn simple_session_message() {
         .build(&key2)
         .unwrap();
 
-    let (_exit_send, sender_send, _sender_recv) = Handler::spawn(
+    let (_exit_send, sender_send, _sender_recv) = Handler::spawn::<DefaultProtocolId>(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
         sender_enr.udp4_socket().unwrap().into(),
@@ -56,7 +57,7 @@ async fn simple_session_message() {
     .await
     .unwrap();
 
-    let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn(
+    let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn::<DefaultProtocolId>(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_enr.udp4_socket().unwrap().into(),
@@ -123,16 +124,17 @@ async fn multiple_messages() {
         .build(&key2)
         .unwrap();
 
-    let (_exit_send, sender_handler, mut sender_handler_recv) = Handler::spawn(
-        arc_rw!(sender_enr.clone()),
-        arc_rw!(key1),
-        sender_enr.udp4_socket().unwrap().into(),
-        config.clone(),
-    )
-    .await
-    .unwrap();
+    let (_exit_send, sender_handler, mut sender_handler_recv) =
+        Handler::spawn::<DefaultProtocolId>(
+            arc_rw!(sender_enr.clone()),
+            arc_rw!(key1),
+            sender_enr.udp4_socket().unwrap().into(),
+            config.clone(),
+        )
+        .await
+        .unwrap();
 
-    let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
+    let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn::<DefaultProtocolId>(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_enr.udp4_socket().unwrap().into(),

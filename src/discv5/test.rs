@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{Discv5, *};
+use crate::{packet::DefaultProtocolId, Discv5, *};
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{collections::HashMap, net::Ipv4Addr};
@@ -32,7 +32,10 @@ async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
         // transport for building a swarm
         let socket_addr = enr.udp4_socket().unwrap();
         let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-        discv5.start(socket_addr.into()).await.unwrap();
+        discv5
+            .start::<DefaultProtocolId>(socket_addr.into())
+            .await
+            .unwrap();
         nodes.push(discv5);
     }
     nodes
@@ -56,7 +59,10 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
 
         let socket_addr = enr.udp4_socket().unwrap();
         let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
-        discv5.start(socket_addr.into()).await.unwrap();
+        discv5
+            .start::<DefaultProtocolId>(socket_addr.into())
+            .await
+            .unwrap();
         nodes.push(discv5);
     }
     nodes

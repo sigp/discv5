@@ -19,7 +19,7 @@ use clap::Parser;
 use discv5::{
     enr,
     enr::{k256, CombinedKey},
-    Discv5, Discv5ConfigBuilder, Discv5Event,
+    DefaultProtocolId, Discv5, Discv5ConfigBuilder, Discv5Event,
 };
 use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -154,7 +154,10 @@ async fn main() {
     }
 
     // start the discv5 service
-    discv5.start(socket_addr).await.unwrap();
+    discv5
+        .start::<DefaultProtocolId>(socket_addr)
+        .await
+        .unwrap();
     let mut event_stream = discv5.event_stream().await.unwrap();
     let check_evs = args.events;
 
