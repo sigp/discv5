@@ -459,7 +459,7 @@ impl Packet {
 
         let version_bytes = &static_header[6..8];
         // Check the version matches
-        if version_bytes != &P::PROTOCOL_VERSION_BYTES {
+        if version_bytes != P::PROTOCOL_VERSION_BYTES {
             let version =
                 u16::from_be_bytes(version_bytes.try_into().expect("Must be correct size"));
             return Err(PacketError::InvalidVersion(version));
