@@ -15,17 +15,12 @@ use aes::{
     Aes128Ctr,
 };
 use enr::NodeId;
-use once_cell::sync::OnceCell;
 use rand::Rng;
 use std::convert::TryInto;
 use zeroize::Zeroize;
 
 /// The packet IV length (u128).
 pub const IV_LENGTH: usize = 16;
-/// Length of the protocol id.
-pub const PROTOCOL_ID_LENGTH: usize = 6;
-/// Length of the protocol version.
-pub const PROTOCOL_VERSION_LENGTH: usize = 2;
 /// The length of the static header. (6 byte protocol id, 2 bytes version, 1 byte kind, 12 byte
 /// message nonce and a 2 byte authdata-size).
 pub const STATIC_HEADER_LENGTH: usize = 23;
@@ -34,18 +29,10 @@ pub const MESSAGE_NONCE_LENGTH: usize = 12;
 /// The Id nonce length (in bytes).
 pub const ID_NONCE_LENGTH: usize = 16;
 
-/// Protocol ID bytes sent with each message.
-#[cfg(not(test))]
-pub(crate) static PROTOCOL_ID: OnceCell<[u8; PROTOCOL_ID_LENGTH]> = OnceCell::new();
-#[cfg(test)]
-pub(crate) static PROTOCOL_ID: OnceCell<[u8; PROTOCOL_ID_LENGTH]> =
-    OnceCell::with_value(crate::config::DEFAULT_PROTOCOL_ID);
-/// The version bytes sent with each handshake.
-#[cfg(not(test))]
-pub(crate) static VERSION: OnceCell<[u8; PROTOCOL_VERSION_LENGTH]> = OnceCell::new();
-#[cfg(test)]
-pub(crate) static VERSION: OnceCell<[u8; PROTOCOL_VERSION_LENGTH]> =
-    OnceCell::with_value(crate::config::DEFAULT_PROTOCOL_VERSION);
+/// Protocol ID sent with each message.
+const PROTOCOL_ID: &str = "discv5";
+/// The version sent with each handshake.
+const VERSION: u16 = 0x0001;
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 // The smallest packet must be at least this large
@@ -108,8 +95,8 @@ impl PacketHeader {
     pub fn encode(&self) -> Vec<u8> {
         let auth_data = self.kind.encode();
         let mut buf = Vec::with_capacity(auth_data.len() + STATIC_HEADER_LENGTH);
-        buf.extend_from_slice(PROTOCOL_ID.wait());
-        buf.extend_from_slice(VERSION.wait());
+        buf.extend_from_slice(PROTOCOL_ID.as_bytes());
+        buf.extend_from_slice(&VERSION.to_be_bytes());
         let kind: u8 = (&self.kind).into();
         buf.extend_from_slice(&kind.to_be_bytes());
         buf.extend_from_slice(&self.message_nonce);
@@ -453,16 +440,17 @@ impl Packet {
         }
 
         // Check the protocol id
-        if &static_header[..PROTOCOL_ID_LENGTH] != PROTOCOL_ID.wait() {
+        if &static_header[..6] != PROTOCOL_ID.as_bytes() {
             return Err(PacketError::HeaderDecryptionFailed);
         }
 
         // Check the version matches
-        let version_bytes =
-            &static_header[PROTOCOL_ID_LENGTH..PROTOCOL_ID_LENGTH + PROTOCOL_VERSION_LENGTH];
-        if version_bytes != VERSION.wait() {
-            let version =
-                u16::from_be_bytes(version_bytes.try_into().expect("Must be correct size"));
+        let version = u16::from_be_bytes(
+            static_header[6..8]
+                .try_into()
+                .expect("Must be correct size"),
+        );
+        if version != VERSION {
             return Err(PacketError::InvalidVersion(version));
         }
 
