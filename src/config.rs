@@ -1,17 +1,9 @@
 use crate::{
-    ipmode::IpMode,
-    kbucket::MAX_NODES_PER_BUCKET,
-    packet::{PROTOCOL_ID_LENGTH, PROTOCOL_VERSION_LENGTH},
-    Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
+    ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter,
+    RateLimiterBuilder,
 };
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
-use std::{convert::TryInto, num::NonZeroU16};
-
-/// Protocol ID sent with each message.
-pub(crate) const DEFAULT_PROTOCOL_ID: [u8; PROTOCOL_ID_LENGTH] = *b"discv5";
-/// The version sent with each handshake.
-pub(crate) const DEFAULT_PROTOCOL_VERSION: [u8; PROTOCOL_VERSION_LENGTH] = 0x0001_u16.to_be_bytes();
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
@@ -107,9 +99,6 @@ pub struct Discv5Config {
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
-
-    /// The Discv5 protocol id and version, in bytes.
-    pub protocol: ([u8; PROTOCOL_ID_LENGTH], [u8; PROTOCOL_VERSION_LENGTH]),
 }
 
 impl Default for Discv5Config {
@@ -149,7 +138,6 @@ impl Default for Discv5Config {
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             ip_mode: IpMode::default(),
             executor: None,
-            protocol: (DEFAULT_PROTOCOL_ID, DEFAULT_PROTOCOL_VERSION),
         }
     }
 }
@@ -326,30 +314,6 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Set the discv5 wire protocol id.
-    pub fn protocol_id(&mut self, protocol_id: &'static str) -> &mut Self {
-        let protocol_id: [u8; PROTOCOL_ID_LENGTH] =
-            protocol_id.as_bytes().try_into().unwrap_or_else(|_| {
-                panic!("The protocol id must be {} bytes long", PROTOCOL_ID_LENGTH)
-            });
-
-        self.config.protocol = (protocol_id, DEFAULT_PROTOCOL_VERSION);
-        self
-    }
-
-    /// Set the discv5 wire protocol id and the version.
-    pub fn protocol(
-        &mut self,
-        protocol_id: &'static str,
-        protocol_version: NonZeroU16,
-    ) -> &mut Self {
-        self.protocol_id(protocol_id);
-        let protocol_version = protocol_version.get().to_be_bytes();
-
-        self.config.protocol.1 = protocol_version;
-        self
-    }
-
     pub fn build(&mut self) -> Discv5Config {
         // If an executor is not provided, assume a current tokio runtime is running.
         if self.config.executor.is_none() {
@@ -383,7 +347,6 @@ impl std::fmt::Debug for Discv5Config {
             .field("incoming_bucket_limit", &self.incoming_bucket_limit)
             .field("ping_interval", &self.ping_interval)
             .field("ban_duration", &self.ban_duration)
-            .field("protocol", &self.protocol)
             .finish()
     }
 }

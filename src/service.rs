@@ -25,7 +25,7 @@ use crate::{
         NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
-    packet::MAX_PACKET_SIZE,
+    packet::{ProtocolIdentity, MAX_PACKET_SIZE},
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
@@ -245,7 +245,7 @@ impl Service {
     /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
     /// as IP addresses and ports which we wish to broadcast to other nodes via this discovery
     /// mechanism.
-    pub async fn spawn(
+    pub async fn spawn<P: ProtocolIdentity>(
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
@@ -263,7 +263,7 @@ impl Service {
         };
 
         // build the session service
-        let (handler_exit, handler_send, handler_recv) = Handler::spawn(
+        let (handler_exit, handler_send, handler_recv) = Handler::spawn::<P>(
             local_enr.clone(),
             enr_key.clone(),
             listen_socket,

@@ -19,13 +19,15 @@ use crate::{
         NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
+    packet::ProtocolIdentity,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
-    Discv5Config, Enr,
+    DefaultProtocolId, Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
+    marker::PhantomData,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -71,7 +73,10 @@ pub enum Discv5Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
-pub struct Discv5 {
+pub struct Discv5<P = DefaultProtocolId>
+where
+    P: ProtocolIdentity,
+{
     config: Discv5Config,
     /// The channel to make requests from the main service.
     service_channel: Option<mpsc::Sender<ServiceRequest>>,
@@ -83,47 +88,16 @@ pub struct Discv5 {
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
     enr_key: Arc<RwLock<CombinedKey>>,
+    /// Phantom for the protocol id.
+    _phantom: PhantomData<P>,
 }
 
-impl Discv5 {
+impl<P: ProtocolIdentity> Discv5<P> {
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
         mut config: Discv5Config,
     ) -> Result<Self, &'static str> {
-        // tests use the default value, so we ignore initializing the protocol.
-        #[cfg(not(test))]
-        {
-            use crate::{
-                config::{DEFAULT_PROTOCOL_ID, DEFAULT_PROTOCOL_VERSION},
-                packet::{PROTOCOL_ID, VERSION},
-            };
-            // initialize the protocol id and version
-            let (protocol_id_bytes, protocol_version_bytes) = config.protocol;
-            PROTOCOL_ID
-                .set(protocol_id_bytes)
-                .map_err(|_old_val| "PROTOCOL_ID has already been initialized")?;
-            VERSION
-                .set(protocol_version_bytes)
-                .map_err(|_old_val| "protocol's VERSION has already been initialized")?;
-
-            if protocol_id_bytes != DEFAULT_PROTOCOL_ID
-                || protocol_version_bytes != DEFAULT_PROTOCOL_VERSION
-            {
-                let protocol_version = u16::from_be_bytes(protocol_version_bytes);
-                match std::str::from_utf8(&protocol_id_bytes) {
-                Ok(pretty_protocol_id) => tracing::info!(
-                    "Discv5 using custom protocol id and version. Id: {} Version: {}",
-                    pretty_protocol_id, protocol_version
-                ),
-                Err(_) => tracing::info!(
-                    "Discv5 using custom protocol id and version, with non utf8 protocol id. Id: {:?} Version: {}",
-                    protocol_id_bytes, protocol_version
-                ),
-            }
-            }
-        }
-
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
             return Err("Provided keypair does not match the provided ENR");
@@ -166,6 +140,7 @@ impl Discv5 {
             kbuckets,
             local_enr,
             enr_key,
+            _phantom: Default::default(),
         })
     }
 
@@ -177,7 +152,7 @@ impl Discv5 {
         }
 
         // create the main service
-        let (service_exit, service_channel) = Service::spawn(
+        let (service_exit, service_channel) = Service::spawn::<P>(
             self.local_enr.clone(),
             self.enr_key.clone(),
             self.kbuckets.clone(),
@@ -638,7 +613,7 @@ impl Discv5 {
     }
 }
 
-impl Drop for Discv5 {
+impl<P: ProtocolIdentity> Drop for Discv5<P> {
     fn drop(&mut self) {
         self.shutdown();
     }

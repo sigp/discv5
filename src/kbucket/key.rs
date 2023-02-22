@@ -21,7 +21,8 @@
 // This basis of this file has been taken from the rust-libp2p codebase:
 // https://github.com/libp2p/rust-libp2p
 
-#![allow(clippy::assign_op_pattern)]
+#![allow(clippy::all)]
+
 use enr::{
     k256::sha2::digest::generic_array::{typenum::U32, GenericArray},
     NodeId,

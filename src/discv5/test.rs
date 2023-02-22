@@ -615,7 +615,7 @@ async fn test_bucket_limits() {
         .collect();
 
     let config = Discv5ConfigBuilder::new().ip_limit().build();
-    let discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
     for enr in enrs {
         let _ = discv5.add_enr(enr.clone()); // we expect some of these to fail based on the filter.
     }

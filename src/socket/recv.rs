@@ -64,7 +64,7 @@ pub(crate) struct RecvHandler {
 
 impl RecvHandler {
     /// Spawns the `RecvHandler` on a provided executor.
-    pub(crate) fn spawn(
+    pub(crate) fn spawn<P: ProtocolIdentity>(
         config: RecvHandlerConfig,
     ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
@@ -87,13 +87,13 @@ impl RecvHandler {
         // start the handler
         config.executor.spawn(Box::pin(async move {
             debug!("Recv handler starting");
-            recv_handler.start(filter_enabled).await;
+            recv_handler.start::<P>(filter_enabled).await;
         }));
         (handler_recv, exit_sender)
     }
 
     /// The main future driving the recv handler. This will shutdown when the exit future is fired.
-    async fn start(&mut self, filter_enabled: bool) {
+    async fn start<P: ProtocolIdentity>(&mut self, filter_enabled: bool) {
         // Interval to prune to rate limiter.
         let mut interval = tokio::time::interval(Duration::from_secs(30));
 
@@ -101,7 +101,7 @@ impl RecvHandler {
             tokio::select! {
                 Ok((length, src)) = self.recv.recv_from(&mut self.recv_buffer) => {
                     METRICS.add_recv_bytes(length);
-                    self.handle_inbound(src, length).await;
+                    self.handle_inbound::<P>(src, length).await;
                 }
                 _ = interval.tick(), if filter_enabled => {
                     self.filter.prune_limiter();
@@ -116,7 +116,11 @@ impl RecvHandler {
 
     /// Handles in incoming packet. Passes through the filter, decodes and sends to the packet
     /// handler.
-    async fn handle_inbound(&mut self, mut src_address: SocketAddr, length: usize) {
+    async fn handle_inbound<P: ProtocolIdentity>(
+        &mut self,
+        mut src_address: SocketAddr,
+        length: usize,
+    ) {
         // Make sure ip4 addresses in dual stack nodes are reported correctly
         if let IpAddr::V6(ip6) = src_address.ip() {
             // NOTE: here we don't want to use the `to_ipv4` method, since it also includes compat
@@ -140,7 +144,7 @@ impl RecvHandler {
         }
         // Decodes the packet
         let (packet, authenticated_data) =
-            match Packet::decode(&self.node_id, &self.recv_buffer[..length]) {
+            match Packet::decode::<P>(&self.node_id, &self.recv_buffer[..length]) {
                 Ok(p) => p,
                 Err(e) => {
                     debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it
