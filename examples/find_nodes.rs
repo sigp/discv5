@@ -19,7 +19,7 @@ use clap::Parser;
 use discv5::{
     enr,
     enr::{k256, CombinedKey},
-    DefaultProtocolId, Discv5, Discv5ConfigBuilder, Discv5Event,
+    Discv5, Discv5ConfigBuilder, Discv5Event,
 };
 use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -135,7 +135,7 @@ async fn main() {
     let socket_addr = SocketAddr::new(bind_addr, port);
 
     // construct the discv5 server
-    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {
@@ -154,10 +154,7 @@ async fn main() {
     }
 
     // start the discv5 service
-    discv5
-        .start::<DefaultProtocolId>(socket_addr)
-        .await
-        .unwrap();
+    discv5.start(socket_addr).await.unwrap();
     let mut event_stream = discv5.event_stream().await.unwrap();
     let check_evs = args.events;
 

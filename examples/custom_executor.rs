@@ -9,7 +9,7 @@
 //! $ cargo run --example custom_executor <BASE64ENR>
 //! ```
 
-use discv5::{enr, enr::CombinedKey, DefaultProtocolId, Discv5, Discv5ConfigBuilder, Discv5Event};
+use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder, Discv5Event};
 use std::net::SocketAddr;
 
 fn main() {
@@ -39,7 +39,7 @@ fn main() {
     let config = Discv5ConfigBuilder::new().build();
 
     // construct the discv5 server
-    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
     if let Some(base64_enr) = std::env::args().nth(1) {
@@ -61,10 +61,7 @@ fn main() {
 
     runtime.block_on(async {
         // start the discv5 service
-        discv5
-            .start::<DefaultProtocolId>(listen_addr)
-            .await
-            .unwrap();
+        discv5.start(listen_addr).await.unwrap();
         println!("Server started");
 
         // get an event stream

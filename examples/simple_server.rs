@@ -10,7 +10,7 @@
 //! $ cargo run --example simple_server -- <ENR-IP> <ENR-PORT> <BASE64ENR>
 //! ```
 
-use discv5::{enr, enr::CombinedKey, DefaultProtocolId, Discv5, Discv5Config, Discv5Event};
+use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config, Discv5Event};
 use std::net::{Ipv4Addr, SocketAddr};
 
 #[tokio::main]
@@ -72,7 +72,7 @@ async fn main() {
     let config = Discv5Config::default();
 
     // construct the discv5 server
-    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
     if let Some(base64_enr) = std::env::args().nth(3) {
@@ -93,10 +93,7 @@ async fn main() {
     }
 
     // start the discv5 service
-    discv5
-        .start::<DefaultProtocolId>(listen_addr)
-        .await
-        .unwrap();
+    discv5.start(listen_addr).await.unwrap();
     println!("Server started");
 
     // get an event stream
