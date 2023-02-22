@@ -15,7 +15,6 @@ use tokio::sync::{mpsc, oneshot};
 mod filter;
 mod recv;
 mod send;
-mod two_sockets;
 
 pub use filter::{
     rate_limiter::{RateLimiter, RateLimiterBuilder},
@@ -97,17 +96,37 @@ impl Socket {
             expected_responses,
             local_node_id,
         } = config;
-        let socket = Socket::new_socket(&config.socket_addr).await?;
+
+        // For now intentionally forgettig which socket is the ipv4 and which is the ipv6 one.
+        let (first_addr, maybe_second_addr): (SocketAddr, Option<_>) = match listen_config {
+            ListenConfig::Ipv4 { ip, port } => ((ip, port).into(), None),
+            ListenConfig::Ipv6 { ip, port } => ((ip, port).into(), None),
+            ListenConfig::DualStack {
+                ipv4,
+                ipv4_port,
+                ipv6,
+                ipv6_port,
+            } => ((ipv4, ipv4_port).into(), Some((ipv6, ipv4_port))),
+        };
+        let first_socket = Socket::new_socket(&first_addr).await?;
+        let maybe_second_socket = match maybe_second_addr {
+            Some(second_addr) => Some(Socket::new_socket(&socket_addr).await?),
+            None => None,
+        };
 
         // Arc the udp socket for the send/recv tasks.
-        let recv_udp = Arc::new(socket);
+        let recv_udp = Arc::new(first_socket);
         let send_udp = recv_udp.clone();
+
+        let second_recv = maybe_second_socket.map(Arc::new);
+        let second_send = second_recv.clone();
 
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {
             filter_config,
             executor: executor.clone(),
             recv: recv_udp,
+            second_recv,
             local_node_id,
             expected_responses,
             ban_duration,
