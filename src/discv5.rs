@@ -21,12 +21,13 @@ use crate::{
     node_info::NodeContact,
     packet::ProtocolIdentity,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
-    Discv5Config, Enr,
+    DefaultProtocolId, Discv5Config, Enr,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
+    marker::PhantomData,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -72,7 +73,10 @@ pub enum Discv5Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
-pub struct Discv5 {
+pub struct Discv5<P = DefaultProtocolId>
+where
+    P: ProtocolIdentity,
+{
     config: Discv5Config,
     /// The channel to make requests from the main service.
     service_channel: Option<mpsc::Sender<ServiceRequest>>,
@@ -84,9 +88,11 @@ pub struct Discv5 {
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
     enr_key: Arc<RwLock<CombinedKey>>,
+    /// Phantom for the protocol id.
+    _phantom: PhantomData<P>,
 }
 
-impl Discv5 {
+impl<P: ProtocolIdentity> Discv5<P> {
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
@@ -134,14 +140,12 @@ impl Discv5 {
             kbuckets,
             local_enr,
             enr_key,
+            _phantom: Default::default(),
         })
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
-    pub async fn start<P: ProtocolIdentity>(
-        &mut self,
-        listen_socket: SocketAddr,
-    ) -> Result<(), Discv5Error> {
+    pub async fn start(&mut self, listen_socket: SocketAddr) -> Result<(), Discv5Error> {
         if self.service_channel.is_some() {
             warn!("Service is already started");
             return Err(Discv5Error::ServiceAlreadyStarted);
@@ -609,7 +613,7 @@ impl Discv5 {
     }
 }
 
-impl Drop for Discv5 {
+impl<P: ProtocolIdentity> Drop for Discv5<P> {
     fn drop(&mut self) {
         self.shutdown();
     }
