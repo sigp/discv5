@@ -31,6 +31,7 @@ impl SendHandler {
     pub(crate) fn spawn(
         executor: Box<dyn Executor>,
         send: Arc<UdpSocket>,
+        second_send: Option<Arc<UdpSocket>>,
     ) -> (mpsc::Sender<OutboundPacket>, oneshot::Sender<()>) {
         let (exit_send, exit) = oneshot::channel();
         let (handler_send, handler_recv) = mpsc::channel(30);
