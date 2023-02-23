@@ -30,7 +30,7 @@ jobs:
       - name: Get latest version of stable rust
         run: rustup update stable
       - name: Run tests in release
-        run: cargo test --all --release --tests
+        run: cargo test --all --release
   test-all-features:
     runs-on: ubuntu-latest
     container:
