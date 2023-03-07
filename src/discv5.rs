@@ -387,22 +387,30 @@ impl Discv5 {
         match (is_tcp, socket_addr) {
             (false, SocketAddr::V4(specific_socket_addr)) => {
                 if Some(specific_socket_addr) != local_enr.udp4_socket() {
-                    return local_enr.set_udp_socket(socket_addr, &self.enr_key.read()).is_ok();
+                    return local_enr
+                        .set_udp_socket(socket_addr, &self.enr_key.read())
+                        .is_ok();
                 }
             }
             (true, SocketAddr::V4(specific_socket_addr)) => {
                 if Some(specific_socket_addr) != local_enr.tcp4_socket() {
-                    return local_enr.set_tcp_socket(socket_addr, &self.enr_key.read()).is_ok();
+                    return local_enr
+                        .set_tcp_socket(socket_addr, &self.enr_key.read())
+                        .is_ok();
                 }
             }
             (false, SocketAddr::V6(specific_socket_addr)) => {
                 if Some(specific_socket_addr) != local_enr.udp6_socket() {
-                    return local_enr.set_udp_socket(socket_addr, &self.enr_key.read()).is_ok();
+                    return local_enr
+                        .set_udp_socket(socket_addr, &self.enr_key.read())
+                        .is_ok();
                 }
             }
             (true, SocketAddr::V6(specific_socket_addr)) => {
                 if Some(specific_socket_addr) != local_enr.tcp6_socket() {
-                    return local_enr.set_tcp_socket(socket_addr, &self.enr_key.read()).is_ok();
+                    return local_enr
+                        .set_tcp_socket(socket_addr, &self.enr_key.read())
+                        .is_ok();
                 }
             }
         }
