@@ -24,6 +24,7 @@ pub use recv::InboundPacket;
 pub use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
+#[derive(Clone)]
 pub enum ListenConfig {
     Ipv4 {
         ip: Ipv4Addr,
@@ -45,8 +46,6 @@ pub enum ListenConfig {
 pub struct SocketConfig {
     /// The executor to spawn the tasks.
     pub executor: Box<dyn Executor + Send + Sync>,
-    /// The listening socket.
-    pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
     /// Type of socket to create.
@@ -89,7 +88,7 @@ impl Socket {
     pub(crate) async fn new(config: SocketConfig) -> Result<Self, Error> {
         let SocketConfig {
             executor,
-            socket_addr,
+            // socket_addr,
             filter_config,
             listen_config,
             ban_duration,
@@ -106,11 +105,11 @@ impl Socket {
                 ipv4_port,
                 ipv6,
                 ipv6_port,
-            } => ((ipv4, ipv4_port).into(), Some((ipv6, ipv4_port))),
+            } => ((ipv4, ipv4_port).into(), Some((ipv6, ipv6_port))),
         };
         let first_socket = Socket::new_socket(&first_addr).await?;
         let maybe_second_socket = match maybe_second_addr {
-            Some(second_addr) => Some(Socket::new_socket(&socket_addr).await?),
+            Some(second_addr) => Some(Socket::new_socket(&second_addr.into()).await?),
             None => None,
         };
 
@@ -134,7 +133,7 @@ impl Socket {
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);
         // spawn the sender handler
-        let (send, sender_exit) = SendHandler::spawn(executor, send_udp);
+        let (send, sender_exit) = SendHandler::spawn(executor, send_udp, second_send);
 
         Ok(Socket {
             send,

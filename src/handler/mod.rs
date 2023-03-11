@@ -40,6 +40,7 @@ use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
+use std::net::{SocketAddrV4, SocketAddrV6};
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -64,6 +65,7 @@ pub use crate::node_info::{NodeAddress, NodeContact};
 use crate::metrics::METRICS;
 
 use crate::lru_time_cache::LruTimeCache;
+use crate::socket::ListenConfig;
 use active_requests::ActiveRequests;
 use request_call::RequestCall;
 use session::Session;
@@ -213,8 +215,8 @@ impl Handler {
     pub async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
-        listen_socket: SocketAddr,
         config: Discv5Config,
+        listen_config: ListenConfig,
     ) -> Result<HandlerReturn, std::io::Error> {
         let (exit_sender, exit) = oneshot::channel();
         // create the channels to send/receive messages from the application
@@ -238,14 +240,25 @@ impl Handler {
             max_bans_per_ip: config.filter_max_bans_per_ip,
         };
 
+        // FIXME
+        let listen_socket = match listen_config {
+            ListenConfig::Ipv4 { ip, port } => SocketAddr::V4(SocketAddrV4::new(ip, port)),
+            ListenConfig::Ipv6 { ip, port } => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+            ListenConfig::DualStack {
+                ipv4,
+                ipv4_port,
+                ipv6: _ipv6,
+                ipv6_port: _ipv6_port,
+            } => SocketAddr::V4(SocketAddrV4::new(ipv4, ipv4_port)),
+        };
+
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
-            socket_addr: listen_socket,
             filter_config,
+            listen_config,
             local_node_id: node_id,
             expected_responses: filter_expected_responses.clone(),
             ban_duration: config.ban_duration,
-            ip_mode: config.ip_mode,
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.

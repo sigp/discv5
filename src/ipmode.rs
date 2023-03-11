@@ -1,5 +1,8 @@
+use crate::socket::ListenConfig;
 use crate::Enr;
+use crate::IpMode::{DualStack, Ip4, Ip6};
 use std::net::SocketAddr;
+
 ///! A set of configuration parameters to tune the discovery protocol.
 
 /// Sets the socket type to be established and also determines the type of ENRs that we will store
@@ -20,6 +23,14 @@ pub enum IpMode {
 }
 
 impl IpMode {
+    pub(crate) fn new_from_listen_config(listen_config: &ListenConfig) -> Self {
+        match listen_config {
+            ListenConfig::Ipv4 { .. } => Ip4,
+            ListenConfig::Ipv6 { .. } => Ip6,
+            ListenConfig::DualStack { .. } => DualStack,
+        }
+    }
+
     pub fn is_ipv4(&self) -> bool {
         self == &IpMode::Ip4
     }

@@ -20,10 +20,11 @@ use crate::{
     },
     node_info::NodeContact,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
-    Discv5Config, Enr,
+    Discv5Config, Enr, IpMode,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::{
     future::Future,
     net::SocketAddr,
@@ -38,6 +39,7 @@ use libp2p_core::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
 use crate::metrics::{Metrics, METRICS};
+use crate::socket::ListenConfig;
 lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
@@ -83,6 +85,10 @@ pub struct Discv5 {
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
     enr_key: Arc<RwLock<CombinedKey>>,
+    /// Type of socket to create.
+    listen_config: ListenConfig,
+    // Type of socket we are using
+    ip_mode: IpMode,
 }
 
 impl Discv5 {
@@ -126,6 +132,16 @@ impl Discv5 {
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
 
+        // FIXME
+        let listen_config = ListenConfig::DualStack {
+            ipv4: Ipv4Addr::UNSPECIFIED,
+            ipv4_port: 9000,
+            ipv6: Ipv6Addr::UNSPECIFIED,
+            ipv6_port: 9006,
+        };
+
+        let ip_mode = IpMode::new_from_listen_config(&listen_config);
+
         Ok(Discv5 {
             config,
             service_channel: None,
@@ -133,6 +149,8 @@ impl Discv5 {
             kbuckets,
             local_enr,
             enr_key,
+            listen_config,
+            ip_mode,
         })
     }
 
@@ -149,7 +167,7 @@ impl Discv5 {
             self.enr_key.clone(),
             self.kbuckets.clone(),
             self.config.clone(),
-            listen_socket,
+            self.listen_config.clone(),
         )
         .await?;
         self.service_exit = Some(service_exit);
@@ -178,7 +196,7 @@ impl Discv5 {
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
-        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
+        if self.ip_mode.get_contactable_addr(&enr).is_none() {
             warn!("ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored.");
             return Err("ENR has no compatible UDP socket to connect to");
         }
@@ -474,7 +492,7 @@ impl Discv5 {
 
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
-        let ip_mode = self.config.ip_mode;
+        let ip_mode = self.ip_mode;
 
         async move {
             let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;

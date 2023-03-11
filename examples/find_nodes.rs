@@ -105,17 +105,7 @@ async fn main() {
     // let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
 
     // default configuration without packet filtering
-    let config = Discv5ConfigBuilder::new()
-        .ip_mode(match args.socket_kind {
-            SocketKind::Ip4 => discv5::IpMode::Ip4,
-            SocketKind::Ip6 => discv5::IpMode::Ip6 {
-                enable_mapped_addresses: false,
-            },
-            SocketKind::Ds => discv5::IpMode::Ip6 {
-                enable_mapped_addresses: true,
-            },
-        })
-        .build();
+    let config = Discv5ConfigBuilder::new().build();
 
     info!("Node Id: {}", enr.node_id());
     if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
