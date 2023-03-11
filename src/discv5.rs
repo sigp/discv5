@@ -24,7 +24,6 @@ use crate::{
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
-use std::net::{Ipv4Addr, Ipv6Addr};
 use std::{
     future::Future,
     net::SocketAddr,
@@ -96,6 +95,7 @@ impl Discv5 {
         local_enr: Enr,
         enr_key: CombinedKey,
         mut config: Discv5Config,
+        listen_config: ListenConfig,
     ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
@@ -131,14 +131,6 @@ impl Discv5 {
 
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
-
-        // FIXME
-        let listen_config = ListenConfig::DualStack {
-            ipv4: Ipv4Addr::UNSPECIFIED,
-            ipv4_port: 9000,
-            ipv6: Ipv6Addr::UNSPECIFIED,
-            ipv6_port: 9006,
-        };
 
         let ip_mode = IpMode::new_from_listen_config(&listen_config);
 

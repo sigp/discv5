@@ -22,10 +22,11 @@ use discv5::{
     Discv5, Discv5ConfigBuilder, Discv5Event,
 };
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr},
     time::Duration,
 };
 use tracing::{info, warn};
+use discv5::socket::ListenConfig;
 
 #[derive(Parser)]
 struct FindNodesArgs {
@@ -43,6 +44,10 @@ struct FindNodesArgs {
     /// randomly.
     #[clap(long)]
     port: Option<u16>,
+    /// Port to bind for ipv6. If none is provided, a random one in the 9000 - 9999 range will be picked
+    /// randomly.
+    #[clap(long)]
+    port6: Option<u16>,
     /// Use a default test key.
     #[clap(long)]
     use_test_key: bool,
@@ -67,6 +72,16 @@ async fn main() {
     let port = args
         .port
         .unwrap_or_else(|| (rand::random::<u16>() % 1000) + 9000);
+    let port6 = args
+        .port
+        .unwrap_or_else(|| {
+            loop {
+                let port6 = (rand::random::<u16>() % 1000) + 9000;
+                if port6 != port {
+                    return port6;
+                }
+            }
+        });
 
     let enr_key = if args.use_test_key {
         // A fixed key for testing
@@ -93,9 +108,9 @@ async fn main() {
         if let Some(ip6) = args.enr_ip6 {
             // if the given address is the UNSPECIFIED address we want to advertise localhost
             if ip6.is_unspecified() {
-                builder.ip6(Ipv6Addr::LOCALHOST).udp6(port);
+                builder.ip6(Ipv6Addr::LOCALHOST).udp6(port6);
             } else {
-                builder.ip6(ip6).udp6(port);
+                builder.ip6(ip6).udp6(port6);
             }
         }
         builder.build(&enr_key).unwrap()
@@ -118,14 +133,25 @@ async fn main() {
         );
     }
     // the address to listen on.
-    let bind_addr = match args.socket_kind {
-        SocketKind::Ip4 => Ipv4Addr::UNSPECIFIED.into(),
-        SocketKind::Ip6 | SocketKind::Ds => Ipv6Addr::UNSPECIFIED.into(),
+    let listen_config = match args.socket_kind {
+        SocketKind::Ip4 => ListenConfig::Ipv4 {
+            ip: Ipv4Addr::UNSPECIFIED,
+            port,
+        },
+        SocketKind::Ip6 => ListenConfig::Ipv6 {
+            ip: Ipv6Addr::UNSPECIFIED,
+            port: port6,
+        },
+        SocketKind::Ds => ListenConfig::DualStack {
+            ipv4: Ipv4Addr::UNSPECIFIED,
+            ipv4_port: port,
+            ipv6: Ipv6Addr::UNSPECIFIED,
+            ipv6_port: port6,
+        }
     };
-    let socket_addr = SocketAddr::new(bind_addr, port);
 
     // construct the discv5 server
-    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {
@@ -144,12 +170,12 @@ async fn main() {
     }
 
     // start the discv5 service
-    discv5.start(socket_addr).await.unwrap();
+    discv5.start().await.unwrap();
     let mut event_stream = discv5.event_stream().await.unwrap();
     let check_evs = args.events;
 
     // construct a 30 second interval to search for new peers.
-    let mut query_interval = tokio::time::interval(Duration::from_secs(30));
+    let mut query_interval = tokio::time::interval(Duration::from_secs(1));
 
     loop {
         tokio::select! {
