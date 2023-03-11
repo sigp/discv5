@@ -32,7 +32,7 @@ impl IpMode {
     }
 
     pub fn is_ipv4(&self) -> bool {
-        self == &IpMode::Ip4
+        self == &Ip4
     }
 
     /// Get the contactable Socket address of an Enr under current configuration. When running in
@@ -56,9 +56,9 @@ impl IpMode {
         }
 
         match self {
-            IpMode::Ip4 => enr.udp4_socket().map(SocketAddr::V4),
-            IpMode::Ip6 => canonical_ipv6_enr_addr(enr).map(SocketAddr::V6),
-            IpMode::DualStack => {
+            Ip4 => enr.udp4_socket().map(SocketAddr::V4),
+            Ip6 => canonical_ipv6_enr_addr(enr).map(SocketAddr::V6),
+            DualStack => {
                 canonical_ipv6_enr_addr(enr)
                     .map(SocketAddr::V6)
                     // NOTE: general consensus is that ipv6 addresses should be preferred.
@@ -91,7 +91,7 @@ mod tests {
                 name,
                 enr_ip4: None,
                 enr_ip6: None,
-                ip_mode: IpMode::Ip4,
+                ip_mode: Ip4,
                 expected_socket_addr: None,
             }
         }
@@ -150,15 +150,15 @@ mod tests {
     fn empty_enr_no_contactable_address() {
         // Empty ENR
         TestCase::new("Empty enr is non contactable by ip4 node")
-            .ip_mode(IpMode::Ip4)
+            .ip_mode(Ip4)
             .test();
 
         TestCase::new("Empty enr is not contactable by ip6 only node")
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .test();
 
         TestCase::new("Empty enr is not contactable by dual stack node")
-            .ip_mode(IpMode::DualStack)
+            .ip_mode(DualStack)
             .test();
     }
 
@@ -167,18 +167,18 @@ mod tests {
         // Ip4 only ENR
         TestCase::new("Ipv4 only enr is contactable by ip4 node")
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip4)
+            .ip_mode(Ip4)
             .expect_ip4(Ipv4Addr::LOCALHOST)
             .test();
 
         TestCase::new("Ipv4 only enr is not contactable by ip6 only node")
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .test();
 
         TestCase::new("Ipv4 only enr is contactable by dual stack node")
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::DualStack)
+            .ip_mode(DualStack)
             .expect_ip4(Ipv4Addr::LOCALHOST)
             .test();
     }
@@ -188,18 +188,18 @@ mod tests {
         // Ip4 only ENR
         TestCase::new("Ipv6 only enr is not contactable by ip4 node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip4)
+            .ip_mode(Ip4)
             .test();
 
         TestCase::new("Ipv6 only enr is contactable by ip6 only node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
 
         TestCase::new("Ipv6 only enr is contactable by dual stack node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
-            .ip_mode(IpMode::DualStack)
+            .ip_mode(DualStack)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
     }
@@ -210,21 +210,21 @@ mod tests {
         TestCase::new("Dual stack enr is contactable by ip4 node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip4)
+            .ip_mode(Ip4)
             .expect_ip4(Ipv4Addr::LOCALHOST)
             .test();
 
         TestCase::new("Dual stack enr is contactable by ip6 only node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
 
         TestCase::new("Dual stack enr is contactable by dual stack node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
     }
