@@ -301,13 +301,6 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Configures the type of socket to bind to. This also affects the selection of address to use
-    /// to contact an ENR.
-    // pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
-    //     self.config.ip_mode = ip_mode;
-    //     self
-    // }
-
     pub fn build(&mut self) -> Discv5Config {
         // If an executor is not provided, assume a current tokio runtime is running.
         if self.config.executor.is_none() {

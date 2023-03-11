@@ -88,7 +88,6 @@ impl Socket {
     pub(crate) async fn new(config: SocketConfig) -> Result<Self, Error> {
         let SocketConfig {
             executor,
-            // socket_addr,
             filter_config,
             listen_config,
             ban_duration,
