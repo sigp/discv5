@@ -5,8 +5,7 @@ use std::net::SocketAddr;
 /// Sets the socket type to be established and also determines the type of ENRs that we will store
 /// in our routing table.
 /// We store ENR's that have a `get_contractable_addr()` based on the `IpMode` set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IpMode {
     /// IPv4 only. This creates an IPv4 only UDP socket and will only store ENRs in the local
     /// routing table if they contain a contactable IPv4 address.
@@ -18,8 +17,6 @@ pub enum IpMode {
     /// IPv6-only node.
     Ip6 { enable_mapped_addresses: bool },
 }
-
-
 
 impl IpMode {
     pub fn is_ipv4(&self) -> bool {
