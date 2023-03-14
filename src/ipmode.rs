@@ -6,9 +6,11 @@ use std::net::SocketAddr;
 /// in our routing table.
 /// We store ENR's that have a `get_contractable_addr()` based on the `IpMode` set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum IpMode {
     /// IPv4 only. This creates an IPv4 only UDP socket and will only store ENRs in the local
     /// routing table if they contain a contactable IPv4 address.
+    #[default]
     Ip4,
     /// This enables IPv6 support. This creates an IPv6 socket. If `enable_mapped_addresses` is set
     /// to true, this creates a dual-stack socket capable of sending/receiving IPv4 and IPv6
@@ -17,11 +19,7 @@ pub enum IpMode {
     Ip6 { enable_mapped_addresses: bool },
 }
 
-impl Default for IpMode {
-    fn default() -> Self {
-        IpMode::Ip4
-    }
-}
+
 
 impl IpMode {
     pub fn is_ipv4(&self) -> bool {
