@@ -16,6 +16,7 @@
 //! For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
 use clap::Parser;
+use discv5::socket::ListenConfig;
 use discv5::{
     enr,
     enr::{k256, CombinedKey},
@@ -26,7 +27,6 @@ use std::{
     time::Duration,
 };
 use tracing::{info, warn};
-use discv5::socket::ListenConfig;
 
 #[derive(Parser)]
 struct FindNodesArgs {
@@ -72,16 +72,12 @@ async fn main() {
     let port = args
         .port
         .unwrap_or_else(|| (rand::random::<u16>() % 1000) + 9000);
-    let port6 = args
-        .port
-        .unwrap_or_else(|| {
-            loop {
-                let port6 = (rand::random::<u16>() % 1000) + 9000;
-                if port6 != port {
-                    return port6;
-                }
-            }
-        });
+    let port6 = args.port.unwrap_or_else(|| loop {
+        let port6 = (rand::random::<u16>() % 1000) + 9000;
+        if port6 != port {
+            return port6;
+        }
+    });
 
     let enr_key = if args.use_test_key {
         // A fixed key for testing
@@ -147,7 +143,7 @@ async fn main() {
             ipv4_port: port,
             ipv6: Ipv6Addr::UNSPECIFIED,
             ipv6_port: port6,
-        }
+        },
     };
 
     // construct the discv5 server

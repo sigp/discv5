@@ -50,8 +50,11 @@ async fn simple_session_message() {
     let (_exit_send, sender_send, _sender_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
-        sender_enr.udp4_socket().unwrap().into(),
         config.clone(),
+        ListenConfig::Ipv4 {
+            ip: sender_enr.ip4().unwrap(),
+            port: sender_enr.udp4().unwrap(),
+        },
     )
     .await
     .unwrap();
@@ -59,8 +62,11 @@ async fn simple_session_message() {
     let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
-        receiver_enr.udp4_socket().unwrap().into(),
         config,
+        ListenConfig::Ipv4 {
+            ip: receiver_enr.ip4().unwrap(),
+            port: receiver_enr.udp4().unwrap(),
+        },
     )
     .await
     .unwrap();
@@ -126,8 +132,11 @@ async fn multiple_messages() {
     let (_exit_send, sender_handler, mut sender_handler_recv) = Handler::spawn(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
-        sender_enr.udp4_socket().unwrap().into(),
         config.clone(),
+        ListenConfig::Ipv4 {
+            ip: sender_enr.ip4().unwrap(),
+            port: sender_enr.udp4().unwrap(),
+        },
     )
     .await
     .unwrap();
@@ -135,8 +144,11 @@ async fn multiple_messages() {
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
-        receiver_enr.udp4_socket().unwrap().into(),
         config,
+        ListenConfig::Ipv4 {
+            ip: receiver_enr.ip4().unwrap(),
+            port: receiver_enr.udp4().unwrap(),
+        },
     )
     .await
     .unwrap();

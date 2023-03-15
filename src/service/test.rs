@@ -14,7 +14,7 @@ use crate::{
 };
 use enr::{CombinedKey, EnrBuilder};
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 fn _connected_state() -> NodeStatus {
@@ -40,7 +40,7 @@ fn init() {
 async fn build_service(
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
-    listen_socket: SocketAddr,
+    listen_config: ListenConfig,
     filters: bool,
 ) -> Service {
     let config = Discv5ConfigBuilder::new()
@@ -50,8 +50,8 @@ async fn build_service(
     let (_handler_exit, handler_send, handler_recv) = Handler::spawn(
         local_enr.clone(),
         enr_key.clone(),
-        listen_socket,
         config.clone(),
+        listen_config,
     )
     .await
     .unwrap();
@@ -93,6 +93,7 @@ async fn build_service(
         event_stream: None,
         exit,
         config,
+        ip_mode: Default::default(),
     }
 }
 
@@ -114,12 +115,15 @@ async fn test_updating_connection_on_ping() {
         .build(&enr_key2)
         .unwrap();
 
-    let socket_addr = enr.udp4_socket().unwrap();
+    let listen_config = ListenConfig::Ipv4 {
+        ip: enr.ip4().unwrap(),
+        port: enr.udp4().unwrap(),
+    };
 
     let mut service = build_service(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
-        socket_addr.into(),
+        listen_config,
         false,
     )
     .await;
