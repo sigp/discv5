@@ -48,7 +48,7 @@ pub struct RecvHandlerConfig {
 pub(crate) struct RecvHandler {
     /// The UDP recv socket.
     recv: Arc<UdpSocket>,
-    /// An option second UDO socket. Used when dialing over both Ipv4 and Ipv6.
+    /// An option second UDP socket. Used when dialing over both Ipv4 and Ipv6.
     second_recv: Option<Arc<UdpSocket>>,
     /// Simple hack to alternate reading from the first or the second socket.
     /// The list of waiting responses. These are used to allow incoming packets from sources
