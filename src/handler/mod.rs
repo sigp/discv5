@@ -40,6 +40,7 @@ use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
+use smallvec::SmallVec;
 use std::net::{SocketAddrV4, SocketAddrV6};
 use std::{
     collections::HashMap,
@@ -196,8 +197,8 @@ pub struct Handler {
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
     service_send: mpsc::Sender<HandlerOut>,
-    /// The listening socket to filter out any attempted requests to self.
-    listen_socket: SocketAddr,
+    /// The listening sockets to filter out any attempted requests to self.
+    listen_sockets: SmallVec<[SocketAddr; 2]>,
     /// The discovery v5 UDP socket tasks.
     socket: Socket,
     /// Exit channel to shutdown the handler.
@@ -232,7 +233,6 @@ impl Handler {
         let node_id = enr.read().node_id();
 
         // enable the packet filter if required
-
         let filter_config = FilterConfig {
             enabled: config.enable_packet_filter,
             rate_limiter: config.filter_rate_limiter.clone(),
@@ -240,16 +240,23 @@ impl Handler {
             max_bans_per_ip: config.filter_max_bans_per_ip,
         };
 
-        // FIXME
-        let listen_socket = match listen_config {
-            ListenConfig::Ipv4 { ip, port } => SocketAddr::V4(SocketAddrV4::new(ip, port)),
-            ListenConfig::Ipv6 { ip, port } => SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)),
+        let mut listen_sockets = SmallVec::default();
+        match listen_config {
+            ListenConfig::Ipv4 { ip, port } => {
+                listen_sockets.push(SocketAddr::V4(SocketAddrV4::new(ip, port)))
+            }
+            ListenConfig::Ipv6 { ip, port } => {
+                listen_sockets.push(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)))
+            }
             ListenConfig::DualStack {
                 ipv4,
                 ipv4_port,
-                ipv6: _ipv6,
-                ipv6_port: _ipv6_port,
-            } => SocketAddr::V4(SocketAddrV4::new(ipv4, ipv4_port)),
+                ipv6,
+                ipv6_port,
+            } => {
+                listen_sockets.push(SocketAddr::V4(SocketAddrV4::new(ipv4, ipv4_port)));
+                listen_sockets.push(SocketAddr::V6(SocketAddrV6::new(ipv6, ipv6_port, 0, 0)));
+            }
         };
 
         let socket_config = socket::SocketConfig {
@@ -284,7 +291,7 @@ impl Handler {
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
                     service_send,
-                    listen_socket,
+                    listen_sockets,
                     socket,
                     exit,
                 };
@@ -444,7 +451,7 @@ impl Handler {
     ) -> Result<(), RequestError> {
         let node_address = contact.node_address();
 
-        if node_address.socket_addr == self.listen_socket {
+        if self.listen_sockets.contains(&node_address.socket_addr) {
             debug!("Filtered request to self");
             return Err(RequestError::SelfRequest);
         }
