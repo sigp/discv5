@@ -330,7 +330,10 @@ async fn test_discovery_three_peers_ipv4() {
     // IPv4
     let nodes = build_nodes_from_keypairs(keypairs, 11200).await;
 
-    test_discovery_three_peers(nodes, total_nodes).await;
+    assert_eq!(
+        total_nodes,
+        test_discovery_three_peers(nodes, total_nodes).await
+    );
 }
 
 /// Test for running a simple query test for a topology consisting of IPv6 nodes.
@@ -345,7 +348,10 @@ async fn test_discovery_three_peers_ipv6() {
     // IPv6
     let nodes = build_nodes_from_keypairs_ipv6(keypairs, 11200).await;
 
-    test_discovery_three_peers(nodes, total_nodes).await;
+    assert_eq!(
+        total_nodes,
+        test_discovery_three_peers(nodes, total_nodes).await
+    );
 }
 
 /// Test for running a simple query test for a topology consisting of dual stack nodes.
@@ -360,10 +366,14 @@ async fn test_discovery_three_peers_dual_stack() {
     // DualStack
     let nodes = build_nodes_from_keypairs_dual_stack(keypairs, 11200).await;
 
-    test_discovery_three_peers(nodes, total_nodes).await;
+    assert_eq!(
+        total_nodes,
+        test_discovery_three_peers(nodes, total_nodes).await
+    );
 }
 
 /// Test for running a simple query test for a mixed topology of IPv4, IPv6 and dual stack nodes.
+/// The node to run the query is DualStack.
 #[tokio::test]
 async fn test_discovery_three_peers_mixed() {
     init();
@@ -387,11 +397,46 @@ async fn test_discovery_three_peers_mixed() {
 
     assert!(keypairs.is_empty());
     assert_eq!(5, nodes.len());
-    test_discovery_three_peers(nodes, total_nodes).await;
+    assert_eq!(
+        total_nodes,
+        test_discovery_three_peers(nodes, total_nodes).await
+    );
+}
+
+/// Test for running a simple query test for a mixed topology of IPv4, IPv6 and dual stack nodes.
+/// The node to run the query is IPv4.
+#[tokio::test]
+async fn test_discovery_three_peers_mixed_query_from_ipv4() {
+    init();
+    let total_nodes = 3;
+    // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
+    let seed = 1652;
+    // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
+    let mut keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
+
+    let mut nodes = vec![];
+    // Bootstrap node (DualStack)
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12000).await);
+    // A node to run query (** IPv4 **)
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 12010).await);
+    // IPv4 node
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 12020).await);
+    // IPv6 node
+    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 12030).await);
+    // Target node (DualStack)
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12040).await);
+
+    assert!(keypairs.is_empty());
+    assert_eq!(5, nodes.len());
+
+    // `2` is expected here since the node that runs the query is IPv4.
+    // The response from Bootstrap node will include the IPv6 node but that will be ignored due to
+    // non-contactable.
+    assert_eq!(2, test_discovery_three_peers(nodes, total_nodes).await);
 }
 
 /// This is a smaller version of the star topology test designed to debug issues with queries.
-async fn test_discovery_three_peers(mut nodes: Vec<Discv5>, total_nodes: usize) {
+async fn test_discovery_three_peers(mut nodes: Vec<Discv5>, total_nodes: usize) -> usize {
     init();
     // Last node is bootstrap node in a star topology
     let bootstrap_node = nodes.remove(0);
@@ -438,7 +483,7 @@ async fn test_discovery_three_peers(mut nodes: Vec<Discv5>, total_nodes: usize) 
         result_nodes.len(),
         total_nodes
     );
-    assert_eq!(result_nodes.len(), total_nodes);
+    result_nodes.len()
 }
 
 /// Test for a star topology with `num_nodes` connected to a `bootstrap_node`
