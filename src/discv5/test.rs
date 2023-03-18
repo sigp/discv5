@@ -4,6 +4,7 @@ use crate::socket::ListenConfig;
 use crate::{Discv5, *};
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
+use std::net::Ipv6Addr;
 use std::{collections::HashMap, net::Ipv4Addr};
 
 fn init() {
@@ -59,6 +60,64 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
         let enr = EnrBuilder::new("v4")
             .ip4(ip)
             .udp4(port)
+            .build(&enr_key)
+            .unwrap();
+
+        let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+        discv5.start().await.unwrap();
+        nodes.push(discv5);
+    }
+    nodes
+}
+
+async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Discv5> {
+    let mut nodes = Vec::new();
+
+    for (i, enr_key) in keys.into_iter().enumerate() {
+        let port = base_port + i as u16;
+
+        let config = Discv5ConfigBuilder::new().build();
+        let listen_config = ListenConfig::Ipv6 {
+            ip: Ipv6Addr::LOCALHOST,
+            port,
+        };
+
+        let enr = EnrBuilder::new("v4")
+            .ip6(Ipv6Addr::LOCALHOST)
+            .udp6(port)
+            .build(&enr_key)
+            .unwrap();
+
+        let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+        discv5.start().await.unwrap();
+        nodes.push(discv5);
+    }
+    nodes
+}
+
+async fn build_nodes_from_keypairs_dual_stack(
+    keys: Vec<CombinedKey>,
+    base_port: u16,
+) -> Vec<Discv5> {
+    let mut nodes = Vec::new();
+
+    for (i, enr_key) in keys.into_iter().enumerate() {
+        let ipv4_port = base_port + i as u16;
+        let ipv6_port = ipv4_port + 1000;
+
+        let config = Discv5ConfigBuilder::new().build();
+        let listen_config = ListenConfig::DualStack {
+            ipv4: Ipv4Addr::LOCALHOST,
+            ipv4_port,
+            ipv6: Ipv6Addr::LOCALHOST,
+            ipv6_port,
+        };
+
+        let enr = EnrBuilder::new("v4")
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(ipv4_port)
+            .ip6(Ipv6Addr::LOCALHOST)
+            .udp6(ipv6_port)
             .build(&enr_key)
             .unwrap();
 
@@ -259,16 +318,81 @@ fn find_seed_linear_topology() {
     }
 }
 
-/// This is a smaller version of the star topology test designed to debug issues with queries.
+/// Test for running a simple query test for a topology consisting of IPv4 nodes.
 #[tokio::test]
-async fn test_discovery_three_peers() {
+async fn test_discovery_three_peers_ipv4() {
     init();
     let total_nodes = 3;
     // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
     let seed = 1652;
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
-    let mut nodes = build_nodes_from_keypairs(keypairs, 11200).await;
+    // IPv4
+    let nodes = build_nodes_from_keypairs(keypairs, 11200).await;
+
+    test_discovery_three_peers(nodes, total_nodes).await;
+}
+
+/// Test for running a simple query test for a topology consisting of IPv6 nodes.
+#[tokio::test]
+async fn test_discovery_three_peers_ipv6() {
+    init();
+    let total_nodes = 3;
+    // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
+    let seed = 1652;
+    // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
+    let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
+    // IPv6
+    let nodes = build_nodes_from_keypairs_ipv6(keypairs, 11200).await;
+
+    test_discovery_three_peers(nodes, total_nodes).await;
+}
+
+/// Test for running a simple query test for a topology consisting of dual stack nodes.
+#[tokio::test]
+async fn test_discovery_three_peers_dual_stack() {
+    init();
+    let total_nodes = 3;
+    // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
+    let seed = 1652;
+    // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
+    let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
+    // DualStack
+    let nodes = build_nodes_from_keypairs_dual_stack(keypairs, 11200).await;
+
+    test_discovery_three_peers(nodes, total_nodes).await;
+}
+
+/// Test for running a simple query test for a mixed topology of IPv4, IPv6 and dual stack nodes.
+#[tokio::test]
+async fn test_discovery_three_peers_mixed() {
+    init();
+    let total_nodes = 3;
+    // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
+    let seed = 1652;
+    // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
+    let mut keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
+
+    let mut nodes = vec![];
+    // Bootstrap node (DualStack)
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12000).await);
+    // A node to run query (DualStack)
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12010).await);
+    // IPv4 node
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 12020).await);
+    // IPv6 node
+    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 12030).await);
+    // Target node (DualStack)
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12040).await);
+
+    assert!(keypairs.is_empty());
+    assert_eq!(5, nodes.len());
+    test_discovery_three_peers(nodes, total_nodes).await;
+}
+
+/// This is a smaller version of the star topology test designed to debug issues with queries.
+async fn test_discovery_three_peers(mut nodes: Vec<Discv5>, total_nodes: usize) {
+    init();
     // Last node is bootstrap node in a star topology
     let bootstrap_node = nodes.remove(0);
     // target_node is not polled.
