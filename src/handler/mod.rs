@@ -36,14 +36,17 @@ use crate::{
     socket::{FilterConfig, Socket},
     Enr,
 };
+use async_trait::async_trait;
 use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
+//use nat_hole_punch::*;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     convert::TryFrom,
     default::Default,
+    marker::PhantomData,
     net::SocketAddr,
     pin::Pin,
     sync::{atomic::Ordering, Arc},
@@ -170,7 +173,7 @@ struct PendingRequest {
 }
 
 /// Process to handle handshakes and sessions established from raw RPC communications between nodes.
-pub struct Handler {
+pub struct Handler<P: ProtocolIdentity> {
     /// Configuration for the discv5 service.
     request_retries: u8,
     /// The local node id to save unnecessary read locks on the ENR. The NodeID should not change
@@ -200,6 +203,7 @@ pub struct Handler {
     socket: Socket,
     /// Exit channel to shutdown the handler.
     exit: oneshot::Receiver<()>,
+    _phantom: PhantomData<P>,
 }
 
 type HandlerReturn = (
@@ -208,9 +212,9 @@ type HandlerReturn = (
     mpsc::Receiver<HandlerOut>,
 );
 
-impl Handler {
+impl<P: ProtocolIdentity> Handler<P> {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
-    pub async fn spawn<P: ProtocolIdentity>(
+    pub async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
         listen_socket: SocketAddr,
@@ -256,7 +260,7 @@ impl Handler {
             .clone()
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
-                let mut handler = Handler {
+                let mut handler: Handler<P> = Handler {
                     request_retries: config.request_retries,
                     node_id,
                     enr,
@@ -274,16 +278,17 @@ impl Handler {
                     listen_socket,
                     socket,
                     exit,
+                    _phantom: PhantomData,
                 };
                 debug!("Handler Starting");
-                handler.start::<P>().await;
+                handler.start().await;
             }));
 
         Ok((exit_sender, handler_send, handler_recv))
     }
 
     /// The main execution loop for the handler.
-    async fn start<P: ProtocolIdentity>(&mut self) {
+    async fn start(&mut self) {
         let mut banned_nodes_check = tokio::time::interval(Duration::from_secs(BANNED_NODES_CHECK));
 
         loop {
@@ -292,19 +297,19 @@ impl Handler {
                     match handler_request {
                         HandlerIn::Request(contact, request) => {
                             let Request { id, body: request } = *request;
-                            if let Err(request_error) =  self.send_request::<P>(contact, HandlerReqId::External(id.clone()), request).await {
+                            if let Err(request_error) =  self.send_request(contact, HandlerReqId::External(id.clone()), request).await {
                                 // If the sending failed report to the application
                                 if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
                                     warn!("Failed to inform that request failed {}", e)
                                 }
                             }
                         }
-                        HandlerIn::Response(dst, response) => self.send_response::<P>(dst, *response).await,
-                        HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge::<P>(wru_ref, enr).await,
+                        HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
+                        HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                     }
                 }
                 Some(inbound_packet) = self.socket.recv.recv() => {
-                    self.process_inbound_packet::<P>(inbound_packet).await;
+                    self.process_inbound_packet(inbound_packet).await;
                 }
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, pending_request).await;
@@ -312,7 +317,7 @@ impl Handler {
                 Some(Ok((node_address, _challenge))) = self.active_challenges.next() => {
                     // A challenge has expired. There could be pending requests awaiting this
                     // challenge. We process them here
-                    self.send_next_request::<P>(node_address).await;
+                    self.send_next_request(node_address).await;
                 }
                 _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
@@ -323,17 +328,14 @@ impl Handler {
     }
 
     /// Processes an inbound decoded packet.
-    async fn process_inbound_packet<P: ProtocolIdentity>(
-        &mut self,
-        inbound_packet: socket::InboundPacket,
-    ) {
+    async fn process_inbound_packet(&mut self, inbound_packet: socket::InboundPacket) {
         let message_nonce = inbound_packet.header.message_nonce;
         match inbound_packet.header.kind {
             PacketKind::WhoAreYou { enr_seq, .. } => {
                 let challenge_data =
                     ChallengeData::try_from(inbound_packet.authenticated_data.as_slice())
                         .expect("Must be correct size");
-                self.handle_challenge::<P>(
+                self.handle_challenge(
                     inbound_packet.src_address,
                     message_nonce,
                     enr_seq,
@@ -351,7 +353,7 @@ impl Handler {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                self.handle_auth_message::<P>(
+                self.handle_auth_message(
                     node_address,
                     message_nonce,
                     &id_nonce_sig,
@@ -367,13 +369,39 @@ impl Handler {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                self.handle_message::<P>(
+                self.handle_message(
                     node_address,
                     message_nonce,
                     &inbound_packet.message,
                     &inbound_packet.authenticated_data,
                 )
                 .await
+            }
+            PacketKind::Notification { src_id } => {
+                let node_address = NodeAddress {
+                    socket_addr: inbound_packet.src_address,
+                    node_id: src_id,
+                };
+                match <Self as NatHolePunch>::on_notification(
+                    self,
+                    node_address,
+                    message_nonce,
+                    &inbound_packet.message,
+                    &inbound_packet.authenticated_data,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        trace!("Received notification from: {}", node_address);
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to process notification packet from: {}. Error: {:?}",
+                            node_address, e
+                        );
+                        return;
+                    }
+                }
             }
         }
     }
@@ -426,7 +454,7 @@ impl Handler {
     }
 
     /// Sends a `Request` to a node.
-    async fn send_request<P: ProtocolIdentity>(
+    async fn send_request(
         &mut self,
         contact: NodeContact,
         request_id: HandlerReqId,
@@ -497,11 +525,7 @@ impl Handler {
     }
 
     /// Sends an RPC Response.
-    async fn send_response<P: ProtocolIdentity>(
-        &mut self,
-        node_address: NodeAddress,
-        response: Response,
-    ) {
+    async fn send_response(&mut self, node_address: NodeAddress, response: Response) {
         // Check for an established session
         if let Some(session) = self.sessions.get_mut(&node_address) {
             // Encrypt the message and send
@@ -525,11 +549,7 @@ impl Handler {
 
     /// This is called in response to a `HandlerOut::WhoAreYou` event. The applications finds the
     /// highest known ENR for a node then we respond to the node with a WHOAREYOU packet.
-    async fn send_challenge<P: ProtocolIdentity>(
-        &mut self,
-        wru_ref: WhoAreYouRef,
-        remote_enr: Option<Enr>,
-    ) {
+    async fn send_challenge(&mut self, wru_ref: WhoAreYouRef, remote_enr: Option<Enr>) {
         let node_address = wru_ref.0;
         let message_nonce = wru_ref.1;
 
@@ -569,7 +589,7 @@ impl Handler {
     /* Packet Handling */
 
     /// Handles a WHOAREYOU packet that was received from the network.
-    async fn handle_challenge<P: ProtocolIdentity>(
+    async fn handle_challenge(
         &mut self,
         src_address: SocketAddr,
         request_nonce: MessageNonce,
@@ -713,7 +733,7 @@ impl Handler {
                 let request = RequestBody::FindNode { distances: vec![0] };
                 session.awaiting_enr = Some(id.clone());
                 if let Err(e) = self
-                    .send_request::<P>(contact, HandlerReqId::Internal(id), request)
+                    .send_request(contact, HandlerReqId::Internal(id), request)
                     .await
                 {
                     warn!("Failed to send Enr request {}", e)
@@ -741,7 +761,7 @@ impl Handler {
 
     /// Handle a message that contains an authentication header.
     #[allow(clippy::too_many_arguments)]
-    async fn handle_auth_message<P: ProtocolIdentity>(
+    async fn handle_auth_message(
         &mut self,
         node_address: NodeAddress,
         message_nonce: MessageNonce,
@@ -789,7 +809,7 @@ impl Handler {
                             warn!("Failed to inform of established session {}", e)
                         }
                         self.new_session(node_address.clone(), session);
-                        self.handle_message::<P>(
+                        self.handle_message(
                             node_address.clone(),
                             message_nonce,
                             message,
@@ -798,7 +818,7 @@ impl Handler {
                         .await;
                         // We could have pending messages that were awaiting this session to be
                         // established. If so process them.
-                        self.send_next_request::<P>(node_address).await;
+                        self.send_next_request(node_address).await;
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
@@ -836,7 +856,7 @@ impl Handler {
         }
     }
 
-    async fn send_next_request<P: ProtocolIdentity>(&mut self, node_address: NodeAddress) {
+    async fn send_next_request(&mut self, node_address: NodeAddress) {
         // ensure we are not over writing any existing requests
         if self.active_requests.get(&node_address).is_none() {
             if let std::collections::hash_map::Entry::Occupied(mut entry) =
@@ -853,7 +873,7 @@ impl Handler {
                 }
                 trace!("Sending next awaiting message. Node: {}", contact);
                 if let Err(request_error) = self
-                    .send_request::<P>(contact, request_id.clone(), request)
+                    .send_request(contact, request_id.clone(), request)
                     .await
                 {
                     warn!("Failed to send next awaiting request {}", request_error);
@@ -880,7 +900,7 @@ impl Handler {
 
     /// Handle a standard message that does not contain an authentication header.
     #[allow(clippy::single_match)]
-    async fn handle_message<P: ProtocolIdentity>(
+    async fn handle_message(
         &mut self,
         node_address: NodeAddress,
         message_nonce: MessageNonce,
@@ -982,7 +1002,7 @@ impl Handler {
                         }
                     }
                     // Handle standard responses
-                    self.handle_response::<P>(node_address, response).await;
+                    self.handle_response(node_address, response).await;
                 }
             }
         } else {
@@ -1006,11 +1026,7 @@ impl Handler {
 
     /// Handles a response to a request. Re-inserts the request call if the response is a multiple
     /// Nodes response.
-    async fn handle_response<P: ProtocolIdentity>(
-        &mut self,
-        node_address: NodeAddress,
-        response: Response,
-    ) {
+    async fn handle_response(&mut self, node_address: NodeAddress, response: Response) {
         // Find a matching request, if any
         if let Some(mut request_call) = self.active_requests.remove(&node_address) {
             let id = match request_call.id() {
@@ -1081,7 +1097,7 @@ impl Handler {
             {
                 warn!("Failed to inform of response {}", e)
             }
-            self.send_next_request::<P>(node_address).await;
+            self.send_next_request(node_address).await;
         } else {
             // This is likely a late response and we have already failed the request. These get
             // dropped here.
@@ -1191,5 +1207,274 @@ impl Handler {
             .write()
             .ban_nodes
             .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
+    }
+}
+
+/// Discv5 message nonce length in bytes.
+pub const MESSAGE_NONCE_LENGTH: usize = 12;
+pub type NonceOfTimedOutMessage = MessageNonce;
+
+macro_rules! impl_from_variant_wrap {
+    ($from_type: ty, $to_type: ty, $variant: path) => {
+        impl From<$from_type> for $to_type {
+            fn from(e: $from_type) -> Self {
+                $variant(e)
+            }
+        }
+    };
+}
+
+#[derive(Debug)]
+pub enum HolePunchError {
+    NotificationError(rlp::DecoderError),
+    Session(String),
+    RelayError(String),
+    TargetError(String),
+}
+
+#[async_trait]
+pub trait NatHolePunch {
+    /// A FINDNODE request, as part of a find node query, has timed out. Hole punching is
+    /// initiated. The node which passed the hole punch target peer in a NODES response to us is
+    /// used as relay.
+    async fn on_time_out(
+        &mut self,
+        relay: NodeAddress,
+        notif: RelayInit,
+    ) -> Result<(), HolePunchError>;
+    /// Handle a notification received over discv5 used for hole punching.
+    async fn on_notification_packet(
+        &mut self,
+        notif_sender: NodeAddress,
+        notif_nonce: MessageNonce,
+        notif: &[u8],
+        authenticated_data: &[u8],
+    ) -> Result<(), HolePunchError> {
+        let decrypted_notif = self
+            .decrypt_notification(notif_sender, notif_nonce, notif, authenticated_data)
+            .await?;
+
+        match Notification::decode(decrypted_notif)? {
+            Notification::RelayInit(relay_init_notif) => self.on_relay_init(relay_init_notif).await,
+            Notification::RelayMsg(relay_msg_notif) => self.on_relay_msg(relay_msg_notif).await,
+        }
+    }
+    /// Decrypt a notification with the session keys held for the sender, just like for a discv5
+    /// message. Notifications differentiate themsleves from discv5 messages (request or response)
+    /// in the way they handle a session, or rather the absence of a session. The duration of a
+    /// roundtrip in a hole punch relay circuit is bound by the duration of an average router's
+    /// time out for a udp entry for a given connection. Notifications that can't be decrypted
+    /// should be dropped to stay within bounds.
+    async fn decrypt_notification(
+        &mut self,
+        notif_sender: NodeAddress,
+        notif_nonce: MessageNonce,
+        notif: &[u8],
+        authenticated_data: &[u8],
+    ) -> Result<Vec<u8>, HolePunchError>;
+    /// This node receives a message to relay.
+    async fn on_relay_init(&mut self, notif: RelayInit) -> Result<(), HolePunchError>;
+    /// This node received a relayed message and should punch a hole in its NAT for the initiator.
+    async fn on_relay_msg(&mut self, notif: RelayMsg) -> Result<(), HolePunchError>;
+}
+
+/// A unicast notification sent over discv5.
+pub enum Notification {
+    /// Initialise a one-shot relay circuit.
+    RelayInit(RelayInit),
+    /// A relayed notification.
+    RelayMsg(RelayMsg),
+}
+
+/// A hole punch notification sent to the relay. Contains the node address of the initiator of the
+/// hole punch, the nonce of the request from the initiator to the target that triggered
+/// `on_time_out` and the node address of the hole punch target peer.
+pub struct RelayInit(NodeAddress, NonceOfTimedOutMessage, NodeAddress);
+
+impl RelayInit {
+    pub fn encode(self) -> Result<Vec<u8>, HolePunchError> {
+        todo!()
+    }
+    pub fn decode(bytes: Vec<u8>) -> Result<Self, HolePunchError> {
+        todo!()
+    }
+}
+
+/// A relayed hole punch notification sent to the target. Contains the node address of the
+/// initiator of the hole punch and the nonce of the initiator's request that timed out, so the
+/// hole punch target peer can respond with WHOAREYOU to the initiator.
+pub struct RelayMsg(NodeAddress, NonceOfTimedOutMessage);
+
+impl RelayMsg {
+    pub fn encode(self) -> Result<Vec<u8>, HolePunchError> {
+        todo!()
+    }
+    pub fn decode(bytes: Vec<u8>) -> Result<Self, HolePunchError> {
+        todo!()
+    }
+}
+
+impl_from_variant_wrap!(RelayInit, Notification, Self::RelayInit);
+impl_from_variant_wrap!(RelayMsg, Notification, Self::RelayMsg);
+
+impl Notification {
+    fn decode(message: Vec<u8>) -> Result<Self, HolePunchError> {
+        // check flag todo(emhane)
+        todo!()
+    }
+    fn encode(self) -> Result<Vec<u8>, HolePunchError> {
+        /// Encodes a Message to RLP-encoded bytes.
+        let mut buf = Vec::with_capacity(10);
+        /*let msg_type = self.msg_type();
+            buf.push(msg_type);
+            let id = &self.id;
+            match self.body {
+                RequestBody::Ping { enr_seq } => {
+                    let mut s = RlpStream::new();
+                    s.begin_list(2);
+                    s.append(&id.as_bytes());
+                    s.append(&enr_seq);
+                    buf.extend_from_slice(&s.out());
+                    buf
+                }
+                RequestBody::FindNode { distances } => {
+                    let mut s = RlpStream::new();
+                    s.begin_list(2);
+                    s.append(&id.as_bytes());
+                    s.begin_list(distances.len());
+                    for distance in distances {
+                        s.append(&distance);
+                    }
+                    buf.extend_from_slice(&s.out());
+                    buf
+                }
+        }*/
+        Ok(buf)
+    }
+}
+
+#[async_trait]
+impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
+    async fn on_time_out(
+        &mut self,
+        relay: NodeAddress,
+        notif: RelayInit,
+    ) -> Result<(), HolePunchError> {
+        if let Some(session) = self.sessions.get_mut(&relay) {
+            // Encrypt the message and send
+            let packet = match session.encrypt_message(self.node_id, &notif.encode()?) {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(HolePunchError::RelayError(format!(
+                        "Could not encrypt notification: {:?}",
+                        e
+                    )));
+                }
+            };
+            self.send(relay, packet).await;
+        } else {
+            // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
+            // within the time out of the udp entrypoint for the target peer in the intiator's
+            // router, set by the original timed out FINDNODE request from the initiator, as the
+            // initiator may also be behind a NAT.
+            warn!(
+                "Session is not established. Dropping relay notification for relay: {}",
+                relay.node_id
+            );
+        }
+        Ok(())
+    }
+
+    async fn decrypt_notification(
+        &mut self,
+        session_index: NodeAddress,
+        notif_nonce: MessageNonce,
+        notif: &[u8],
+        authenticated_data: &[u8],
+    ) -> Result<Vec<u8>, HolePunchError> {
+        // check if we have an available session
+        match self.sessions.get_mut(&session_index) {
+            Some(session) => {
+                // attempt to decrypt
+                match session.decrypt_message(notif_nonce, notif, authenticated_data) {
+                    Err(e) => {
+                        // We have a session, but the notification could not be decrypted. It is
+                        // likely the node sending this message has dropped their session. Since
+                        // this is a notification, we do not reply with a WHOAREYOU to this random
+                        // packet. This means we drop the current session and the notification.
+                        self.fail_session(&session_index, RequestError::InvalidRemotePacket, true)
+                            .await;
+                        return Err(HolePunchError::Session(format!(
+                            "Decryption of notification from node: {} failed. Dropping notification. Error: {:?}",
+                            session_index, e
+                        )));
+                    }
+                    Ok(bytes) => Ok(bytes),
+                }
+            }
+            None => Err(HolePunchError::Session(format!(
+                "Received a notification without a session. Dropping notification from {}",
+                session_index
+            ))),
+        }
+    }
+
+    async fn on_relay_init(&mut self, relay_init_notif: RelayInit) -> Result<(), HolePunchError> {
+        let RelayInit(initiator, nonce, target) = relay_init_notif;
+        let notif = Notification::RelayMsg(RelayMsg(initiator, nonce));
+        // Check for an established session. Only relay to peers we have sessions with,
+        // otherwise it is unlikely we have passed the target node to the initiator in a NODES
+        // response recently.
+        if let Some(session) = self.sessions.get_mut(&target) {
+            // Encrypt the message and send
+            let packet = match session.encrypt_message(self.node_id, &notif.encode()?) {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(HolePunchError::RelayError(format!(
+                        "Could not encrypt response: {:?}",
+                        e
+                    )));
+                }
+            };
+            self.send(target, packet).await;
+        } else {
+            // Either the session is being established or has expired. We simply drop the
+            // notification in this case to ensure hole punch round-trip time stays within the
+            // time out of the udp entrypoint for the target peer in the intiator's router, set by
+            // the original timed out FINDNODE request from the initiator, as the initiator may
+            // also be behind a NAT.
+            warn!(
+                "Session is not established. Dropping relayed notification for node: {}",
+                target.node_id
+            );
+        }
+        Ok(())
+    }
+
+    async fn on_relay_msg(&mut self, notif: RelayMsg) -> Result<(), HolePunchError> {
+        let RelayMsg(initiator, nonce) = notif;
+        // A session may already have been established.
+        if self.sessions.get(&initiator).is_some() {
+            trace!("Session already established with initiator: {}", initiator);
+            return Ok(());
+        }
+        // If we haven't already sent a WhoAreYou, possibly punching the same hole using another
+        // relay, spawn a WHOAREYOU event to punch a hole in our NAT for initiator.
+        if self.active_challenges.get(&initiator).is_none() {
+            let whoareyou_ref = WhoAreYouRef(initiator, nonce);
+            if let Err(e) = self
+                .service_send
+                .send(HandlerOut::WhoAreYou(whoareyou_ref))
+                .await
+            {
+                return Err(HolePunchError::TargetError(format!(
+                    "Failed to send WhoAreYou to the service {}",
+                    e
+                )));
+            }
+        } else {
+            trace!("WHOAREYOU packet already sent to initiator: {}", initiator);
+        }
+        Ok(())
     }
 }

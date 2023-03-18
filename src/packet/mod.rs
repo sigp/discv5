@@ -36,7 +36,7 @@ impl ProtocolIdentity for DefaultProtocolId {
     const PROTOCOL_VERSION_BYTES: [u8; 2] = 0x0001_u16.to_be_bytes();
 }
 
-pub trait ProtocolIdentity {
+pub trait ProtocolIdentity: Sync + Send {
     const PROTOCOL_ID_BYTES: [u8; 6];
     const PROTOCOL_VERSION_BYTES: [u8; 2];
 }
