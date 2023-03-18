@@ -1,10 +1,14 @@
 #![cfg(test)]
+
 use super::*;
 use crate::{
     rpc::{Request, Response},
-    Discv5ConfigBuilder,
+    Discv5ConfigBuilder, IpMode,
 };
+use std::net::{Ipv4Addr, Ipv6Addr};
 
+use crate::handler::HandlerOut::RequestFailed;
+use crate::RequestError::SelfRequest;
 use active_requests::ActiveRequests;
 use enr::EnrBuilder;
 use std::time::Duration;
@@ -262,4 +266,61 @@ async fn test_active_requests_insert() {
     active_requests.check_invariant();
     active_requests.remove_by_nonce(&nonce);
     active_requests.check_invariant();
+}
+
+#[tokio::test]
+async fn test_self_request() {
+    init();
+
+    let key = CombinedKey::generate_secp256k1();
+    let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
+    let enr = EnrBuilder::new("v4")
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(5000)
+        .ip6(Ipv6Addr::LOCALHOST)
+        .udp6(5001)
+        .build(&key)
+        .unwrap();
+
+    let (_exit_send, send, mut recv) = Handler::spawn(
+        arc_rw!(enr.clone()),
+        arc_rw!(key),
+        config,
+        ListenConfig::DualStack {
+            ipv4: enr.ip4().unwrap(),
+            ipv4_port: enr.udp4().unwrap(),
+            ipv6: enr.ip6().unwrap(),
+            ipv6_port: enr.udp6().unwrap(),
+        },
+    )
+    .await
+    .unwrap();
+
+    // self request (IPv4)
+    let _ = send.send(HandlerIn::Request(
+        NodeContact::try_from_enr(enr.clone(), IpMode::Ip4).unwrap(),
+        Box::new(Request {
+            id: RequestId(vec![1]),
+            body: RequestBody::Ping { enr_seq: 1 },
+        }),
+    ));
+    let handler_out = recv.recv().await;
+    assert_eq!(
+        Some(RequestFailed(RequestId(vec![1]), SelfRequest)),
+        handler_out
+    );
+
+    // self request (IPv6)
+    let _ = send.send(HandlerIn::Request(
+        NodeContact::try_from_enr(enr, IpMode::Ip6).unwrap(),
+        Box::new(Request {
+            id: RequestId(vec![2]),
+            body: RequestBody::Ping { enr_seq: 1 },
+        }),
+    ));
+    let handler_out = recv.recv().await;
+    assert_eq!(
+        Some(RequestFailed(RequestId(vec![2]), SelfRequest)),
+        handler_out
+    );
 }
