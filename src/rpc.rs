@@ -434,8 +434,13 @@ impl Message {
                         let mut ip = [0u8; 16];
                         ip.copy_from_slice(&ip_bytes);
                         let ipv6 = Ipv6Addr::from(ip);
-                        // If the ipv6 is ipv4 compatible/mapped, simply return the ipv4.
-                        if let Some(ipv4) = ipv6.to_ipv4() {
+
+                        if ipv6.is_loopback() {
+                            // Checking if loopback address since IPv6Addr::to_ipv4 returns
+                            // IPv4 address for IPv6 loopback address.
+                            IpAddr::V6(ipv6)
+                        } else if let Some(ipv4) = ipv6.to_ipv4() {
+                            // If the ipv6 is ipv4 compatible/mapped, simply return the ipv4.
                             IpAddr::V4(ipv4)
                         } else {
                             IpAddr::V6(ipv6)
@@ -605,6 +610,7 @@ impl Message {
 mod tests {
     use super::*;
     use enr::EnrBuilder;
+    use std::net::Ipv4Addr;
 
     #[test]
     fn ref_test_encode_request_ping() {
@@ -766,6 +772,50 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: "127.0.0.1".parse().unwrap(),
+                port: 80,
+            },
+        });
+
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(&encoded).unwrap();
+
+        assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn encode_decode_ping_response_ipv4_mapped() {
+        let id = RequestId(vec![1]);
+        let request = Message::Response(Response {
+            id: id.clone(),
+            body: ResponseBody::Pong {
+                enr_seq: 15,
+                ip: IpAddr::V6(Ipv4Addr::new(192, 0, 2, 1).to_ipv6_mapped()),
+                port: 80,
+            },
+        });
+
+        let encoded = request.encode();
+        let decoded = Message::decode(&encoded).unwrap();
+        let expected = Message::Response(Response {
+            id,
+            body: ResponseBody::Pong {
+                enr_seq: 15,
+                ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
+                port: 80,
+            },
+        });
+
+        assert_eq!(expected, decoded);
+    }
+
+    #[test]
+    fn encode_decode_ping_response_ipv6_loopback() {
+        let id = RequestId(vec![1]);
+        let request = Message::Response(Response {
+            id,
+            body: ResponseBody::Pong {
+                enr_seq: 15,
+                ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
                 port: 80,
             },
         });

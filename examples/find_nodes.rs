@@ -30,8 +30,7 @@ use tracing::{info, warn};
 
 #[derive(Parser)]
 struct FindNodesArgs {
-    /// Type of socket to bind ['ds', 'ip4', 'ip6']. The dual stack option will enable mapped
-    /// addresses over an IpV6 socket.
+    /// Type of socket to bind ['ds', 'ip4', 'ip6'].
     #[clap(long, default_value_t = SocketKind::Ds)]
     socket_kind: SocketKind,
     /// IpV4 to advertise in the ENR. This is needed so that other IpV4 nodes can connect to us.
