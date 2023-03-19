@@ -14,7 +14,7 @@ pub enum IpMode {
     /// routing table if they contain a contactable IPv4 address.
     #[default]
     Ip4,
-    /// IPv4 only. This creates an IPv6 only UDP socket and will only store ENRs in the local
+    /// IPv6 only. This creates an IPv6 only UDP socket and will only store ENRs in the local
     /// routing table if they contain a contactable IPv6 address. Mapped addresses will be
     /// disabled.
     Ip6,

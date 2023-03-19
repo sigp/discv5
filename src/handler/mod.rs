@@ -242,20 +242,16 @@ impl Handler {
 
         let mut listen_sockets = SmallVec::default();
         match listen_config {
-            ListenConfig::Ipv4 { ip, port } => {
-                listen_sockets.push(SocketAddr::V4(SocketAddrV4::new(ip, port)))
-            }
-            ListenConfig::Ipv6 { ip, port } => {
-                listen_sockets.push(SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0)))
-            }
+            ListenConfig::Ipv4 { ip, port } => listen_sockets.push((ip, port).into()),
+            ListenConfig::Ipv6 { ip, port } => listen_sockets.push((ip, port).into()),
             ListenConfig::DualStack {
                 ipv4,
                 ipv4_port,
                 ipv6,
                 ipv6_port,
             } => {
-                listen_sockets.push(SocketAddr::V4(SocketAddrV4::new(ipv4, ipv4_port)));
-                listen_sockets.push(SocketAddr::V6(SocketAddrV6::new(ipv6, ipv6_port, 0, 0)));
+                listen_sockets.push((ipv4, ipv4_port).into());
+                listen_sockets.push((ipv6, ipv6_port).into());
             }
         };
 
