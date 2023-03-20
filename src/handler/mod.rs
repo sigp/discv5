@@ -41,7 +41,6 @@ use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
-use std::net::{SocketAddrV4, SocketAddrV6};
 use std::{
     collections::HashMap,
     convert::TryFrom,
