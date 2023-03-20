@@ -105,6 +105,13 @@ pub enum HandlerIn {
     /// The `WhoAreYouRef` is sent out in the `HandlerOut::WhoAreYou` event and should
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
+
+    /// The node address of the relay, the local node address, the message nonce of the timed out
+    /// request and the node address of the target peer to hole punch and a rleay init
+    /// notification. A FINDNODE request to a peer discovered in a find node query has timed out.
+    /// The target of that request may be behind a NAT. The peer which passed us the target in a
+    /// NODES response, is used as relay to attmept punching a hole in the targets NAT.
+    HolePunch(NodeAddress, NodeAddress, MessageNonce, NodeAddress),
 }
 
 /// Messages sent between a node on the network and `Handler`.
@@ -129,8 +136,10 @@ pub enum HandlerOut {
 
     /// An RPC request failed.
     ///
-    /// This returns the request ID and an error indicating why the request failed.
-    RequestFailed(RequestId, RequestError),
+    /// This returns the request ID, an error indicating why the request failed and possibly also
+    /// the message nonce to allow for attempting NAT hole punching (attempted upon request time
+    /// out).
+    RequestFailed(RequestId, RequestError, Option<MessageNonce>),
 }
 
 /// How we connected to the node.
@@ -299,13 +308,22 @@ impl<P: ProtocolIdentity> Handler<P> {
                             let Request { id, body: request } = *request;
                             if let Err(request_error) =  self.send_request(contact, HandlerReqId::External(id.clone()), request).await {
                                 // If the sending failed report to the application
-                                if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
+                                if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error, None)).await {
                                     warn!("Failed to inform that request failed {}", e)
                                 }
                             }
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
+                        HandlerIn::HolePunch(relay, local_node_address,
+                            message_nonce,
+                            target_node_address) => {
+                            if let Err(e) = self.on_time_out(relay, local_node_address,
+                                message_nonce,
+                                target_node_address).await {
+                                warn!("Failed to start hole punching. Error: {:?}", e);
+                            }
+                        }
                     }
                 }
                 Some(inbound_packet) = self.socket.recv.recv() => {
@@ -382,25 +400,17 @@ impl<P: ProtocolIdentity> Handler<P> {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                match <Self as NatHolePunch>::on_notification(
-                    self,
-                    node_address,
-                    message_nonce,
-                    &inbound_packet.message,
-                    &inbound_packet.authenticated_data,
-                )
-                .await
+                trace!("Received notification from: {}", node_address);
+                if let Err(e) = self
+                    .on_notification(
+                        node_address,
+                        message_nonce,
+                        &inbound_packet.message,
+                        &inbound_packet.authenticated_data,
+                    )
+                    .await
                 {
-                    Ok(()) => {
-                        trace!("Received notification from: {}", node_address);
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to process notification packet from: {}. Error: {:?}",
-                            node_address, e
-                        );
-                        return;
-                    }
+                    warn!("Failed to process notification packet. Error: {:?}", e);
                 }
             }
         }
@@ -886,7 +896,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                         HandlerReqId::External(id) => {
                             if let Err(e) = self
                                 .service_send
-                                .send(HandlerOut::RequestFailed(id, request_error))
+                                .send(HandlerOut::RequestFailed(id, request_error, None))
                                 .await
                             {
                                 warn!("Failed to inform that request failed {}", e);
@@ -1140,7 +1150,11 @@ impl<P: ProtocolIdentity> Handler<P> {
             HandlerReqId::External(id) => {
                 if let Err(e) = self
                     .service_send
-                    .send(HandlerOut::RequestFailed(id.clone(), error.clone()))
+                    .send(HandlerOut::RequestFailed(
+                        id.clone(),
+                        error.clone(),
+                        Some(request_call.packet().header.message_nonce),
+                    ))
                     .await
                 {
                     warn!("Failed to inform request failure {}", e)
@@ -1175,7 +1189,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     HandlerReqId::External(id) => {
                         if let Err(e) = self
                             .service_send
-                            .send(HandlerOut::RequestFailed(id, error.clone()))
+                            .send(HandlerOut::RequestFailed(id, error.clone(), None))
                             .await
                         {
                             warn!("Failed to inform request failure {}", e)
@@ -1240,10 +1254,12 @@ pub trait NatHolePunch {
     async fn on_time_out(
         &mut self,
         relay: NodeAddress,
-        notif: RelayInit,
+        local_node_address: NodeAddress,
+        message_nonce: MessageNonce,
+        target_node_address: NodeAddress,
     ) -> Result<(), HolePunchError>;
-    /// Handle a notification received over discv5 used for hole punching.
-    async fn on_notification_packet(
+    /// Handle a notification packet received over discv5 used for hole punching.
+    async fn on_notification(
         &mut self,
         notif_sender: NodeAddress,
         notif_nonce: MessageNonce,
@@ -1251,7 +1267,7 @@ pub trait NatHolePunch {
         authenticated_data: &[u8],
     ) -> Result<(), HolePunchError> {
         let decrypted_notif = self
-            .decrypt_notification(notif_sender, notif_nonce, notif, authenticated_data)
+            .handle_decryption_with_session(notif_sender, notif_nonce, notif, authenticated_data)
             .await?;
 
         match Notification::decode(decrypted_notif)? {
@@ -1259,15 +1275,14 @@ pub trait NatHolePunch {
             Notification::RelayMsg(relay_msg_notif) => self.on_relay_msg(relay_msg_notif).await,
         }
     }
-    /// Decrypt a notification with the session keys held for the sender, just like for a discv5
-    /// message. Notifications differentiate themsleves from discv5 messages (request or response)
-    /// in the way they handle a session, or rather the absence of a session. The duration of a
-    /// roundtrip in a hole punch relay circuit is bound by the duration of an average router's
-    /// time out for a udp entry for a given connection. Notifications that can't be decrypted
-    /// should be dropped to stay within bounds.
-    async fn decrypt_notification(
+    /// Decrypt a notification with session keys held for the notification sender, just like for a
+    /// discv5 message. Notifications should differentiate themsleves from discv5 messages
+    /// (request or response) in the way they handle a session, or rather the absence of a
+    /// session. Notifications that can't be decrypted with existing session keys should be
+    /// dropped.
+    async fn handle_decryption_with_session(
         &mut self,
-        notif_sender: NodeAddress,
+        session_index: NodeAddress, // notif sender
         notif_nonce: MessageNonce,
         notif: &[u8],
         authenticated_data: &[u8],
@@ -1289,7 +1304,8 @@ pub enum Notification {
 /// A hole punch notification sent to the relay. Contains the node address of the initiator of the
 /// hole punch, the nonce of the request from the initiator to the target that triggered
 /// `on_time_out` and the node address of the hole punch target peer.
-pub struct RelayInit(NodeAddress, NonceOfTimedOutMessage, NodeAddress);
+#[derive(Debug, Clone, PartialEq)]
+pub struct RelayInit(pub NodeAddress, pub NonceOfTimedOutMessage, pub NodeAddress);
 
 impl RelayInit {
     pub fn encode(self) -> Result<Vec<u8>, HolePunchError> {
@@ -1358,19 +1374,31 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
     async fn on_time_out(
         &mut self,
         relay: NodeAddress,
-        notif: RelayInit,
+        local_node_address: NodeAddress,
+        timed_out_message_nonce: MessageNonce,
+        target_node_address: NodeAddress,
     ) -> Result<(), HolePunchError> {
+        // Another hole punch process may have just completed.
+        if self.sessions.get(&target_node_address).is_some() {
+            return Ok(());
+        }
         if let Some(session) = self.sessions.get_mut(&relay) {
+            let relay_init_notif = RelayInit(
+                local_node_address,
+                timed_out_message_nonce,
+                target_node_address,
+            );
             // Encrypt the message and send
-            let packet = match session.encrypt_message(self.node_id, &notif.encode()?) {
-                Ok(packet) => packet,
-                Err(e) => {
-                    return Err(HolePunchError::RelayError(format!(
-                        "Could not encrypt notification: {:?}",
-                        e
-                    )));
-                }
-            };
+            let packet =
+                match session.encrypt_message::<P>(self.node_id, &relay_init_notif.encode()?) {
+                    Ok(packet) => packet,
+                    Err(e) => {
+                        return Err(HolePunchError::RelayError(format!(
+                            "Could not encrypt notification: {:?}",
+                            e
+                        )));
+                    }
+                };
             self.send(relay, packet).await;
         } else {
             // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
@@ -1385,7 +1413,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         Ok(())
     }
 
-    async fn decrypt_notification(
+    async fn handle_decryption_with_session(
         &mut self,
         session_index: NodeAddress,
         notif_nonce: MessageNonce,
@@ -1427,7 +1455,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         // response recently.
         if let Some(session) = self.sessions.get_mut(&target) {
             // Encrypt the message and send
-            let packet = match session.encrypt_message(self.node_id, &notif.encode()?) {
+            let packet = match session.encrypt_message::<P>(self.node_id, &notif.encode()?) {
                 Ok(packet) => packet,
                 Err(e) => {
                     return Err(HolePunchError::RelayError(format!(

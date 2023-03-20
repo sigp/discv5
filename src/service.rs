@@ -25,7 +25,7 @@ use crate::{
         NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
-    packet::{ProtocolIdentity, MAX_PACKET_SIZE},
+    packet::{MessageNonce, ProtocolIdentity, MAX_PACKET_SIZE},
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
@@ -199,6 +199,11 @@ pub struct Service {
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
+
+    /// The last peer to send us a new peer in a NODES response is stored as the new peer's
+    /// potential relay until the first request to the new peer after its discovery is either
+    /// responded or failed.
+    new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -263,7 +268,7 @@ impl Service {
         };
 
         // build the session service
-        let (handler_exit, handler_send, handler_recv) = Handler::spawn::<P>(
+        let (handler_exit, handler_send, handler_recv) = Handler::<P>::spawn(
             local_enr.clone(),
             enr_key.clone(),
             listen_socket,
@@ -296,6 +301,7 @@ impl Service {
                     event_stream: None,
                     exit,
                     config: config.clone(),
+                    new_peer_latest_relay: HashMap::default(),
                 };
 
                 info!("Discv5 Service started");
@@ -373,13 +379,13 @@ impl Service {
                                 }
                             }
                         }
-                        HandlerOut::RequestFailed(request_id, error) => {
+                        HandlerOut::RequestFailed(request_id, error, message_nonce) => {
                             if let RequestError::Timeout = error {
                                 debug!("RPC Request timed out. id: {}", request_id);
                             } else {
                                 warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
                             }
-                            self.rpc_failure(request_id, error);
+                            self.rpc_failure(request_id, error, message_nonce);
                         }
                     }
                 }
@@ -643,6 +649,9 @@ impl Service {
 
             let node_id = node_address.node_id;
 
+            // Peer is not behind a NAT. Remove potential relay that may be stored for peer.
+            self.new_peer_latest_relay.remove(&node_id);
+
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
                     if total > MAX_NODES_RESPONSES as u64 {
@@ -695,7 +704,9 @@ impl Service {
                                 node_address
                             );
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                            PERMIT_BAN_LIST
+                                .write()
+                                .ban(node_address.clone(), ban_timeout);
                             nodes.retain(|enr| {
                                 peer_key.log2_distance(&enr.node_id().into()).is_none()
                             });
@@ -716,7 +727,9 @@ impl Service {
                                 active_request.contact
                             );
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                            PERMIT_BAN_LIST
+                                .write()
+                                .ban(node_address.clone(), ban_timeout);
                         }
                     }
 
@@ -767,7 +780,7 @@ impl Service {
                     // ensure any mapping is removed in this rare case
                     self.active_nodes_responses.remove(&node_id);
 
-                    self.discovered(&node_id, nodes, active_request.query_id);
+                    self.discovered(&node_address, nodes, active_request.query_id);
                 }
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     let socket = SocketAddr::new(ip, port);
@@ -1159,9 +1172,9 @@ impl Service {
     }
 
     /// Processes discovered peers from a query.
-    fn discovered(&mut self, source: &NodeId, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
+    fn discovered(&mut self, source: &NodeAddress, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
         let local_id = self.local_enr.read().node_id();
-        enrs.retain(|enr| {
+        let discovered = enrs.retain(|enr| {
             if enr.node_id() == local_id {
                 return false;
             }
@@ -1174,7 +1187,8 @@ impl Service {
 
             // ignore peers that don't pass the table filter
             if (self.config.table_filter)(enr) {
-                let key = kbucket::Key::from(enr.node_id());
+                let node_id = enr.node_id();
+                let key = kbucket::Key::from(node_id);
 
                 // If the ENR exists in the routing table and the discovered ENR has a greater
                 // sequence number, perform some filter checks before updating the enr.
@@ -1182,7 +1196,10 @@ impl Service {
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
                     kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
                     kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
-                    _ => false,
+                    _ => {
+                        self.new_peer_latest_relay.insert(node_id, source.clone());
+                        false
+                    }
                 };
 
                 if must_update_enr {
@@ -1206,7 +1223,7 @@ impl Service {
             // requesting the target of the query, this ENR could be the result of requesting the
             // target-nodes own id. We don't want to add this as a "new" discovered peer in the
             // query, so we remove it from the discovered list here.
-            source != &enr.node_id()
+            source.node_id != enr.node_id()
         });
 
         // if this is part of a query, update the query
@@ -1225,7 +1242,7 @@ impl Service {
                     peer_count += 1;
                 }
                 debug!("{} peers found for query id {:?}", peer_count, query_id);
-                query.on_success(source, &enrs)
+                query.on_success(&source.node_id, &enrs)
             } else {
                 debug!("Response returned for ended query {:?}", query_id)
             }
@@ -1364,7 +1381,12 @@ impl Service {
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
-    fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
+    fn rpc_failure(
+        &mut self,
+        id: RequestId,
+        error: RequestError,
+        message_nonce: Option<MessageNonce>,
+    ) {
         trace!("RPC Error removing request. Reason: {:?}, id {}", error, id);
         if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
@@ -1393,6 +1415,44 @@ impl Service {
                 // if a failed FindNodes request, ensure we haven't partially received packets. If
                 // so, process the partially found nodes
                 RequestBody::FindNode { .. } => {
+                    let relay = self.new_peer_latest_relay.remove(&node_id);
+                    if let RequestError::Timeout = error {
+                        // The request might be timing out because the peer is behind a NAT. If we
+                        // have a relay to the peer, attempt hole punching.
+                        if let (Some(relay), Some(message_nonce)) = (relay, message_nonce) {
+                            let target_node_address = active_request.contact.node_address();
+                            let local_enr = self.local_enr.read();
+                            let socket = match target_node_address.socket_addr {
+                                SocketAddr::V4(_) => match local_enr.udp4_socket() {
+                                    Some(socket) => Some(SocketAddr::V4(socket)),
+                                    None => local_enr.udp6_socket().map(SocketAddr::V6),
+                                },
+                                SocketAddr::V6(_) => match local_enr.udp6_socket() {
+                                    Some(socket) => Some(SocketAddr::V6(socket)),
+                                    None => local_enr.udp4_socket().map(SocketAddr::V4),
+                                },
+                            };
+                            if let Some(socket_addr) = socket {
+                                let local_node_address = NodeAddress {
+                                    socket_addr,
+                                    node_id: local_enr.node_id(),
+                                };
+                                match self.handler_send.send(HandlerIn::HolePunch(
+                                    relay,
+                                    local_node_address,
+                                    message_nonce,
+                                    target_node_address,
+                                )) {
+                                    Err(e) => {
+                                        warn!("Failed to start hole punch {}", e);
+                                    }
+                                    Ok(()) => {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if let Some(nodes_response) = self.active_nodes_responses.remove(&node_id) {
                         if !nodes_response.received_nodes.is_empty() {
                             warn!(
@@ -1402,7 +1462,7 @@ impl Service {
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
-                                &node_id,
+                                &active_request.contact.node_address(),
                                 nodes_response.received_nodes,
                                 active_request.query_id,
                             );
