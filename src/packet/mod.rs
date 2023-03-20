@@ -141,6 +141,12 @@ pub enum PacketKind {
         /// The ENR record of the node if the WHOAREYOU request is out-dated.
         enr_record: Option<Enr>,
     },
+    /// A notification. Differs from [`PacketKind::Message`] in the way it handles sessions. If a
+    /// session doesn't exist to decrypt or encrypt a notification, it is dropped.
+    Notification {
+        /// The sending NodeId.
+        src_id: NodeId,
+    },
 }
 
 impl From<&PacketKind> for u8 {
@@ -149,6 +155,7 @@ impl From<&PacketKind> for u8 {
             PacketKind::Message { .. } => 0,
             PacketKind::WhoAreYou { .. } => 1,
             PacketKind::Handshake { .. } => 2,
+            PacketKind::Notification { .. } => 3,
         }
     }
 }
@@ -157,7 +164,9 @@ impl PacketKind {
     /// Encodes the packet type into its corresponding auth_data.
     pub fn encode(&self) -> Vec<u8> {
         match self {
-            PacketKind::Message { src_id } => src_id.raw().to_vec(),
+            PacketKind::Message { src_id } | PacketKind::Notification { src_id } => {
+                src_id.raw().to_vec()
+            }
             PacketKind::WhoAreYou { id_nonce, enr_seq } => {
                 let mut auth_data = Vec::with_capacity(24);
                 auth_data.extend_from_slice(id_nonce);
@@ -273,6 +282,16 @@ impl PacketKind {
                     enr_record,
                 })
             }
+            3 => {
+                // Decoding a notification packet
+                // This should only contain a 32 byte NodeId.
+                if auth_data.len() != 32 {
+                    return Err(PacketError::InvalidAuthDataSize);
+                }
+
+                let src_id = NodeId::parse(auth_data).map_err(|_| PacketError::InvalidNodeId)?;
+                Ok(PacketKind::Notification { src_id })
+            }
             _ => Err(PacketError::UnknownPacket),
         }
     }
@@ -362,7 +381,9 @@ impl Packet {
     pub fn is_whoareyou(&self) -> bool {
         match &self.header.kind {
             PacketKind::WhoAreYou { .. } => true,
-            PacketKind::Message { .. } | PacketKind::Handshake { .. } => false,
+            PacketKind::Message { .. }
+            | PacketKind::Handshake { .. }
+            | PacketKind::Notification { .. } => false,
         }
     }
 
@@ -370,7 +391,7 @@ impl Packet {
     /// src_id in this case.
     pub fn src_id(&self) -> Option<NodeId> {
         match self.header.kind {
-            PacketKind::Message { src_id } => Some(src_id),
+            PacketKind::Message { src_id } | PacketKind::Notification { src_id } => Some(src_id),
             PacketKind::WhoAreYou { .. } => None,
             PacketKind::Handshake { src_id, .. } => Some(src_id),
         }
@@ -565,6 +586,7 @@ impl std::fmt::Display for PacketKind {
                 hex::encode(ephem_pubkey),
                 enr_record
             ),
+            PacketKind::Notification { src_id } => write!(f, "Notification {{ src_id: {src_id} }}"),
         }
     }
 }
