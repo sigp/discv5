@@ -275,9 +275,9 @@ async fn test_self_request() {
     let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
     let enr = EnrBuilder::new("v4")
         .ip4(Ipv4Addr::LOCALHOST)
-        .udp4(5000)
+        .udp4(5004)
         .ip6(Ipv6Addr::LOCALHOST)
-        .udp6(5001)
+        .udp6(5005)
         .build(&key)
         .unwrap();
 

@@ -329,7 +329,7 @@ async fn test_discovery_three_peers_ipv4() {
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     // IPv4
-    let nodes = build_nodes_from_keypairs(keypairs, 11200).await;
+    let nodes = build_nodes_from_keypairs(keypairs, 10000).await;
 
     assert_eq!(
         total_nodes,
@@ -347,7 +347,7 @@ async fn test_discovery_three_peers_ipv6() {
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     // IPv6
-    let nodes = build_nodes_from_keypairs_ipv6(keypairs, 11200).await;
+    let nodes = build_nodes_from_keypairs_ipv6(keypairs, 10010).await;
 
     assert_eq!(
         total_nodes,
@@ -365,7 +365,7 @@ async fn test_discovery_three_peers_dual_stack() {
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     // DualStack
-    let nodes = build_nodes_from_keypairs_dual_stack(keypairs, 11200).await;
+    let nodes = build_nodes_from_keypairs_dual_stack(keypairs, 10020).await;
 
     assert_eq!(
         total_nodes,
@@ -386,15 +386,15 @@ async fn test_discovery_three_peers_mixed() {
 
     let mut nodes = vec![];
     // Bootstrap node (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12000).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10030).await);
     // A node to run query (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12010).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10031).await);
     // IPv4 node
-    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 12020).await);
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10032).await);
     // IPv6 node
-    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 12030).await);
+    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 10033).await);
     // Target node (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12040).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10034).await);
 
     assert!(keypairs.is_empty());
     assert_eq!(5, nodes.len());
@@ -417,15 +417,15 @@ async fn test_discovery_three_peers_mixed_query_from_ipv4() {
 
     let mut nodes = vec![];
     // Bootstrap node (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12000).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10040).await);
     // A node to run query (** IPv4 **)
-    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 12010).await);
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10041).await);
     // IPv4 node
-    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 12020).await);
+    nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10042).await);
     // IPv6 node
-    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 12030).await);
+    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 10043).await);
     // Target node (DualStack)
-    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 12040).await);
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10044).await);
 
     assert!(keypairs.is_empty());
     assert_eq!(5, nodes.len());
