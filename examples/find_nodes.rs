@@ -16,10 +16,10 @@
 //! For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
 use clap::Parser;
-use discv5::socket::ListenConfig;
 use discv5::{
     enr,
     enr::{k256, CombinedKey},
+    socket::ListenConfig,
     Discv5, Discv5ConfigBuilder, Discv5Event,
 };
 use std::{

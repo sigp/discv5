@@ -151,8 +151,7 @@ pub enum ServiceRequest {
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
-use crate::discv5::PERMIT_BAN_LIST;
-use crate::socket::ListenConfig;
+use crate::{discv5::PERMIT_BAN_LIST, socket::ListenConfig};
 
 pub struct Service {
     /// Configuration parameters.

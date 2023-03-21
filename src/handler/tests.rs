@@ -7,8 +7,7 @@ use crate::{
 };
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::handler::HandlerOut::RequestFailed;
-use crate::RequestError::SelfRequest;
+use crate::{handler::HandlerOut::RequestFailed, RequestError::SelfRequest};
 use active_requests::ActiveRequests;
 use enr::EnrBuilder;
 use std::time::Duration;

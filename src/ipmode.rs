@@ -1,6 +1,8 @@
-use crate::socket::ListenConfig;
-use crate::Enr;
-use crate::IpMode::{DualStack, Ip4, Ip6};
+use crate::{
+    socket::ListenConfig,
+    Enr,
+    IpMode::{DualStack, Ip4, Ip6},
+};
 use std::net::SocketAddr;
 
 ///! A set of configuration parameters to tune the discovery protocol.
@@ -39,7 +41,7 @@ impl IpMode {
     /// dual stack, an Enr that advertises both an Ipv4 and a canonical Ipv6 address will be
     /// contacted using their Ipv6 address.
     pub fn get_contactable_addr(&self, enr: &Enr) -> Option<SocketAddr> {
-        // A function to get a cononical ipv6 address from an Enr
+        // A function to get a canonical ipv6 address from an Enr
 
         /// NOTE: There is nothing in the spec preventing compat/mapped addresses from being
         /// transmitted in the ENR. Here we choose to enforce canonical addresses since

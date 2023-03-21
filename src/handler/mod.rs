@@ -64,8 +64,7 @@ pub use crate::node_info::{NodeAddress, NodeContact};
 
 use crate::metrics::METRICS;
 
-use crate::lru_time_cache::LruTimeCache;
-use crate::socket::ListenConfig;
+use crate::{lru_time_cache::LruTimeCache, socket::ListenConfig};
 use active_requests::ActiveRequests;
 use request_call::RequestCall;
 use session::Session;

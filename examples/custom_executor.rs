@@ -9,8 +9,9 @@
 //! $ cargo run --example custom_executor <BASE64ENR>
 //! ```
 
-use discv5::socket::ListenConfig;
-use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder, Discv5Event};
+use discv5::{
+    enr, enr::CombinedKey, socket::ListenConfig, Discv5, Discv5ConfigBuilder, Discv5Event,
+};
 use std::net::Ipv4Addr;
 
 fn main() {

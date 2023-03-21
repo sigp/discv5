@@ -37,8 +37,10 @@ use tracing::{debug, warn};
 use libp2p_core::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
-use crate::metrics::{Metrics, METRICS};
-use crate::socket::ListenConfig;
+use crate::{
+    metrics::{Metrics, METRICS},
+    socket::ListenConfig,
+};
 lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());

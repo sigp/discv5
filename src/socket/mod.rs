@@ -10,8 +10,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc, oneshot},
+};
 
 mod filter;
 mod recv;
@@ -70,15 +72,15 @@ pub struct Socket {
 impl Socket {
     /// This creates and binds a new UDP socket.
     // In general this function can be expanded to handle more advanced socket creation.
-    async fn new_socket(socket_addr: &SocketAddr) -> Result<tokio::net::UdpSocket, Error> {
+    async fn new_socket(socket_addr: &SocketAddr) -> Result<UdpSocket, Error> {
         match socket_addr {
-            SocketAddr::V4(ip4) => tokio::net::UdpSocket::bind(ip4).await,
+            SocketAddr::V4(ip4) => UdpSocket::bind(ip4).await,
             SocketAddr::V6(ip6) => {
                 let socket = Socket2::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
                 socket.set_only_v6(true)?;
                 socket.set_nonblocking(true)?;
                 socket.bind(&SocketAddr::V6(*ip6).into())?;
-                tokio::net::UdpSocket::from_std(socket.into())
+                UdpSocket::from_std(socket.into())
             }
         }
     }

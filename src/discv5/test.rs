@@ -1,11 +1,12 @@
 #![cfg(test)]
 
-use crate::socket::ListenConfig;
-use crate::{Discv5, *};
+use crate::{socket::ListenConfig, Discv5, *};
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
-use std::net::Ipv6Addr;
-use std::{collections::HashMap, net::Ipv4Addr};
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, Ipv6Addr},
+};
 
 fn init() {
     let _ = tracing_subscriber::fmt()
