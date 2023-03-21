@@ -40,7 +40,7 @@ use async_trait::async_trait;
 use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
-//use nat_hole_punch::*;
+use nat_hole_punch::*;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -1224,151 +1224,6 @@ impl<P: ProtocolIdentity> Handler<P> {
     }
 }
 
-/// Discv5 message nonce length in bytes.
-pub const MESSAGE_NONCE_LENGTH: usize = 12;
-pub type NonceOfTimedOutMessage = MessageNonce;
-
-macro_rules! impl_from_variant_wrap {
-    ($from_type: ty, $to_type: ty, $variant: path) => {
-        impl From<$from_type> for $to_type {
-            fn from(e: $from_type) -> Self {
-                $variant(e)
-            }
-        }
-    };
-}
-
-#[derive(Debug)]
-pub enum HolePunchError {
-    NotificationError(rlp::DecoderError),
-    Session(String),
-    RelayError(String),
-    TargetError(String),
-}
-
-#[async_trait]
-pub trait NatHolePunch {
-    /// A FINDNODE request, as part of a find node query, has timed out. Hole punching is
-    /// initiated. The node which passed the hole punch target peer in a NODES response to us is
-    /// used as relay.
-    async fn on_time_out(
-        &mut self,
-        relay: NodeAddress,
-        local_node_address: NodeAddress,
-        message_nonce: MessageNonce,
-        target_node_address: NodeAddress,
-    ) -> Result<(), HolePunchError>;
-    /// Handle a notification packet received over discv5 used for hole punching.
-    async fn on_notification(
-        &mut self,
-        notif_sender: NodeAddress,
-        notif_nonce: MessageNonce,
-        notif: &[u8],
-        authenticated_data: &[u8],
-    ) -> Result<(), HolePunchError> {
-        let decrypted_notif = self
-            .handle_decryption_with_session(notif_sender, notif_nonce, notif, authenticated_data)
-            .await?;
-
-        match Notification::decode(decrypted_notif)? {
-            Notification::RelayInit(relay_init_notif) => self.on_relay_init(relay_init_notif).await,
-            Notification::RelayMsg(relay_msg_notif) => self.on_relay_msg(relay_msg_notif).await,
-        }
-    }
-    /// Decrypt a notification with session keys held for the notification sender, just like for a
-    /// discv5 message. Notifications should differentiate themsleves from discv5 messages
-    /// (request or response) in the way they handle a session, or rather the absence of a
-    /// session. Notifications that can't be decrypted with existing session keys should be
-    /// dropped.
-    async fn handle_decryption_with_session(
-        &mut self,
-        session_index: NodeAddress, // notif sender
-        notif_nonce: MessageNonce,
-        notif: &[u8],
-        authenticated_data: &[u8],
-    ) -> Result<Vec<u8>, HolePunchError>;
-    /// This node receives a message to relay.
-    async fn on_relay_init(&mut self, notif: RelayInit) -> Result<(), HolePunchError>;
-    /// This node received a relayed message and should punch a hole in its NAT for the initiator.
-    async fn on_relay_msg(&mut self, notif: RelayMsg) -> Result<(), HolePunchError>;
-}
-
-/// A unicast notification sent over discv5.
-pub enum Notification {
-    /// Initialise a one-shot relay circuit.
-    RelayInit(RelayInit),
-    /// A relayed notification.
-    RelayMsg(RelayMsg),
-}
-
-/// A hole punch notification sent to the relay. Contains the node address of the initiator of the
-/// hole punch, the nonce of the request from the initiator to the target that triggered
-/// `on_time_out` and the node address of the hole punch target peer.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RelayInit(pub NodeAddress, pub NonceOfTimedOutMessage, pub NodeAddress);
-
-impl RelayInit {
-    pub fn encode(self) -> Result<Vec<u8>, HolePunchError> {
-        todo!()
-    }
-    pub fn decode(bytes: Vec<u8>) -> Result<Self, HolePunchError> {
-        todo!()
-    }
-}
-
-/// A relayed hole punch notification sent to the target. Contains the node address of the
-/// initiator of the hole punch and the nonce of the initiator's request that timed out, so the
-/// hole punch target peer can respond with WHOAREYOU to the initiator.
-pub struct RelayMsg(NodeAddress, NonceOfTimedOutMessage);
-
-impl RelayMsg {
-    pub fn encode(self) -> Result<Vec<u8>, HolePunchError> {
-        todo!()
-    }
-    pub fn decode(bytes: Vec<u8>) -> Result<Self, HolePunchError> {
-        todo!()
-    }
-}
-
-impl_from_variant_wrap!(RelayInit, Notification, Self::RelayInit);
-impl_from_variant_wrap!(RelayMsg, Notification, Self::RelayMsg);
-
-impl Notification {
-    fn decode(message: Vec<u8>) -> Result<Self, HolePunchError> {
-        // check flag todo(emhane)
-        todo!()
-    }
-    fn encode(self) -> Result<Vec<u8>, HolePunchError> {
-        /// Encodes a Message to RLP-encoded bytes.
-        let mut buf = Vec::with_capacity(10);
-        /*let msg_type = self.msg_type();
-            buf.push(msg_type);
-            let id = &self.id;
-            match self.body {
-                RequestBody::Ping { enr_seq } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(2);
-                    s.append(&id.as_bytes());
-                    s.append(&enr_seq);
-                    buf.extend_from_slice(&s.out());
-                    buf
-                }
-                RequestBody::FindNode { distances } => {
-                    let mut s = RlpStream::new();
-                    s.begin_list(2);
-                    s.append(&id.as_bytes());
-                    s.begin_list(distances.len());
-                    for distance in distances {
-                        s.append(&distance);
-                    }
-                    buf.extend_from_slice(&s.out());
-                    buf
-                }
-        }*/
-        Ok(buf)
-    }
-}
-
 #[async_trait]
 impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
     async fn on_time_out(
@@ -1423,7 +1278,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         // check if we have an available session
         match self.sessions.get_mut(&session_index) {
             Some(session) => {
-                // attempt to decrypt
+                // attempt to decrypt notification (same decryption as for a message)
                 match session.decrypt_message(notif_nonce, notif, authenticated_data) {
                     Err(e) => {
                         // We have a session, but the notification could not be decrypted. It is
@@ -1454,7 +1309,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         // otherwise it is unlikely we have passed the target node to the initiator in a NODES
         // response recently.
         if let Some(session) = self.sessions.get_mut(&target) {
-            // Encrypt the message and send
+            // Encrypt the notification and send (encrypted same way as a message)
             let packet = match session.encrypt_message::<P>(self.node_id, &notif.encode()?) {
                 Ok(packet) => packet,
                 Err(e) => {

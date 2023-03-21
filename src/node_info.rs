@@ -1,7 +1,8 @@
 use super::*;
 use crate::Enr;
 use enr::{CombinedPublicKey, NodeId};
-use std::net::SocketAddr;
+use rlp::{DecoderError, Rlp, RlpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 #[cfg(feature = "libp2p")]
 use libp2p_core::{identity::PublicKey, multiaddr::Protocol, multihash, Multiaddr};
