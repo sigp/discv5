@@ -38,10 +38,8 @@ A simple example of creating this service is as follows:
 
 ```rust
    use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, Discv5ConfigBuilder};
+   use discv5::socket::ListenConfig;
    use std::net::SocketAddr;
-
-   // listening address and port
-   let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
 
    // construct a local ENR
    let enr_key = CombinedKey::generate_secp256k1();
@@ -57,15 +55,21 @@ A simple example of creating this service is as follows:
    // default configuration
    let config = Discv5ConfigBuilder::new().build();
 
+   // configuration for the sockets to listen on
+   let listen_config = ListenConfig::Ipv4 {
+       ip: Ipv4Addr::UNSPECIFIED,
+       port: 9000,
+   };
+
    // construct the discv5 server
-   let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+   let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
 
    // In order to bootstrap the routing table an external ENR should be added
    // This can be done via add_enr. I.e.:
    // discv5.add_enr(<ENR>)
 
    // start the discv5 server
-   runtime.block_on(discv5.start(listen_addr));
+   runtime.block_on(discv5.start());
 
    // run a find_node query
    runtime.block_on(async {
