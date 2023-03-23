@@ -48,7 +48,7 @@ async fn build_service<P: ProtocolIdentity>(
         .executor(Box::<crate::executor::TokioExecutor>::default())
         .build();
     // build the session service
-    let (_handler_exit, handler_send, handler_recv) = Handler::spawn::<P>(
+    let (_handler_exit, handler_send, handler_recv) = Handler::<P>::spawn(
         local_enr.clone(),
         enr_key.clone(),
         listen_socket,
@@ -94,6 +94,7 @@ async fn build_service<P: ProtocolIdentity>(
         event_stream: None,
         exit,
         config,
+        new_peer_latest_relay: Default::default(),
     }
 }
 

@@ -357,6 +357,8 @@ impl Service {
                     match event {
                         HandlerOut::Established(enr, socket_addr, direction) => {
                             self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
+                            // Remove potential relay that may be stored for peer.
+                            self.new_peer_latest_relay.remove(&enr.node_id());
                             self.inject_session_established(enr, direction);
                         }
                         HandlerOut::Request(node_address, request) => {
@@ -648,9 +650,6 @@ impl Service {
             }
 
             let node_id = node_address.node_id;
-
-            // Peer is not behind a NAT. Remove potential relay that may be stored for peer.
-            self.new_peer_latest_relay.remove(&node_id);
 
             match response.body {
                 ResponseBody::Nodes { total, mut nodes } => {
@@ -1174,7 +1173,7 @@ impl Service {
     /// Processes discovered peers from a query.
     fn discovered(&mut self, source: &NodeAddress, mut enrs: Vec<Enr>, query_id: Option<QueryId>) {
         let local_id = self.local_enr.read().node_id();
-        let discovered = enrs.retain(|enr| {
+        enrs.retain(|enr| {
             if enr.node_id() == local_id {
                 return false;
             }
