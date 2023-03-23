@@ -1226,32 +1226,31 @@ impl<P: ProtocolIdentity> Handler<P> {
 
 #[async_trait]
 impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
+    type TNodeAddress = NodeAddress;
+    type TDiscv5Error = Discv5Error;
     async fn on_time_out(
         &mut self,
-        relay: NodeAddress,
-        local_node_address: NodeAddress,
+        relay: Self::TNodeAddress,
+        local_node_address: Self::TNodeAddress,
         timed_out_message_nonce: MessageNonce,
-        target_node_address: NodeAddress,
-    ) -> Result<(), HolePunchError> {
+        target_node_address: Self::TNodeAddress,
+    ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
         // Another hole punch process may have just completed.
         if self.sessions.get(&target_node_address).is_some() {
             return Ok(());
         }
         if let Some(session) = self.sessions.get_mut(&relay) {
             let relay_init_notif = RelayInit(
-                local_node_address,
+                local_node_address.into(),
                 timed_out_message_nonce,
-                target_node_address,
+                target_node_address.into(),
             );
             // Encrypt the message and send
             let packet =
-                match session.encrypt_message::<P>(self.node_id, &relay_init_notif.encode()?) {
+                match session.encrypt_message::<P>(self.node_id, &relay_init_notif.rlp_encode()) {
                     Ok(packet) => packet,
                     Err(e) => {
-                        return Err(HolePunchError::RelayError(format!(
-                            "Could not encrypt notification: {:?}",
-                            e
-                        )));
+                        return Err(HolePunchError::RelayError(e));
                     }
                 };
             self.send(relay, packet).await;
@@ -1270,11 +1269,11 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
 
     async fn handle_decryption_with_session(
         &mut self,
-        session_index: NodeAddress,
+        session_index: Self::TNodeAddress,
         notif_nonce: MessageNonce,
         notif: &[u8],
         authenticated_data: &[u8],
-    ) -> Result<Vec<u8>, HolePunchError> {
+    ) -> Result<Vec<u8>, HolePunchError<Self::TDiscv5Error>> {
         // check if we have an available session
         match self.sessions.get_mut(&session_index) {
             Some(session) => {
@@ -1287,76 +1286,77 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                         // packet. This means we drop the current session and the notification.
                         self.fail_session(&session_index, RequestError::InvalidRemotePacket, true)
                             .await;
-                        return Err(HolePunchError::Session(format!(
-                            "Decryption of notification from node: {} failed. Dropping notification. Error: {:?}",
-                            session_index, e
-                        )));
+                        return Err(HolePunchError::SessionError(e));
                     }
                     Ok(bytes) => Ok(bytes),
                 }
             }
-            None => Err(HolePunchError::Session(format!(
-                "Received a notification without a session. Dropping notification from {}",
-                session_index
-            ))),
+            None => Err(HolePunchError::SessionError(
+                Discv5Error::SessionNotEstablished,
+            )),
         }
     }
 
-    async fn on_relay_init(&mut self, relay_init_notif: RelayInit) -> Result<(), HolePunchError> {
+    async fn on_relay_init(
+        &mut self,
+        relay_init_notif: RelayInit,
+    ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
         let RelayInit(initiator, nonce, target) = relay_init_notif;
-        let notif = Notification::RelayMsg(RelayMsg(initiator, nonce));
+        let notif_for_target = RelayMsg(initiator, nonce);
+        // Overshadow with local version of same type
+        let target: NodeAddress = target.into();
         // Check for an established session. Only relay to peers we have sessions with,
         // otherwise it is unlikely we have passed the target node to the initiator in a NODES
         // response recently.
         if let Some(session) = self.sessions.get_mut(&target) {
             // Encrypt the notification and send (encrypted same way as a message)
-            let packet = match session.encrypt_message::<P>(self.node_id, &notif.encode()?) {
-                Ok(packet) => packet,
-                Err(e) => {
-                    return Err(HolePunchError::RelayError(format!(
-                        "Could not encrypt response: {:?}",
-                        e
-                    )));
-                }
-            };
+            let packet =
+                match session.encrypt_message::<P>(self.node_id, &notif_for_target.rlp_encode()) {
+                    Ok(packet) => packet,
+                    Err(e) => {
+                        return Err(HolePunchError::RelayError(e));
+                    }
+                };
             self.send(target, packet).await;
+            Ok(())
         } else {
             // Either the session is being established or has expired. We simply drop the
             // notification in this case to ensure hole punch round-trip time stays within the
             // time out of the udp entrypoint for the target peer in the intiator's router, set by
             // the original timed out FINDNODE request from the initiator, as the initiator may
             // also be behind a NAT.
-            warn!(
-                "Session is not established. Dropping relayed notification for node: {}",
-                target.node_id
-            );
+            Err(HolePunchError::RelayError(
+                Discv5Error::SessionNotEstablished,
+            ))
         }
-        Ok(())
     }
 
-    async fn on_relay_msg(&mut self, notif: RelayMsg) -> Result<(), HolePunchError> {
+    async fn on_relay_msg(
+        &mut self,
+        notif: RelayMsg,
+    ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
         let RelayMsg(initiator, nonce) = notif;
+        // Overshadow with local version of same type
+        let initiator: NodeAddress = initiator.into();
         // A session may already have been established.
         if self.sessions.get(&initiator).is_some() {
             trace!("Session already established with initiator: {}", initiator);
             return Ok(());
         }
-        // If we haven't already sent a WhoAreYou, possibly punching the same hole using another
-        // relay, spawn a WHOAREYOU event to punch a hole in our NAT for initiator.
-        if self.active_challenges.get(&initiator).is_none() {
-            let whoareyou_ref = WhoAreYouRef(initiator, nonce);
-            if let Err(e) = self
-                .service_send
-                .send(HandlerOut::WhoAreYou(whoareyou_ref))
-                .await
-            {
-                return Err(HolePunchError::TargetError(format!(
-                    "Failed to send WhoAreYou to the service {}",
-                    e
-                )));
-            }
-        } else {
+        // Possibly, an attempt to punch this hole, using another relay, is in progress.
+        if self.active_challenges.get(&initiator).is_some() {
             trace!("WHOAREYOU packet already sent to initiator: {}", initiator);
+            return Ok(());
+        }
+        // If not hole punch attempts are in progress, spawn a WHOAREYOU event to punch a hole in
+        // our NAT for initiator.
+        let whoareyou_ref = WhoAreYouRef(initiator, nonce);
+        if let Err(e) = self
+            .service_send
+            .send(HandlerOut::WhoAreYou(whoareyou_ref))
+            .await
+        {
+            return Err(HolePunchError::TargetError(e.into()));
         }
         Ok(())
     }

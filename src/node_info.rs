@@ -1,8 +1,7 @@
 use super::*;
 use crate::Enr;
 use enr::{CombinedPublicKey, NodeId};
-use rlp::{DecoderError, Rlp, RlpStream};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::SocketAddr;
 
 #[cfg(feature = "libp2p")]
 use libp2p_core::{identity::PublicKey, multiaddr::Protocol, multihash, Multiaddr};
@@ -153,6 +152,32 @@ pub struct NodeAddress {
     pub socket_addr: SocketAddr,
     /// The destination Node Id.
     pub node_id: NodeId,
+}
+
+impl From<nat_hole_punch::NodeAddress> for NodeAddress {
+    fn from(n: nat_hole_punch::NodeAddress) -> Self {
+        let nat_hole_punch::NodeAddress {
+            socket_addr,
+            node_id,
+        } = n;
+        Self {
+            socket_addr,
+            node_id,
+        }
+    }
+}
+
+impl Into<nat_hole_punch::NodeAddress> for NodeAddress {
+    fn into(self) -> nat_hole_punch::NodeAddress {
+        let NodeAddress {
+            socket_addr,
+            node_id,
+        } = self;
+        nat_hole_punch::NodeAddress {
+            socket_addr,
+            node_id,
+        }
+    }
 }
 
 impl Ord for NodeAddress {
