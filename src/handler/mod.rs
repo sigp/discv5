@@ -1285,13 +1285,14 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                 relay
             );
             // Encrypt the message and send
-            let packet =
-                match session.encrypt_message::<P>(self.node_id, &relay_init_notif.rlp_encode()) {
-                    Ok(packet) => packet,
-                    Err(e) => {
-                        return Err(HolePunchError::RelayError(e));
-                    }
-                };
+            let packet = match session
+                .encrypt_notification::<P>(self.node_id, &relay_init_notif.rlp_encode())
+            {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(HolePunchError::RelayError(e));
+                }
+            };
             self.send(relay, packet).await;
         } else {
             // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
@@ -1349,13 +1350,14 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         // response recently.
         if let Some(session) = self.sessions.get_mut(&target) {
             // Encrypt the notification and send (encrypted same way as a message)
-            let packet =
-                match session.encrypt_message::<P>(self.node_id, &notif_for_target.rlp_encode()) {
-                    Ok(packet) => packet,
-                    Err(e) => {
-                        return Err(HolePunchError::RelayError(e));
-                    }
-                };
+            let packet = match session
+                .encrypt_notification::<P>(self.node_id, &notif_for_target.rlp_encode())
+            {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(HolePunchError::RelayError(e));
+                }
+            };
             self.send(target, packet).await;
             Ok(())
         } else {

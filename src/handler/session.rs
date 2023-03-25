@@ -96,6 +96,48 @@ impl Session {
         })
     }
 
+    /// Uses the current `Session` to encrypt a notification. Encrypt packets with the current
+    /// session key if we are awaiting a response from AuthMessage. Same as `encrypt_message`
+    /// apart form the the [`PacketHeader`].
+    pub(crate) fn encrypt_notification<P: ProtocolIdentity>(
+        &mut self,
+        src_id: NodeId,
+        message: &[u8],
+    ) -> Result<Packet, Discv5Error> {
+        self.counter += 1;
+
+        // If the message nonce length is ever set below 4 bytes this will explode. The packet
+        // size constants shouldn't be modified.
+        let random_nonce: [u8; MESSAGE_NONCE_LENGTH - 4] = rand::random();
+        let mut message_nonce: MessageNonce = [0u8; MESSAGE_NONCE_LENGTH];
+        message_nonce[..4].copy_from_slice(&self.counter.to_be_bytes());
+        message_nonce[4..].copy_from_slice(&random_nonce);
+
+        // the authenticated data is the IV concatenated with the packet header
+        let iv: u128 = rand::random();
+        let header = PacketHeader {
+            message_nonce,
+            kind: PacketKind::Notification { src_id },
+        };
+
+        let mut authenticated_data = iv.to_be_bytes().to_vec();
+        authenticated_data.extend_from_slice(&header.encode::<P>());
+
+        let cipher = crypto::encrypt_message(
+            &self.keys.encryption_key,
+            message_nonce,
+            message,
+            &authenticated_data,
+        )?;
+
+        // construct a packet from the header and the cipher text
+        Ok(Packet {
+            iv,
+            header,
+            message: cipher,
+        })
+    }
+
     /// Decrypts an encrypted message. If a Session is already established, the original decryption
     /// keys are tried first, upon failure, the new keys are attempted. If the new keys succeed,
     /// the session keys are updated along with the Session state.
