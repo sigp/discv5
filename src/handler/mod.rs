@@ -1224,7 +1224,7 @@ impl<P: ProtocolIdentity> Handler<P> {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
     type TNodeAddress = NodeAddress;
     type TDiscv5Error = Discv5Error;
