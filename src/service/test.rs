@@ -94,7 +94,6 @@ async fn build_service<P: ProtocolIdentity>(
         event_stream: None,
         exit,
         config,
-        new_peer_latest_relay: Default::default(),
     }
 }
 

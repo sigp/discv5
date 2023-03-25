@@ -34,7 +34,7 @@ use crate::{
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
     socket::{FilterConfig, Socket},
-    Enr,
+    Enr, IpMode,
 };
 use async_trait::async_trait;
 use delay_map::HashMapDelay;
@@ -105,13 +105,6 @@ pub enum HandlerIn {
     /// The `WhoAreYouRef` is sent out in the `HandlerOut::WhoAreYou` event and should
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
-
-    /// The node address of the relay, the local node address, the message nonce of the timed out
-    /// request and the node address of the target peer to hole punch and a rleay init
-    /// notification. A FINDNODE request to a peer discovered in a find node query has timed out.
-    /// The target of that request may be behind a NAT. The peer which passed us the target in a
-    /// NODES response, is used as relay to attmept punching a hole in the targets NAT.
-    HolePunch(NodeAddress, NodeAddress, MessageNonce, NodeAddress),
 }
 
 /// Messages sent between a node on the network and `Handler`.
@@ -136,10 +129,8 @@ pub enum HandlerOut {
 
     /// An RPC request failed.
     ///
-    /// This returns the request ID, an error indicating why the request failed and possibly also
-    /// the message nonce to allow for attempting NAT hole punching (attempted upon request time
-    /// out).
-    RequestFailed(RequestId, RequestError, Option<MessageNonce>),
+    /// This returns the request ID, an error indicating why the request failed.
+    RequestFailed(RequestId, RequestError),
 }
 
 /// How we connected to the node.
@@ -212,7 +203,14 @@ pub struct Handler<P: ProtocolIdentity> {
     socket: Socket,
     /// Exit channel to shutdown the handler.
     exit: oneshot::Receiver<()>,
+    /// Access generic when implementing traits for Handler.
     _phantom: PhantomData<P>,
+    /// The last peer to send us a new peer in a NODES response is stored as the new peer's
+    /// potential relay until the first request to the new peer after its discovery is either
+    /// responded or failed.
+    new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
+    /// Ip mode as set in config.
+    ip_mode: IpMode,
 }
 
 type HandlerReturn = (
@@ -264,6 +262,8 @@ impl<P: ProtocolIdentity> Handler<P> {
         // Attempt to bind to the socket before spinning up the send/recv tasks.
         let socket = Socket::new::<P>(socket_config).await?;
 
+        let ip_mode = config.ip_mode;
+
         config
             .executor
             .clone()
@@ -288,6 +288,8 @@ impl<P: ProtocolIdentity> Handler<P> {
                     socket,
                     exit,
                     _phantom: PhantomData,
+                    new_peer_latest_relay: Default::default(),
+                    ip_mode,
                 };
                 debug!("Handler Starting");
                 handler.start().await;
@@ -308,22 +310,13 @@ impl<P: ProtocolIdentity> Handler<P> {
                             let Request { id, body: request } = *request;
                             if let Err(request_error) =  self.send_request(contact, HandlerReqId::External(id.clone()), request).await {
                                 // If the sending failed report to the application
-                                if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error, None)).await {
+                                if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
                                     warn!("Failed to inform that request failed {}", e)
                                 }
                             }
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
-                        HandlerIn::HolePunch(relay, local_node_address,
-                            message_nonce,
-                            target_node_address) => {
-                            if let Err(e) = self.on_time_out(relay, local_node_address,
-                                message_nonce,
-                                target_node_address).await {
-                                warn!("Failed to start hole punching. Error: {:?}", e);
-                            }
-                        }
                     }
                 }
                 Some(inbound_packet) = self.socket.recv.recv() => {
@@ -444,6 +437,31 @@ impl<P: ProtocolIdentity> Handler<P> {
     ) {
         if request_call.retries() >= self.request_retries {
             trace!("Request timed out with {}", node_address);
+            if let Some(relay) = self.new_peer_latest_relay.remove(&node_address.node_id) {
+                // The request might be timing out because the peer is behind a NAT. If we
+                // have a relay to the peer, attempt NAT hole punching.
+                let target = request_call.contact().node_address();
+                let (socket_addr, node_id) = {
+                    let local_enr = self.enr.read();
+                    let socket_addr = self.ip_mode.get_contactable_addr(&local_enr);
+                    let node_id = local_enr.node_id();
+                    (socket_addr, node_id)
+                };
+                if let Some(socket_addr) = socket_addr {
+                    let local_node_address = NodeAddress {
+                        socket_addr,
+                        node_id,
+                    };
+                    let nonce = request_call.packet().header.message_nonce;
+                    if let Err(e) = self
+                        .on_time_out(relay, local_node_address.into(), nonce, target.into())
+                        .await
+                    {
+                        warn!("Failed to start hole punching. Error: {:?}", e);
+                    }
+                    return;
+                }
+            }
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);
             // The request has timed out. We keep any established session for future use.
@@ -477,7 +495,8 @@ impl<P: ProtocolIdentity> Handler<P> {
             return Err(RequestError::SelfRequest);
         }
 
-        // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
+        // If there is already an active request or an active challenge (WHOAREYOU sent) for this
+        // node, add to pending requests
         if self.active_requests.get(&node_address).is_some()
             || self.active_challenges.get(&node_address).is_some()
         {
@@ -819,6 +838,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                             warn!("Failed to inform of established session {}", e)
                         }
                         self.new_session(node_address.clone(), session);
+                        self.new_peer_latest_relay.remove(&node_address.node_id);
                         self.handle_message(
                             node_address.clone(),
                             message_nonce,
@@ -896,7 +916,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                         HandlerReqId::External(id) => {
                             if let Err(e) = self
                                 .service_send
-                                .send(HandlerOut::RequestFailed(id, request_error, None))
+                                .send(HandlerOut::RequestFailed(id, request_error))
                                 .await
                             {
                                 warn!("Failed to inform that request failed {}", e);
@@ -1056,7 +1076,19 @@ impl<P: ProtocolIdentity> Handler<P> {
 
             // Check to see if this is a Nodes response, in which case we may require to wait for
             // extra responses
-            if let ResponseBody::Nodes { total, .. } = response.body {
+            if let ResponseBody::Nodes { total, ref nodes } = response.body {
+                for node in nodes {
+                    if let Some(socket_addr) = self.ip_mode.get_contactable_addr(node) {
+                        let node_id = node.node_id();
+                        let node_address = NodeAddress {
+                            socket_addr,
+                            node_id,
+                        };
+                        if self.sessions.get(&node_address).is_none() {
+                            self.new_peer_latest_relay.insert(node_id, node_address);
+                        }
+                    }
+                }
                 if total > 1 {
                     // This is a multi-response Nodes response
                     if let Some(remaining_responses) = request_call.remaining_responses_mut() {
@@ -1150,19 +1182,15 @@ impl<P: ProtocolIdentity> Handler<P> {
             HandlerReqId::External(id) => {
                 if let Err(e) = self
                     .service_send
-                    .send(HandlerOut::RequestFailed(
-                        id.clone(),
-                        error.clone(),
-                        Some(request_call.packet().header.message_nonce),
-                    ))
+                    .send(HandlerOut::RequestFailed(id.clone(), error.clone()))
                     .await
                 {
                     warn!("Failed to inform request failure {}", e)
                 }
             }
         }
-
         let node_address = request_call.contact().node_address();
+        self.new_peer_latest_relay.remove(&node_address.node_id);
         self.fail_session(&node_address, error, remove_session)
             .await;
     }
@@ -1189,7 +1217,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     HandlerReqId::External(id) => {
                         if let Err(e) = self
                             .service_send
-                            .send(HandlerOut::RequestFailed(id, error.clone(), None))
+                            .send(HandlerOut::RequestFailed(id, error.clone()))
                             .await
                         {
                             warn!("Failed to inform request failure {}", e)
@@ -1224,7 +1252,7 @@ impl<P: ProtocolIdentity> Handler<P> {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
     type TNodeAddress = NodeAddress;
     type TDiscv5Error = Discv5Error;
@@ -1232,7 +1260,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         &mut self,
         relay: Self::TNodeAddress,
         local_node_address: Self::TNodeAddress,
-        timed_out_message_nonce: MessageNonce,
+        message_nonce: MessageNonce,
         target_node_address: Self::TNodeAddress,
     ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
         // Another hole punch process may have just completed.
@@ -1242,7 +1270,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         if let Some(session) = self.sessions.get_mut(&relay) {
             let relay_init_notif = RelayInit(
                 local_node_address.into(),
-                timed_out_message_nonce,
+                message_nonce,
                 target_node_address.into(),
             );
             // Encrypt the message and send
