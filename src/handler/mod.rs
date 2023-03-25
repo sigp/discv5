@@ -441,6 +441,11 @@ impl<P: ProtocolIdentity> Handler<P> {
                 // The request might be timing out because the peer is behind a NAT. If we
                 // have a relay to the peer, attempt NAT hole punching.
                 let target = request_call.contact().node_address();
+                trace!(
+                    "Trying to hole punch target {} with relay {:?}",
+                    target,
+                    relay
+                );
                 let (socket_addr, node_id) = {
                     let local_enr = self.enr.read();
                     let socket_addr = self.ip_mode.get_contactable_addr(&local_enr);
@@ -1273,6 +1278,11 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                 local_node_address.into(),
                 message_nonce,
                 target_node_address.into(),
+            );
+            trace!(
+                "Sending realy init notif {:?} to relay {:?}",
+                relay_init_notif,
+                relay
             );
             // Encrypt the message and send
             let packet =
