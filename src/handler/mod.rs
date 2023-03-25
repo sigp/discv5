@@ -1084,7 +1084,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                             socket_addr,
                             node_id,
                         };
-                        if self.sessions.get(&node_address).is_none() {
+                        if self.sessions.peek(&node_address).is_none() {
                             self.new_peer_latest_relay.insert(node_id, node_address);
                         }
                     }
