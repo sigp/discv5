@@ -1080,12 +1080,13 @@ impl<P: ProtocolIdentity> Handler<P> {
                 for node in nodes {
                     if let Some(socket_addr) = self.ip_mode.get_contactable_addr(node) {
                         let node_id = node.node_id();
-                        let node_address = NodeAddress {
+                        let new_peer_node_address = NodeAddress {
                             socket_addr,
                             node_id,
                         };
-                        if self.sessions.peek(&node_address).is_none() {
-                            self.new_peer_latest_relay.insert(node_id, node_address);
+                        if self.sessions.peek(&new_peer_node_address).is_none() {
+                            self.new_peer_latest_relay
+                                .insert(node_id, node_address.clone());
                         }
                     }
                 }
