@@ -464,6 +464,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     {
                         warn!("Failed to start hole punching. Error: {:?}", e);
                     }
+                    self.active_requests.insert(node_address, request_call);
                     return;
                 }
             }
