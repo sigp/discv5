@@ -162,7 +162,7 @@ impl From<nat_hole_punch::NodeAddress> for NodeAddress {
         } = n;
         Self {
             socket_addr,
-            node_id,
+            node_id: NodeId::new(&node_id),
         }
     }
 }
@@ -175,7 +175,7 @@ impl Into<nat_hole_punch::NodeAddress> for NodeAddress {
         } = self;
         nat_hole_punch::NodeAddress {
             socket_addr,
-            node_id,
+            node_id: node_id.raw(),
         }
     }
 }
