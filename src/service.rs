@@ -266,6 +266,7 @@ impl Service {
         let (handler_exit, handler_send, handler_recv) = Handler::<P>::spawn(
             local_enr.clone(),
             enr_key.clone(),
+            kbuckets.clone(),
             listen_socket,
             config.clone(),
         )

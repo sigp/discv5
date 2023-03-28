@@ -154,32 +154,6 @@ pub struct NodeAddress {
     pub node_id: NodeId,
 }
 
-impl From<nat_hole_punch::NodeAddress> for NodeAddress {
-    fn from(n: nat_hole_punch::NodeAddress) -> Self {
-        let nat_hole_punch::NodeAddress {
-            socket_addr,
-            node_id,
-        } = n;
-        Self {
-            socket_addr,
-            node_id: NodeId::new(&node_id),
-        }
-    }
-}
-
-impl Into<nat_hole_punch::NodeAddress> for NodeAddress {
-    fn into(self) -> nat_hole_punch::NodeAddress {
-        let NodeAddress {
-            socket_addr,
-            node_id,
-        } = self;
-        nat_hole_punch::NodeAddress {
-            socket_addr,
-            node_id: node_id.raw(),
-        }
-    }
-}
-
 impl Ord for NodeAddress {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let ord = self.node_id.raw().cmp(&other.node_id.raw());

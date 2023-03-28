@@ -30,6 +30,8 @@ use crate::{
     config::Discv5Config,
     discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
+    kbucket,
+    kbucket::KBucketsTable,
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
@@ -205,12 +207,8 @@ pub struct Handler<P: ProtocolIdentity> {
     exit: oneshot::Receiver<()>,
     /// Access generic when implementing traits for Handler.
     _phantom: PhantomData<P>,
-    /// The last peer to send us a new peer in a NODES response is stored as the new peer's
-    /// potential relay until the first request to the new peer after its discovery is either
-    /// responded or failed.
-    new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
-    /// Ip mode as set in config.
-    ip_mode: IpMode,
+    /// Types necessary to plug in nat hole punching.
+    nat_hole_puncher: NatHolePuncher,
 }
 
 type HandlerReturn = (
@@ -224,6 +222,7 @@ impl<P: ProtocolIdentity> Handler<P> {
     pub async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
+        kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         listen_socket: SocketAddr,
         config: Discv5Config,
     ) -> Result<HandlerReturn, std::io::Error> {
@@ -262,7 +261,11 @@ impl<P: ProtocolIdentity> Handler<P> {
         // Attempt to bind to the socket before spinning up the send/recv tasks.
         let socket = Socket::new::<P>(socket_config).await?;
 
-        let ip_mode = config.ip_mode;
+        let nat_hole_puncher = NatHolePuncher {
+            new_peer_latest_relay: Default::default(),
+            ip_mode: config.ip_mode,
+            kbuckets,
+        };
 
         config
             .executor
@@ -288,8 +291,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     socket,
                     exit,
                     _phantom: PhantomData,
-                    new_peer_latest_relay: Default::default(),
-                    ip_mode,
+                    nat_hole_puncher,
                 };
                 debug!("Handler Starting");
                 handler.start().await;
@@ -437,7 +439,11 @@ impl<P: ProtocolIdentity> Handler<P> {
     ) {
         if request_call.retries() >= self.request_retries {
             trace!("Request timed out with {}", node_address);
-            if let Some(relay) = self.new_peer_latest_relay.remove(&node_address.node_id) {
+            if let Some(relay) = self
+                .nat_hole_puncher
+                .new_peer_latest_relay
+                .remove(&node_address.node_id)
+            {
                 // The request might be timing out because the peer is behind a NAT. If we
                 // have a relay to the peer, attempt NAT hole punching.
                 let target = request_call.contact().node_address();
@@ -446,27 +452,16 @@ impl<P: ProtocolIdentity> Handler<P> {
                     target,
                     relay
                 );
-                let (socket_addr, node_id) = {
-                    let local_enr = self.enr.read();
-                    let socket_addr = self.ip_mode.get_contactable_addr(&local_enr);
-                    let node_id = local_enr.node_id();
-                    (socket_addr, node_id)
-                };
-                if let Some(socket_addr) = socket_addr {
-                    let local_node_address = NodeAddress {
-                        socket_addr,
-                        node_id,
-                    };
-                    let nonce = request_call.packet().header.message_nonce;
-                    if let Err(e) = self
-                        .on_time_out(relay, local_node_address.into(), nonce, target.into())
-                        .await
-                    {
-                        warn!("Failed to start hole punching. Error: {:?}", e);
-                    }
-                    self.active_requests.insert(node_address, request_call);
-                    return;
+                let local_enr = self.enr.read().clone();
+                let nonce = request_call.packet().header.message_nonce;
+                if let Err(e) = self
+                    .on_time_out(relay, local_enr, nonce, target.into())
+                    .await
+                {
+                    warn!("Failed to start hole punching. Error: {:?}", e);
                 }
+                self.active_requests.insert(node_address, request_call);
+                return;
             }
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);
@@ -844,7 +839,9 @@ impl<P: ProtocolIdentity> Handler<P> {
                             warn!("Failed to inform of established session {}", e)
                         }
                         self.new_session(node_address.clone(), session);
-                        self.new_peer_latest_relay.remove(&node_address.node_id);
+                        self.nat_hole_puncher
+                            .new_peer_latest_relay
+                            .remove(&node_address.node_id);
                         self.handle_message(
                             node_address.clone(),
                             message_nonce,
@@ -1084,14 +1081,17 @@ impl<P: ProtocolIdentity> Handler<P> {
             // extra responses
             if let ResponseBody::Nodes { total, ref nodes } = response.body {
                 for node in nodes {
-                    if let Some(socket_addr) = self.ip_mode.get_contactable_addr(node) {
+                    if let Some(socket_addr) =
+                        self.nat_hole_puncher.ip_mode.get_contactable_addr(node)
+                    {
                         let node_id = node.node_id();
                         let new_peer_node_address = NodeAddress {
                             socket_addr,
                             node_id,
                         };
                         if self.sessions.peek(&new_peer_node_address).is_none() {
-                            self.new_peer_latest_relay
+                            self.nat_hole_puncher
+                                .new_peer_latest_relay
                                 .insert(node_id, node_address.clone());
                         }
                     }
@@ -1197,7 +1197,9 @@ impl<P: ProtocolIdentity> Handler<P> {
             }
         }
         let node_address = request_call.contact().node_address();
-        self.new_peer_latest_relay.remove(&node_address.node_id);
+        self.nat_hole_puncher
+            .new_peer_latest_relay
+            .remove(&node_address.node_id);
         self.fail_session(&node_address, error, remove_session)
             .await;
     }
@@ -1261,24 +1263,25 @@ impl<P: ProtocolIdentity> Handler<P> {
 
 #[async_trait]
 impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
+    type TEnr = Enr;
     type TNodeAddress = NodeAddress;
     type TDiscv5Error = Discv5Error;
     async fn on_time_out(
         &mut self,
         relay: Self::TNodeAddress,
-        local_node_address: Self::TNodeAddress,
-        message_nonce: MessageNonce,
-        target_node_address: Self::TNodeAddress,
+        local_enr: Self::TEnr,
+        timed_out_message_nonce: MessageNonce,
+        target_session_index: Self::TNodeAddress,
     ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
-        // Another hole punch process may have just completed.
-        if self.sessions.get(&target_node_address).is_some() {
+        // Another hole punch process with this target may have just completed.
+        if self.sessions.get(&target_session_index).is_some() {
             return Ok(());
         }
         if let Some(session) = self.sessions.get_mut(&relay) {
             let relay_init_notif = RelayInit(
-                local_node_address.into(),
-                message_nonce,
-                target_node_address.into(),
+                local_enr,
+                target_session_index.node_id.raw(),
+                timed_out_message_nonce,
             );
             trace!(
                 "Sending realy init notif {:?} to relay {:?}",
@@ -1310,7 +1313,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
 
     async fn handle_decryption_with_session(
         &mut self,
-        session_index: Self::TNodeAddress,
+        session_index: Self::TNodeAddress, // notif sender
         notif_nonce: MessageNonce,
         notif: &[u8],
         authenticated_data: &[u8],
@@ -1340,17 +1343,30 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
 
     async fn on_relay_init(
         &mut self,
-        relay_init_notif: RelayInit,
+        notif: RelayInit<Self::TEnr>,
     ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
-        let RelayInit(initiator, nonce, target) = relay_init_notif;
+        let RelayInit(initiator, tgt, nonce) = notif;
         let notif_for_target = RelayMsg(initiator, nonce);
-        // Overshadow with local version of same type
-        let target: NodeAddress = target.into();
-        // Check for an established session. Only relay to peers we have sessions with,
-        // otherwise it is unlikely we have passed the target node to the initiator in a NODES
-        // response recently.
-        if let Some(session) = self.sessions.get_mut(&target) {
-            // Encrypt the notification and send (encrypted same way as a message)
+
+        // Check for target peer in our kbuckets otherwise drop notification.
+        let tgt_node_id = NodeId::new(&tgt);
+        let key = kbucket::Key::from(tgt_node_id);
+        let tgt_enr = match self.nat_hole_puncher.kbuckets.read().get_enr(&key) {
+            Some(enr) => enr.clone(),
+            None => {
+                return Err(HolePunchError::RelayError(Discv5Error::Custom(
+                    "Target peer not in kbuckets",
+                )))
+            }
+        };
+
+        let tgt_node_address =
+            match NodeContact::try_from_enr(tgt_enr, self.nat_hole_puncher.ip_mode) {
+                Ok(contact) => contact.node_address(),
+                Err(e) => return Err(HolePunchError::RelayError(e.into())),
+            };
+        if let Some(session) = self.sessions.get_mut(&tgt_node_address) {
+            // Encrypt the notification and send
             let packet = match session
                 .encrypt_notification::<P>(self.node_id, &notif_for_target.rlp_encode())
             {
@@ -1359,7 +1375,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                     return Err(HolePunchError::RelayError(e));
                 }
             };
-            self.send(target, packet).await;
+            self.send(tgt_node_address, packet).await;
             Ok(())
         } else {
             // Either the session is being established or has expired. We simply drop the
@@ -1375,24 +1391,39 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
 
     async fn on_relay_msg(
         &mut self,
-        notif: RelayMsg,
+        notif: RelayMsg<Self::TEnr>,
     ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
         let RelayMsg(initiator, nonce) = notif;
-        // Overshadow with local version of same type
-        let initiator: NodeAddress = initiator.into();
+
+        let initiator_node_address =
+            match NodeContact::try_from_enr(initiator, self.nat_hole_puncher.ip_mode) {
+                Ok(contact) => contact.node_address(),
+                Err(e) => return Err(HolePunchError::TargetError(e.into())),
+            };
+
         // A session may already have been established.
-        if self.sessions.get(&initiator).is_some() {
-            trace!("Session already established with initiator: {}", initiator);
+        if self.sessions.get(&initiator_node_address).is_some() {
+            trace!(
+                "Session already established with initiator: {}",
+                initiator_node_address
+            );
             return Ok(());
         }
         // Possibly, an attempt to punch this hole, using another relay, is in progress.
-        if self.active_challenges.get(&initiator).is_some() {
-            trace!("WHOAREYOU packet already sent to initiator: {}", initiator);
+        if self
+            .active_challenges
+            .get(&initiator_node_address)
+            .is_some()
+        {
+            trace!(
+                "WHOAREYOU packet already sent to initiator: {}",
+                initiator_node_address
+            );
             return Ok(());
         }
         // If not hole punch attempts are in progress, spawn a WHOAREYOU event to punch a hole in
         // our NAT for initiator.
-        let whoareyou_ref = WhoAreYouRef(initiator, nonce);
+        let whoareyou_ref = WhoAreYouRef(initiator_node_address, nonce);
         if let Err(e) = self
             .service_send
             .send(HandlerOut::WhoAreYou(whoareyou_ref))
@@ -1402,4 +1433,17 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         }
         Ok(())
     }
+}
+
+/// Types necessary implement trait [`NatHolePunch`].
+struct NatHolePuncher {
+    /// The last peer to send us a new peer in a NODES response is stored as the new peer's
+    /// potential relay until the first request to the new peer after its discovery is either
+    /// responded or failed.
+    new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
+    /// Ip mode as set in config.
+    ip_mode: IpMode,
+    /// The KBuckets. Handler should only be read the kbuckets! Holding write locks may change
+    /// flow too much and this has not been examined.
+    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
 }

@@ -58,6 +58,7 @@ macro_rules! impl_from_to_variant {
 }
 
 impl_from_to_variant!(<T,>, tokio::sync::mpsc::error::SendError<T>, Discv5Error, Self::ServiceChannelClosed);
+impl_from_to_variant!(, NonContactable, Discv5Error, Self::InvalidEnr);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Types of packet errors.
