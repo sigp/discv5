@@ -1,6 +1,5 @@
 use crate::{
-    ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter,
-    RateLimiterBuilder,
+    kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
 };
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
@@ -299,13 +298,6 @@ impl Discv5ConfigBuilder {
     /// timing support.
     pub fn executor(&mut self, executor: Box<dyn Executor + Send + Sync>) -> &mut Self {
         self.config.executor = Some(executor);
-        self
-    }
-
-    /// Configures the type of socket to bind to. This also affects the selection of address to use
-    /// to contact an ENR.
-    pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
-        self.config.ip_mode = ip_mode;
         self
     }
 

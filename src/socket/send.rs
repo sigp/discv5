@@ -1,6 +1,6 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
 use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
@@ -16,8 +16,10 @@ pub struct OutboundPacket {
 
 /// The main task that handles outbound UDP packets.
 pub(crate) struct SendHandler {
-    /// The UDP send socket.
-    send: Arc<UdpSocket>,
+    /// The UDP send socket for IPv4.
+    send_ipv4: Option<Arc<UdpSocket>>,
+    /// The UDP send socket for IPv6.
+    send_ipv6: Option<Arc<UdpSocket>>,
     /// The channel to respond to send requests.
     handler_recv: mpsc::Receiver<OutboundPacket>,
     /// Exit channel to shutdown the handler.
@@ -30,14 +32,15 @@ impl SendHandler {
     /// shutdown the handler.
     pub(crate) fn spawn(
         executor: Box<dyn Executor>,
-        send: Arc<UdpSocket>,
-        second_send: Option<Arc<UdpSocket>>,
+        send_ipv4: Option<Arc<UdpSocket>>,
+        send_ipv6: Option<Arc<UdpSocket>>,
     ) -> (mpsc::Sender<OutboundPacket>, oneshot::Sender<()>) {
         let (exit_send, exit) = oneshot::channel();
         let (handler_send, handler_recv) = mpsc::channel(30);
 
         let mut send_handler = SendHandler {
-            send,
+            send_ipv4,
+            send_ipv6,
             handler_recv,
             exit,
         };
@@ -59,7 +62,7 @@ impl SendHandler {
                     if encoded_packet.len() > MAX_PACKET_SIZE {
                         warn!("Sending packet larger than max size: {} max: {}", encoded_packet.len(), MAX_PACKET_SIZE);
                     }
-                    if let Err(e) = self.send.send_to(&encoded_packet, &packet.node_address.socket_addr).await {
+                    if let Err(e) = self.send(&encoded_packet, &packet.node_address.socket_addr).await {
                         trace!("Could not send packet. Error: {:?}", e);
                     } else {
                         METRICS.add_sent_bytes(encoded_packet.len());
@@ -71,5 +74,33 @@ impl SendHandler {
                 }
             }
         }
+    }
+
+    async fn send(
+        &self,
+        encoded_packet: &Vec<u8>,
+        socket_addr: &SocketAddr,
+    ) -> Result<usize, String> {
+        let socket = match socket_addr {
+            SocketAddr::V4(_) => {
+                if let Some(socket) = self.send_ipv4.as_ref() {
+                    socket
+                } else {
+                    return Err("No IPv4 socket.".to_string());
+                }
+            }
+            SocketAddr::V6(_) => {
+                if let Some(socket) = self.send_ipv6.as_ref() {
+                    socket
+                } else {
+                    return Err("No IPv6 socket.".to_string());
+                }
+            }
+        };
+
+        socket
+            .send_to(encoded_packet, socket_addr)
+            .await
+            .map_err(|e| e.to_string())
     }
 }

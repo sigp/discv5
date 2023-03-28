@@ -1,5 +1,10 @@
-use crate::Enr;
+use crate::{
+    socket::ListenConfig,
+    Enr,
+    IpMode::{DualStack, Ip4, Ip6},
+};
 use std::net::SocketAddr;
+
 ///! A set of configuration parameters to tune the discovery protocol.
 
 /// Sets the socket type to be established and also determines the type of ENRs that we will store
@@ -11,7 +16,7 @@ pub enum IpMode {
     /// routing table if they contain a contactable IPv4 address.
     #[default]
     Ip4,
-    /// IPv4 only. This creates an IPv6 only UDP socket and will only store ENRs in the local
+    /// IPv6 only. This creates an IPv6 only UDP socket and will only store ENRs in the local
     /// routing table if they contain a contactable IPv6 address. Mapped addresses will be
     /// disabled.
     Ip6,
@@ -20,15 +25,23 @@ pub enum IpMode {
 }
 
 impl IpMode {
+    pub(crate) fn new_from_listen_config(listen_config: &ListenConfig) -> Self {
+        match listen_config {
+            ListenConfig::Ipv4 { .. } => Ip4,
+            ListenConfig::Ipv6 { .. } => Ip6,
+            ListenConfig::DualStack { .. } => DualStack,
+        }
+    }
+
     pub fn is_ipv4(&self) -> bool {
-        self == &IpMode::Ip4
+        self == &Ip4
     }
 
     /// Get the contactable Socket address of an Enr under current configuration. When running in
     /// dual stack, an Enr that advertises both an Ipv4 and a canonical Ipv6 address will be
     /// contacted using their Ipv6 address.
     pub fn get_contactable_addr(&self, enr: &Enr) -> Option<SocketAddr> {
-        // A function to get a cononical ipv6 address from an Enr
+        // A function to get a canonical ipv6 address from an Enr
 
         /// NOTE: There is nothing in the spec preventing compat/mapped addresses from being
         /// transmitted in the ENR. Here we choose to enforce canonical addresses since
@@ -45,9 +58,9 @@ impl IpMode {
         }
 
         match self {
-            IpMode::Ip4 => enr.udp4_socket().map(SocketAddr::V4),
-            IpMode::Ip6 => canonical_ipv6_enr_addr(enr).map(SocketAddr::V6),
-            IpMode::DualStack => {
+            Ip4 => enr.udp4_socket().map(SocketAddr::V4),
+            Ip6 => canonical_ipv6_enr_addr(enr).map(SocketAddr::V6),
+            DualStack => {
                 canonical_ipv6_enr_addr(enr)
                     .map(SocketAddr::V6)
                     // NOTE: general consensus is that ipv6 addresses should be preferred.
@@ -80,7 +93,7 @@ mod tests {
                 name,
                 enr_ip4: None,
                 enr_ip6: None,
-                ip_mode: IpMode::Ip4,
+                ip_mode: Ip4,
                 expected_socket_addr: None,
             }
         }
@@ -139,15 +152,15 @@ mod tests {
     fn empty_enr_no_contactable_address() {
         // Empty ENR
         TestCase::new("Empty enr is non contactable by ip4 node")
-            .ip_mode(IpMode::Ip4)
+            .ip_mode(Ip4)
             .test();
 
         TestCase::new("Empty enr is not contactable by ip6 only node")
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .test();
 
         TestCase::new("Empty enr is not contactable by dual stack node")
-            .ip_mode(IpMode::DualStack)
+            .ip_mode(DualStack)
             .test();
     }
 
@@ -156,18 +169,18 @@ mod tests {
         // Ip4 only ENR
         TestCase::new("Ipv4 only enr is contactable by ip4 node")
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip4)
+            .ip_mode(Ip4)
             .expect_ip4(Ipv4Addr::LOCALHOST)
             .test();
 
         TestCase::new("Ipv4 only enr is not contactable by ip6 only node")
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .test();
 
         TestCase::new("Ipv4 only enr is contactable by dual stack node")
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::DualStack)
+            .ip_mode(DualStack)
             .expect_ip4(Ipv4Addr::LOCALHOST)
             .test();
     }
@@ -177,18 +190,18 @@ mod tests {
         // Ip4 only ENR
         TestCase::new("Ipv6 only enr is not contactable by ip4 node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip4)
+            .ip_mode(Ip4)
             .test();
 
         TestCase::new("Ipv6 only enr is contactable by ip6 only node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
 
         TestCase::new("Ipv6 only enr is contactable by dual stack node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
-            .ip_mode(IpMode::DualStack)
+            .ip_mode(DualStack)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
     }
@@ -199,21 +212,21 @@ mod tests {
         TestCase::new("Dual stack enr is contactable by ip4 node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip4)
+            .ip_mode(Ip4)
             .expect_ip4(Ipv4Addr::LOCALHOST)
             .test();
 
         TestCase::new("Dual stack enr is contactable by ip6 only node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
 
         TestCase::new("Dual stack enr is contactable by dual stack node")
             .enr_ip6(Ipv6Addr::LOCALHOST)
             .enr_ip4(Ipv4Addr::LOCALHOST)
-            .ip_mode(IpMode::Ip6)
+            .ip_mode(Ip6)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
     }

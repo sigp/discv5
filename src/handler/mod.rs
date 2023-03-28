@@ -40,6 +40,7 @@ use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use parking_lot::RwLock;
+use smallvec::SmallVec;
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -63,7 +64,7 @@ pub use crate::node_info::{NodeAddress, NodeContact};
 
 use crate::metrics::METRICS;
 
-use crate::lru_time_cache::LruTimeCache;
+use crate::{lru_time_cache::LruTimeCache, socket::ListenConfig};
 use active_requests::ActiveRequests;
 use request_call::RequestCall;
 use session::Session;
@@ -194,8 +195,8 @@ pub struct Handler {
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
     service_send: mpsc::Sender<HandlerOut>,
-    /// The listening socket to filter out any attempted requests to self.
-    listen_socket: SocketAddr,
+    /// The listening sockets to filter out any attempted requests to self.
+    listen_sockets: SmallVec<[SocketAddr; 2]>,
     /// The discovery v5 UDP socket tasks.
     socket: Socket,
     /// Exit channel to shutdown the handler.
@@ -213,8 +214,8 @@ impl Handler {
     pub async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
-        listen_socket: SocketAddr,
         config: Discv5Config,
+        listen_config: ListenConfig,
     ) -> Result<HandlerReturn, std::io::Error> {
         let (exit_sender, exit) = oneshot::channel();
         // create the channels to send/receive messages from the application
@@ -230,7 +231,6 @@ impl Handler {
         let node_id = enr.read().node_id();
 
         // enable the packet filter if required
-
         let filter_config = FilterConfig {
             enabled: config.enable_packet_filter,
             rate_limiter: config.filter_rate_limiter.clone(),
@@ -238,14 +238,28 @@ impl Handler {
             max_bans_per_ip: config.filter_max_bans_per_ip,
         };
 
+        let mut listen_sockets = SmallVec::default();
+        match listen_config {
+            ListenConfig::Ipv4 { ip, port } => listen_sockets.push((ip, port).into()),
+            ListenConfig::Ipv6 { ip, port } => listen_sockets.push((ip, port).into()),
+            ListenConfig::DualStack {
+                ipv4,
+                ipv4_port,
+                ipv6,
+                ipv6_port,
+            } => {
+                listen_sockets.push((ipv4, ipv4_port).into());
+                listen_sockets.push((ipv6, ipv6_port).into());
+            }
+        };
+
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
-            socket_addr: listen_socket,
             filter_config,
+            listen_config,
             local_node_id: node_id,
             expected_responses: filter_expected_responses.clone(),
             ban_duration: config.ban_duration,
-            ip_mode: config.ip_mode,
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
@@ -271,7 +285,7 @@ impl Handler {
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
                     service_send,
-                    listen_socket,
+                    listen_sockets,
                     socket,
                     exit,
                 };
@@ -431,7 +445,7 @@ impl Handler {
     ) -> Result<(), RequestError> {
         let node_address = contact.node_address();
 
-        if node_address.socket_addr == self.listen_socket {
+        if self.listen_sockets.contains(&node_address.socket_addr) {
             debug!("Filtered request to self");
             return Err(RequestError::SelfRequest);
         }

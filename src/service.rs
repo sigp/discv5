@@ -151,7 +151,7 @@ pub enum ServiceRequest {
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
-use crate::discv5::PERMIT_BAN_LIST;
+use crate::{discv5::PERMIT_BAN_LIST, socket::ListenConfig};
 
 pub struct Service {
     /// Configuration parameters.
@@ -253,7 +253,7 @@ impl Service {
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
-        listen_socket: SocketAddr,
+        listen_config: ListenConfig,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
@@ -265,12 +265,14 @@ impl Service {
             None
         };
 
+        let ip_mode = IpMode::new_from_listen_config(&listen_config);
+
         // build the session service
         let (handler_exit, handler_send, handler_recv) = Handler::spawn(
             local_enr.clone(),
             enr_key.clone(),
-            listen_socket,
             config.clone(),
+            listen_config,
         )
         .await?;
 
@@ -299,6 +301,7 @@ impl Service {
                     event_stream: None,
                     exit,
                     config: config.clone(),
+                    ip_mode,
                 };
 
                 info!("Discv5 Service started");

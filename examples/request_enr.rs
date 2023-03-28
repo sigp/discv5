@@ -13,9 +13,10 @@
 //!
 //! This requires the "libp2p" feature.
 #[cfg(feature = "libp2p")]
-use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config};
+use discv5::socket::ListenConfig;
 #[cfg(feature = "libp2p")]
-use std::net::SocketAddr;
+use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config};
+use std::net::Ipv4Addr;
 
 #[cfg(not(feature = "libp2p"))]
 fn main() {}
@@ -31,7 +32,10 @@ async fn main() {
         .try_init();
 
     // listening address and port
-    let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
+    let listen_config = ListenConfig::Ipv4 {
+        ip: Ipv4Addr::UNSPECIFIED,
+        port: 9000,
+    };
 
     // generate a new enr key
     let enr_key = CombinedKey::generate_secp256k1();
@@ -46,10 +50,10 @@ async fn main() {
         .expect("A multiaddr must be supplied");
 
     // construct the discv5 server
-    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
 
     // start the discv5 service
-    discv5.start(listen_addr).await.unwrap();
+    discv5.start().await.unwrap();
 
     // search for the ENR
     match discv5.request_enr(multiaddr).await {

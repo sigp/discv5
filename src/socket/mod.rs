@@ -10,7 +10,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc, oneshot},
+};
 
 mod filter;
 mod recv;
@@ -24,6 +27,7 @@ pub use recv::InboundPacket;
 pub use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
+#[derive(Clone)]
 pub enum ListenConfig {
     Ipv4 {
         ip: Ipv4Addr,
@@ -45,8 +49,6 @@ pub enum ListenConfig {
 pub struct SocketConfig {
     /// The executor to spawn the tasks.
     pub executor: Box<dyn Executor + Send + Sync>,
-    /// The listening socket.
-    pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
     /// Type of socket to create.
@@ -70,15 +72,15 @@ pub struct Socket {
 impl Socket {
     /// This creates and binds a new UDP socket.
     // In general this function can be expanded to handle more advanced socket creation.
-    async fn new_socket(socket_addr: &SocketAddr) -> Result<tokio::net::UdpSocket, Error> {
+    async fn new_socket(socket_addr: &SocketAddr) -> Result<UdpSocket, Error> {
         match socket_addr {
-            SocketAddr::V4(ip4) => tokio::net::UdpSocket::bind(ip4).await,
+            SocketAddr::V4(ip4) => UdpSocket::bind(ip4).await,
             SocketAddr::V6(ip6) => {
                 let socket = Socket2::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
                 socket.set_only_v6(true)?;
                 socket.set_nonblocking(true)?;
                 socket.bind(&SocketAddr::V6(*ip6).into())?;
-                tokio::net::UdpSocket::from_std(socket.into())
+                UdpSocket::from_std(socket.into())
             }
         }
     }
@@ -89,7 +91,6 @@ impl Socket {
     pub(crate) async fn new(config: SocketConfig) -> Result<Self, Error> {
         let SocketConfig {
             executor,
-            socket_addr,
             filter_config,
             listen_config,
             ban_duration,
@@ -97,35 +98,43 @@ impl Socket {
             local_node_id,
         } = config;
 
-        // For now intentionally forgettig which socket is the ipv4 and which is the ipv6 one.
-        let (first_addr, maybe_second_addr): (SocketAddr, Option<_>) = match listen_config {
-            ListenConfig::Ipv4 { ip, port } => ((ip, port).into(), None),
-            ListenConfig::Ipv6 { ip, port } => ((ip, port).into(), None),
+        // For recv socket, intentionally forgetting which socket is the ipv4 and which is the ipv6 one.
+        let (first_recv, second_recv, send_ipv4, send_ipv6): (
+            Arc<UdpSocket>,
+            Option<_>,
+            Option<_>,
+            Option<_>,
+        ) = match listen_config {
+            ListenConfig::Ipv4 { ip, port } => {
+                let ipv4_socket = Arc::new(Socket::new_socket(&(ip, port).into()).await?);
+                (ipv4_socket.clone(), None, Some(ipv4_socket), None)
+            }
+            ListenConfig::Ipv6 { ip, port } => {
+                let ipv6_socket = Arc::new(Socket::new_socket(&(ip, port).into()).await?);
+                (ipv6_socket.clone(), None, None, Some(ipv6_socket))
+            }
             ListenConfig::DualStack {
                 ipv4,
                 ipv4_port,
                 ipv6,
                 ipv6_port,
-            } => ((ipv4, ipv4_port).into(), Some((ipv6, ipv4_port))),
+            } => {
+                let ipv4_socket = Arc::new(Socket::new_socket(&(ipv4, ipv4_port).into()).await?);
+                let ipv6_socket = Arc::new(Socket::new_socket(&(ipv6, ipv6_port).into()).await?);
+                (
+                    ipv4_socket.clone(),
+                    Some(ipv6_socket.clone()),
+                    Some(ipv4_socket),
+                    Some(ipv6_socket),
+                )
+            }
         };
-        let first_socket = Socket::new_socket(&first_addr).await?;
-        let maybe_second_socket = match maybe_second_addr {
-            Some(second_addr) => Some(Socket::new_socket(&socket_addr).await?),
-            None => None,
-        };
-
-        // Arc the udp socket for the send/recv tasks.
-        let recv_udp = Arc::new(first_socket);
-        let send_udp = recv_udp.clone();
-
-        let second_recv = maybe_second_socket.map(Arc::new);
-        let second_send = second_recv.clone();
 
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {
             filter_config,
             executor: executor.clone(),
-            recv: recv_udp,
+            recv: first_recv,
             second_recv,
             local_node_id,
             expected_responses,
@@ -134,7 +143,7 @@ impl Socket {
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);
         // spawn the sender handler
-        let (send, sender_exit) = SendHandler::spawn(executor, send_udp);
+        let (send, sender_exit) = SendHandler::spawn(executor, send_ipv4, send_ipv6);
 
         Ok(Socket {
             send,
