@@ -8,7 +8,7 @@ use libp2p_core::{identity::PublicKey, multiaddr::Protocol, multihash, Multiaddr
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeContact {
     /// Key to use for communications with this node.
     public_key: CombinedPublicKey,

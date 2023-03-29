@@ -381,7 +381,7 @@ impl Service {
                             }
                             self.rpc_failure(request_id, error);
                         }
-                        HandlerOut::FindHolePunchEnr(tgt_node_id) => {
+                        HandlerOut::FindHolePunchEnr(tgt_node_id, relay_msg_notif) => {
                             // check if we know this node id in our routing table
                             let key = kbucket::Key::from(tgt_node_id);
                             let tgt_enr = match self.kbuckets.write().entry(&key) {
@@ -389,7 +389,7 @@ impl Service {
                                 _ => None
                             };
                             trace!("Sending hole punch target enr to handler {:?}", tgt_enr);
-                            if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(tgt_node_id, tgt_enr)) {
+                            if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(tgt_enr, relay_msg_notif)) {
                                 warn!("Failed to send target enr to relay proccess, error: {}", e);
                             }
                         }

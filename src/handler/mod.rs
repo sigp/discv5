@@ -76,7 +76,7 @@ use session::Session;
 const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
 /// Messages sent from the application layer to `Handler`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum HandlerIn {
     /// A Request to send to a `NodeContact` has been received from the application layer. A
@@ -107,7 +107,7 @@ pub enum HandlerIn {
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 
     /// Response to a [`HandlerOut::FindEnrForHolePunch`]. Returns the ENR if it was found.
-    HolePunchEnr(NodeId, Option<Enr>),
+    HolePunchEnr(Option<Enr>, RelayMsg<Enr>),
 }
 
 /// Messages sent between a node on the network and `Handler`.
@@ -138,7 +138,7 @@ pub enum HandlerOut {
     /// A peer has supposed we have passed it another peer in a NODES response, if that is true
     /// (very probably not false) the ENR of that peer is returned in a
     /// [`HandlerIn::HolePunchEnr`].
-    FindHolePunchEnr(NodeId),
+    FindHolePunchEnr(NodeId, RelayMsg<Enr>),
 }
 
 /// How we connected to the node.
@@ -269,7 +269,6 @@ impl<P: ProtocolIdentity> Handler<P> {
         let nat_hole_puncher = NatHolePuncher {
             new_peer_latest_relay: Default::default(),
             ip_mode: config.ip_mode,
-            tgt_enr_tx: Default::default(),
         };
 
         config
@@ -324,16 +323,9 @@ impl<P: ProtocolIdentity> Handler<P> {
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
-                        HandlerIn::HolePunchEnr(tgt_node_id, tgt_enr) => {
-                            let Some(relay_processes) = self.nat_hole_puncher.tgt_enr_tx.remove(&tgt_node_id) else {
-                                debug!("Relay processes have already received the target enr");
-                                continue
-                            };
-                            for tx in relay_processes {
-                                trace!("Sending tgt enr to relay process");
-                                if let Err(e) = tx.send(tgt_enr.clone()) {
-                                    error!("Failed to send to relay process, relay process will now be parked forever. Error: {:?}", e);
-                                }
+                        HandlerIn::HolePunchEnr(tgt_enr, relay_msg_notif) => {
+                            if let Err(e) = self.on_hole_punch_tgt_enr(tgt_enr, relay_msg_notif).await {
+                                warn!("Failed to realy. Error: {}", e);
                             }
                         }
                     }
@@ -1276,6 +1268,48 @@ impl<P: ProtocolIdentity> Handler<P> {
             .ban_nodes
             .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
     }
+
+    async fn on_hole_punch_tgt_enr(
+        &mut self,
+        tgt_enr: Option<Enr>,
+        relay_msg_notif: RelayMsg<Enr>,
+    ) -> Result<(), HolePunchError<Discv5Error>> {
+        let Some(tgt_enr) = tgt_enr else {
+            return Err(HolePunchError::RelayError(Discv5Error::Custom("Target enr not found")));
+        };
+        let tgt_node_address =
+            match NodeContact::try_from_enr(tgt_enr, self.nat_hole_puncher.ip_mode) {
+                Ok(contact) => contact.node_address(),
+                Err(e) => return Err(HolePunchError::RelayError(e.into())),
+            };
+        if let Some(session) = self.sessions.get_mut(&tgt_node_address) {
+            trace!(
+                "Sending notif to target {}. relay msg: {}",
+                tgt_node_address.node_id,
+                relay_msg_notif,
+            );
+            // Encrypt the notification and send
+            let packet = match session
+                .encrypt_notification::<P>(self.node_id, &relay_msg_notif.rlp_encode())
+            {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(HolePunchError::RelayError(e));
+                }
+            };
+            self.send(tgt_node_address, packet).await;
+            Ok(())
+        } else {
+            // Either the session is being established or has expired. We simply drop the
+            // notification in this case to ensure hole punch round-trip time stays within the
+            // time out of the udp entrypoint for the target peer in the intiator's router, set by
+            // the original timed out FINDNODE request from the initiator, as the initiator may
+            // also be behind a NAT.
+            Err(HolePunchError::RelayError(
+                Discv5Error::SessionNotEstablished,
+            ))
+        }
+    }
 }
 
 #[async_trait]
@@ -1363,76 +1397,20 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         notif: RelayInit<Self::TEnr>,
     ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
         let RelayInit(initiator, tgt, nonce) = notif;
+        // Assemble the notification for the target
+        let relay_msg_notif = RelayMsg(initiator, nonce);
 
         // Check for target peer in our kbuckets otherwise drop notification.
         let tgt_node_id = NodeId::new(&tgt);
-        let (tx, rx) = oneshot::channel::<Option<Enr>>();
-
-        let waiting_relay_processes = self
-            .nat_hole_puncher
-            .tgt_enr_tx
-            .entry(tgt_node_id)
-            .or_default();
-        waiting_relay_processes.push(tx);
-        drop(waiting_relay_processes);
-
 
         if let Err(e) = self
             .service_send
-            .send(HandlerOut::FindHolePunchEnr(tgt_node_id))
+            .send(HandlerOut::FindHolePunchEnr(tgt_node_id, relay_msg_notif))
             .await
         {
             return Err(HolePunchError::RelayError(e.into()));
         }
-        let tgt_enr = match rx.await {
-            Ok(Some(enr)) => enr,
-            Err(_) => {
-                return Err(HolePunchError::RelayError(Discv5Error::Custom(
-                    "Relay process failed to receive target enr",
-                )))
-            }
-            Ok(None) => {
-                return Err(HolePunchError::RelayError(Discv5Error::Custom(
-                    "Target peer not in kbuckets",
-                )))
-            }
-        };
-        trace!("Enr of target {} was found in kbuckets", tgt_node_id);
-
-        let tgt_node_address =
-            match NodeContact::try_from_enr(tgt_enr, self.nat_hole_puncher.ip_mode) {
-                Ok(contact) => contact.node_address(),
-                Err(e) => return Err(HolePunchError::RelayError(e.into())),
-            };
-        if let Some(session) = self.sessions.get_mut(&tgt_node_address) {
-            // Assemble the notification for the target
-            let relay_msg_notif = RelayMsg(initiator, nonce);
-            trace!(
-                "Sending notif to target {}. relay msg: {}",
-                tgt_node_id,
-                relay_msg_notif,
-            );
-            // Encrypt the notification and send
-            let packet = match session
-                .encrypt_notification::<P>(self.node_id, &relay_msg_notif.rlp_encode())
-            {
-                Ok(packet) => packet,
-                Err(e) => {
-                    return Err(HolePunchError::RelayError(e));
-                }
-            };
-            self.send(tgt_node_address, packet).await;
-            Ok(())
-        } else {
-            // Either the session is being established or has expired. We simply drop the
-            // notification in this case to ensure hole punch round-trip time stays within the
-            // time out of the udp entrypoint for the target peer in the intiator's router, set by
-            // the original timed out FINDNODE request from the initiator, as the initiator may
-            // also be behind a NAT.
-            Err(HolePunchError::RelayError(
-                Discv5Error::SessionNotEstablished,
-            ))
-        }
+        Ok(())
     }
 
     async fn on_relay_msg(
@@ -1489,6 +1467,4 @@ struct NatHolePuncher {
     new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
     /// Ip mode as set in config.
     ip_mode: IpMode,
-    /// Channels to processes waiting on the ENR of the target of a [`RelayInit`].
-    tgt_enr_tx: HashMap<NodeId, Vec<oneshot::Sender<Option<Enr>>>>,
 }
