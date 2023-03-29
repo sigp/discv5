@@ -718,17 +718,6 @@ where
         let index = BucketIndex::new(&self.local_key.distance(key));
         index.map(|i| i.get())
     }
-
-    /// Returns an enr without applying pending. Use with care.
-    pub fn get_enr<'a>(&'a self, key: &Key<TNodeId>) -> Option<&'a TVal> {
-        let index = BucketIndex::new(&self.local_key.distance(key));
-        if let Some(i) = index {
-            let bucket = &self.buckets[i.get()];
-            bucket.get(key).map(|entry| &entry.value)
-        } else {
-            None
-        }
-    }
 }
 
 /// An iterator over (some projection of) the closest entries in a

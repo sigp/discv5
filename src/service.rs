@@ -266,7 +266,6 @@ impl Service {
         let (handler_exit, handler_send, handler_recv) = Handler::<P>::spawn(
             local_enr.clone(),
             enr_key.clone(),
-            kbuckets.clone(),
             listen_socket,
             config.clone(),
         )
@@ -381,6 +380,17 @@ impl Service {
                                 warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
                             }
                             self.rpc_failure(request_id, error);
+                        }
+                        HandlerOut::FindHolePunchEnr(tgt_node_id) => {
+                            // check if we know this node id in our routing table
+                            let key = kbucket::Key::from(tgt_node_id);
+                            let tgt_enr = match self.kbuckets.write().entry(&key) {
+                                kbucket::Entry::Present(entry, _) => Some(entry.value().clone()),
+                                _ => None
+                            };
+                            if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(tgt_node_id, tgt_enr)) {
+                                warn!("Failed to send target enr to relay proccess, error: {}", e);
+                            }
                         }
                     }
                 }

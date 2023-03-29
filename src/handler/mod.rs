@@ -30,8 +30,6 @@ use crate::{
     config::Discv5Config,
     discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
-    kbucket,
-    kbucket::KBucketsTable,
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
@@ -107,6 +105,9 @@ pub enum HandlerIn {
     /// The `WhoAreYouRef` is sent out in the `HandlerOut::WhoAreYou` event and should
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
+
+    /// Response to a [`HandlerOut::FindEnrForHolePunch`]. Returns the ENR if it was found.
+    HolePunchEnr(NodeId, Option<Enr>),
 }
 
 /// Messages sent between a node on the network and `Handler`.
@@ -133,6 +134,11 @@ pub enum HandlerOut {
     ///
     /// This returns the request ID, an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
+
+    /// A peer has supposed we have passed it another peer in a NODES response, if that is true
+    /// (very probably not false) the ENR of that peer is returned in a
+    /// [`HandlerIn::HolePunchEnr`].
+    FindHolePunchEnr(NodeId),
 }
 
 /// How we connected to the node.
@@ -222,7 +228,6 @@ impl<P: ProtocolIdentity> Handler<P> {
     pub async fn spawn(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
-        kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         listen_socket: SocketAddr,
         config: Discv5Config,
     ) -> Result<HandlerReturn, std::io::Error> {
@@ -264,7 +269,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         let nat_hole_puncher = NatHolePuncher {
             new_peer_latest_relay: Default::default(),
             ip_mode: config.ip_mode,
-            kbuckets,
+            tgt_enr_tx: Default::default(),
         };
 
         config
@@ -319,6 +324,17 @@ impl<P: ProtocolIdentity> Handler<P> {
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
+                        HandlerIn::HolePunchEnr(tgt_node_id, tgt_enr) => {
+                            let Some(relay_processes) = self.nat_hole_puncher.tgt_enr_tx.remove(&tgt_node_id) else {
+                                debug!("Relay processes have already received the target enr");
+                                continue
+                            };
+                            for tx in relay_processes {
+                                if let Err(e) = tx.send(tgt_enr.clone()) {
+                                    error!("Failed to send to relay process, relay process will now be parked forever. error: {:?}", e);
+                                }
+                            }
+                        }
                     }
                 }
                 Some(inbound_packet) = self.socket.recv.recv() => {
@@ -1330,12 +1346,12 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                         // packet. This means we drop the current session and the notification.
                         self.fail_session(&session_index, RequestError::InvalidRemotePacket, true)
                             .await;
-                        return Err(HolePunchError::SessionError(e));
+                        return Err(HolePunchError::InitiatorError(e));
                     }
                     Ok(bytes) => Ok(bytes),
                 }
             }
-            None => Err(HolePunchError::SessionError(
+            None => Err(HolePunchError::InitiatorError(
                 Discv5Error::SessionNotEstablished,
             )),
         }
@@ -1346,14 +1362,34 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         notif: RelayInit<Self::TEnr>,
     ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
         let RelayInit(initiator, tgt, nonce) = notif;
-        let notif_for_target = RelayMsg(initiator, nonce);
 
         // Check for target peer in our kbuckets otherwise drop notification.
         let tgt_node_id = NodeId::new(&tgt);
-        let key = kbucket::Key::from(tgt_node_id);
-        let tgt_enr = match self.nat_hole_puncher.kbuckets.read().get_enr(&key) {
-            Some(enr) => enr.clone(),
-            None => {
+        let (tx, rx) = oneshot::channel::<Option<Enr>>();
+
+        let waiting_relay_processes = self
+            .nat_hole_puncher
+            .tgt_enr_tx
+            .entry(tgt_node_id)
+            .or_default();
+        waiting_relay_processes.push(tx);
+        drop(waiting_relay_processes);
+
+        if let Err(e) = self
+            .service_send
+            .send(HandlerOut::FindHolePunchEnr(tgt_node_id))
+            .await
+        {
+            return Err(HolePunchError::RelayError(e.into()));
+        }
+        let tgt_enr = match rx.await {
+            Ok(Some(enr)) => enr,
+            Err(_) => {
+                return Err(HolePunchError::RelayError(Discv5Error::Custom(
+                    "Relay process failed to receive target enr",
+                )))
+            }
+            Ok(None) => {
                 return Err(HolePunchError::RelayError(Discv5Error::Custom(
                     "Target peer not in kbuckets",
                 )))
@@ -1366,6 +1402,8 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                 Err(e) => return Err(HolePunchError::RelayError(e.into())),
             };
         if let Some(session) = self.sessions.get_mut(&tgt_node_address) {
+            // Assemble the notification for the target
+            let notif_for_target = RelayMsg(initiator, nonce);
             // Encrypt the notification and send
             let packet = match session
                 .encrypt_notification::<P>(self.node_id, &notif_for_target.rlp_encode())
@@ -1443,7 +1481,6 @@ struct NatHolePuncher {
     new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
     /// Ip mode as set in config.
     ip_mode: IpMode,
-    /// The KBuckets. Handler should only be read the kbuckets! Holding write locks may change
-    /// flow too much and this has not been examined.
-    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+    /// Channels to processes waiting on the ENR of the target of a [`RelayInit`].
+    tgt_enr_tx: HashMap<NodeId, Vec<oneshot::Sender<Option<Enr>>>>,
 }
