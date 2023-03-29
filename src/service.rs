@@ -388,6 +388,7 @@ impl Service {
                                 kbucket::Entry::Present(entry, _) => Some(entry.value().clone()),
                                 _ => None
                             };
+                            trace!("Sending hole punch target enr to handler {:?}", tgt_enr);
                             if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(tgt_node_id, tgt_enr)) {
                                 warn!("Failed to send target enr to relay proccess, error: {}", e);
                             }

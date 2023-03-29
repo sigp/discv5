@@ -330,8 +330,9 @@ impl<P: ProtocolIdentity> Handler<P> {
                                 continue
                             };
                             for tx in relay_processes {
+                                trace!("Sending tgt enr to relay process");
                                 if let Err(e) = tx.send(tgt_enr.clone()) {
-                                    error!("Failed to send to relay process, relay process will now be parked forever. error: {:?}", e);
+                                    error!("Failed to send to relay process, relay process will now be parked forever. Error: {:?}", e);
                                 }
                             }
                         }
@@ -1375,6 +1376,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         waiting_relay_processes.push(tx);
         drop(waiting_relay_processes);
 
+
         if let Err(e) = self
             .service_send
             .send(HandlerOut::FindHolePunchEnr(tgt_node_id))
@@ -1395,6 +1397,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                 )))
             }
         };
+        trace!("Enr of target {} was found in kbuckets", tgt_node_id);
 
         let tgt_node_address =
             match NodeContact::try_from_enr(tgt_enr, self.nat_hole_puncher.ip_mode) {
