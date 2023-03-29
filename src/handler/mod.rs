@@ -1300,9 +1300,9 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                 timed_out_message_nonce,
             );
             trace!(
-                "Sending realy init notif {:?} to relay {:?}",
+                "Sending notif to relay {}. relay init: {}",
+                relay.node_id,
                 relay_init_notif,
-                relay
             );
             // Encrypt the message and send
             let packet = match session
@@ -1403,10 +1403,15 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
             };
         if let Some(session) = self.sessions.get_mut(&tgt_node_address) {
             // Assemble the notification for the target
-            let notif_for_target = RelayMsg(initiator, nonce);
+            let relay_msg_notif = RelayMsg(initiator, nonce);
+            trace!(
+                "Sending notif to target {}. relay msg: {}",
+                tgt_node_id,
+                relay_msg_notif,
+            );
             // Encrypt the notification and send
             let packet = match session
-                .encrypt_notification::<P>(self.node_id, &notif_for_target.rlp_encode())
+                .encrypt_notification::<P>(self.node_id, &relay_msg_notif.rlp_encode())
             {
                 Ok(packet) => packet,
                 Err(e) => {
