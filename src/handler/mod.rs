@@ -399,23 +399,18 @@ impl<P: ProtocolIdentity> Handler<P> {
                 )
                 .await
             }
-            PacketKind::SessionMessage { src_id } => {
+            PacketKind::Notification { src_id } => {
                 let node_address = NodeAddress {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                trace!("Received notification from: {}", node_address);
-                if let Err(e) = self
-                    .on_notification(
-                        node_address,
-                        message_nonce,
-                        &inbound_packet.message,
-                        &inbound_packet.authenticated_data,
-                    )
-                    .await
-                {
-                    warn!("Failed to process notification packet. Error: {:?}", e);
-                }
+                self.handle_notification(
+                    node_address,
+                    message_nonce,
+                    &inbound_packet.message,
+                    &inbound_packet.authenticated_data,
+                )
+                .await
             }
         }
     }
@@ -940,8 +935,105 @@ impl<P: ProtocolIdentity> Handler<P> {
         }
     }
 
+    /// Handle a session message that is dropped if it can't be decrypted.
+    async fn handle_notification(
+        &mut self,
+        node_address: NodeAddress, // session message sender
+        message_nonce: MessageNonce,
+        message: &[u8],
+        authenticated_data: &[u8],
+    ) {
+        // check if we have an available session
+        let Some(session) = self.sessions.get_mut(&node_address) else {
+            warn!(
+                "Dropping message. Error: {}, {}",
+                Discv5Error::SessionNotEstablished,
+                node_address
+            );
+            return;
+        };
+        // attempt to decrypt notification (same decryption as for a message)
+        let message = match session.decrypt_message(message_nonce, message, authenticated_data) {
+            Err(e) => {
+                // We have a session, but the session message could not be decrypted. It is
+                // likely the node sending this message has dropped their session. Since
+                // this is a session message that assumes an established session, we do
+                // not reply with a WHOAREYOU to this random packet. This means we drop
+                // the current session and the packet.
+                self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
+                    .await;
+                warn!(
+                    "Dropping message that should have been part of a session. Error: {}",
+                    e
+                );
+                return;
+            }
+            Ok(ref bytes) => match Message::decode(bytes) {
+                Ok(message) => message,
+                Err(msg_err) => {
+                    if let Err(notif_err) = self.on_notification(bytes).await {
+                        warn!(
+                            "Failed to decode as message and notification. Error: {:?}, {}, {}",
+                            msg_err, notif_err, node_address
+                        );
+                        return;
+                    }
+                    return;
+                }
+            },
+        };
+
+        match message {
+            Message::Response(response) => {
+                // Sessions could be awaiting an ENR response. Check if this response matches
+                // these
+                let Some(request_id) = session.awaiting_enr.as_ref() else {
+                    return;
+                };
+                if &response.id == request_id {
+                    session.awaiting_enr = None;
+                    if let ResponseBody::Nodes { mut nodes, .. } = response.body {
+                        // Received the requested ENR
+                        let Some(enr) = nodes.pop() else {
+                                return;
+                            };
+                        if self.verify_enr(&enr, &node_address) {
+                            // Notify the application
+                            // This can occur when we try to dial a node without an
+                            // ENR. In this case we have attempted to establish the
+                            // connection, so this is an outgoing connection.
+                            if let Err(e) = self
+                                .service_send
+                                .send(HandlerOut::Established(
+                                    enr,
+                                    node_address.socket_addr,
+                                    ConnectionDirection::Outgoing,
+                                ))
+                                .await
+                            {
+                                warn!("Failed to inform established outgoing connection {}", e)
+                            }
+                            return;
+                        }
+                    }
+                    debug!("Session failed invalid ENR response");
+                    self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
+                        .await;
+                    return;
+                }
+                // Handle standard responses
+                self.handle_response(node_address, response).await;
+            }
+            _ => {
+                warn!(
+                    "Peer sent message type that shouldn't be sent in packet type Message, {}",
+                    node_address
+                );
+            }
+        }
+    }
+
     /// Handle a standard message that does not contain an authentication header.
-    #[allow(clippy::single_match)]
     async fn handle_message(
         &mut self,
         node_address: NodeAddress,
@@ -950,104 +1042,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         authenticated_data: &[u8],
     ) {
         // check if we have an available session
-        if let Some(session) = self.sessions.get_mut(&node_address) {
-            // attempt to decrypt and process the message.
-            let message = match session.decrypt_message(message_nonce, message, authenticated_data)
-            {
-                Ok(m) => match Message::decode(&m) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
-                        return;
-                    }
-                },
-                Err(e) => {
-                    // We have a session, but the message could not be decrypted. It is likely the node
-                    // sending this message has dropped their session. In this case, this message is a
-                    // Random packet and we should reply with a WHOAREYOU.
-                    // This means we need to drop the current session and re-establish.
-                    trace!("Decryption failed. Error {}", e);
-                    debug!(
-                        "Message from node: {} is not encrypted with known session keys.",
-                        node_address
-                    );
-                    self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
-                        .await;
-                    // If we haven't already sent a WhoAreYou,
-                    // spawn a WHOAREYOU event to check for highest known ENR
-                    if self.active_challenges.get(&node_address).is_none() {
-                        let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-                        if let Err(e) = self
-                            .service_send
-                            .send(HandlerOut::WhoAreYou(whoareyou_ref))
-                            .await
-                        {
-                            warn!("Failed to send WhoAreYou to the service {}", e)
-                        }
-                    } else {
-                        trace!("WHOAREYOU packet already sent: {}", node_address);
-                    }
-                    return;
-                }
-            };
-
-            trace!("Received message from: {}", node_address);
-
-            // Remove any associated request from pending_request
-            match message {
-                Message::Request(request) => {
-                    // report the request to the application
-                    if let Err(e) = self
-                        .service_send
-                        .send(HandlerOut::Request(node_address, Box::new(request)))
-                        .await
-                    {
-                        warn!("Failed to report request to application {}", e)
-                    }
-                }
-                Message::Response(response) => {
-                    // Sessions could be awaiting an ENR response. Check if this response matches
-                    // these
-                    if let Some(request_id) = session.awaiting_enr.as_ref() {
-                        if &response.id == request_id {
-                            session.awaiting_enr = None;
-                            match response.body {
-                                ResponseBody::Nodes { mut nodes, .. } => {
-                                    // Received the requested ENR
-                                    if let Some(enr) = nodes.pop() {
-                                        if self.verify_enr(&enr, &node_address) {
-                                            // Notify the application
-                                            // This can occur when we try to dial a node without an
-                                            // ENR. In this case we have attempted to establish the
-                                            // connection, so this is an outgoing connection.
-                                            if let Err(e) = self
-                                                .service_send
-                                                .send(HandlerOut::Established(
-                                                    enr,
-                                                    node_address.socket_addr,
-                                                    ConnectionDirection::Outgoing,
-                                                ))
-                                                .await
-                                            {
-                                                warn!("Failed to inform established outgoing connection {}", e)
-                                            }
-                                            return;
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                            debug!("Session failed invalid ENR response");
-                            self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
-                                .await;
-                            return;
-                        }
-                    }
-                    // Handle standard responses
-                    self.handle_response(node_address, response).await;
-                }
-            }
-        } else {
+        let Some(session) = self.sessions.get_mut(&node_address) else {
             // no session exists
             trace!("Received a message without a session. {}", node_address);
             trace!("Requesting a WHOAREYOU packet to be sent.");
@@ -1062,6 +1057,66 @@ impl<P: ProtocolIdentity> Handler<P> {
                     "Spawn a WHOAREYOU event to check for highest known ENR failed {}",
                     e
                 )
+            }
+            return;
+        };
+        // attempt to decrypt and process the message.
+        let message = match session.decrypt_message(message_nonce, message, authenticated_data) {
+            Ok(m) => match Message::decode(&m) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
+                    return;
+                }
+            },
+            Err(e) => {
+                // We have a session, but the message could not be decrypted. It is likely the node
+                // sending this message has dropped their session. In this case, this message is a
+                // Random packet and we should reply with a WHOAREYOU.
+                // This means we need to drop the current session and re-establish.
+                trace!("Decryption failed. Error {}", e);
+                debug!(
+                    "Message from node: {} is not encrypted with known session keys.",
+                    node_address
+                );
+                self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
+                    .await;
+                // If we haven't already sent a WhoAreYou,
+                // spawn a WHOAREYOU event to check for highest known ENR
+                if self.active_challenges.get(&node_address).is_none() {
+                    let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
+                    if let Err(e) = self
+                        .service_send
+                        .send(HandlerOut::WhoAreYou(whoareyou_ref))
+                        .await
+                    {
+                        warn!("Failed to send WhoAreYou to the service {}", e)
+                    }
+                } else {
+                    trace!("WHOAREYOU packet already sent: {}", node_address);
+                }
+                return;
+            }
+        };
+
+        trace!("Received message from: {}", node_address);
+
+        match message {
+            Message::Request(request) => {
+                // report the request to the application
+                if let Err(e) = self
+                    .service_send
+                    .send(HandlerOut::Request(node_address, Box::new(request)))
+                    .await
+                {
+                    warn!("Failed to report request to application {}", e)
+                }
+            }
+            _ => {
+                warn!(
+                    "Peer sent message type that shouldn't be sent in packet type Message, {}",
+                    node_address
+                );
             }
         }
     }
@@ -1360,36 +1415,6 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
             );
         }
         Ok(())
-    }
-
-    async fn handle_decryption_with_session(
-        &mut self,
-        session_index: Self::TNodeAddress, // notif sender
-        notif_nonce: MessageNonce,
-        notif: &[u8],
-        authenticated_data: &[u8],
-    ) -> Result<Vec<u8>, HolePunchError<Self::TDiscv5Error>> {
-        // check if we have an available session
-        match self.sessions.get_mut(&session_index) {
-            Some(session) => {
-                // attempt to decrypt notification (same decryption as for a message)
-                match session.decrypt_message(notif_nonce, notif, authenticated_data) {
-                    Err(e) => {
-                        // We have a session, but the notification could not be decrypted. It is
-                        // likely the node sending this message has dropped their session. Since
-                        // this is a notification, we do not reply with a WHOAREYOU to this random
-                        // packet. This means we drop the current session and the notification.
-                        self.fail_session(&session_index, RequestError::InvalidRemotePacket, true)
-                            .await;
-                        return Err(HolePunchError::InitiatorError(e));
-                    }
-                    Ok(bytes) => Ok(bytes),
-                }
-            }
-            None => Err(HolePunchError::InitiatorError(
-                Discv5Error::SessionNotEstablished,
-            )),
-        }
     }
 
     async fn on_relay_init(
