@@ -399,7 +399,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 )
                 .await
             }
-            PacketKind::Notification { src_id } => {
+            PacketKind::SessionMessage { src_id } => {
                 let node_address = NodeAddress {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
