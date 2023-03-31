@@ -563,7 +563,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         // Check for an established session
         if let Some(session) = self.sessions.get_mut(&node_address) {
             // Encrypt the message and send
-            let packet = match session.encrypt_message::<P>(self.node_id, &response.encode()) {
+            let packet = match session.encrypt_notification::<P>(self.node_id, &response.encode()) {
                 Ok(packet) => packet,
                 Err(e) => {
                     warn!("Could not encrypt response: {:?}", e);
@@ -935,7 +935,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         }
     }
 
-    /// Handle a session message that is dropped if it can't be decrypted.
+    /// Handle a notification packet, that is dropped if it can't be decrypted.
     async fn handle_notification(
         &mut self,
         node_address: NodeAddress, // session message sender
@@ -971,6 +971,7 @@ impl<P: ProtocolIdentity> Handler<P> {
             Ok(ref bytes) => match Message::decode(bytes) {
                 Ok(message) => message,
                 Err(msg_err) => {
+                    // try to decode the message as an application layer notification 
                     if let Err(notif_err) = self.on_notification(bytes).await {
                         warn!(
                             "Failed to decode as message and notification. Error: {:?}, {}, {}",
