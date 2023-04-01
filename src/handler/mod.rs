@@ -458,14 +458,18 @@ impl<P: ProtocolIdentity> Handler<P> {
                 );
                 let local_enr = self.enr.read().clone();
                 let nonce = request_call.packet().header.message_nonce;
-                if let Err(e) = self
+                match self
                     .on_time_out(relay, local_enr, nonce, target.into())
                     .await
                 {
-                    warn!("Failed to start hole punching. Error: {:?}", e);
+                    Err(e) => {
+                        warn!("Failed to start hole punching. Error: {:?}", e);
+                    }
+                    Ok(()) => {
+                        self.active_requests.insert(node_address, request_call);
+                        return;
+                    }
                 }
-                self.active_requests.insert(node_address, request_call);
-                return;
             }
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);
@@ -1358,7 +1362,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         } else {
             // Either the session is being established or has expired. We simply drop the
             // notification in this case to ensure hole punch round-trip time stays within the
-            // time out of the udp entrypoint for the target peer in the intiator's router, set by
+            // time out of the udp entrypoint for the target peer in the initiator's NAT, set by
             // the original timed out FINDNODE request from the initiator, as the initiator may
             // also be behind a NAT.
             Err(HolePunchError::RelayError(
@@ -1407,7 +1411,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
             self.send(relay, packet).await;
         } else {
             // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
-            // within the time out of the udp entrypoint for the target peer in the intiator's
+            // within the time out of the udp entrypoint for the target peer in the initiator's
             // router, set by the original timed out FINDNODE request from the initiator, as the
             // initiator may also be behind a NAT.
             warn!(
