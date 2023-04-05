@@ -30,7 +30,7 @@ jobs:
       - name: Get latest version of stable rust
         run: rustup update stable
       - name: Run tests in release
-        run: cargo test --all --release --tests
+        run: cargo test --all --release
   test-all-features:
     runs-on: ubuntu-latest
     container:
@@ -43,7 +43,7 @@ jobs:
       - name: Install protobuf compiler for the libp2p-core dependency
         uses: arduino/setup-protoc@v1
       - name: Run tests in release
-        run: cargo test --all --release --all-features --tests
+        run: cargo test --all --release --all-features
   check-rustdoc-links:
     name: Check rustdoc intra-doc links
     runs-on: ubuntu-latest

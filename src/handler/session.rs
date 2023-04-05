@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
     node_info::NodeContact,
-    packet::{ChallengeData, Packet, PacketHeader, PacketKind, MESSAGE_NONCE_LENGTH},
+    packet::{
+        ChallengeData, Packet, PacketHeader, PacketKind, ProtocolIdentity, MESSAGE_NONCE_LENGTH,
+    },
 };
 use enr::{CombinedKey, NodeId};
 use zeroize::Zeroize;
@@ -55,7 +57,7 @@ impl Session {
 
     /// Uses the current `Session` to encrypt a message. Encrypt packets with the current session
     /// key if we are awaiting a response from AuthMessage.
-    pub(crate) fn encrypt_message(
+    pub(crate) fn encrypt_message<P: ProtocolIdentity>(
         &mut self,
         src_id: NodeId,
         message: &[u8],
@@ -77,7 +79,7 @@ impl Session {
         };
 
         let mut authenticated_data = iv.to_be_bytes().to_vec();
-        authenticated_data.extend_from_slice(&header.encode());
+        authenticated_data.extend_from_slice(&header.encode::<P>());
 
         let cipher = crypto::encrypt_message(
             &self.keys.encryption_key,
@@ -211,7 +213,7 @@ impl Session {
     }
 
     /// Encrypts a message and produces an AuthMessage.
-    pub(crate) fn encrypt_with_header(
+    pub(crate) fn encrypt_with_header<P: ProtocolIdentity>(
         remote_contact: &NodeContact,
         local_key: Arc<RwLock<CombinedKey>>,
         updated_enr: Option<Enr>,
@@ -250,7 +252,7 @@ impl Session {
         // Create the authenticated data for the new packet.
 
         let mut authenticated_data = packet.iv.to_be_bytes().to_vec();
-        authenticated_data.extend_from_slice(&packet.header.encode());
+        authenticated_data.extend_from_slice(&packet.header.encode::<P>());
 
         // encrypt the message
         let message_ciphertext =

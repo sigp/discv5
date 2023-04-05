@@ -146,7 +146,7 @@ async fn main() {
     };
 
     // construct the discv5 server
-    let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {

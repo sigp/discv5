@@ -2,7 +2,7 @@
 name = "discv5"
 authors = ["Age Manning <Age@AgeManning.com>"]
 edition = "2018"
-version = "0.1.0"
+version = "0.2.2"
 description = "Implementation of the p2p discv5 discovery protocol"
 license = "Apache-2.0"
 repository = "https://github.com/sigp/discv5"
@@ -37,7 +37,7 @@ tracing = { version = "0.1.29", features = ["log"] }
 tracing-subscriber = { version = "0.3.3", features = ["env-filter"] }
 lru = "0.7.1"
 hashlink = "0.7.0"
-delay_map = "0.1.1"
+delay_map = "0.3.0"
 more-asserts = "0.2.2"
 
 [dev-dependencies]

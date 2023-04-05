@@ -30,7 +30,7 @@ impl SendHandler {
     /// Spawns the `SendHandler` on a provided executor.
     /// This returns the sending channel to process `OutboundPacket`'s and an exit channel to
     /// shutdown the handler.
-    pub(crate) fn spawn(
+    pub(crate) fn spawn<P: ProtocolIdentity>(
         executor: Box<dyn Executor>,
         send_ipv4: Option<Arc<UdpSocket>>,
         send_ipv6: Option<Arc<UdpSocket>>,
@@ -48,17 +48,17 @@ impl SendHandler {
         // start the handler
         executor.spawn(Box::pin(async move {
             debug!("Send handler starting");
-            send_handler.start().await;
+            send_handler.start::<P>().await;
         }));
         (handler_send, exit_send)
     }
 
     /// The main future driving the send handler. This will shutdown when the exit future is fired.
-    async fn start(&mut self) {
+    async fn start<P: ProtocolIdentity>(&mut self) {
         loop {
             tokio::select! {
                 Some(packet) = self.handler_recv.recv() => {
-                    let encoded_packet = packet.packet.encode(&packet.node_address.node_id);
+                    let encoded_packet = packet.packet.encode::<P>(&packet.node_address.node_id);
                     if encoded_packet.len() > MAX_PACKET_SIZE {
                         warn!("Sending packet larger than max size: {} max: {}", encoded_packet.len(), MAX_PACKET_SIZE);
                     }

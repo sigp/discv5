@@ -82,7 +82,7 @@
 //!    };
 //!
 //!    // construct the discv5 server
-//!    let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+//!    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
 //!
 //!    // In order to bootstrap the routing table an external ENR should be added
 //!    // This can be done via add_enr. I.e.:
@@ -134,6 +134,7 @@ pub use error::{Discv5Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
 pub use ipmode::IpMode;
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};
+pub use packet::{DefaultProtocolId, ProtocolIdentity};
 pub use permit_ban::PermitBanList;
 pub use service::TalkRequest;
 pub use socket::{RateLimiter, RateLimiterBuilder};

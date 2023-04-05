@@ -1,4 +1,4 @@
-use crate::Executor;
+use crate::{packet::ProtocolIdentity, Executor};
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
@@ -88,7 +88,7 @@ impl Socket {
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
     /// This needs to be run inside of a tokio executor.
-    pub(crate) async fn new(config: SocketConfig) -> Result<Self, Error> {
+    pub(crate) async fn new<P: ProtocolIdentity>(config: SocketConfig) -> Result<Self, Error> {
         let SocketConfig {
             executor,
             filter_config,
@@ -141,9 +141,9 @@ impl Socket {
             ban_duration,
         };
 
-        let (recv, recv_exit) = RecvHandler::spawn(recv_config);
+        let (recv, recv_exit) = RecvHandler::spawn::<P>(recv_config);
         // spawn the sender handler
-        let (send, sender_exit) = SendHandler::spawn(executor, send_ipv4, send_ipv6);
+        let (send, sender_exit) = SendHandler::spawn::<P>(executor, send_ipv4, send_ipv6);
 
         Ok(Socket {
             send,

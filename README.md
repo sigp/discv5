@@ -62,7 +62,7 @@ A simple example of creating this service is as follows:
    };
 
    // construct the discv5 server
-   let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+   let mut discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
 
    // In order to bootstrap the routing table an external ENR should be added
    // This can be done via add_enr. I.e.:

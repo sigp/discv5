@@ -30,7 +30,7 @@ use crate::{
     config::Discv5Config,
     discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
-    packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
+    packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
     socket::{FilterConfig, Socket},
@@ -211,7 +211,7 @@ type HandlerReturn = (
 
 impl Handler {
     /// A new Session service which instantiates the UDP socket send/recv tasks.
-    pub async fn spawn(
+    pub async fn spawn<P: ProtocolIdentity>(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
         config: Discv5Config,
@@ -263,7 +263,7 @@ impl Handler {
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
-        let socket = Socket::new(socket_config).await?;
+        let socket = Socket::new::<P>(socket_config).await?;
 
         config
             .executor
@@ -290,14 +290,14 @@ impl Handler {
                     exit,
                 };
                 debug!("Handler Starting");
-                handler.start().await;
+                handler.start::<P>().await;
             }));
 
         Ok((exit_sender, handler_send, handler_recv))
     }
 
     /// The main execution loop for the handler.
-    async fn start(&mut self) {
+    async fn start<P: ProtocolIdentity>(&mut self) {
         let mut banned_nodes_check = tokio::time::interval(Duration::from_secs(BANNED_NODES_CHECK));
 
         loop {
@@ -306,19 +306,19 @@ impl Handler {
                     match handler_request {
                         HandlerIn::Request(contact, request) => {
                             let Request { id, body: request } = *request;
-                            if let Err(request_error) =  self.send_request(contact, HandlerReqId::External(id.clone()), request).await {
+                            if let Err(request_error) =  self.send_request::<P>(contact, HandlerReqId::External(id.clone()), request).await {
                                 // If the sending failed report to the application
                                 if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
                                     warn!("Failed to inform that request failed {}", e)
                                 }
                             }
                         }
-                        HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
-                        HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
+                        HandlerIn::Response(dst, response) => self.send_response::<P>(dst, *response).await,
+                        HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge::<P>(wru_ref, enr).await,
                     }
                 }
                 Some(inbound_packet) = self.socket.recv.recv() => {
-                    self.process_inbound_packet(inbound_packet).await;
+                    self.process_inbound_packet::<P>(inbound_packet).await;
                 }
                 Some(Ok((node_address, pending_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, pending_request).await;
@@ -326,7 +326,7 @@ impl Handler {
                 Some(Ok((node_address, _challenge))) = self.active_challenges.next() => {
                     // A challenge has expired. There could be pending requests awaiting this
                     // challenge. We process them here
-                    self.send_next_request(node_address).await;
+                    self.send_next_request::<P>(node_address).await;
                 }
                 _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
@@ -337,14 +337,17 @@ impl Handler {
     }
 
     /// Processes an inbound decoded packet.
-    async fn process_inbound_packet(&mut self, inbound_packet: socket::InboundPacket) {
+    async fn process_inbound_packet<P: ProtocolIdentity>(
+        &mut self,
+        inbound_packet: socket::InboundPacket,
+    ) {
         let message_nonce = inbound_packet.header.message_nonce;
         match inbound_packet.header.kind {
             PacketKind::WhoAreYou { enr_seq, .. } => {
                 let challenge_data =
                     ChallengeData::try_from(inbound_packet.authenticated_data.as_slice())
                         .expect("Must be correct size");
-                self.handle_challenge(
+                self.handle_challenge::<P>(
                     inbound_packet.src_address,
                     message_nonce,
                     enr_seq,
@@ -362,7 +365,7 @@ impl Handler {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                self.handle_auth_message(
+                self.handle_auth_message::<P>(
                     node_address,
                     message_nonce,
                     &id_nonce_sig,
@@ -378,7 +381,7 @@ impl Handler {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                self.handle_message(
+                self.handle_message::<P>(
                     node_address,
                     message_nonce,
                     &inbound_packet.message,
@@ -437,7 +440,7 @@ impl Handler {
     }
 
     /// Sends a `Request` to a node.
-    async fn send_request(
+    async fn send_request<P: ProtocolIdentity>(
         &mut self,
         contact: NodeContact,
         request_id: HandlerReqId,
@@ -476,7 +479,7 @@ impl Handler {
                     },
                 };
                 let packet = session
-                    .encrypt_message(self.node_id, &request.encode())
+                    .encrypt_message::<P>(self.node_id, &request.encode())
                     .map_err(|e| RequestError::EncryptionFailed(format!("{e:?}")))?;
                 (packet, false)
             } else {
@@ -508,11 +511,15 @@ impl Handler {
     }
 
     /// Sends an RPC Response.
-    async fn send_response(&mut self, node_address: NodeAddress, response: Response) {
+    async fn send_response<P: ProtocolIdentity>(
+        &mut self,
+        node_address: NodeAddress,
+        response: Response,
+    ) {
         // Check for an established session
         if let Some(session) = self.sessions.get_mut(&node_address) {
             // Encrypt the message and send
-            let packet = match session.encrypt_message(self.node_id, &response.encode()) {
+            let packet = match session.encrypt_message::<P>(self.node_id, &response.encode()) {
                 Ok(packet) => packet,
                 Err(e) => {
                     warn!("Could not encrypt response: {:?}", e);
@@ -532,7 +539,11 @@ impl Handler {
 
     /// This is called in response to a `HandlerOut::WhoAreYou` event. The applications finds the
     /// highest known ENR for a node then we respond to the node with a WHOAREYOU packet.
-    async fn send_challenge(&mut self, wru_ref: WhoAreYouRef, remote_enr: Option<Enr>) {
+    async fn send_challenge<P: ProtocolIdentity>(
+        &mut self,
+        wru_ref: WhoAreYouRef,
+        remote_enr: Option<Enr>,
+    ) {
         let node_address = wru_ref.0;
         let message_nonce = wru_ref.1;
 
@@ -555,7 +566,7 @@ impl Handler {
         let enr_seq = remote_enr.clone().map_or_else(|| 0, |enr| enr.seq());
         let id_nonce: IdNonce = rand::random();
         let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
-        let challenge_data = ChallengeData::try_from(packet.authenticated_data().as_slice())
+        let challenge_data = ChallengeData::try_from(packet.authenticated_data::<P>().as_slice())
             .expect("Must be the correct challenge size");
         debug!("Sending WHOAREYOU to {}", node_address);
         self.add_expected_response(node_address.socket_addr);
@@ -572,7 +583,7 @@ impl Handler {
     /* Packet Handling */
 
     /// Handles a WHOAREYOU packet that was received from the network.
-    async fn handle_challenge(
+    async fn handle_challenge<P: ProtocolIdentity>(
         &mut self,
         src_address: SocketAddr,
         request_nonce: MessageNonce,
@@ -635,7 +646,7 @@ impl Handler {
         };
 
         // Generate a new session and authentication packet
-        let (auth_packet, mut session) = match Session::encrypt_with_header(
+        let (auth_packet, mut session) = match Session::encrypt_with_header::<P>(
             request_call.contact(),
             self.key.clone(),
             updated_enr,
@@ -716,7 +727,7 @@ impl Handler {
                 let request = RequestBody::FindNode { distances: vec![0] };
                 session.awaiting_enr = Some(id.clone());
                 if let Err(e) = self
-                    .send_request(contact, HandlerReqId::Internal(id), request)
+                    .send_request::<P>(contact, HandlerReqId::Internal(id), request)
                     .await
                 {
                     warn!("Failed to send Enr request {}", e)
@@ -744,7 +755,7 @@ impl Handler {
 
     /// Handle a message that contains an authentication header.
     #[allow(clippy::too_many_arguments)]
-    async fn handle_auth_message(
+    async fn handle_auth_message<P: ProtocolIdentity>(
         &mut self,
         node_address: NodeAddress,
         message_nonce: MessageNonce,
@@ -792,7 +803,7 @@ impl Handler {
                             warn!("Failed to inform of established session {}", e)
                         }
                         self.new_session(node_address.clone(), session);
-                        self.handle_message(
+                        self.handle_message::<P>(
                             node_address.clone(),
                             message_nonce,
                             message,
@@ -801,7 +812,7 @@ impl Handler {
                         .await;
                         // We could have pending messages that were awaiting this session to be
                         // established. If so process them.
-                        self.send_next_request(node_address).await;
+                        self.send_next_request::<P>(node_address).await;
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
@@ -839,7 +850,7 @@ impl Handler {
         }
     }
 
-    async fn send_next_request(&mut self, node_address: NodeAddress) {
+    async fn send_next_request<P: ProtocolIdentity>(&mut self, node_address: NodeAddress) {
         // ensure we are not over writing any existing requests
         if self.active_requests.get(&node_address).is_none() {
             if let std::collections::hash_map::Entry::Occupied(mut entry) =
@@ -856,7 +867,7 @@ impl Handler {
                 }
                 trace!("Sending next awaiting message. Node: {}", contact);
                 if let Err(request_error) = self
-                    .send_request(contact, request_id.clone(), request)
+                    .send_request::<P>(contact, request_id.clone(), request)
                     .await
                 {
                     warn!("Failed to send next awaiting request {}", request_error);
@@ -883,7 +894,7 @@ impl Handler {
 
     /// Handle a standard message that does not contain an authentication header.
     #[allow(clippy::single_match)]
-    async fn handle_message(
+    async fn handle_message<P: ProtocolIdentity>(
         &mut self,
         node_address: NodeAddress,
         message_nonce: MessageNonce,
@@ -985,7 +996,7 @@ impl Handler {
                         }
                     }
                     // Handle standard responses
-                    self.handle_response(node_address, response).await;
+                    self.handle_response::<P>(node_address, response).await;
                 }
             }
         } else {
@@ -1009,7 +1020,11 @@ impl Handler {
 
     /// Handles a response to a request. Re-inserts the request call if the response is a multiple
     /// Nodes response.
-    async fn handle_response(&mut self, node_address: NodeAddress, response: Response) {
+    async fn handle_response<P: ProtocolIdentity>(
+        &mut self,
+        node_address: NodeAddress,
+        response: Response,
+    ) {
         // Find a matching request, if any
         if let Some(mut request_call) = self.active_requests.remove(&node_address) {
             let id = match request_call.id() {
@@ -1080,7 +1095,7 @@ impl Handler {
             {
                 warn!("Failed to inform of response {}", e)
             }
-            self.send_next_request(node_address).await;
+            self.send_next_request::<P>(node_address).await;
         } else {
             // This is likely a late response and we have already failed the request. These get
             // dropped here.

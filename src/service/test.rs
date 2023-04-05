@@ -7,6 +7,7 @@ use crate::{
     kbucket,
     kbucket::{BucketInsertResult, KBucketsTable, NodeStatus},
     node_info::NodeContact,
+    packet::{DefaultProtocolId, ProtocolIdentity},
     query_pool::{QueryId, QueryPool},
     rpc::RequestId,
     service::{ActiveRequest, Service},
@@ -37,7 +38,7 @@ fn init() {
         .try_init();
 }
 
-async fn build_service(
+async fn build_service<P: ProtocolIdentity>(
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
     listen_config: ListenConfig,
@@ -47,7 +48,7 @@ async fn build_service(
         .executor(Box::<crate::executor::TokioExecutor>::default())
         .build();
     // build the session service
-    let (_handler_exit, handler_send, handler_recv) = Handler::spawn(
+    let (_handler_exit, handler_send, handler_recv) = Handler::spawn::<P>(
         local_enr.clone(),
         enr_key.clone(),
         config.clone(),
@@ -120,7 +121,7 @@ async fn test_updating_connection_on_ping() {
         port: enr.udp4().unwrap(),
     };
 
-    let mut service = build_service(
+    let mut service = build_service::<DefaultProtocolId>(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
         listen_config,
