@@ -76,11 +76,7 @@ impl SendHandler {
         }
     }
 
-    async fn send(
-        &self,
-        encoded_packet: &Vec<u8>,
-        socket_addr: &SocketAddr,
-    ) -> Result<usize, String> {
+    async fn send(&self, encoded_packet: &[u8], socket_addr: &SocketAddr) -> Result<usize, String> {
         let socket = match socket_addr {
             SocketAddr::V4(_) => {
                 if let Some(socket) = self.send_ipv4.as_ref() {

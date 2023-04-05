@@ -27,7 +27,7 @@ async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
         let enr_key = CombinedKey::generate_secp256k1();
         let config = Discv5Config::default();
         let listen_config = ListenConfig::Ipv4 {
-            ip: ip.clone(),
+            ip,
             port,
         };
 
@@ -54,7 +54,7 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
 
         let config = Discv5ConfigBuilder::new().build();
         let listen_config = ListenConfig::Ipv4 {
-            ip: ip.clone(),
+            ip,
             port,
         };
 
