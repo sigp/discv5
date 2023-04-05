@@ -105,14 +105,14 @@ async fn test_updating_connection_on_ping() {
     let ip = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
         .ip4(ip)
-        .udp4(10001)
+        .udp4(10011)
         .build(&enr_key1)
         .unwrap();
     let ip2 = "127.0.0.1".parse().unwrap();
     let enr_key2 = CombinedKey::generate_secp256k1();
     let enr2 = EnrBuilder::new("v4")
         .ip4(ip2)
-        .udp4(10002)
+        .udp4(10012)
         .build(&enr_key2)
         .unwrap();
 

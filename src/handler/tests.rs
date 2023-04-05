@@ -283,7 +283,7 @@ async fn test_self_request() {
         .build(&key)
         .unwrap();
 
-    let (_exit_send, send, mut recv) = Handler::spawn::<DefaultProtocolId>(
+    let spawn_result = Handler::spawn::<DefaultProtocolId>(
         arc_rw!(enr.clone()),
         arc_rw!(key),
         config,
@@ -294,7 +294,16 @@ async fn test_self_request() {
             ipv6_port: enr.udp6().unwrap(),
         },
     )
-    .await
+    .await;
+
+    let (_exit_send, send, mut recv) = match spawn_result {
+        ok @ Ok(_) => ok,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrNotAvailable => {
+            tracing::error!("AddrNotAvailable error identified, this likely means Ipv6 is not supported. Test won't be run");
+            return;
+        },
+        e @ Err(_) => e
+    }
     .unwrap();
 
     // self request (IPv4)

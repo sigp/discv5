@@ -72,7 +72,7 @@ pub struct Socket {
 impl Socket {
     /// This creates and binds a new UDP socket.
     // In general this function can be expanded to handle more advanced socket creation.
-    async fn new_socket(socket_addr: &SocketAddr) -> Result<UdpSocket, Error> {
+    pub(crate) async fn new_socket(socket_addr: &SocketAddr) -> Result<UdpSocket, Error> {
         match socket_addr {
             SocketAddr::V4(ip4) => UdpSocket::bind(ip4).await,
             SocketAddr::V6(ip6) => {
