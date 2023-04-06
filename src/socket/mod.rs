@@ -43,7 +43,7 @@ pub struct SocketConfig {
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
 pub struct Socket {
-    pub send: mpsc::Sender<OutboundPacket>,
+    pub send: mpsc::Sender<Outbound>,
     pub recv: mpsc::Receiver<InboundPacket>,
     sender_exit: Option<oneshot::Sender<()>>,
     recv_exit: Option<oneshot::Sender<()>>,

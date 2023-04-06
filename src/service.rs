@@ -832,6 +832,12 @@ impl Service {
                                             updated = true;
                                             info!("Local UDP ip6 socket updated to: {}", new_ip6);
                                             self.send_event(Discv5Event::SocketUpdated(new_ip6));
+                                            if let Err(e) = self
+                                                .handler_send
+                                                .send(HandlerIn::SocketUpdated(new_ip6))
+                                            {
+                                                warn!("Failed to send socket update {}", e);
+                                            };
                                         }
                                         Err(e) => {
                                             warn!("Failed to update local UDP ip6 socket. ip6: {}, error: {:?}", new_ip6, e);
@@ -849,6 +855,13 @@ impl Service {
                                             updated = true;
                                             info!("Local UDP socket updated to: {}", new_ip4);
                                             self.send_event(Discv5Event::SocketUpdated(new_ip4));
+                                            // Check if we are behind a NAT
+                                            if let Err(e) = self
+                                                .handler_send
+                                                .send(HandlerIn::SocketUpdated(new_ip4))
+                                            {
+                                                warn!("Failed to send socket update {}", e);
+                                            };
                                         }
                                         Err(e) => {
                                             warn!("Failed to update local UDP socket. ip: {}, error: {:?}", new_ip4, e);
