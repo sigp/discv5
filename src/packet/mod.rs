@@ -141,9 +141,9 @@ pub enum PacketKind {
         /// The ENR record of the node if the WHOAREYOU request is out-dated.
         enr_record: Option<Enr>,
     },
-    /// A notification. Differs from [`PacketKind::Message`] in the way it handles sessions. A 
-    /// notification packet doesn't trigger a WHOAREYOU response. If a session doesn't exist to 
-    /// decrypt or encrypt a notification, it is dropped. 
+    /// A notification. Differs from [`PacketKind::Message`] in the way it handles sessions. A
+    /// notification packet doesn't trigger a WHOAREYOU response. If a session doesn't exist to
+    /// decrypt or encrypt a notification, it is dropped.
     Notification {
         /// The sending NodeId.
         src_id: NodeId,

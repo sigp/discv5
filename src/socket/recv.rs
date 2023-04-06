@@ -6,6 +6,7 @@ use super::filter::{Filter, FilterConfig};
 use crate::{
     ipmode::to_ipv4_mapped, metrics::METRICS, node_info::NodeAddress, packet::*, Executor,
 };
+use nat_hole_punch;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -143,14 +144,26 @@ impl RecvHandler {
             return;
         }
         // Decodes the packet
-        let (packet, authenticated_data) =
-            match Packet::decode::<P>(&self.node_id, &self.recv_buffer[..length]) {
-                Ok(p) => p,
-                Err(e) => {
-                    debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it
-                    return;
+        let (packet, authenticated_data) = match Packet::decode::<P>(
+            &self.node_id,
+            &self.recv_buffer[..length],
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                // This could be a packet to keep a NAT hole punched for this node in the
+                // sender's NAT, hence only serves purpose for the sender.
+                if nat_hole_punch::is_keep_hole_punched_packet(length) {
+                    debug!("Appears to be a packet to keep a hole punched in sender's NAT, dropping. src: {}", src_address);
+                } else {
+                    // Could not decode the packet, drop it.
+                    debug!(
+                        "Packet decoding failed, src: {}, error: {:?}",
+                        src_address, e
+                    );
                 }
-            };
+                return;
+            }
+        };
 
         // If this is not a challenge packet, we immediately know its src_id and so pass it
         // through the second filter.

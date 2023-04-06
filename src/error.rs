@@ -47,7 +47,7 @@ impl From<std::io::Error> for Discv5Error {
     }
 }
 
-macro_rules! impl_from_to_variant {
+macro_rules! impl_from_variant {
     ($(<$($generic: ident$(: $trait: path)*,)+>)*, $from_type: ty, $to_type: ty, $variant: path) => {
         impl$(<$($generic$(: $trait)*,)+>)* From<$from_type> for $to_type {
             fn from(_e: $from_type) -> Self {
@@ -57,8 +57,8 @@ macro_rules! impl_from_to_variant {
     };
 }
 
-impl_from_to_variant!(<T,>, tokio::sync::mpsc::error::SendError<T>, Discv5Error, Self::ServiceChannelClosed);
-impl_from_to_variant!(, NonContactable, Discv5Error, Self::InvalidEnr);
+impl_from_variant!(<T,>, tokio::sync::mpsc::error::SendError<T>, Discv5Error, Self::ServiceChannelClosed);
+impl_from_variant!(, NonContactable, Discv5Error, Self::InvalidEnr);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Types of packet errors.

@@ -1,5 +1,6 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
 use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
+use nat_hole_punch::impl_from_variant_wrap;
 use std::sync::Arc;
 use tokio::{
     net::UdpSocket,
@@ -7,11 +8,18 @@ use tokio::{
 };
 use tracing::{debug, trace, warn};
 
+pub enum Outbound {
+    Packet(Packet),
+    KeepHolePunched,
+}
+
+impl_from_variant_wrap!(, Packet, Outbound, Self::Packet);
+
 pub struct OutboundPacket {
     /// The destination node address
     pub node_address: NodeAddress,
     /// The packet to be encoded.
-    pub packet: Packet,
+    pub packet: Outbound,
 }
 
 /// The main task that handles outbound UDP packets.
@@ -53,15 +61,23 @@ impl SendHandler {
     async fn start<P: ProtocolIdentity>(&mut self) {
         loop {
             tokio::select! {
-                Some(packet) = self.handler_recv.recv() => {
-                    let encoded_packet = packet.packet.encode::<P>(&packet.node_address.node_id);
-                    if encoded_packet.len() > MAX_PACKET_SIZE {
-                        warn!("Sending packet larger than max size: {} max: {}", encoded_packet.len(), MAX_PACKET_SIZE);
-                    }
-                    if let Err(e) = self.send.send_to(&encoded_packet, &packet.node_address.socket_addr).await {
+                Some(outbound) = self.handler_recv.recv() => {
+                    let packet_bytes = match outbound.packet {
+                        Outbound::Packet(packet) => {
+                            let dst_id = outbound.node_address.node_id;
+                            let encoded_packet = packet.encode::<P>(&dst_id);
+                            if encoded_packet.len() > MAX_PACKET_SIZE {
+                                warn!("Sending packet larger than max size: {} max: {}", encoded_packet.len(), MAX_PACKET_SIZE);
+                            }
+                            encoded_packet
+                        }
+                        Outbound::KeepHolePunched => vec![],
+                    };
+                    let dst_addr = outbound.node_address.socket_addr;
+                    if let Err(e) = self.send.send_to(&packet_bytes, &dst_addr).await {
                         trace!("Could not send packet. Error: {:?}", e);
                     } else {
-                        METRICS.add_sent_bytes(encoded_packet.len());
+                        METRICS.add_sent_bytes(packet_bytes.len());
                     }
                 }
                 _ = &mut self.exit => {

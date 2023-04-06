@@ -33,11 +33,11 @@ use crate::{
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
-    socket::{FilterConfig, Socket},
+    socket::{FilterConfig, Outbound, Socket},
     Enr, IpMode,
 };
 use async_trait::async_trait;
-use delay_map::HashMapDelay;
+use delay_map::{HashMapDelay, HashSetDelay};
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
 use nat_hole_punch::*;
@@ -269,6 +269,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         let nat_hole_puncher = NatHolePuncher {
             new_peer_latest_relay: Default::default(),
             ip_mode: config.ip_mode,
+            hole_punch_tracker: HashSetDelay::new(Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME)),
         };
 
         config
@@ -340,6 +341,11 @@ impl<P: ProtocolIdentity> Handler<P> {
                     // A challenge has expired. There could be pending requests awaiting this
                     // challenge. We process them here
                     self.send_next_request(node_address).await;
+                }
+                Some(Ok(node_address)) = self.nat_hole_puncher.hole_punch_tracker.next() => {
+                    if let Err(e) = self.on_hole_punch_expired(node_address).await {
+                        warn!("Failed to keep hole punched for peer, error: {}", e);
+                    }
                 }
                 _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
@@ -483,7 +489,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 request_call.body(),
                 node_address
             );
-            self.send(node_address.clone(), request_call.packet().clone())
+            self.send(node_address.clone(), request_call.packet().clone().into())
                 .await;
             request_call.increment_retries();
             self.active_requests.insert(node_address, request_call);
@@ -556,7 +562,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         );
         // let the filter know we are expecting a response
         self.add_expected_response(node_address.socket_addr);
-        self.send(node_address.clone(), packet).await;
+        self.send(node_address.clone(), packet.into()).await;
 
         self.active_requests.insert(node_address, call);
         Ok(())
@@ -574,7 +580,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     return;
                 }
             };
-            self.send(node_address, packet).await;
+            self.send(node_address, packet.into()).await;
         } else {
             // Either the session is being established or has expired. We simply drop the
             // response in this case.
@@ -614,7 +620,7 @@ impl<P: ProtocolIdentity> Handler<P> {
             .expect("Must be the correct challenge size");
         debug!("Sending WHOAREYOU to {}", node_address);
         self.add_expected_response(node_address.socket_addr);
-        self.send(node_address.clone(), packet).await;
+        self.send(node_address.clone(), packet.into()).await;
         self.active_challenges.insert(
             node_address,
             Challenge {
@@ -743,7 +749,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
                 // Send the actual packet to the send task.
-                self.send(node_address.clone(), auth_packet).await;
+                self.send(node_address.clone(), auth_packet.into()).await;
 
                 // Notify the application that the session has been established
                 self.service_send
@@ -765,7 +771,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 request_call.set_handshake_sent();
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
-                self.send(node_address.clone(), auth_packet).await;
+                self.send(node_address.clone(), auth_packet.into()).await;
 
                 let id = RequestId::random();
                 let request = RequestBody::FindNode { distances: vec![0] };
@@ -975,7 +981,7 @@ impl<P: ProtocolIdentity> Handler<P> {
             Ok(ref bytes) => match Message::decode(bytes) {
                 Ok(message) => message,
                 Err(msg_err) => {
-                    // try to decode the message as an application layer notification 
+                    // try to decode the message as an application layer notification
                     if let Err(notif_err) = self.on_notification(bytes).await {
                         warn!(
                             "Failed to decode as message and notification. Error: {:?}, {}, {}",
@@ -1307,14 +1313,17 @@ impl<P: ProtocolIdentity> Handler<P> {
     }
 
     /// Sends a packet to the send handler to be encoded and sent.
-    async fn send(&mut self, node_address: NodeAddress, packet: Packet) {
+    async fn send(&mut self, node_address: NodeAddress, packet: Outbound) {
         let outbound_packet = socket::OutboundPacket {
-            node_address,
+            node_address: node_address.clone(),
             packet,
         };
         if let Err(e) = self.socket.send.send(outbound_packet).await {
             warn!("Failed to send outbound packet {}", e)
         }
+        self.nat_hole_puncher
+            .hole_punch_tracker
+            .insert(node_address);
     }
 
     /// Check if any banned nodes have served their time and unban them.
@@ -1357,7 +1366,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     return Err(HolePunchError::RelayError(e));
                 }
             };
-            self.send(tgt_node_address, packet).await;
+            self.send(tgt_node_address, packet.into()).await;
             Ok(())
         } else {
             // Either the session is being established or has expired. We simply drop the
@@ -1408,7 +1417,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                     return Err(HolePunchError::RelayError(e));
                 }
             };
-            self.send(relay, packet).await;
+            self.send(relay, packet.into()).await;
         } else {
             // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
             // within the time out of the udp entrypoint for the target peer in the initiator's
@@ -1487,14 +1496,23 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         }
         Ok(())
     }
+    async fn on_hole_punch_expired(
+        &mut self,
+        dst: Self::TNodeAddress,
+    ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
+        Ok(self.send(dst, Outbound::KeepHolePunched).await)
+    }
 }
 
 /// Types necessary implement trait [`NatHolePunch`].
 struct NatHolePuncher {
+    /// Ip mode as set in config.
+    ip_mode: IpMode,
     /// The last peer to send us a new peer in a NODES response is stored as the new peer's
     /// potential relay until the first request to the new peer after its discovery is either
     /// responded or failed.
     new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
-    /// Ip mode as set in config.
-    ip_mode: IpMode,
+    /// Keeps track if this node needs to send a packet to a peer in order to keep a hole punched
+    /// for it in its NAT.
+    hole_punch_tracker: HashSetDelay<NodeAddress>,
 }
