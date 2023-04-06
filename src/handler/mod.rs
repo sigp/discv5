@@ -1519,6 +1519,8 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
     }
 }
 
+const DEFAULT_PORT_BIND_TRIES: usize = 4;
+
 /// Types necessary implement trait [`NatHolePunch`].
 struct NatHolePuncher {
     /// Ip mode as set in config.
@@ -1591,7 +1593,7 @@ impl NatHolePuncher {
             return;
         };
         let mut rng = rand::thread_rng();
-        for _ in 0..4 {
+        for _ in 0..DEFAULT_PORT_BIND_TRIES {
             let rnd_port: u16 = rng.gen_range(1024..=49151);
             let Ok(addr) = format!("{}:{}", ip, rnd_port).parse() else {
                 return;
