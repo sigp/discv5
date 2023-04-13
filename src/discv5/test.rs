@@ -424,6 +424,9 @@ async fn test_discovery_three_peers_mixed() {
 
 /// Test for running a simple query test for a mixed topology of IPv4, IPv6 and dual stack nodes.
 /// The node to run the query is IPv4.
+// NOTE: This test emits the error log below because the node to run a query is in IPv4 mode so
+// IPv6 address included in the response is non-contactable.
+// `ERROR discv5::service: Query 0 has a non contactable enr: ENR: NodeId: 0xe030..dcbe, IpV4 Socket: None IpV6 Socket: Some([::1]:10043)`
 #[tokio::test]
 async fn test_discovery_three_peers_mixed_query_from_ipv4() {
     return_if_ipv6_is_not_supported!();
