@@ -149,6 +149,23 @@ fn get_distance(node1: NodeId, node2: NodeId) -> Option<u64> {
     node1.log2_distance(&node2.into())
 }
 
+macro_rules! return_if_ipv6_is_not_supported {
+    () => {
+        let mut is_ipv6_supported = false;
+        for i in if_addrs::get_if_addrs().expect("network interfaces").iter() {
+            if !i.is_loopback() && i.addr.ip().is_ipv6() {
+                is_ipv6_supported = true;
+                break;
+            }
+        }
+
+        if !is_ipv6_supported {
+            tracing::error!("Seems Ipv6 is not supported. Test won't be run.");
+            return;
+        }
+    };
+}
+
 // Simple searching function to find seeds that give node ids for a range of testing and different
 // topologies
 #[allow(dead_code)]
@@ -334,6 +351,8 @@ async fn test_discovery_three_peers_ipv4() {
 /// Test for running a simple query test for a topology consisting of IPv6 nodes.
 #[tokio::test]
 async fn test_discovery_three_peers_ipv6() {
+    return_if_ipv6_is_not_supported!();
+
     init();
     let total_nodes = 3;
     // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
@@ -352,6 +371,8 @@ async fn test_discovery_three_peers_ipv6() {
 /// Test for running a simple query test for a topology consisting of dual stack nodes.
 #[tokio::test]
 async fn test_discovery_three_peers_dual_stack() {
+    return_if_ipv6_is_not_supported!();
+
     init();
     let total_nodes = 3;
     // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
@@ -371,6 +392,8 @@ async fn test_discovery_three_peers_dual_stack() {
 /// The node to run the query is DualStack.
 #[tokio::test]
 async fn test_discovery_three_peers_mixed() {
+    return_if_ipv6_is_not_supported!();
+
     init();
     let total_nodes = 3;
     // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
@@ -402,6 +425,8 @@ async fn test_discovery_three_peers_mixed() {
 /// The node to run the query is IPv4.
 #[tokio::test]
 async fn test_discovery_three_peers_mixed_query_from_ipv4() {
+    return_if_ipv6_is_not_supported!();
+
     init();
     let total_nodes = 3;
     // Seed is chosen such that all nodes are in the 256th bucket of bootstrap
