@@ -9,7 +9,6 @@ use std::{
 };
 
 fn init() {
-    // check if ipv6 is supported.
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
@@ -66,10 +65,7 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
     nodes
 }
 
-async fn build_nodes_from_keypairs_ipv6(
-    keys: Vec<CombinedKey>,
-    base_port: u16,
-) -> Result<Vec<Discv5>, Discv5Error> {
+async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>, base_port: u16) -> Vec<Discv5> {
     let mut nodes = Vec::new();
 
     for (i, enr_key) in keys.into_iter().enumerate() {
@@ -88,16 +84,16 @@ async fn build_nodes_from_keypairs_ipv6(
             .unwrap();
 
         let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
-        discv5.start().await?;
+        discv5.start().await.unwrap();
         nodes.push(discv5);
     }
-    Ok(nodes)
+    nodes
 }
 
 async fn build_nodes_from_keypairs_dual_stack(
     keys: Vec<CombinedKey>,
     base_port: u16,
-) -> Result<Vec<Discv5>, Discv5Error> {
+) -> Vec<Discv5> {
     let mut nodes = Vec::new();
 
     for (i, enr_key) in keys.into_iter().enumerate() {
@@ -121,29 +117,10 @@ async fn build_nodes_from_keypairs_dual_stack(
             .unwrap();
 
         let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
-        discv5.start().await?;
+        discv5.start().await.unwrap();
         nodes.push(discv5);
     }
-    Ok(nodes)
-}
-
-/// Calls fn_call which returns Result<Something, Discv5Error> and checks if the error is
-/// `AddrNotAvailable`. This likely means ipv6 is not supported. In this case, inserts an error
-/// log and a return to prevent the test from continuing (and failing). Otherwise panics
-macro_rules! check_build {
-    ($fn_call: expr) => {
-        {
-            let nodes = match $fn_call {
-                Ok(nodes) => nodes,
-                Err(Discv5Error::Io(e)) if e.kind() == std::io::ErrorKind::AddrNotAvailable => {
-                    tracing::error!("AddrNotAvailable error identified, this likely means Ipv6 is not supported. Test won't be run");
-                    return;
-                },
-                Err(e) => panic!("Failed to build discv5 nodes {}", e),
-            };
-            nodes
-        }
-    };
+    nodes
 }
 
 /// Generate `n` deterministic keypairs from a given seed.
@@ -364,7 +341,7 @@ async fn test_discovery_three_peers_ipv6() {
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     // IPv6
-    let nodes = check_build!(build_nodes_from_keypairs_ipv6(keypairs, 10010).await);
+    let nodes = build_nodes_from_keypairs_ipv6(keypairs, 10010).await;
 
     assert_eq!(
         total_nodes,
@@ -382,7 +359,7 @@ async fn test_discovery_three_peers_dual_stack() {
     // Generate `num_nodes` + bootstrap_node and target_node keypairs from given seed
     let keypairs = generate_deterministic_keypair(total_nodes + 2, seed);
     // DualStack
-    let nodes = check_build!(build_nodes_from_keypairs_dual_stack(keypairs, 10020).await);
+    let nodes = build_nodes_from_keypairs_dual_stack(keypairs, 10020).await;
 
     assert_eq!(
         total_nodes,
@@ -403,23 +380,15 @@ async fn test_discovery_three_peers_mixed() {
 
     let mut nodes = vec![];
     // Bootstrap node (DualStack)
-    nodes.append(&mut check_build!(
-        build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10030).await
-    ));
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10030).await);
     // A node to run query (DualStack)
-    nodes.append(&mut check_build!(
-        build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10031).await
-    ));
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10031).await);
     // IPv4 node
     nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10032).await);
     // IPv6 node
-    nodes.append(&mut check_build!(
-        build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 10033).await
-    ));
+    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 10033).await);
     // Target node (DualStack)
-    nodes.append(&mut check_build!(
-        build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10034).await
-    ));
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10034).await);
 
     assert!(keypairs.is_empty());
     assert_eq!(5, nodes.len());
@@ -442,21 +411,15 @@ async fn test_discovery_three_peers_mixed_query_from_ipv4() {
 
     let mut nodes = vec![];
     // Bootstrap node (DualStack)
-    nodes.append(&mut check_build!(
-        build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10040).await
-    ));
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10040).await);
     // A node to run query (** IPv4 **)
     nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10041).await);
     // IPv4 node
     nodes.append(&mut build_nodes_from_keypairs(vec![keypairs.remove(0)], 10042).await);
     // IPv6 node
-    nodes.append(&mut check_build!(
-        build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 10043).await
-    ));
+    nodes.append(&mut build_nodes_from_keypairs_ipv6(vec![keypairs.remove(0)], 10043).await);
     // Target node (DualStack)
-    nodes.append(&mut check_build!(
-        build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10044).await
-    ));
+    nodes.append(&mut build_nodes_from_keypairs_dual_stack(vec![keypairs.remove(0)], 10044).await);
 
     assert!(keypairs.is_empty());
     assert_eq!(5, nodes.len());
