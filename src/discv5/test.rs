@@ -149,6 +149,7 @@ fn get_distance(node1: NodeId, node2: NodeId) -> Option<u64> {
     node1.log2_distance(&node2.into())
 }
 
+#[macro_export]
 macro_rules! return_if_ipv6_is_not_supported {
     () => {
         let mut is_ipv6_supported = false;
