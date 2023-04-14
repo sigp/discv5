@@ -3,6 +3,7 @@
 use super::*;
 use crate::{
     packet::DefaultProtocolId,
+    return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
     Discv5ConfigBuilder, IpMode,
 };
@@ -270,7 +271,7 @@ async fn test_active_requests_insert() {
 }
 
 #[tokio::test]
-async fn test_self_request() {
+async fn test_self_request_ipv4() {
     init();
 
     let key = CombinedKey::generate_secp256k1();
@@ -278,32 +279,19 @@ async fn test_self_request() {
     let enr = EnrBuilder::new("v4")
         .ip4(Ipv4Addr::LOCALHOST)
         .udp4(5004)
-        .ip6(Ipv6Addr::LOCALHOST)
-        .udp6(5005)
         .build(&key)
         .unwrap();
 
-    let spawn_result = Handler::spawn::<DefaultProtocolId>(
+    let (_exit_send, send, mut recv) = Handler::spawn::<DefaultProtocolId>(
         arc_rw!(enr.clone()),
         arc_rw!(key),
         config,
-        ListenConfig::DualStack {
-            ipv4: enr.ip4().unwrap(),
-            ipv4_port: enr.udp4().unwrap(),
-            ipv6: enr.ip6().unwrap(),
-            ipv6_port: enr.udp6().unwrap(),
+        ListenConfig::Ipv4 {
+            ip: enr.ip4().unwrap(),
+            port: enr.udp4().unwrap(),
         },
     )
-    .await;
-
-    let (_exit_send, send, mut recv) = match spawn_result {
-        ok @ Ok(_) => ok,
-        Err(e) if e.kind() == std::io::ErrorKind::AddrNotAvailable => {
-            tracing::error!("AddrNotAvailable error identified, this likely means Ipv6 is not supported. Test won't be run");
-            return;
-        },
-        e @ Err(_) => e
-    }
+    .await
     .unwrap();
 
     // self request (IPv4)
@@ -319,6 +307,33 @@ async fn test_self_request() {
         Some(RequestFailed(RequestId(vec![1]), SelfRequest)),
         handler_out
     );
+}
+
+#[tokio::test]
+async fn test_self_request_ipv6() {
+    return_if_ipv6_is_not_supported!();
+
+    init();
+
+    let key = CombinedKey::generate_secp256k1();
+    let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
+    let enr = EnrBuilder::new("v4")
+        .ip6(Ipv6Addr::LOCALHOST)
+        .udp6(5005)
+        .build(&key)
+        .unwrap();
+
+    let (_exit_send, send, mut recv) = Handler::spawn::<DefaultProtocolId>(
+        arc_rw!(enr.clone()),
+        arc_rw!(key),
+        config,
+        ListenConfig::Ipv6 {
+            ip: enr.ip6().unwrap(),
+            port: enr.udp6().unwrap(),
+        },
+    )
+    .await
+    .unwrap();
 
     // self request (IPv6)
     let _ = send.send(HandlerIn::Request(
