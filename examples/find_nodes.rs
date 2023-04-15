@@ -111,22 +111,6 @@ async fn main() {
         builder.build(&enr_key).unwrap()
     };
 
-    // default configuration with packet filtering
-    // let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
-
-    // default configuration without packet filtering
-    let config = Discv5ConfigBuilder::new().build();
-
-    info!("Node Id: {}", enr.node_id());
-    if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
-        // if the ENR is useful print it
-        info!("Base64 ENR: {}", enr.to_base64());
-        info!(
-            "Local ENR IpV6 socket: {:?}. Local ENR IpV4 socket: {:?}",
-            enr.udp6_socket(),
-            enr.udp4_socket()
-        );
-    }
     // the address to listen on.
     let listen_config = match args.socket_kind {
         SocketKind::Ip4 => ListenConfig::Ipv4 {
@@ -145,8 +129,25 @@ async fn main() {
         },
     };
 
+    // default configuration with packet filtering
+    // let config = Discv5ConfigBuilder::new(listen_config).enable_packet_filter().build();
+
+    // default configuration without packet filtering
+    let config = Discv5ConfigBuilder::new(listen_config).build();
+
+    info!("Node Id: {}", enr.node_id());
+    if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
+        // if the ENR is useful print it
+        info!("Base64 ENR: {}", enr.to_base64());
+        info!(
+            "Local ENR IpV6 socket: {:?}. Local ENR IpV4 socket: {:?}",
+            enr.udp6_socket(),
+            enr.udp4_socket()
+        );
+    }
+
     // construct the discv5 server
-    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {

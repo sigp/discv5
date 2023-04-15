@@ -39,10 +39,7 @@ use tracing::{debug, warn};
 use libp2p_core::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
-use crate::{
-    metrics::{Metrics, METRICS},
-    socket::ListenConfig,
-};
+use crate::metrics::{Metrics, METRICS};
 lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
@@ -91,8 +88,6 @@ where
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
     enr_key: Arc<RwLock<CombinedKey>>,
-    /// Type of socket to create.
-    listen_config: ListenConfig,
     // Type of socket we are using
     ip_mode: IpMode,
     /// Phantom for the protocol id.
@@ -104,7 +99,6 @@ impl<P: ProtocolIdentity> Discv5<P> {
         local_enr: Enr,
         enr_key: CombinedKey,
         mut config: Discv5Config,
-        listen_config: ListenConfig,
     ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
@@ -141,7 +135,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
 
-        let ip_mode = IpMode::new_from_listen_config(&listen_config);
+        let ip_mode = IpMode::new_from_listen_config(&config.listen_config);
 
         Ok(Discv5 {
             config,
@@ -150,7 +144,6 @@ impl<P: ProtocolIdentity> Discv5<P> {
             kbuckets,
             local_enr,
             enr_key,
-            listen_config,
             ip_mode,
             _phantom: Default::default(),
         })
@@ -169,7 +162,6 @@ impl<P: ProtocolIdentity> Discv5<P> {
             self.enr_key.clone(),
             self.kbuckets.clone(),
             self.config.clone(),
-            self.listen_config.clone(),
         )
         .await?;
         self.service_exit = Some(service_exit);

@@ -25,8 +25,8 @@ async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
 
     for port in base_port..base_port + n as u16 {
         let enr_key = CombinedKey::generate_secp256k1();
-        let config = Discv5Config::default();
         let listen_config = ListenConfig::Ipv4 { ip, port };
+        let config = Discv5ConfigBuilder::new(listen_config).build();
 
         let enr = EnrBuilder::new("v4")
             .ip4(ip)
@@ -34,7 +34,7 @@ async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
             .build(&enr_key)
             .unwrap();
         // transport for building a swarm
-        let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+        let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
         discv5.start().await.unwrap();
         nodes.push(discv5);
     }
@@ -49,8 +49,8 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
     for (i, enr_key) in keys.into_iter().enumerate() {
         let port = base_port + i as u16;
 
-        let config = Discv5ConfigBuilder::new().build();
         let listen_config = ListenConfig::Ipv4 { ip, port };
+        let config = Discv5ConfigBuilder::new(listen_config).build();
 
         let enr = EnrBuilder::new("v4")
             .ip4(ip)
@@ -58,7 +58,7 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
             .build(&enr_key)
             .unwrap();
 
-        let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+        let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
         discv5.start().await.unwrap();
         nodes.push(discv5);
     }
@@ -71,11 +71,11 @@ async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>, base_port: u16) 
     for (i, enr_key) in keys.into_iter().enumerate() {
         let port = base_port + i as u16;
 
-        let config = Discv5ConfigBuilder::new().build();
         let listen_config = ListenConfig::Ipv6 {
             ip: Ipv6Addr::LOCALHOST,
             port,
         };
+        let config = Discv5ConfigBuilder::new(listen_config).build();
 
         let enr = EnrBuilder::new("v4")
             .ip6(Ipv6Addr::LOCALHOST)
@@ -83,7 +83,7 @@ async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>, base_port: u16) 
             .build(&enr_key)
             .unwrap();
 
-        let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+        let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
         discv5.start().await.unwrap();
         nodes.push(discv5);
     }
@@ -100,13 +100,13 @@ async fn build_nodes_from_keypairs_dual_stack(
         let ipv4_port = base_port + i as u16;
         let ipv6_port = ipv4_port + 1000;
 
-        let config = Discv5ConfigBuilder::new().build();
         let listen_config = ListenConfig::DualStack {
             ipv4: Ipv4Addr::LOCALHOST,
             ipv4_port,
             ipv6: Ipv6Addr::LOCALHOST,
             ipv6_port,
         };
+        let config = Discv5ConfigBuilder::new(listen_config).build();
 
         let enr = EnrBuilder::new("v4")
             .ip4(Ipv4Addr::LOCALHOST)
@@ -116,7 +116,7 @@ async fn build_nodes_from_keypairs_dual_stack(
             .build(&enr_key)
             .unwrap();
 
-        let mut discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+        let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
         discv5.start().await.unwrap();
         nodes.push(discv5);
     }
@@ -744,7 +744,6 @@ async fn test_table_limits() {
     let mut keypairs = generate_deterministic_keypair(12, 9487);
     let ip: Ipv4Addr = "127.0.0.1".parse().unwrap();
     let enr_key: CombinedKey = keypairs.remove(0);
-    let config = Discv5ConfigBuilder::new().ip_limit().build();
     let enr = EnrBuilder::new("v4")
         .ip4(ip)
         .udp4(9050)
@@ -754,9 +753,10 @@ async fn test_table_limits() {
         ip: enr.ip4().unwrap(),
         port: enr.udp4().unwrap(),
     };
+    let config = Discv5ConfigBuilder::new(listen_config).ip_limit().build();
 
     // let socket_addr = enr.udp_socket().unwrap();
-    let discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+    let discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
     let table_limit: usize = 10;
     // Generate `table_limit + 2` nodes in the same subnet.
     let enrs: Vec<Enr<CombinedKey>> = (1..=table_limit + 1)
@@ -818,13 +818,13 @@ async fn test_bucket_limits() {
         })
         .collect();
 
-    let config = Discv5ConfigBuilder::new().ip_limit().build();
     let listen_config = ListenConfig::Ipv4 {
         ip: enr.ip4().unwrap(),
         port: enr.udp4().unwrap(),
     };
+    let config = Discv5ConfigBuilder::new(listen_config).ip_limit().build();
 
-    let discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+    let discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
     for enr in enrs {
         let _ = discv5.add_enr(enr.clone()); // we expect some of these to fail based on the filter.
     }

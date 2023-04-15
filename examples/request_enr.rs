@@ -14,6 +14,7 @@
 //! This requires the "libp2p" feature.
 #[cfg(feature = "libp2p")]
 use discv5::socket::ListenConfig;
+use discv5::Discv5ConfigBuilder;
 #[cfg(feature = "libp2p")]
 use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config};
 use std::net::Ipv4Addr;
@@ -43,14 +44,14 @@ async fn main() {
     let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
 
     // default discv5 configuration
-    let config = Discv5Config::default();
+    let config = Discv5ConfigBuilder::new(listen_config).build();
 
     let multiaddr = std::env::args()
         .nth(1)
         .expect("A multiaddr must be supplied");
 
     // construct the discv5 server
-    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // start the discv5 service
     discv5.start().await.unwrap();
