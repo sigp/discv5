@@ -27,7 +27,7 @@ pub use recv::InboundPacket;
 pub use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ListenConfig {
     Ipv4 {
         ip: Ipv4Addr,

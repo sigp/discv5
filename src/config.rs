@@ -3,6 +3,7 @@ use crate::{
 };
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
+use crate::socket::ListenConfig;
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
@@ -94,10 +95,18 @@ pub struct Discv5Config {
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
+
+    /// Configuration for the sockets to listen on.
+    pub listen_config: ListenConfig,
 }
 
-impl Default for Discv5Config {
-    fn default() -> Self {
+#[derive(Debug)]
+pub struct Discv5ConfigBuilder {
+    config: Discv5Config,
+}
+
+impl Discv5ConfigBuilder {
+    pub fn new(listen_config: ListenConfig) -> Self {
         // This is only applicable if enable_packet_filter is set.
         let filter_rate_limiter = Some(
             RateLimiterBuilder::new()
@@ -108,7 +117,8 @@ impl Default for Discv5Config {
                 .expect("The total rate limit has been specified"),
         );
 
-        Self {
+        // set default values
+        let config = Discv5Config {
             enable_packet_filter: false,
             request_timeout: Duration::from_secs(1),
             vote_duration: Duration::from_secs(30),
@@ -132,19 +142,12 @@ impl Default for Discv5Config {
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             executor: None,
+            listen_config,
+        };
+
+        Discv5ConfigBuilder {
+            config,
         }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Discv5ConfigBuilder {
-    config: Discv5Config,
-}
-
-impl Discv5ConfigBuilder {
-    // set default values
-    pub fn new() -> Self {
-        Discv5ConfigBuilder::default()
     }
 
     /// Whether to enable the incoming packet filter.
@@ -334,6 +337,7 @@ impl std::fmt::Debug for Discv5Config {
             .field("incoming_bucket_limit", &self.incoming_bucket_limit)
             .field("ping_interval", &self.ping_interval)
             .field("ban_duration", &self.ban_duration)
+            .field("listen_config", &self.listen_config)
             .finish()
     }
 }
