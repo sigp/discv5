@@ -2,6 +2,7 @@
 
 use super::*;
 
+use crate::socket::ListenConfig;
 use crate::{
     handler::Handler,
     kbucket,
@@ -41,21 +42,20 @@ fn init() {
 async fn build_service<P: ProtocolIdentity>(
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
-    listen_config: ListenConfig,
     filters: bool,
 ) -> Service {
-    let config = Discv5ConfigBuilder::new()
+    let listen_config = ListenConfig::Ipv4 {
+        ip: local_enr.read().ip4().unwrap(),
+        port: local_enr.read().udp4().unwrap(),
+    };
+    let config = Discv5ConfigBuilder::new(listen_config)
         .executor(Box::<crate::executor::TokioExecutor>::default())
         .build();
     // build the session service
-    let (_handler_exit, handler_send, handler_recv) = Handler::spawn::<P>(
-        local_enr.clone(),
-        enr_key.clone(),
-        config.clone(),
-        listen_config,
-    )
-    .await
-    .unwrap();
+    let (_handler_exit, handler_send, handler_recv) =
+        Handler::spawn::<P>(local_enr.clone(), enr_key.clone(), config.clone())
+            .await
+            .unwrap();
 
     let (table_filter, bucket_filter) = if filters {
         (
@@ -116,15 +116,9 @@ async fn test_updating_connection_on_ping() {
         .build(&enr_key2)
         .unwrap();
 
-    let listen_config = ListenConfig::Ipv4 {
-        ip: enr.ip4().unwrap(),
-        port: enr.udp4().unwrap(),
-    };
-
     let mut service = build_service::<DefaultProtocolId>(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
-        listen_config,
         false,
     )
     .await;
