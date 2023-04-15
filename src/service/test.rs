@@ -2,7 +2,6 @@
 
 use super::*;
 
-use crate::socket::ListenConfig;
 use crate::{
     handler::Handler,
     kbucket,
@@ -12,6 +11,7 @@ use crate::{
     query_pool::{QueryId, QueryPool},
     rpc::RequestId,
     service::{ActiveRequest, Service},
+    socket::ListenConfig,
     Discv5ConfigBuilder, Enr,
 };
 use enr::{CombinedKey, EnrBuilder};
