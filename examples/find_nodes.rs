@@ -133,7 +133,7 @@ async fn main() {
     // let config = Discv5ConfigBuilder::new(listen_config).enable_packet_filter().build();
 
     // default configuration without packet filtering
-    let config = Discv5ConfigBuilder::new(listen_config.clone()).build();
+    let config = Discv5ConfigBuilder::new(listen_config).build();
 
     info!("Node Id: {}", enr.node_id());
     if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
@@ -147,7 +147,7 @@ async fn main() {
     }
 
     // construct the discv5 server
-    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {

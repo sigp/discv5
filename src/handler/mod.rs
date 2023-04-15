@@ -215,7 +215,6 @@ impl Handler {
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
         config: Discv5Config,
-        listen_config: ListenConfig,
     ) -> Result<HandlerReturn, std::io::Error> {
         let (exit_sender, exit) = oneshot::channel();
         // create the channels to send/receive messages from the application
@@ -239,7 +238,7 @@ impl Handler {
         };
 
         let mut listen_sockets = SmallVec::default();
-        match listen_config {
+        match config.listen_config {
             ListenConfig::Ipv4 { ip, port } => listen_sockets.push((ip, port).into()),
             ListenConfig::Ipv6 { ip, port } => listen_sockets.push((ip, port).into()),
             ListenConfig::DualStack {
@@ -256,7 +255,7 @@ impl Handler {
         let socket_config = socket::SocketConfig {
             executor: config.executor.clone().expect("Executor must exist"),
             filter_config,
-            listen_config,
+            listen_config: config.listen_config.clone(),
             local_node_id: node_id,
             expected_responses: filter_expected_responses.clone(),
             ban_duration: config.ban_duration,

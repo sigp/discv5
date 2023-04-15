@@ -1,9 +1,9 @@
+use crate::socket::ListenConfig;
 use crate::{
     kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
 };
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
-use crate::socket::ListenConfig;
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
@@ -145,9 +145,7 @@ impl Discv5ConfigBuilder {
             listen_config,
         };
 
-        Discv5ConfigBuilder {
-            config,
-        }
+        Discv5ConfigBuilder { config }
     }
 
     /// Whether to enable the incoming packet filter.
