@@ -337,7 +337,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                             let port = socket.port();
                             if old_socket.is_none() {
                                 // This node goes from being unreachable to being reachable. Remove
-                                // it's sessions to trigger a WHOAREYOU from peers. If the peer is
+                                // its sessions to trigger a WHOAREYOU from peers. If the peer is
                                 // running this implementation of discovery, this makes it possible
                                 // for the local node to be inserted into its peers' kbuckets
                                 // before the session they already had expires. Session duration,
