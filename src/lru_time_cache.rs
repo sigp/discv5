@@ -1,8 +1,10 @@
+use futures::channel::mpsc;
 use hashlink::LinkedHashMap;
 use std::{
     hash::Hash,
     time::{Duration, Instant},
 };
+use tracing::warn;
 
 pub struct LruTimeCache<K, V> {
     map: LinkedHashMap<K, (V, Instant)>,
@@ -10,10 +12,16 @@ pub struct LruTimeCache<K, V> {
     ttl: Duration,
     /// The max size of the cache.
     capacity: usize,
+    /// Channel to send expiry notifications on.
+    tx: Option<mpsc::Sender<K>>,
 }
 
 impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
-    pub fn new(ttl: Duration, capacity: Option<usize>) -> LruTimeCache<K, V> {
+    pub fn new(
+        ttl: Duration,
+        capacity: Option<usize>,
+        tx: Option<mpsc::Sender<K>>,
+    ) -> LruTimeCache<K, V> {
         let capacity = if let Some(cap) = capacity {
             cap
         } else {
@@ -23,6 +31,7 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
             map: LinkedHashMap::new(),
             ttl,
             capacity,
+            tx,
         }
     }
 
@@ -83,7 +92,13 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
     /// Removes a key-value pair from the cache, returning the value at the key if the key
     /// was previously in the map.
     pub fn remove(&mut self, key: &K) -> Option<V> {
-        self.map.remove(key).map(|v| v.0)
+        let v = self.map.remove(key).map(|v| v.0);
+        if let Some(ref mut tx) = self.tx {
+            if let Err(e) = tx.try_send(key.clone()) {
+                warn!("remove failed, {}", e);
+            }
+        }
+        v
     }
 
     /// Removes expired items from the cache.
@@ -97,8 +112,16 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
             expired_keys.push(key.clone());
         }
 
-        for k in expired_keys {
-            self.map.remove(&k);
+        for k in expired_keys.iter() {
+            self.map.remove(k);
+        }
+
+        if let Some(ref mut tx) = self.tx {
+            for k in expired_keys {
+                if let Err(e) = tx.try_send(k) {
+                    warn!("remove expired failed, {}", e);
+                }
+            }
         }
     }
 
@@ -114,7 +137,7 @@ mod tests {
 
     #[test]
     fn insert() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), None, None);
 
         cache.insert(1, 10);
         cache.insert(2, 20);
@@ -127,7 +150,7 @@ mod tests {
 
     #[test]
     fn capacity() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2));
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2), None);
 
         cache.insert(1, 10);
         cache.insert(2, 20);
@@ -141,7 +164,7 @@ mod tests {
 
     #[test]
     fn get() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2));
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2), None);
 
         cache.insert(1, 10);
         cache.insert(2, 20);
@@ -156,7 +179,7 @@ mod tests {
 
     #[test]
     fn get_mut() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), None, None);
 
         cache.insert(1, 10);
         let v = cache.get_mut(&1).expect("should have value");
@@ -167,7 +190,7 @@ mod tests {
 
     #[test]
     fn peek() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2));
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2), None);
 
         cache.insert(1, 10);
         cache.insert(2, 20);
@@ -181,7 +204,7 @@ mod tests {
 
     #[test]
     fn len() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), None, None);
 
         assert_eq!(0, cache.len());
 
@@ -193,7 +216,7 @@ mod tests {
 
     #[test]
     fn remove() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), None, None);
 
         cache.insert(1, 10);
         assert_eq!(Some(10), cache.remove(&1));
@@ -209,7 +232,7 @@ mod tests {
 
         #[test]
         fn get() {
-            let mut cache = LruTimeCache::new(TTL, None);
+            let mut cache = LruTimeCache::new(TTL, None, None);
             cache.insert(1, 10);
             assert_eq!(Some(&10), cache.get(&1));
 
@@ -219,7 +242,7 @@ mod tests {
 
         #[test]
         fn peek() {
-            let mut cache = LruTimeCache::new(TTL, None);
+            let mut cache = LruTimeCache::new(TTL, None, None);
             cache.insert(1, 10);
             assert_eq!(Some(&10), cache.peek(&1));
 
@@ -229,7 +252,7 @@ mod tests {
 
         #[test]
         fn len() {
-            let mut cache = LruTimeCache::new(TTL, None);
+            let mut cache = LruTimeCache::new(TTL, None, None);
             cache.insert(1, 10);
             assert_eq!(1, cache.len());
 
@@ -239,7 +262,7 @@ mod tests {
 
         #[test]
         fn ttl() {
-            let mut cache = LruTimeCache::new(TTL, None);
+            let mut cache = LruTimeCache::new(TTL, None, None);
             cache.insert(1, 10);
             sleep(TTL / 4);
             cache.insert(2, 20);

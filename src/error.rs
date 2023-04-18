@@ -7,6 +7,8 @@ use std::fmt;
 pub enum Discv5Error {
     /// An invalid ENR was received.
     InvalidEnr,
+    /// An invalid ENR was received.
+    LimitSessionsUnreachableEnr,
     /// The public key type is known.
     UnknownPublicKey,
     /// The ENR key used is not supported.

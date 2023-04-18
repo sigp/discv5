@@ -59,19 +59,17 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
 
 mod active_requests;
-mod crypto;
 mod request_call;
-mod session;
+mod sessions;
 mod tests;
 
 pub use crate::node_info::{NodeAddress, NodeContact};
 
 use crate::metrics::METRICS;
 
-use crate::lru_time_cache::LruTimeCache;
 use active_requests::ActiveRequests;
 use request_call::RequestCall;
-use session::Session;
+use sessions::{Session, Sessions};
 
 // The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in
 // seconds).
@@ -205,7 +203,7 @@ pub struct Handler<P: ProtocolIdentity> {
     /// Currently in-progress outbound handshakes (WHOAREYOU packets) with peers.
     active_challenges: HashMapDelay<NodeAddress, Challenge>,
     /// Established sessions with peers.
-    sessions: LruTimeCache<NodeAddress, Session>,
+    sessions: Sessions,
     /// The channel to receive messages from the application layer.
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
@@ -274,6 +272,8 @@ impl<P: ProtocolIdentity> Handler<P> {
         let nat_hole_puncher =
             NatHolePuncher::new(listen_socket.port(), &enr.read(), config.ip_mode);
 
+        let sessions = Sessions::new(config.session_cache_capacity, config.session_timeout);
+
         config
             .executor
             .clone()
@@ -287,10 +287,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     active_requests: ActiveRequests::new(config.request_timeout),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
-                    sessions: LruTimeCache::new(
-                        config.session_timeout,
-                        Some(config.session_cache_capacity),
-                    ),
+                    sessions,
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
                     service_send,
@@ -342,7 +339,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                                 // for the local node to be inserted into its peers' kbuckets
                                 // before the session they already had expires. Session duration,
                                 // in this impl defaults to 24 hours.
-                                self.sessions.clear()
+                                self.sessions.cache.clear()
                             }
                             self.nat_hole_puncher.set_is_behind_nat(listen_port, Some(ip), Some(port));
                         }
@@ -545,7 +542,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         }
 
         let (packet, initiating_session) = {
-            if let Some(session) = self.sessions.get_mut(&node_address) {
+            if let Some(session) = self.sessions.cache.get_mut(&node_address) {
                 // Encrypt the message and send
                 let request = match &request_id {
                     HandlerReqId::Internal(id) | HandlerReqId::External(id) => Request {
@@ -588,7 +585,7 @@ impl<P: ProtocolIdentity> Handler<P> {
     /// Sends an RPC Response.
     async fn send_response(&mut self, node_address: NodeAddress, response: Response) {
         // Check for an established session
-        if let Some(session) = self.sessions.get_mut(&node_address) {
+        if let Some(session) = self.sessions.cache.get_mut(&node_address) {
             // Encrypt the message and send
             let packet = match session.encrypt_notification::<P>(self.node_id, &response.encode()) {
                 Ok(packet) => packet,
@@ -769,14 +766,8 @@ impl<P: ProtocolIdentity> Handler<P> {
                 self.send(node_address.clone(), auth_packet.into()).await;
 
                 // Notify the application that the session has been established
-                self.service_send
-                    .send(HandlerOut::Established(
-                        enr,
-                        node_address.socket_addr,
-                        connection_direction,
-                    ))
-                    .await
-                    .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                self.new_connection(enr, node_address.socket_addr, connection_direction)
+                    .await;
             }
             None => {
                 // Don't know the ENR. Establish the session, but request an ENR also
@@ -841,14 +832,18 @@ impl<P: ProtocolIdentity> Handler<P> {
         );
 
         if let Some(challenge) = self.active_challenges.remove(&node_address) {
+            let local_key = self.key.clone();
+            let local_id = self.node_id;
             match Session::establish_from_challenge(
-                self.key.clone(),
-                &self.node_id,
+                local_key,
+                &local_id,
                 &node_address.node_id,
                 challenge,
                 id_nonce_sig,
                 ephem_pubkey,
                 enr_record,
+                &node_address,
+                &mut self.sessions,
             ) {
                 Ok((session, enr)) => {
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
@@ -858,17 +853,12 @@ impl<P: ProtocolIdentity> Handler<P> {
                         // Notify the application
                         // The session established here are from WHOAREYOU packets that we sent.
                         // This occurs when a node established a connection with us.
-                        if let Err(e) = self
-                            .service_send
-                            .send(HandlerOut::Established(
-                                enr,
-                                node_address.socket_addr,
-                                ConnectionDirection::Incoming,
-                            ))
-                            .await
-                        {
-                            warn!("Failed to inform of established session {}", e)
-                        }
+                        self.new_connection(
+                            enr,
+                            node_address.socket_addr,
+                            ConnectionDirection::Incoming,
+                        )
+                        .await;
                         self.new_session(node_address.clone(), session);
                         self.nat_hole_puncher
                             .new_peer_latest_relay
@@ -902,6 +892,9 @@ impl<P: ProtocolIdentity> Handler<P> {
                     );
                     // insert back the challenge
                     self.active_challenges.insert(node_address, challenge);
+                }
+                Err(Discv5Error::LimitSessionsUnreachableEnr) => {
+                    warn!("Limit reached for sessions with unreachable ENRs. Dropping session.");
                 }
                 Err(e) => {
                     warn!(
@@ -971,7 +964,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         authenticated_data: &[u8],
     ) {
         // check if we have an available session
-        let Some(session) = self.sessions.get_mut(&node_address) else {
+        let Some(session) = self.sessions.cache.get_mut(&node_address) else {
             warn!(
                 "Dropping message. Error: {}, {}",
                 Discv5Error::SessionNotEstablished,
@@ -1030,17 +1023,12 @@ impl<P: ProtocolIdentity> Handler<P> {
                             // This can occur when we try to dial a node without an
                             // ENR. In this case we have attempted to establish the
                             // connection, so this is an outgoing connection.
-                            if let Err(e) = self
-                                .service_send
-                                .send(HandlerOut::Established(
-                                    enr,
-                                    node_address.socket_addr,
-                                    ConnectionDirection::Outgoing,
-                                ))
-                                .await
-                            {
-                                warn!("Failed to inform established outgoing connection {}", e)
-                            }
+                            self.new_connection(
+                                enr,
+                                node_address.socket_addr,
+                                ConnectionDirection::Outgoing,
+                            )
+                            .await;
                             return;
                         }
                     }
@@ -1070,7 +1058,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         authenticated_data: &[u8],
     ) {
         // check if we have an available session
-        let Some(session) = self.sessions.get_mut(&node_address) else {
+        let Some(session) = self.sessions.cache.get_mut(&node_address) else {
             // no session exists
             trace!("Received a message without a session. {}", node_address);
             trace!("Requesting a WHOAREYOU packet to be sent.");
@@ -1181,7 +1169,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                             socket_addr,
                             node_id,
                         };
-                        if self.sessions.peek(&new_peer_node_address).is_none() {
+                        if self.sessions.cache.peek(&new_peer_node_address).is_none() {
                             self.nat_hole_puncher
                                 .new_peer_latest_relay
                                 .insert(node_id, node_address.clone());
@@ -1255,13 +1243,13 @@ impl<P: ProtocolIdentity> Handler<P> {
     }
 
     fn new_session(&mut self, node_address: NodeAddress, session: Session) {
-        if let Some(current_session) = self.sessions.get_mut(&node_address) {
+        if let Some(current_session) = self.sessions.cache.get_mut(&node_address) {
             current_session.update(session);
         } else {
-            self.sessions.insert(node_address, session);
+            self.sessions.cache.insert(node_address, session);
             METRICS
                 .active_sessions
-                .store(self.sessions.len(), Ordering::Relaxed);
+                .store(self.sessions.cache.len(), Ordering::Relaxed);
         }
     }
 
@@ -1304,10 +1292,10 @@ impl<P: ProtocolIdentity> Handler<P> {
         remove_session: bool,
     ) {
         if remove_session {
-            self.sessions.remove(node_address);
+            self.sessions.cache.remove(node_address);
             METRICS
                 .active_sessions
-                .store(self.sessions.len(), Ordering::Relaxed);
+                .store(self.sessions.cache.len(), Ordering::Relaxed);
         }
         if let Some(to_remove) = self.pending_requests.remove(node_address) {
             for PendingRequest { request_id, .. } in to_remove {
@@ -1373,7 +1361,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 Ok(contact) => contact.node_address(),
                 Err(e) => return Err(HolePunchError::RelayError(e.into())),
             };
-        if let Some(session) = self.sessions.get_mut(&tgt_node_address) {
+        if let Some(session) = self.sessions.cache.get_mut(&tgt_node_address) {
             trace!(
                 "Sending notif to target {}. relay msg: {}",
                 tgt_node_address.node_id,
@@ -1401,6 +1389,24 @@ impl<P: ProtocolIdentity> Handler<P> {
             ))
         }
     }
+
+    async fn new_connection(
+        &mut self,
+        enr: Enr,
+        socket_addr: SocketAddr,
+        conn_dir: ConnectionDirection,
+    ) {
+        if let Err(e) = self
+            .service_send
+            .send(HandlerOut::Established(enr, socket_addr, conn_dir))
+            .await
+        {
+            warn!(
+                "Failed to inform of established connection {}, {}",
+                conn_dir, e
+            )
+        }
+    }
 }
 
 #[async_trait]
@@ -1416,10 +1422,10 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         target_session_index: Self::TNodeAddress,
     ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
         // Another hole punch process with this target may have just completed.
-        if self.sessions.get(&target_session_index).is_some() {
+        if self.sessions.cache.get(&target_session_index).is_some() {
             return Ok(());
         }
-        if let Some(session) = self.sessions.get_mut(&relay) {
+        if let Some(session) = self.sessions.cache.get_mut(&relay) {
             let relay_init_notif = RelayInit(
                 local_enr,
                 target_session_index.node_id.raw(),
@@ -1487,7 +1493,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
             };
 
         // A session may already have been established.
-        if self.sessions.get(&initiator_node_address).is_some() {
+        if self.sessions.cache.get(&initiator_node_address).is_some() {
             trace!(
                 "Session already established with initiator: {}",
                 initiator_node_address
@@ -1531,7 +1537,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
 const DEFAULT_PORT_BIND_TRIES: usize = 4;
 
 /// Types necessary implement trait [`NatHolePunch`].
-struct NatHolePuncher {
+pub struct NatHolePuncher {
     /// Ip mode as set in config.
     ip_mode: IpMode,
     /// This node has been observed to be behind a NAT.
