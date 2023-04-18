@@ -569,7 +569,7 @@ impl Service {
                             to_request_enr = Some(enr);
                         }
                     }
-                    // don't know of the ENR, request the update
+                    // don't know of the ENR, drop the request
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
