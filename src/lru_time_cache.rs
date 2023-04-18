@@ -101,6 +101,10 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
             self.map.remove(&k);
         }
     }
+
+    pub fn clear(&mut self) {
+        self.map.clear()
+    }
 }
 
 #[cfg(test)]

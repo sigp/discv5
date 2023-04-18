@@ -832,9 +832,12 @@ impl Service {
                                             updated = true;
                                             info!("Local UDP ip6 socket updated to: {}", new_ip6);
                                             self.send_event(Discv5Event::SocketUpdated(new_ip6));
-                                            if let Err(e) = self
-                                                .handler_send
-                                                .send(HandlerIn::SocketUpdated(new_ip6))
+                                            // Check if we are behind a NAT
+                                            if let Err(e) =
+                                                self.handler_send.send(HandlerIn::SocketUpdate(
+                                                    local_ip6_socket.map(SocketAddr::V6),
+                                                    new_ip6,
+                                                ))
                                             {
                                                 warn!("Failed to send socket update {}", e);
                                             };
@@ -856,9 +859,11 @@ impl Service {
                                             info!("Local UDP socket updated to: {}", new_ip4);
                                             self.send_event(Discv5Event::SocketUpdated(new_ip4));
                                             // Check if we are behind a NAT
-                                            if let Err(e) = self
-                                                .handler_send
-                                                .send(HandlerIn::SocketUpdated(new_ip4))
+                                            if let Err(e) =
+                                                self.handler_send.send(HandlerIn::SocketUpdate(
+                                                    local_ip4_socket.map(SocketAddr::V4),
+                                                    new_ip4,
+                                                ))
                                             {
                                                 warn!("Failed to send socket update {}", e);
                                             };

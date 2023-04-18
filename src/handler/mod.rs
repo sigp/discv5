@@ -111,8 +111,8 @@ pub enum HandlerIn {
     /// Response to a [`HandlerOut::FindEnrForHolePunch`]. Returns the ENR if it was found.
     HolePunchEnr(Option<Enr>, RelayMsg<Enr>),
 
-    /// Observed socket has been update.
-    SocketUpdated(SocketAddr),
+    /// Observed socket has been update. The old socket and the current socket.
+    SocketUpdate(Option<SocketAddr>, SocketAddr),
 }
 
 /// Messages sent between a node on the network and `Handler`.
@@ -331,10 +331,19 @@ impl<P: ProtocolIdentity> Handler<P> {
                                 warn!("Failed to realy. Error: {}", e);
                             }
                         }
-                        HandlerIn::SocketUpdated(socket) => {
+                        HandlerIn::SocketUpdate(old_socket, socket) => {
                             let listen_port = self.listen_socket.port();
                             let ip = socket.ip();
                             let port = socket.port();
+                            if old_socket.is_none() {
+                                // This node goes from being unreachable to being reachable. Remove
+                                // it's sessions to trigger a WHOAREYOU from peers. If the peer is
+                                // running this implementation of discovery, this makes it possible
+                                // for the local node to be inserted into its peers' kbuckets
+                                // before the session they already had expires. Session duration,
+                                // in this impl defaults to 24 hours.
+                                self.sessions.clear()
+                            }
                             self.nat_hole_puncher.set_is_behind_nat(listen_port, Some(ip), Some(port));
                         }
                     }
