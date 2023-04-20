@@ -63,9 +63,8 @@ mod request_call;
 mod sessions;
 mod tests;
 
-pub use crate::node_info::{NodeAddress, NodeContact};
-
 use crate::metrics::METRICS;
+pub use crate::node_info::{NodeAddress, NodeContact};
 
 use active_requests::ActiveRequests;
 use request_call::RequestCall;
@@ -272,7 +271,11 @@ impl<P: ProtocolIdentity> Handler<P> {
         let nat_hole_puncher =
             NatHolePuncher::new(listen_socket.port(), &enr.read(), config.ip_mode);
 
-        let sessions = Sessions::new(config.session_cache_capacity, config.session_timeout);
+        let sessions = Sessions::new(
+            config.session_cache_capacity,
+            config.session_timeout,
+            config.unreachable_enr_limit,
+        );
 
         config
             .executor

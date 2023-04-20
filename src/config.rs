@@ -99,6 +99,11 @@ pub struct Discv5Config {
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
+
+    /// The limit for peers with unreachable ENRs. Benevolent examples of such peers are peers
+    /// that are discovering their externally reachable socket and peers behind symmetric NAT.
+    /// Default are 250. Minimum is 1.
+    pub unreachable_enr_limit: Option<usize>,
 }
 
 impl Default for Discv5Config {
@@ -138,6 +143,7 @@ impl Default for Discv5Config {
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             ip_mode: IpMode::default(),
             executor: None,
+            unreachable_enr_limit: None,
         }
     }
 }
@@ -311,6 +317,12 @@ impl Discv5ConfigBuilder {
     /// to contact an ENR.
     pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
         self.config.ip_mode = ip_mode;
+        self
+    }
+
+    /// Whether to enable the incoming packet filter.
+    pub fn unreachable_enr_limit(&mut self, peer_limit: Option<usize>) -> &mut Self {
+        self.config.unreachable_enr_limit = peer_limit;
         self
     }
 

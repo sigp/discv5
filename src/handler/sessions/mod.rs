@@ -14,10 +14,14 @@ pub struct Sessions {
 }
 
 impl Sessions {
-    pub fn new(cache_capacity: usize, entry_ttl: Duration) -> Self {
+    pub fn new(
+        cache_capacity: usize,
+        entry_ttl: Duration,
+        unreachable_enr_limit: Option<usize>,
+    ) -> Self {
         let (tx, rx) = futures::channel::mpsc::channel::<NodeAddress>(cache_capacity);
         let sessions = LruTimeCache::new(entry_ttl, Some(cache_capacity), Some(tx));
-        let limiter = SessionLimiter::new(rx);
+        let limiter = SessionLimiter::new(rx, unreachable_enr_limit);
         Sessions {
             cache: sessions,
             limiter,
