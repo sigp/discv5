@@ -125,7 +125,7 @@ impl Session {
         let iv: u128 = rand::random();
         let header = PacketHeader {
             message_nonce,
-            kind: PacketKind::Notification { src_id },
+            kind: PacketKind::SessionMessage { src_id },
         };
 
         let mut authenticated_data = iv.to_be_bytes().to_vec();

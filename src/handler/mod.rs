@@ -422,12 +422,12 @@ impl<P: ProtocolIdentity> Handler<P> {
                 )
                 .await
             }
-            PacketKind::Notification { src_id } => {
+            PacketKind::SessionMessage { src_id } => {
                 let node_address = NodeAddress {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                self.handle_notification(
+                self.handle_session_message(
                     node_address,
                     message_nonce,
                     &inbound_packet.message,
@@ -958,8 +958,8 @@ impl<P: ProtocolIdentity> Handler<P> {
         }
     }
 
-    /// Handle a notification packet, that is dropped if it can't be decrypted.
-    async fn handle_notification(
+    /// Handle a session message packet, that is dropped if it can't be decrypted.
+    async fn handle_session_message(
         &mut self,
         node_address: NodeAddress, // session message sender
         message_nonce: MessageNonce,
