@@ -34,22 +34,20 @@ use crate::{
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
     socket::{FilterConfig, Outbound, Socket},
-    Enr, IpMode,
+    Enr,
 };
 use async_trait::async_trait;
-use delay_map::{HashMapDelay, HashSetDelay};
+use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
-use mio::net::UdpSocket;
 use nat_hole_punch::*;
 use parking_lot::RwLock;
-use rand::prelude::*;
 use std::{
     collections::HashMap,
     convert::TryFrom,
     default::Default,
     marker::PhantomData,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::{atomic::Ordering, Arc},
     task::{Context, Poll},
@@ -59,6 +57,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
 
 mod active_requests;
+mod nat_hole_puncher;
 mod request_call;
 mod sessions;
 mod tests;
@@ -67,6 +66,7 @@ use crate::metrics::METRICS;
 pub use crate::node_info::{NodeAddress, NodeContact};
 
 use active_requests::ActiveRequests;
+use nat_hole_puncher::NatHolePuncher;
 use request_call::RequestCall;
 use sessions::{Session, Sessions};
 
@@ -1534,107 +1534,5 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         Ok(self
             .send_outbound(dst, Outbound::KeepHolePunched(dst))
             .await)
-    }
-}
-
-const DEFAULT_PORT_BIND_TRIES: usize = 4;
-
-/// Types necessary implement trait [`NatHolePunch`].
-pub struct NatHolePuncher {
-    /// Ip mode as set in config.
-    ip_mode: IpMode,
-    /// This node has been observed to be behind a NAT.
-    is_behind_nat: Option<bool>,
-    /// The last peer to send us a new peer in a NODES response is stored as the new peer's
-    /// potential relay until the first request to the new peer after its discovery is either
-    /// responded or failed.
-    new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
-    /// Keeps track if this node needs to send a packet to a peer in order to keep a hole punched
-    /// for it in its NAT.
-    hole_punch_tracker: HashSetDelay<SocketAddr>,
-}
-
-impl NatHolePuncher {
-    fn new(listen_port: u16, local_enr: &Enr, ip_mode: IpMode) -> Self {
-        let mut nat_hole_puncher = NatHolePuncher {
-            ip_mode,
-            is_behind_nat: None,
-            new_peer_latest_relay: Default::default(),
-            hole_punch_tracker: HashSetDelay::new(Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME)),
-        };
-        // Optimistically only test one advertised socket, ipv4 has precedence.
-        match (
-            local_enr.ip4(),
-            local_enr.udp4(),
-            local_enr.ip6(),
-            local_enr.udp6(),
-        ) {
-            (Some(ip), port, _, _) => {
-                nat_hole_puncher.set_is_behind_nat(listen_port, Some(ip.into()), port);
-            }
-            (_, _, Some(ip6), port) => {
-                nat_hole_puncher.set_is_behind_nat(listen_port, Some(ip6.into()), port);
-            }
-            (None, Some(port), _, _) => {
-                nat_hole_puncher.set_is_behind_nat(listen_port, None, Some(port));
-            }
-            (_, _, None, Some(port)) => {
-                nat_hole_puncher.set_is_behind_nat(listen_port, None, Some(port));
-            }
-            (None, None, None, None) => {}
-        }
-        nat_hole_puncher
-    }
-
-    fn track(&mut self, peer_socket: SocketAddr) {
-        if self.is_behind_nat == Some(false) {
-            return;
-        }
-        self.hole_punch_tracker.insert(peer_socket);
-    }
-
-    // Called when a new observed address is reported at start up or after a
-    // `Discv5Event::SocketUpdated(socket)`
-    fn set_is_behind_nat(
-        &mut self,
-        listen_port: u16,
-        observed_ip: Option<IpAddr>,
-        observed_port: Option<u16>,
-    ) {
-        if Some(listen_port) != observed_port {
-            self.is_behind_nat = Some(true);
-            return;
-        }
-        // If the node cannot bind to the observed address at any of some random ports, we
-        // conclude it is behind a NAT.
-        let Some(ip) = observed_ip else {
-            return;
-        };
-        let mut rng = rand::thread_rng();
-        for _ in 0..DEFAULT_PORT_BIND_TRIES {
-            let rnd_port: u16 = rng.gen_range(1024..=49151);
-            let Ok(addr) = format!("{}:{}", ip, rnd_port).parse() else {
-                return;
-            };
-            if UdpSocket::bind(addr).is_ok() {
-                self.is_behind_nat = Some(false);
-                return;
-            }
-        }
-        debug!("Could not bind to any port tried on the observed address {}, setting nodes as behind NAT", ip);
-        self.is_behind_nat = Some(true);
-    }
-}
-
-impl Stream for NatHolePuncher {
-    type Item = Result<SocketAddr, String>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Until ip voting is done and an observed public address is finalised, all nodes act as
-        // if they are behind a NAT.
-        if self.is_behind_nat == Some(false) || self.hole_punch_tracker.is_empty() {
-            return Poll::Pending;
-        }
-        self.hole_punch_tracker.poll_next_unpin(cx)
     }
 }
