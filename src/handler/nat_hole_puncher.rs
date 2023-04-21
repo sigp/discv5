@@ -11,7 +11,8 @@ use std::{
     time::Duration,
 };
 
-/// Types necessary implement trait [`NatHolePunch`] on [`Handler`].
+/// Types necessary implement trait [`nat_hole_punch::NatHolePunch`] on
+/// [`crate::handler::Handler`].
 pub(crate) struct NatHolePuncher {
     /// Ip mode as set in config.
     pub ip_mode: IpMode,

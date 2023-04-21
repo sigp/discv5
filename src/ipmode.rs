@@ -232,7 +232,7 @@ mod tests {
     }
 }
 
-/// Copied from the standard library. See https://github.com/rust-lang/rust/issues/27709
+/// Copied from the standard library. See <https://github.com/rust-lang/rust/issues/27709>
 /// The current code is behind the `ip` feature.
 pub const fn to_ipv4_mapped(ip: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
     match ip.octets() {

@@ -105,7 +105,7 @@ pub enum HandlerIn {
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 
-    /// Response to a [`HandlerOut::FindEnrForHolePunch`]. Returns the ENR if it was found.
+    /// Response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR if it was found.
     HolePunchEnr(Option<Enr>, RelayMsg<Enr>),
 
     /// Observed socket has been update. The old socket and the current socket.
