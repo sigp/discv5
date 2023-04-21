@@ -182,6 +182,7 @@ impl Session {
     /// Generates session keys from an authentication header. If the IP of the ENR does not match the
     /// source IP address, we consider this session untrusted. The output returns a boolean which
     /// specifies if the Session is trusted or not.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn establish_from_challenge(
         local_key: Arc<RwLock<CombinedKey>>,
         local_id: &NodeId,

@@ -481,10 +481,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 );
                 let local_enr = self.enr.read().clone();
                 let nonce = request_call.packet().header.message_nonce;
-                match self
-                    .on_time_out(relay, local_enr, nonce, target.into())
-                    .await
-                {
+                match self.on_time_out(relay, local_enr, nonce, target).await {
                     Err(e) => {
                         warn!("Failed to start hole punching. Error: {:?}", e);
                     }
@@ -506,7 +503,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 request_call.body(),
                 node_address
             );
-            self.send(node_address.clone(), request_call.packet().clone().into())
+            self.send(node_address.clone(), request_call.packet().clone())
                 .await;
             request_call.increment_retries();
             self.active_requests.insert(node_address, request_call);
@@ -579,7 +576,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         );
         // let the filter know we are expecting a response
         self.add_expected_response(node_address.socket_addr);
-        self.send(node_address.clone(), packet.into()).await;
+        self.send(node_address.clone(), packet).await;
 
         self.active_requests.insert(node_address, call);
         Ok(())
@@ -597,7 +594,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     return;
                 }
             };
-            self.send(node_address, packet.into()).await;
+            self.send(node_address, packet).await;
         } else {
             // Either the session is being established or has expired. We simply drop the
             // response in this case.
@@ -637,7 +634,7 @@ impl<P: ProtocolIdentity> Handler<P> {
             .expect("Must be the correct challenge size");
         debug!("Sending WHOAREYOU to {}", node_address);
         self.add_expected_response(node_address.socket_addr);
-        self.send(node_address.clone(), packet.into()).await;
+        self.send(node_address.clone(), packet).await;
         self.active_challenges.insert(
             node_address,
             Challenge {
@@ -766,7 +763,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
                 // Send the actual packet to the send task.
-                self.send(node_address.clone(), auth_packet.into()).await;
+                self.send(node_address.clone(), auth_packet).await;
 
                 // Notify the application that the session has been established
                 self.new_connection(enr, node_address.socket_addr, connection_direction)
@@ -782,7 +779,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 request_call.set_handshake_sent();
                 // Reinsert the request_call
                 self.insert_active_request(request_call);
-                self.send(node_address.clone(), auth_packet.into()).await;
+                self.send(node_address.clone(), auth_packet).await;
 
                 let id = RequestId::random();
                 let request = RequestBody::FindNode { distances: vec![0] };
@@ -1379,7 +1376,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     return Err(HolePunchError::RelayError(e));
                 }
             };
-            self.send(tgt_node_address, packet.into()).await;
+            self.send(tgt_node_address, packet).await;
             Ok(())
         } else {
             // Either the session is being established or has expired. We simply drop the
@@ -1448,7 +1445,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
                     return Err(HolePunchError::RelayError(e));
                 }
             };
-            self.send(relay, packet.into()).await;
+            self.send(relay, packet).await;
         } else {
             // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
             // within the time out of the udp entrypoint for the target peer in the initiator's
@@ -1531,8 +1528,8 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         &mut self,
         dst: SocketAddr,
     ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
-        Ok(self
-            .send_outbound(dst, Outbound::KeepHolePunched(dst))
-            .await)
+        self.send_outbound(dst, Outbound::KeepHolePunched(dst))
+            .await;
+        Ok(())
     }
 }
