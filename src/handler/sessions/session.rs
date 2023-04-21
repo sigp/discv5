@@ -217,9 +217,10 @@ impl Session {
 
         // Avoid unnecessary key derivation computation, first verify session candidate against
         // current sessions state
-        sessions
-            .limiter
-            .track_sessions_unreachable_enr(node_address, session_enr.enr())?;
+        if let Some(ref mut limiter) = sessions.limiter {
+            limiter.track_sessions_unreachable_enr(node_address, session_enr.enr())?;
+        }
+
         let remote_public_key = session_enr.enr().public_key();
 
         // verify the auth header nonce

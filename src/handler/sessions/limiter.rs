@@ -7,8 +7,6 @@ use tracing::warn;
 /// NAT:ed nodes or nodes that have recently joined the network and are still unaware of their
 /// externally reachable socket, relying on their peers to discover it.
 pub const MIN_SESSIONS_UNREACHABLE_ENR: usize = 1;
-/// The default number of peers to accept sessions with that have an unreachable ENR.
-pub const DEFAULT_SESSIONS_UNREACHABLE_ENR: usize = 250;
 
 pub(crate) struct SessionLimiter {
     /// Keeps track of the sessions held for peers with unreachable ENRs. These could be peers yet
@@ -24,21 +22,16 @@ pub(crate) struct SessionLimiter {
 impl SessionLimiter {
     pub fn new(
         rx_expired_sessions: futures::channel::mpsc::Receiver<NodeAddress>,
-        unreachable_enr_limit: Option<usize>,
+        unreachable_enr_limit: usize,
     ) -> Self {
-        let limit = match unreachable_enr_limit {
-            Some(peer_count) => {
-                if peer_count < MIN_SESSIONS_UNREACHABLE_ENR {
-                    warn!(
-                        "unreachable ENR limit from config too low, setting to minimum {}",
-                        MIN_SESSIONS_UNREACHABLE_ENR
-                    );
-                    MIN_SESSIONS_UNREACHABLE_ENR
-                } else {
-                    peer_count
-                }
-            }
-            None => DEFAULT_SESSIONS_UNREACHABLE_ENR,
+        let limit = if unreachable_enr_limit < MIN_SESSIONS_UNREACHABLE_ENR {
+            warn!(
+                "unreachable ENR limit from config too low, setting to minimum {}",
+                MIN_SESSIONS_UNREACHABLE_ENR
+            );
+            MIN_SESSIONS_UNREACHABLE_ENR
+        } else {
+            unreachable_enr_limit
         };
         SessionLimiter {
             sessions_unreachable_enr_tracker: Default::default(),

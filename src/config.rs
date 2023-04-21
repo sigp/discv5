@@ -100,9 +100,9 @@ pub struct Discv5Config {
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
 
-    /// The limit for peers with unreachable ENRs. Benevolent examples of such peers are peers
+    /// The max limit for peers with unreachable ENRs. Benevolent examples of such peers are peers
     /// that are discovering their externally reachable socket and peers behind symmetric NAT.
-    /// Default are 250. Minimum is 1.
+    /// Default is no limit. Minimum is 1.
     pub unreachable_enr_limit: Option<usize>,
 }
 

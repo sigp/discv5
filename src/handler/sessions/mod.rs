@@ -10,7 +10,7 @@ pub use session::Session;
 
 pub struct Sessions {
     pub cache: LruTimeCache<NodeAddress, Session>,
-    limiter: SessionLimiter,
+    limiter: Option<SessionLimiter>,
 }
 
 impl Sessions {
@@ -21,7 +21,7 @@ impl Sessions {
     ) -> Self {
         let (tx, rx) = futures::channel::mpsc::channel::<NodeAddress>(cache_capacity);
         let sessions = LruTimeCache::new(entry_ttl, Some(cache_capacity), Some(tx));
-        let limiter = SessionLimiter::new(rx, unreachable_enr_limit);
+        let limiter = unreachable_enr_limit.map(|limit| SessionLimiter::new(rx, limit));
         Sessions {
             cache: sessions,
             limiter,
