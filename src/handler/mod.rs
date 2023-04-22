@@ -1009,6 +1009,8 @@ impl<P: ProtocolIdentity> Handler<P> {
                 // Sessions could be awaiting an ENR response. Check if this response matches
                 // these
                 let Some(request_id) = session.awaiting_enr.as_ref() else {
+                    // Handle standard responses
+                    self.handle_response(node_address, response).await;
                     return;
                 };
                 if &response.id == request_id {
