@@ -95,7 +95,7 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
         let v = self.map.remove(key).map(|v| v.0);
         if let Some(ref mut tx) = self.tx {
             if let Err(e) = tx.try_send(key.clone()) {
-                warn!("remove failed, {}", e);
+                warn!("failed to notify of remove, {}", e);
             }
         }
         v

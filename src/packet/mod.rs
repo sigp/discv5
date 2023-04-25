@@ -589,7 +589,7 @@ impl std::fmt::Display for PacketKind {
                 enr_record
             ),
             PacketKind::SessionMessage { src_id } => {
-                write!(f, "Notification {{ src_id: {src_id} }}")
+                write!(f, "SessionMessage {{ src_id: {src_id} }}")
             }
         }
     }
