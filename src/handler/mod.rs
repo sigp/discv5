@@ -106,7 +106,7 @@ pub enum HandlerIn {
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 
     /// Response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR if it was found.
-    HolePunchEnr(Option<Enr>, RelayMsg<Enr>),
+    HolePunchEnr(Option<Enr>, RelayMsg),
 
     /// Observed socket has been update. The old socket and the current socket.
     SocketUpdate(Option<SocketAddr>, SocketAddr),
@@ -140,7 +140,7 @@ pub enum HandlerOut {
     /// A peer has supposed we have passed it another peer in a NODES response, if that is true
     /// (very probably not false) the ENR of that peer is returned in a
     /// [`HandlerIn::HolePunchEnr`].
-    FindHolePunchEnr(NodeId, RelayMsg<Enr>),
+    FindHolePunchEnr(NodeId, RelayMsg),
 }
 
 /// How we connected to the node.
@@ -481,7 +481,10 @@ impl<P: ProtocolIdentity> Handler<P> {
                 );
                 let local_enr = self.enr.read().clone();
                 let nonce = request_call.packet().header.message_nonce;
-                match self.on_time_out(relay, local_enr, nonce, target).await {
+                match self
+                    .on_request_time_out(relay, local_enr, nonce, target)
+                    .await
+                {
                     Err(e) => {
                         warn!("Failed to start hole punching. Error: {:?}", e);
                     }
@@ -1353,7 +1356,7 @@ impl<P: ProtocolIdentity> Handler<P> {
     async fn on_hole_punch_tgt_enr(
         &mut self,
         tgt_enr: Option<Enr>,
-        relay_msg_notif: RelayMsg<Enr>,
+        relay_msg_notif: RelayMsg,
     ) -> Result<(), HolePunchError<Discv5Error>> {
         let Some(tgt_enr) = tgt_enr else {
             return Err(HolePunchError::RelayError(Discv5Error::Custom("Target enr not found")));
@@ -1413,16 +1416,15 @@ impl<P: ProtocolIdentity> Handler<P> {
 
 #[async_trait]
 impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
-    type TEnr = Enr;
-    type TNodeAddress = NodeAddress;
-    type TDiscv5Error = Discv5Error;
-    async fn on_time_out(
+    type SessionIndex = NodeAddress;
+    type Discv5Error = Discv5Error;
+    async fn on_request_time_out(
         &mut self,
-        relay: Self::TNodeAddress,
-        local_enr: Self::TEnr,
+        relay: Self::SessionIndex,
+        local_enr: Enr,
         timed_out_message_nonce: MessageNonce,
-        target_session_index: Self::TNodeAddress,
-    ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
+        target_session_index: Self::SessionIndex,
+    ) -> Result<(), HolePunchError<Self::Discv5Error>> {
         // Another hole punch process with this target may have just completed.
         if self.sessions.cache.get(&target_session_index).is_some() {
             return Ok(());
@@ -1430,7 +1432,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         if let Some(session) = self.sessions.cache.get_mut(&relay) {
             let relay_init_notif = RelayInit(
                 local_enr,
-                target_session_index.node_id.raw(),
+                target_session_index.node_id,
                 timed_out_message_nonce,
             );
             trace!(
@@ -1463,18 +1465,16 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
 
     async fn on_relay_init(
         &mut self,
-        notif: RelayInit<Self::TEnr>,
-    ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
+        notif: RelayInit,
+    ) -> Result<(), HolePunchError<Self::Discv5Error>> {
         let RelayInit(initiator, tgt, nonce) = notif;
         // Assemble the notification for the target
         let relay_msg_notif = RelayMsg(initiator, nonce);
 
         // Check for target peer in our kbuckets otherwise drop notification.
-        let tgt_node_id = NodeId::new(&tgt);
-
         if let Err(e) = self
             .service_send
-            .send(HandlerOut::FindHolePunchEnr(tgt_node_id, relay_msg_notif))
+            .send(HandlerOut::FindHolePunchEnr(tgt, relay_msg_notif))
             .await
         {
             return Err(HolePunchError::RelayError(e.into()));
@@ -1484,8 +1484,8 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
 
     async fn on_relay_msg(
         &mut self,
-        notif: RelayMsg<Self::TEnr>,
-    ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
+        notif: RelayMsg,
+    ) -> Result<(), HolePunchError<Self::Discv5Error>> {
         let RelayMsg(initiator, nonce) = notif;
 
         let initiator_node_address =
@@ -1529,7 +1529,7 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
     async fn on_hole_punch_expired(
         &mut self,
         dst: SocketAddr,
-    ) -> Result<(), HolePunchError<Self::TDiscv5Error>> {
+    ) -> Result<(), HolePunchError<Self::Discv5Error>> {
         self.send_outbound(dst, Outbound::KeepHolePunched(dst))
             .await;
         Ok(())

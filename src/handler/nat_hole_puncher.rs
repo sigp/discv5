@@ -83,7 +83,7 @@ impl NatHolePuncher {
         let Some(ip) = observed_ip else {
             return;
         };
-        self.is_behind_nat = Some(nat_hole_punch::is_behind_nat(ip, (None, None)));
+        self.is_behind_nat = Some(nat_hole_punch::is_behind_nat(ip, None, None));
     }
 }
 

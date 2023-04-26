@@ -6,7 +6,6 @@ use super::filter::{Filter, FilterConfig};
 use crate::{
     ipmode::to_ipv4_mapped, metrics::METRICS, node_info::NodeAddress, packet::*, Executor,
 };
-use nat_hole_punch;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -152,7 +151,7 @@ impl RecvHandler {
             Err(e) => {
                 // This could be a packet to keep a NAT hole punched for this node in the
                 // sender's NAT, hence only serves purpose for the sender.
-                if nat_hole_punch::is_keep_hole_punched_packet(length) {
+                if length == 0 {
                     debug!("Appears to be a packet to keep a hole punched in sender's NAT, dropping. src: {}", src_address);
                 } else {
                     // Could not decode the packet, drop it.
