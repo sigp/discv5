@@ -396,7 +396,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     pub fn enr_insert(&self, key: &str, value: &[u8]) -> Result<Option<Vec<u8>>, EnrError> {
         self.local_enr
             .write()
-            .insert(key, value, &self.enr_key.read())
+            .insert(key, &value, &self.enr_key.read())
             .map(|v| v.map(|v| v.to_vec()))
     }
 

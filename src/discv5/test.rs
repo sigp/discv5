@@ -72,7 +72,7 @@ fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
             loop {
                 // until a value is given within the curve order
                 rng.fill_bytes(&mut b);
-                if let Ok(k) = k256::ecdsa::SigningKey::from_bytes(&b) {
+                if let Ok(k) = k256::ecdsa::SigningKey::from_bytes(&b.into()) {
                     break k;
                 }
             }
