@@ -1,10 +1,12 @@
 use super::{REALYINIT_MSG_TYPE, REALYMSG_MSG_TYPE};
-use crate::{impl_from_variant_wrap, packet::MessageNonce};
+use crate::{
+    packet::{MessageNonce, MESSAGE_NONCE_LENGTH},
+    Enr,
+};
 use parse_display_derive::Display;
-use rlp::{Decodable, DecoderError, Rlp, RlpStream};
-
-mod relay_init;
-mod relay_msg;
+use enr::NodeId;
+use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
+use std::fmt;
 
 pub use relay_init::RelayInit;
 pub use relay_msg::RelayMsg;
@@ -17,14 +19,11 @@ type NonceOfTimedOutMessage = MessageNonce;
 pub enum Notification {
     /// A notification to initialise a one-shot relay circuit for hole-punching.
     #[display("Notification: {0}")]
-    RelayInit(pub Enr, pub NodeId, pub NonceOfTimedOutMessage),
+    RelayInit(Enr, NodeId, NonceOfTimedOutMessage),
     /// The notification relayed to target of hole punch attempt.
     #[display("Notification: {0}")]
-    RelayMsg(pub Enr, pub NonceOfTimedOutMessage),
+    RelayMsg(Enr, NonceOfTimedOutMessage),
 }
-
-impl_from_variant_wrap!(, RelayInit, Notification, Self::RelayInit);
-impl_from_variant_wrap!(, RelayMsg, Notification, Self::RelayMsg);
 
 impl Notification {
     pub fn msg_type(&self) -> u8 {
@@ -41,7 +40,9 @@ impl Notification {
         buf.push(msg_type);
         let mut s = RlpStream::new();
         let _ = match self {
-            Self::RelayInit(notif) => s.append(&notif),
+            Self::RelayInit(notif) => {
+                
+            },
             Self::RelayMsg(notif) => s.append(&notif),
         };
         buf.extend_from_slice(&s.out());

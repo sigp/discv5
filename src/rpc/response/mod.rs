@@ -22,9 +22,9 @@ pub struct Response {
 impl Response {
     pub fn msg_type(&self) -> u8 {
         match &self.body {
-            ResponseBody::Pong { .. } => 2,
-            ResponseBody::Nodes { .. } => 4,
-            ResponseBody::TalkResp { .. } => 6,
+            ResponseBody::Pong { .. } => PONG_MSG_TYPE,
+            ResponseBody::Nodes { .. } => NODES_MSG_TYPE,
+            ResponseBody::TalkResp { .. } => TALKRESP_MSG_TYPE,
         }
     }
 

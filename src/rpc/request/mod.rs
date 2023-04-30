@@ -1,4 +1,4 @@
-use super::{FINDNODE_MSG_TYPE, PING_MSG_TYPE, TALKREQ_MSG_TYPE};
+use super::{FINDNODE_MSG_TYPE, PING_MSG_TYPE, TALKREQ_MSG_TYPE, Payload};
 use crate::impl_from_tuple_struct_unwrap;
 use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
@@ -18,17 +18,17 @@ pub struct Request {
     pub body: RequestBody,
 }
 
-impl Request {
-    pub fn msg_type(&self) -> u8 {
+impl Payload for Request {
+    fn msg_type(&self) -> u8 {
         match self.body {
-            RequestBody::Ping { .. } => 1,
-            RequestBody::FindNode { .. } => 3,
-            RequestBody::TalkReq { .. } => 5,
+            RequestBody::Ping { .. } => PING_MSG_TYPE,
+            RequestBody::FindNode { .. } => FINDNODE_MSG_TYPE,
+            RequestBody::TalkReq { .. } => TALKREQ_MSG_TYPE,
         }
     }
 
     /// Encodes a request message to RLP-encoded bytes.
-    pub fn encode(self) -> Vec<u8> {
+    fn encode(self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(10);
         let msg_type = self.msg_type();
         buf.push(msg_type);
@@ -66,7 +66,7 @@ impl Request {
     }
 
     /// Decodes RLP-encoded bytes into a request message.
-    pub fn decode(msg_type: u8, rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
+    fn decode(msg_type: u8, rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let list_len = rlp.item_count()?;
         let id = RequestId::decode(rlp.val_at::<Vec<u8>>(0)?)?;
         let message = match msg_type {

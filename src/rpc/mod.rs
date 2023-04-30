@@ -1,6 +1,6 @@
 use enr::{CombinedKey, Enr};
 use parse_display_derive::Display;
-use rlp::DecoderError;
+use rlp::{DecoderError, Rlp};
 use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
 
@@ -29,8 +29,14 @@ pub const REALYINIT_MSG_TYPE: u8 = 7;
 /// RelayMsg notification type.
 pub const REALYMSG_MSG_TYPE: u8 = 8;
 
+pub trait Payload where Self: Sized {
+    fn msg_type(&self) -> u8;
+    fn encode(self) -> Vec<u8>;
+    fn decode(msg_type: u8, rlp: &Rlp<'_>) -> Result<Self, DecoderError>;
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Display)]
-/// A combined type representing requests and responses.
+/// A combined type representing the packet payloads.
 pub enum Message {
     /// A request, which contains its [`RequestId`].
     #[display("{0}")]
@@ -82,7 +88,7 @@ impl Message {
                     );
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
-                Message::Request(Request {
+                Payload::Request(Request {
                     id,
                     body: RequestBody::Ping {
                         enr_seq: rlp.val_at::<u64>(1)?,
@@ -122,7 +128,7 @@ impl Message {
                     }
                 };
                 let port = rlp.val_at::<u16>(3)?;
-                Message::Response(Response {
+                Payload::Response(Response {
                     id,
                     body: ResponseBody::Pong {
                         enr_seq: rlp.val_at::<u64>(1)?,
@@ -152,7 +158,7 @@ impl Message {
                     }
                 }
 
-                Message::Request(Request {
+                Payload::Request(Request {
                     id,
                     body: RequestBody::FindNode { distances },
                 })
@@ -176,7 +182,7 @@ impl Message {
                         enr_list_rlp.as_list::<Enr<CombinedKey>>()?
                     }
                 };
-                Message::Response(Response {
+                Payload::Response(Response {
                     id,
                     body: ResponseBody::Nodes {
                         total: rlp.val_at::<u64>(1)?,
@@ -195,7 +201,7 @@ impl Message {
                 }
                 let protocol = rlp.val_at::<Vec<u8>>(1)?;
                 let request = rlp.val_at::<Vec<u8>>(2)?;
-                Message::Request(Request {
+                Payload::Request(Request {
                     id,
                     body: RequestBody::TalkReq { protocol, request },
                 })
@@ -210,7 +216,7 @@ impl Message {
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
                 let response = rlp.val_at::<Vec<u8>>(1)?;
-                Message::Response(Response {
+                Payload::Response(Response {
                     id,
                     body: ResponseBody::TalkResp { response },
                 })
@@ -234,7 +240,7 @@ mod tests {
         // reference input
         let id = RequestId(vec![1]);
         let enr_seq = 1;
-        let message = Message::Request(Request {
+        let message = Payload::Request(Request {
             id,
             body: RequestBody::Ping { enr_seq },
         });
@@ -251,7 +257,7 @@ mod tests {
         // reference input
         let id = RequestId(vec![1]);
         let distances = vec![256];
-        let message = Message::Request(Request {
+        let message = Payload::Request(Request {
             id,
             body: RequestBody::FindNode { distances },
         });
@@ -270,7 +276,7 @@ mod tests {
         let enr_seq = 1;
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
         let port = 5000;
-        let message = Message::Response(Response {
+        let message = Payload::Response(Response {
             id,
             body: ResponseBody::Pong { enr_seq, ip, port },
         });
@@ -291,7 +297,7 @@ mod tests {
         // expected hex output
         let expected_output = hex::decode("04c30101c0").unwrap();
 
-        let message = Message::Response(Response {
+        let message = Payload::Response(Response {
             id,
             body: ResponseBody::Nodes {
                 total,
@@ -311,7 +317,7 @@ mod tests {
         // expected hex output
         let expected_output = hex::decode("04f87b0101f877f875b84028df8ee09f4a62091f1a8b61f18aad2cfe3eadc6f350d527077f9aebc56098883a47f46c6b49bbb91954238f9e14933277b2bd1e0c45b1771b94cd078c32dacb0182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138").unwrap();
 
-        let message = Message::Response(Response {
+        let message = Payload::Response(Response {
             id,
             body: ResponseBody::Nodes {
                 total,
@@ -334,7 +340,7 @@ mod tests {
         // expected hex output
         let expected_output = hex::decode("04f8f20101f8eef875b8401ce2991c64993d7c84c29a00bdc871917551c7d330fca2dd0d69c706596dc655448f030b98a77d4001fd46ae0112ce26d613c5a6a02a81a6223cd0c4edaa53280182696482763489736563703235366b31a103ca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd3138f875b840d7f1c39e376297f81d7297758c64cb37dcc5c3beea9f57f7ce9695d7d5a67553417d719539d6ae4b445946de4d99e680eb8063f29485b555d45b7df16a1850130182696482763489736563703235366b31a1030e2cb74241c0c4fc8e8166f1a79a05d5b0dd95813a74b094529f317d5c39d235").unwrap();
 
-        let message = Message::Response(Response {
+        let message = Payload::Response(Response {
             id,
             body: ResponseBody::Nodes {
                 total,
@@ -352,10 +358,10 @@ mod tests {
         let expected_enr1 = "enr:-HW4QBzimRxkmT18hMKaAL3IcZF1UcfTMPyi3Q1pxwZZbcZVRI8DC5infUAB_UauARLOJtYTxaagKoGmIjzQxO2qUygBgmlkgnY0iXNlY3AyNTZrMaEDymNMrg1JrLQB2KTGtv6MVbcNEVv0AHacwUAPMljNMTg".parse::<Enr<CombinedKey>>().unwrap();
         let expected_enr2 = "enr:-HW4QNfxw543Ypf4HXKXdYxkyzfcxcO-6p9X986WldfVpnVTQX1xlTnWrktEWUbeTZnmgOuAY_KUhbVV1Ft98WoYUBMBgmlkgnY0iXNlY3AyNTZrMaEDDiy3QkHAxPyOgWbxp5oF1bDdlYE6dLCUUp8xfVw50jU".parse::<Enr<CombinedKey>>().unwrap();
 
-        let decoded = Message::decode(&input).unwrap();
+        let decoded = Payload::decode(&input).unwrap();
 
         match decoded {
-            Message::Response(response) => match response.body {
+            Payload::Response(response) => match response.body {
                 ResponseBody::Nodes { total, nodes } => {
                     assert_eq!(total, 1);
                     assert_eq!(nodes[0], expected_enr1);
@@ -370,13 +376,13 @@ mod tests {
     #[test]
     fn encode_decode_ping_request() {
         let id = RequestId(vec![1]);
-        let request = Message::Request(Request {
+        let request = Payload::Request(Request {
             id,
             body: RequestBody::Ping { enr_seq: 15 },
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let decoded = Payload::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -384,7 +390,7 @@ mod tests {
     #[test]
     fn encode_decode_ping_response() {
         let id = RequestId(vec![1]);
-        let request = Message::Response(Response {
+        let request = Payload::Response(Response {
             id,
             body: ResponseBody::Pong {
                 enr_seq: 15,
@@ -394,7 +400,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let decoded = Payload::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -402,7 +408,7 @@ mod tests {
     #[test]
     fn encode_decode_find_node_request() {
         let id = RequestId(vec![1]);
-        let request = Message::Request(Request {
+        let request = Payload::Request(Request {
             id,
             body: RequestBody::FindNode {
                 distances: vec![12],
@@ -410,7 +416,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let decoded = Payload::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -435,7 +441,7 @@ mod tests {
 
         let enr_list = vec![enr1, enr2, enr3];
         let id = RequestId(vec![1]);
-        let request = Message::Response(Response {
+        let request = Payload::Response(Response {
             id,
             body: ResponseBody::Nodes {
                 total: 1,
@@ -444,7 +450,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let decoded = Payload::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
@@ -452,7 +458,7 @@ mod tests {
     #[test]
     fn encode_decode_talk_request() {
         let id = RequestId(vec![1]);
-        let request = Message::Request(Request {
+        let request = Payload::Request(Request {
             id,
             body: RequestBody::TalkReq {
                 protocol: vec![17u8; 32],
@@ -461,7 +467,7 @@ mod tests {
         });
 
         let encoded = request.clone().encode();
-        let decoded = Message::decode(&encoded).unwrap();
+        let decoded = Payload::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
     }
