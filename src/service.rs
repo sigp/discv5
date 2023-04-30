@@ -79,7 +79,7 @@ impl Drop for TalkRequest {
 
         let response = Response {
             id: self.id.clone(),
-            body: ResponseBody::Talk { response: vec![] },
+            body: ResponseBody::TalkResp { response: vec![] },
         };
 
         debug!("Sending empty TALK response to {}", self.node_address);
@@ -114,7 +114,7 @@ impl TalkRequest {
 
         let response = Response {
             id: self.id.clone(),
-            body: ResponseBody::Talk { response },
+            body: ResponseBody::TalkResp { response },
         };
 
         self.sender
@@ -605,7 +605,7 @@ impl Service {
                     warn!("Failed to send response {}", e)
                 }
             }
-            RequestBody::Talk { protocol, request } => {
+            RequestBody::TalkReq { protocol, request } => {
                 let req = TalkRequest {
                     id,
                     node_address,
@@ -615,12 +615,6 @@ impl Service {
                 };
 
                 self.send_event(Discv5Event::TalkRequest(req));
-            }
-            RequestBody::RegisterTopic { .. } => {
-                debug!("Received RegisterTopic request which is unimplemented");
-            }
-            RequestBody::TopicQuery { .. } => {
-                debug!("Received TopicQuery request which is unimplemented");
             }
         }
     }
@@ -897,7 +891,7 @@ impl Service {
                         self.connection_updated(node_id, ConnectionStatus::PongReceived(enr));
                     }
                 }
-                ResponseBody::Talk { response } => {
+                ResponseBody::TalkResp { response } => {
                     // Send the response to the user
                     match active_request.callback {
                         Some(CallbackResponse::Talk(callback)) => {
@@ -907,12 +901,6 @@ impl Service {
                         }
                         _ => error!("Invalid callback for response"),
                     }
-                }
-                ResponseBody::Ticket { .. } => {
-                    error!("Received a TICKET response. This is unimplemented and should be unreachable.");
-                }
-                ResponseBody::RegisterConfirmation { .. } => {
-                    error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
                 }
             }
         } else {
@@ -990,7 +978,7 @@ impl Service {
         request: Vec<u8>,
         callback: oneshot::Sender<Result<Vec<u8>, RequestError>>,
     ) {
-        let request_body = RequestBody::Talk { protocol, request };
+        let request_body = RequestBody::TalkReq { protocol, request };
 
         let active_request = ActiveRequest {
             contact,
