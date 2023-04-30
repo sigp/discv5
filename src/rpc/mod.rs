@@ -94,8 +94,7 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use enr::EnrBuilder;
-    use enr::{CombinedKey, Enr};
+    use enr::{CombinedKey, Enr, EnrBuilder};
     use std::net::IpAddr;
 
     #[test]
