@@ -1,12 +1,7 @@
-use super::{FINDNODE_MSG_TYPE, PING_MSG_TYPE, TALKREQ_MSG_TYPE, Payload};
-use crate::impl_from_tuple_struct_unwrap;
+use super::{Payload, FINDNODE_MSG_TYPE, PING_MSG_TYPE, TALKREQ_MSG_TYPE};
 use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
 use tracing::{debug, warn};
-
-mod request_body;
-
-pub use request_body::RequestBody;
 
 /// A request sent between nodes.
 #[derive(Debug, Clone, PartialEq, Eq, Display)]
@@ -19,6 +14,7 @@ pub struct Request {
 }
 
 impl Payload for Request {
+    /// Matches a request type to its message type id.
     fn msg_type(&self) -> u8 {
         match self.body {
             RequestBody::Ping { .. } => PING_MSG_TYPE,
@@ -128,9 +124,47 @@ impl Payload for Request {
                     body: RequestBody::TalkReq { protocol, request },
                 }
             }
-            _ => return Err(DecoderError::Custom("Unknown RPC request message type")),
+            _ => unreachable!("Implementation does not adhere to wire protocol"),
         };
         Ok(message)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestBody {
+    /// A PING request.
+    Ping {
+        /// Our current ENR sequence number.
+        enr_seq: u64,
+    },
+    /// A FINDNODE request.
+    FindNode {
+        /// The distance(s) of peers we expect to be returned in the response.
+        distances: Vec<u64>,
+    },
+    /// A Talk request.
+    TalkReq {
+        /// The protocol requesting.
+        protocol: Vec<u8>,
+        /// The request.
+        request: Vec<u8>,
+    },
+}
+
+impl std::fmt::Display for RequestBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestBody::Ping { enr_seq } => write!(f, "PING: enr_seq: {enr_seq}"),
+            RequestBody::FindNode { distances } => {
+                write!(f, "FINDNODE Request: distance: {distances:?}")
+            }
+            RequestBody::TalkReq { protocol, request } => write!(
+                f,
+                "TALK: protocol: {}, request: {}",
+                hex::encode(protocol),
+                hex::encode(request)
+            ),
+        }
     }
 }
 
@@ -138,7 +172,11 @@ impl Payload for Request {
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct RequestId(pub Vec<u8>);
 
-impl_from_tuple_struct_unwrap!(, RequestId, Vec<u8>);
+impl From<Vec<u8>> for RequestId {
+    fn from(v: Vec<u8>) -> Self {
+        RequestId(v)
+    }
+}
 
 impl RequestId {
     /// Decodes the ID from a raw bytes.

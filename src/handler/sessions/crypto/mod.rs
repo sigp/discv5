@@ -410,7 +410,7 @@ mod tests {
         let message = decrypt_message(&key, nonce, &ciphertext, &auth_data).unwrap();
         dbg!(&message);
         dbg!(hex::encode(&message));
-        let rpc = crate::rpc::Payload::decode(&message).unwrap();
+        let rpc = crate::rpc::Message::decode(&message).unwrap();
 
         println!("{rpc}");
     }

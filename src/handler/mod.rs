@@ -31,7 +31,7 @@ use crate::{
     discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
-    rpc::{Payload, Request, RequestBody, RequestId, Response, ResponseBody},
+    rpc::{Message, Payload, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
     socket::{FilterConfig, Outbound, Socket},
     Enr,
@@ -991,7 +991,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 );
                 return;
             }
-            Ok(ref bytes) => match Payload::decode(bytes) {
+            Ok(ref bytes) => match Message::decode(bytes) {
                 Ok(message) => message,
                 Err(msg_err) => {
                     // try to decode the message as an application layer notification
@@ -1008,7 +1008,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         };
 
         match message {
-            Payload::Response(response) => {
+            Message::Response(response) => {
                 // Sessions could be awaiting an ENR response. Check if this response matches
                 // these
                 let Some(request_id) = session.awaiting_enr.as_ref() else {
@@ -1083,7 +1083,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         };
         // attempt to decrypt and process the message.
         let message = match session.decrypt_message(message_nonce, message, authenticated_data) {
-            Ok(m) => match Payload::decode(&m) {
+            Ok(m) => match Message::decode(&m) {
                 Ok(p) => p,
                 Err(e) => {
                     warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
@@ -1123,7 +1123,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         trace!("Received message from: {}", node_address);
 
         match message {
-            Payload::Request(request) => {
+            Message::Request(request) => {
                 // report the request to the application
                 if let Err(e) = self
                     .service_send
