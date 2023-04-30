@@ -1,3 +1,4 @@
+use crate::impl_from_variant_wrap;
 use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp};
 
@@ -52,16 +53,6 @@ pub enum Message {
     /// A unicast notification.
     #[display("{0}")]
     Notification(Notification),
-}
-
-macro_rules! impl_from_variant_wrap {
-    ($from_type: ty, $to_type: ty, $variant: path) => {
-        impl From<$from_type> for $to_type {
-            fn from(t: $from_type) -> Self {
-                $variant(t)
-            }
-        }
-    };
 }
 
 impl_from_variant_wrap!(Request, Message, Self::Request);

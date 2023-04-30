@@ -31,7 +31,9 @@ use crate::{
     discv5::PERMIT_BAN_LIST,
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
-    rpc::{Message, Payload, Request, RequestBody, RequestId, Response, ResponseBody},
+    rpc::{
+        Message, Notification, Payload, Request, RequestBody, RequestId, Response, ResponseBody,
+    },
     socket,
     socket::{FilterConfig, Outbound, Socket},
     Enr,
@@ -40,7 +42,6 @@ use async_trait::async_trait;
 use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
-use nat_hole_punch::*;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -66,7 +67,7 @@ use crate::metrics::METRICS;
 pub use crate::node_info::{NodeAddress, NodeContact};
 
 use active_requests::ActiveRequests;
-use nat_hole_puncher::NatHolePuncher;
+use nat_hole_puncher::{Error as HolePunchError, NatHolePunch, NatHolePuncher};
 use request_call::RequestCall;
 use sessions::{Session, Sessions};
 
@@ -105,8 +106,9 @@ pub enum HandlerIn {
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 
-    /// Response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR if it was found.
-    HolePunchEnr(Option<Enr>, RelayMsg),
+    /// Response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR if it was found. Also
+    /// returns the [`Notification::RelayMsg`] we intend to relay to that peer if it was found.
+    HolePunchEnr(Option<Enr>, Notification),
 
     /// Observed socket has been update. The old socket and the current socket.
     SocketUpdate(Option<SocketAddr>, SocketAddr),
@@ -138,9 +140,10 @@ pub enum HandlerOut {
     RequestFailed(RequestId, RequestError),
 
     /// A peer has supposed we have passed it another peer in a NODES response, if that is true
-    /// (very probably not false) the ENR of that peer is returned in a
-    /// [`HandlerIn::HolePunchEnr`].
-    FindHolePunchEnr(NodeId, RelayMsg),
+    /// (very probably not false) then the ENR of that peer is returned in a
+    /// [`HandlerIn::HolePunchEnr`]. Holds the NodeId to look up and the
+    /// [`Notification::RelayMsg`] we intend to relay to that peer if we find it.
+    FindHolePunchEnr(NodeId, Notification),
 }
 
 /// How we connected to the node.
@@ -328,7 +331,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                         HandlerIn::HolePunchEnr(tgt_enr, relay_msg_notif) => {
                             if let Err(e) = self.on_hole_punch_tgt_enr(tgt_enr, relay_msg_notif).await {
-                                warn!("Failed to realy. Error: {}", e);
+                                warn!("Failed to relay. Error: {}", e);
                             }
                         }
                         HandlerIn::SocketUpdate(old_socket, socket) => {
@@ -993,15 +996,11 @@ impl<P: ProtocolIdentity> Handler<P> {
             }
             Ok(ref bytes) => match Message::decode(bytes) {
                 Ok(message) => message,
-                Err(msg_err) => {
-                    // try to decode the message as an application layer notification
-                    if let Err(notif_err) = self.on_notification(bytes).await {
-                        warn!(
-                            "Failed to decode as message and notification. Error: {:?}, {}, {}",
-                            msg_err, notif_err, node_address
-                        );
-                        return;
-                    }
+                Err(err) => {
+                    warn!(
+                        "Failed to decode message. Error: {:?}, {}",
+                        err, node_address
+                    );
                     return;
                 }
             },
@@ -1044,6 +1043,19 @@ impl<P: ProtocolIdentity> Handler<P> {
                 }
                 // Handle standard responses
                 self.handle_response(node_address, response).await;
+            }
+            Message::Notification(notif) => {
+                let res = match notif {
+                    Notification::RelayInit(initr, tgt, timed_out_nonce) => {
+                        self.on_relay_init(initr, tgt, timed_out_nonce).await
+                    }
+                    Notification::RelayMsg(initr, timed_out_nonce) => {
+                        self.on_relay_msg(initr, timed_out_nonce).await
+                    }
+                };
+                if let Err(e) = res {
+                    warn!("failed handling notification from {node_address}, {e}");
+                }
             }
             _ => {
                 warn!(
@@ -1324,17 +1336,16 @@ impl<P: ProtocolIdentity> Handler<P> {
 
     /// Assembles and sends a [`Packet`].
     async fn send(&mut self, node_address: NodeAddress, packet: Packet) {
-        let socket_addr = node_address.socket_addr;
         let outbound_packet = socket::OutboundPacket {
             node_address,
             packet,
         };
-        self.send_outbound(socket_addr, outbound_packet.into())
-            .await;
+        self.send_outbound(outbound_packet.into()).await;
     }
 
     /// Sends a packet to the send handler to be encoded and sent.
-    async fn send_outbound(&mut self, dst: SocketAddr, packet: Outbound) {
+    async fn send_outbound(&mut self, packet: Outbound) {
+        let dst = *packet.dst();
         if let Err(e) = self.socket.send.send(packet).await {
             warn!("Failed to send outbound packet {}", e)
         }
@@ -1356,15 +1367,15 @@ impl<P: ProtocolIdentity> Handler<P> {
     async fn on_hole_punch_tgt_enr(
         &mut self,
         tgt_enr: Option<Enr>,
-        relay_msg_notif: RelayMsg,
-    ) -> Result<(), HolePunchError<Discv5Error>> {
+        relay_msg_notif: Notification,
+    ) -> Result<(), HolePunchError> {
         let Some(tgt_enr) = tgt_enr else {
-            return Err(HolePunchError::RelayError(Discv5Error::Custom("Target enr not found")));
+            return Err(HolePunchError::Relay(Discv5Error::Custom("Target enr not found")));
         };
         let tgt_node_address =
             match NodeContact::try_from_enr(tgt_enr, self.nat_hole_puncher.ip_mode) {
                 Ok(contact) => contact.node_address(),
-                Err(e) => return Err(HolePunchError::RelayError(e.into())),
+                Err(e) => return Err(HolePunchError::Relay(e.into())),
             };
         if let Some(session) = self.sessions.cache.get_mut(&tgt_node_address) {
             trace!(
@@ -1373,14 +1384,13 @@ impl<P: ProtocolIdentity> Handler<P> {
                 relay_msg_notif,
             );
             // Encrypt the notification and send
-            let packet = match session
-                .encrypt_notification::<P>(self.node_id, &relay_msg_notif.rlp_encode())
-            {
-                Ok(packet) => packet,
-                Err(e) => {
-                    return Err(HolePunchError::RelayError(e));
-                }
-            };
+            let packet =
+                match session.encrypt_notification::<P>(self.node_id, &relay_msg_notif.encode()) {
+                    Ok(packet) => packet,
+                    Err(e) => {
+                        return Err(HolePunchError::Relay(e));
+                    }
+                };
             self.send(tgt_node_address, packet).await;
             Ok(())
         } else {
@@ -1389,9 +1399,7 @@ impl<P: ProtocolIdentity> Handler<P> {
             // time out of the udp entrypoint for the target peer in the initiator's NAT, set by
             // the original timed out FINDNODE request from the initiator, as the initiator may
             // also be behind a NAT.
-            Err(HolePunchError::RelayError(
-                Discv5Error::SessionNotEstablished,
-            ))
+            Err(HolePunchError::Relay(Discv5Error::SessionNotEstablished))
         }
     }
 
@@ -1416,39 +1424,33 @@ impl<P: ProtocolIdentity> Handler<P> {
 
 #[async_trait]
 impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
-    type SessionIndex = NodeAddress;
-    type Discv5Error = Discv5Error;
     async fn on_request_time_out(
         &mut self,
-        relay: Self::SessionIndex,
+        relay: NodeAddress,
         local_enr: Enr,
-        timed_out_message_nonce: MessageNonce,
-        target_session_index: Self::SessionIndex,
-    ) -> Result<(), HolePunchError<Self::Discv5Error>> {
+        timed_out_nonce: MessageNonce,
+        target_session_index: NodeAddress,
+    ) -> Result<(), HolePunchError> {
         // Another hole punch process with this target may have just completed.
         if self.sessions.cache.get(&target_session_index).is_some() {
             return Ok(());
         }
         if let Some(session) = self.sessions.cache.get_mut(&relay) {
-            let relay_init_notif = RelayInit(
-                local_enr,
-                target_session_index.node_id,
-                timed_out_message_nonce,
-            );
+            let relay_init_notif =
+                Notification::RelayInit(local_enr, target_session_index.node_id, timed_out_nonce);
             trace!(
                 "Sending notif to relay {}. relay init: {}",
                 relay.node_id,
                 relay_init_notif,
             );
             // Encrypt the message and send
-            let packet = match session
-                .encrypt_notification::<P>(self.node_id, &relay_init_notif.rlp_encode())
-            {
-                Ok(packet) => packet,
-                Err(e) => {
-                    return Err(HolePunchError::RelayError(e));
-                }
-            };
+            let packet =
+                match session.encrypt_notification::<P>(self.node_id, &relay_init_notif.encode()) {
+                    Ok(packet) => packet,
+                    Err(e) => {
+                        return Err(HolePunchError::Initiator(e));
+                    }
+                };
             self.send(relay, packet).await;
         } else {
             // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
@@ -1465,11 +1467,12 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
 
     async fn on_relay_init(
         &mut self,
-        notif: RelayInit,
-    ) -> Result<(), HolePunchError<Self::Discv5Error>> {
-        let RelayInit(initiator, tgt, nonce) = notif;
+        initr: Enr,
+        tgt: NodeId,
+        timed_out_nonce: MessageNonce,
+    ) -> Result<(), HolePunchError> {
         // Assemble the notification for the target
-        let relay_msg_notif = RelayMsg(initiator, nonce);
+        let relay_msg_notif = Notification::RelayMsg(initr, timed_out_nonce);
 
         // Check for target peer in our kbuckets otherwise drop notification.
         if let Err(e) = self
@@ -1477,21 +1480,20 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
             .send(HandlerOut::FindHolePunchEnr(tgt, relay_msg_notif))
             .await
         {
-            return Err(HolePunchError::RelayError(e.into()));
+            return Err(HolePunchError::Relay(e.into()));
         }
         Ok(())
     }
 
     async fn on_relay_msg(
         &mut self,
-        notif: RelayMsg,
-    ) -> Result<(), HolePunchError<Self::Discv5Error>> {
-        let RelayMsg(initiator, nonce) = notif;
-
+        initr: Enr,
+        timed_out_nonce: MessageNonce,
+    ) -> Result<(), HolePunchError> {
         let initiator_node_address =
-            match NodeContact::try_from_enr(initiator, self.nat_hole_puncher.ip_mode) {
+            match NodeContact::try_from_enr(initr, self.nat_hole_puncher.ip_mode) {
                 Ok(contact) => contact.node_address(),
-                Err(e) => return Err(HolePunchError::TargetError(e.into())),
+                Err(e) => return Err(HolePunchError::Target(e.into())),
             };
 
         // A session may already have been established.
@@ -1516,22 +1518,18 @@ impl<P: ProtocolIdentity> NatHolePunch for Handler<P> {
         }
         // If not hole punch attempts are in progress, spawn a WHOAREYOU event to punch a hole in
         // our NAT for initiator.
-        let whoareyou_ref = WhoAreYouRef(initiator_node_address, nonce);
+        let whoareyou_ref = WhoAreYouRef(initiator_node_address, timed_out_nonce);
         if let Err(e) = self
             .service_send
             .send(HandlerOut::WhoAreYou(whoareyou_ref))
             .await
         {
-            return Err(HolePunchError::TargetError(e.into()));
+            return Err(HolePunchError::Target(e.into()));
         }
         Ok(())
     }
-    async fn on_hole_punch_expired(
-        &mut self,
-        dst: SocketAddr,
-    ) -> Result<(), HolePunchError<Self::Discv5Error>> {
-        self.send_outbound(dst, Outbound::KeepHolePunched(dst))
-            .await;
+    async fn on_hole_punch_expired(&mut self, dst: SocketAddr) -> Result<(), HolePunchError> {
+        self.send_outbound(dst.into()).await;
         Ok(())
     }
 }
