@@ -477,11 +477,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 // The request might be timing out because the peer is behind a NAT. If we
                 // have a relay to the peer, attempt NAT hole punching.
                 let target = request_call.contact().node_address();
-                trace!(
-                    "Trying to hole punch target {} with relay {:?}",
-                    target,
-                    relay
-                );
+                trace!("Trying to hole punch target {target} with relay {relay}");
                 let local_enr = self.enr.read().clone();
                 let nonce = request_call.packet().header.message_nonce;
                 match self

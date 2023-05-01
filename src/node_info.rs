@@ -1,6 +1,7 @@
 use super::*;
 use crate::Enr;
 use enr::{CombinedPublicKey, NodeId};
+use parse_display_derive::Display;
 use std::net::SocketAddr;
 
 #[cfg(feature = "libp2p")]
@@ -146,7 +147,8 @@ impl std::fmt::Display for NodeContact {
 }
 
 /// A representation of an unsigned contactable node.
-#[derive(PartialEq, Hash, Eq, Clone, Debug)]
+#[derive(PartialEq, Hash, Eq, Clone, Debug, Display)]
+#[display("Node: {node_id}, addr: {socket_addr}")]
 pub struct NodeAddress {
     /// The destination socket address.
     pub socket_addr: SocketAddr,
@@ -180,11 +182,5 @@ impl NodeAddress {
             socket_addr,
             node_id,
         }
-    }
-}
-
-impl std::fmt::Display for NodeAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Node: {}, addr: {:?}", self.node_id, self.socket_addr)
     }
 }
