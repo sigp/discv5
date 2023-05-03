@@ -143,8 +143,13 @@ pub enum ServiceRequest {
     /// - A Predicate Query - Searches for peers closest to a random target that match a specified
     /// predicate.
     StartQuery(QueryKind, oneshot::Sender<Vec<Enr>>),
-    /// Find the ENR of a node given its multiaddr.
-    FindEnr(NodeContact, oneshot::Sender<Result<Enr, RequestError>>),
+    /// Send a FINDNODE request for nodes that fall within the given set of distances,
+    /// to the designated peer and wait for a response.
+    FindNodeDesignated(
+        NodeContact,
+        Vec<u64>,
+        oneshot::Sender<Result<Vec<Enr>, RequestError>>,
+    ),
     /// The TALK discv5 RPC function.
     Talk(
         NodeContact,
@@ -233,8 +238,8 @@ pub struct Pong {
 
 /// The kinds of responses we can send back to the discv5 layer.
 pub enum CallbackResponse {
-    /// A response to a requested ENR.
-    Enr(oneshot::Sender<Result<Enr, RequestError>>),
+    /// A response to a requested Nodes.
+    Nodes(oneshot::Sender<Result<Vec<Enr>, RequestError>>),
     /// A response from a TALK request
     Talk(oneshot::Sender<Result<Vec<u8>, RequestError>>),
     /// A response from a Pong request
@@ -349,8 +354,8 @@ impl Service {
                                 }
                             }
                         }
-                        ServiceRequest::FindEnr(node_contact, callback) => {
-                            self.request_enr(node_contact, Some(callback));
+                        ServiceRequest::FindNodeDesignated(node_contact, distance, callback) => {
+                            self.request_find_node_designated_peer(node_contact, distance, Some(callback));
                         }
                         ServiceRequest::Talk(node_contact, protocol, request, callback) => {
                             self.talk_request(node_contact, protocol, request, callback);
@@ -587,7 +592,7 @@ impl Service {
                 if let Some(enr) = to_request_enr {
                     match NodeContact::try_from_enr(enr, self.config.ip_mode) {
                         Ok(contact) => {
-                            self.request_enr(contact, None);
+                            self.request_find_node_designated_peer(contact, vec![0], None);
                         }
                         Err(NonContactable { enr }) => {
                             debug_unreachable!("Stored ENR is not contactable. {}", enr);
@@ -681,25 +686,9 @@ impl Service {
                         _ => unreachable!(),
                     };
 
-                    // This could be an ENR request from the outer service. If so respond to the
-                    // callback and End.
-                    if let Some(CallbackResponse::Enr(callback)) = active_request.callback.take() {
-                        // Currently only support requesting for ENR's. Verify this is the case.
-                        if !distances_requested.is_empty() && distances_requested[0] != 0 {
-                            error!("Retrieved a callback request that wasn't for a peer's ENR");
-                            return;
-                        }
-                        // This must be for asking for an ENR
-                        if nodes.len() > 1 {
-                            warn!(
-                                "Peer returned more than one ENR for itself. {}",
-                                active_request.contact
-                            );
-                        }
-                        let response = nodes
-                            .pop()
-                            .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"));
-                        if let Err(e) = callback.send(response) {
+                    if let Some(CallbackResponse::Nodes(callback)) = active_request.callback.take()
+                    {
+                        if let Err(e) = callback.send(Ok(nodes)) {
                             warn!("Failed to send response in callback {:?}", e)
                         }
                         return;
@@ -980,17 +969,18 @@ impl Service {
     }
 
     /// Request an external node's ENR.
-    fn request_enr(
+    fn request_find_node_designated_peer(
         &mut self,
         contact: NodeContact,
-        callback: Option<oneshot::Sender<Result<Enr, RequestError>>>,
+        distances: Vec<u64>,
+        callback: Option<oneshot::Sender<Result<Vec<Enr>, RequestError>>>,
     ) {
-        let request_body = RequestBody::FindNode { distances: vec![0] };
+        let request_body = RequestBody::FindNode { distances };
         let active_request = ActiveRequest {
             contact,
             request_body,
             query_id: None,
-            callback: callback.map(CallbackResponse::Enr),
+            callback: callback.map(CallbackResponse::Nodes),
         };
         self.send_rpc_request(active_request);
     }
@@ -1412,10 +1402,10 @@ impl Service {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
             match active_request.callback {
-                Some(CallbackResponse::Enr(callback)) => {
+                Some(CallbackResponse::Nodes(callback)) => {
                     callback
                         .send(Err(error))
-                        .unwrap_or_else(|_| debug!("Couldn't send TALK error response to user"));
+                        .unwrap_or_else(|_| debug!("Couldn't send Nodes error response to user"));
                     return;
                 }
                 Some(CallbackResponse::Talk(callback)) => {
