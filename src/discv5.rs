@@ -39,7 +39,11 @@ use tracing::{debug, warn};
 use libp2p_core::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
-use crate::metrics::{Metrics, METRICS};
+use crate::{
+    metrics::{Metrics, METRICS},
+    service::Pong,
+};
+
 lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
@@ -306,6 +310,31 @@ impl<P: ProtocolIdentity> Discv5<P> {
             return Some(entry.value().clone());
         }
         None
+    }
+
+    /// Sends a PING request to a node.
+    pub fn send_ping(
+        &mut self,
+        enr: Enr,
+    ) -> impl Future<Output = Result<Pong, RequestError>> + 'static {
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+            let event = ServiceRequest::Ping(enr, Some(callback_send));
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
     }
 
     /// Bans a node from the server. This will remove the node from the routing table if it exists
