@@ -15,6 +15,13 @@ use std::{
 };
 use thiserror::Error;
 
+/// The expected shortest lifetime in most NAT configurations of a punched hole in seconds.
+pub const DEFAULT_HOLE_PUNCH_LIFETIME: u64 = 20;
+/// The default number of ports to try before concluding that the local node is behind NAT.
+pub const DEFAULT_PORT_BIND_TRIES: usize = 4;
+/// Port range that is not impossible to bind to.
+pub const USER_AND_DYNAMIC_PORTS: RangeInclusive<u16> = 1025..=u16::MAX;
+
 /// An error occurred whilst attempting to hole punch NAT.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -25,13 +32,6 @@ pub enum Error {
     #[error("NAT error, failed as target of a hole punch attempt, {0}")]
     Target(Discv5Error),
 }
-
-/// The expected shortest lifetime in most NAT configurations of a punched hole in seconds.
-pub const DEFAULT_HOLE_PUNCH_LIFETIME: u64 = 20;
-/// The default number of ports to try before concluding that the local node is behind NAT.
-pub const DEFAULT_PORT_BIND_TRIES: usize = 4;
-/// Port range that is not impossible to bind to.
-pub const USER_AND_DYNAMIC_PORTS: RangeInclusive<u16> = 1025..=u16::MAX;
 
 #[async_trait]
 pub trait NatHolePunch {
@@ -64,7 +64,7 @@ pub trait NatHolePunch {
 }
 
 /// Types necessary implement trait [`NatHolePunch`] on [`super::Handler`].
-pub(crate) struct NatHolePuncher {
+pub(crate) struct NatHolePunchUtils {
     /// Ip mode as set in config.
     pub ip_mode: IpMode,
     /// This node has been observed to be behind a NAT.
@@ -78,9 +78,9 @@ pub(crate) struct NatHolePuncher {
     pub hole_punch_tracker: HashSetDelay<SocketAddr>,
 }
 
-impl NatHolePuncher {
+impl NatHolePunchUtils {
     pub(crate) fn new(listen_port: u16, local_enr: &Enr, ip_mode: IpMode) -> Self {
-        let mut nat_hole_puncher = NatHolePuncher {
+        let mut nat_hole_puncher = NatHolePunchUtils {
             ip_mode,
             is_behind_nat: None,
             new_peer_latest_relay: Default::default(),
@@ -139,7 +139,7 @@ impl NatHolePuncher {
     }
 }
 
-impl Stream for NatHolePuncher {
+impl Stream for NatHolePunchUtils {
     type Item = Result<SocketAddr, String>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

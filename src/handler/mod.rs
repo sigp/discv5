@@ -67,7 +67,7 @@ use crate::metrics::METRICS;
 pub use crate::node_info::{NodeAddress, NodeContact};
 
 use active_requests::ActiveRequests;
-use nat_hole_puncher::{Error as HolePunchError, NatHolePunch, NatHolePuncher};
+use nat_hole_puncher::{Error as HolePunchError, NatHolePunch, NatHolePunchUtils};
 use request_call::RequestCall;
 use sessions::{Session, Sessions};
 
@@ -219,7 +219,7 @@ pub struct Handler<P: ProtocolIdentity> {
     /// Access generic when implementing traits for Handler.
     _phantom: PhantomData<P>,
     /// Types necessary to plug in nat hole punching.
-    nat_hole_puncher: NatHolePuncher,
+    nat_hole_puncher: NatHolePunchUtils,
 }
 
 type HandlerReturn = (
@@ -272,7 +272,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         let socket = Socket::new::<P>(socket_config).await?;
 
         let nat_hole_puncher =
-            NatHolePuncher::new(listen_socket.port(), &enr.read(), config.ip_mode);
+            NatHolePunchUtils::new(listen_socket.port(), &enr.read(), config.ip_mode);
 
         let sessions = Sessions::new(
             config.session_cache_capacity,
