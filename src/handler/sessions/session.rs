@@ -24,6 +24,15 @@ pub struct Keys {
     decryption_key: [u8; 16],
 }
 
+impl From<([u8; 16], [u8; 16])> for Keys {
+    fn from((encryption_key, decryption_key): ([u8; 16], [u8; 16])) -> Self {
+        Keys {
+            encryption_key,
+            decryption_key,
+        }
+    }
+}
+
 /// A Session containing the encryption/decryption keys. These are kept individually for a given
 /// node.
 pub struct Session {

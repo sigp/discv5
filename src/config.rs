@@ -29,7 +29,7 @@ pub struct Discv5Config {
     /// The number of retries for each UDP request. Default: 1.
     pub request_retries: u8,
 
-    /// The session timeout for each node. Default: 1 day.
+    /// The session timeout for each node in seconds. Default: 1 day.
     pub session_timeout: Duration,
 
     /// The maximum number of established sessions to maintain. Default: 1000.
