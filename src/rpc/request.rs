@@ -1,6 +1,7 @@
-use super::{Payload, FINDNODE_MSG_TYPE, PING_MSG_TYPE, TALKREQ_MSG_TYPE};
+use super::{MessageType, Payload};
 use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
+use std::convert::TryInto;
 use tracing::{debug, warn};
 
 /// A request sent between nodes.
@@ -17,9 +18,9 @@ impl Payload for Request {
     /// Matches a request type to its message type id.
     fn msg_type(&self) -> u8 {
         match self.body {
-            RequestBody::Ping { .. } => PING_MSG_TYPE,
-            RequestBody::FindNode { .. } => FINDNODE_MSG_TYPE,
-            RequestBody::TalkReq { .. } => TALKREQ_MSG_TYPE,
+            RequestBody::Ping { .. } => MessageType::Ping as u8,
+            RequestBody::FindNode { .. } => MessageType::FindNode as u8,
+            RequestBody::TalkReq { .. } => MessageType::TalkReq as u8,
         }
     }
 
@@ -65,8 +66,8 @@ impl Payload for Request {
     fn decode(msg_type: u8, rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let list_len = rlp.item_count()?;
         let id = RequestId::decode(rlp.val_at::<Vec<u8>>(0)?)?;
-        let message = match msg_type {
-            PING_MSG_TYPE => {
+        let message = match msg_type.try_into()? {
+            MessageType::Ping => {
                 // Ping Request
                 if list_len != 2 {
                     debug!(
@@ -82,7 +83,7 @@ impl Payload for Request {
                     },
                 }
             }
-            FINDNODE_MSG_TYPE => {
+            MessageType::FindNode => {
                 // FindNode Request
                 if list_len != 2 {
                     debug!(
@@ -108,7 +109,7 @@ impl Payload for Request {
                     body: RequestBody::FindNode { distances },
                 }
             }
-            TALKREQ_MSG_TYPE => {
+            MessageType::TalkReq => {
                 // Talk Request
                 if list_len != 3 {
                     debug!(

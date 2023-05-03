@@ -1,8 +1,11 @@
-use super::{Payload, RequestBody, RequestId, NODES_MSG_TYPE, PONG_MSG_TYPE, TALKRESP_MSG_TYPE};
+use super::{MessageType, Payload, RequestBody, RequestId};
 use crate::Enr;
 use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
-use std::net::{IpAddr, Ipv6Addr};
+use std::{
+    convert::TryInto,
+    net::{IpAddr, Ipv6Addr},
+};
 use tracing::debug;
 
 /// A response sent in response to a [`super::Request`]
@@ -19,9 +22,9 @@ impl Payload for Response {
     /// Matches a response type to its message type id.
     fn msg_type(&self) -> u8 {
         match &self.body {
-            ResponseBody::Pong { .. } => PONG_MSG_TYPE,
-            ResponseBody::Nodes { .. } => NODES_MSG_TYPE,
-            ResponseBody::TalkResp { .. } => TALKRESP_MSG_TYPE,
+            ResponseBody::Pong { .. } => MessageType::Pong as u8,
+            ResponseBody::Nodes { .. } => MessageType::Nodes as u8,
+            ResponseBody::TalkResp { .. } => MessageType::TalkResp as u8,
         }
     }
 
@@ -77,8 +80,8 @@ impl Payload for Response {
     fn decode(msg_type: u8, rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
         let list_len = rlp.item_count()?;
         let id = RequestId::decode(rlp.val_at::<Vec<u8>>(0)?)?;
-        let response = match msg_type {
-            PONG_MSG_TYPE => {
+        let response = match msg_type.try_into()? {
+            MessageType::Pong => {
                 // Pong Response
                 if list_len != 4 {
                     debug!(
@@ -120,7 +123,7 @@ impl Payload for Response {
                     },
                 }
             }
-            NODES_MSG_TYPE => {
+            MessageType::Nodes => {
                 // Nodes Response
                 if list_len != 3 {
                     debug!(
@@ -147,7 +150,7 @@ impl Payload for Response {
                     },
                 }
             }
-            TALKRESP_MSG_TYPE => {
+            MessageType::TalkResp => {
                 // Talk Response
                 if list_len != 2 {
                     debug!(

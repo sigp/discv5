@@ -1,6 +1,7 @@
 use crate::impl_from_variant_wrap;
 use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp};
+use std::convert::{TryFrom, TryInto};
 
 mod notification;
 mod request;
@@ -11,22 +12,35 @@ pub use request::{Request, RequestBody, RequestId};
 pub use response::{Response, ResponseBody};
 
 /// Message type IDs.
-/// Ping notification type.
-pub const PING_MSG_TYPE: u8 = 1;
-/// Pong notification type.
-pub const PONG_MSG_TYPE: u8 = 2;
-/// FindNode notification type.
-pub const FINDNODE_MSG_TYPE: u8 = 3;
-/// Nodes notification type.
-pub const NODES_MSG_TYPE: u8 = 4;
-/// TalkReq notification type.
-pub const TALKREQ_MSG_TYPE: u8 = 5;
-/// TalkResp notification type.
-pub const TALKRESP_MSG_TYPE: u8 = 6;
-/// RelayInit notification type.
-pub const RELAYINIT_MSG_TYPE: u8 = 7;
-/// RelayMsg notification type.
-pub const RELAYMSG_MSG_TYPE: u8 = 8;
+#[derive(Debug)]
+#[repr(u8)]
+pub enum MessageType {
+    Ping = 1,
+    Pong = 2,
+    FindNode = 3,
+    Nodes = 4,
+    TalkReq = 5,
+    TalkResp = 6,
+    RelayInit = 7,
+    RelayMsg = 8,
+}
+
+impl TryFrom<u8> for MessageType {
+    type Error = DecoderError;
+    fn try_from(byte: u8) -> Result<Self, Self::Error> {
+        match byte {
+            1 => Ok(MessageType::Ping),
+            2 => Ok(MessageType::Pong),
+            3 => Ok(MessageType::FindNode),
+            4 => Ok(MessageType::Nodes),
+            5 => Ok(MessageType::TalkReq),
+            6 => Ok(MessageType::TalkResp),
+            7 => Ok(MessageType::RelayInit),
+            8 => Ok(MessageType::RelayMsg),
+            _ => Err(DecoderError::Custom("Unknown RPC message type")),
+        }
+    }
+}
 
 /// The payload of message containers SessionMessage, Message or Handshake type.
 pub trait Payload
@@ -76,17 +90,16 @@ impl Message {
         let msg_type = data[0];
         let rlp = rlp::Rlp::new(&data[1..]);
 
-        match msg_type {
-            PING_MSG_TYPE | FINDNODE_MSG_TYPE | TALKREQ_MSG_TYPE => {
+        match msg_type.try_into()? {
+            MessageType::Ping | MessageType::FindNode | MessageType::TalkReq => {
                 Ok(Request::decode(msg_type, &rlp)?.into())
             }
-            PONG_MSG_TYPE | NODES_MSG_TYPE | TALKRESP_MSG_TYPE => {
+            MessageType::Pong | MessageType::Nodes | MessageType::TalkResp => {
                 Ok(Response::decode(msg_type, &rlp)?.into())
             }
-            RELAYINIT_MSG_TYPE | RELAYMSG_MSG_TYPE => {
+            MessageType::RelayInit | MessageType::RelayMsg => {
                 Ok(Notification::decode(msg_type, &rlp)?.into())
             }
-            _ => Err(DecoderError::Custom("Unknown RPC message type")),
         }
     }
 }

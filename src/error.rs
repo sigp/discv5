@@ -5,6 +5,8 @@ use std::fmt;
 #[derive(Debug)]
 /// A general error that is used throughout the Discv5 library.
 pub enum Discv5Error {
+    /// An invalid message type was received.
+    InvalidMessage,
     /// An invalid ENR was received.
     InvalidEnr,
     /// An invalid ENR was received.

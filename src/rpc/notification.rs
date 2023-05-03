@@ -1,4 +1,4 @@
-use super::{Payload, RELAYINIT_MSG_TYPE, RELAYMSG_MSG_TYPE};
+use super::{MessageType, Payload};
 use crate::{
     packet::{MessageNonce, MESSAGE_NONCE_LENGTH},
     Enr,
@@ -6,6 +6,7 @@ use crate::{
 use enr::NodeId;
 use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
+use std::convert::TryInto;
 
 /// Nonce of request that triggered the initiation of this hole punching attempt.
 type NonceOfTimedOutMessage = MessageNonce;
@@ -27,8 +28,8 @@ impl Payload for Notification {
     /// Matches a notification type to its message type id.
     fn msg_type(&self) -> u8 {
         match self {
-            Self::RelayInit(..) => RELAYINIT_MSG_TYPE,
-            Self::RelayMsg(..) => RELAYMSG_MSG_TYPE,
+            Self::RelayInit(..) => MessageType::RelayInit as u8,
+            Self::RelayMsg(..) => MessageType::RelayMsg as u8,
         }
     }
 
@@ -57,8 +58,8 @@ impl Payload for Notification {
 
     /// Decodes RLP-encoded bytes into a notification message.
     fn decode(msg_type: u8, rlp: &Rlp<'_>) -> Result<Self, DecoderError> {
-        match msg_type {
-            RELAYINIT_MSG_TYPE => {
+        match msg_type.try_into()? {
+            MessageType::RelayInit => {
                 if rlp.item_count()? != 3 {
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
@@ -84,7 +85,7 @@ impl Payload for Notification {
 
                 Ok(Notification::RelayInit(initiator, tgt, nonce))
             }
-            RELAYMSG_MSG_TYPE => {
+            MessageType::RelayMsg => {
                 if rlp.item_count()? != 2 {
                     return Err(DecoderError::RlpIncorrectListLen);
                 }
