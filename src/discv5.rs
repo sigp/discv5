@@ -422,7 +422,11 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
-    pub fn enr_insert(&self, key: &str, value: &[u8]) -> Result<Option<Vec<u8>>, EnrError> {
+    pub fn enr_insert<T: rlp::Encodable>(
+        &self,
+        key: &str,
+        value: &T,
+    ) -> Result<Option<Vec<u8>>, EnrError> {
         self.local_enr
             .write()
             .insert(key, value, &self.enr_key.read())

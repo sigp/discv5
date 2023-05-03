@@ -73,7 +73,7 @@ async fn main() {
         let raw_key =
             hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
                 .unwrap();
-        let secret_key = k256::ecdsa::SigningKey::from_bytes(&raw_key).unwrap();
+        let secret_key = k256::ecdsa::SigningKey::from_slice(&raw_key).unwrap();
         CombinedKey::from(secret_key)
     } else {
         // use a new key if specified
