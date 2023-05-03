@@ -340,11 +340,12 @@ impl<P: ProtocolIdentity> Handler<P> {
                             let port = socket.port();
                             if old_socket.is_none() {
                                 // This node goes from being unreachable to being reachable. Remove
-                                // its sessions to trigger a WHOAREYOU from peers. If the peer is
-                                // running this implementation of discovery, this makes it possible
-                                // for the local node to be inserted into its peers' kbuckets
-                                // before the session they already had expires. Session duration,
-                                // in this impl defaults to 24 hours.
+                                // its sessions to trigger a WHOAREYOU from peers on next sent
+                                // message. If the peer is running this implementation of
+                                // discovery, this makes it possible for the local node to be
+                                // inserted into its peers' kbuckets before the session they
+                                // already had expires. Session duration, in this impl defaults to
+                                // 24 hours.
                                 self.sessions.cache.clear()
                             }
                             self.nat_hole_puncher.set_is_behind_nat(listen_port, Some(ip), Some(port));
@@ -1309,6 +1310,10 @@ impl<P: ProtocolIdentity> Handler<P> {
             METRICS
                 .active_sessions
                 .store(self.sessions.cache.len(), Ordering::Relaxed);
+            // stop keeping hole punched for peer
+            self.nat_hole_puncher
+                .hole_punch_tracker
+                .remove(&node_address.socket_addr);
         }
         if let Some(to_remove) = self.pending_requests.remove(node_address) {
             for PendingRequest { request_id, .. } in to_remove {
