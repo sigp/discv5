@@ -835,11 +835,9 @@ impl<P: ProtocolIdentity> Handler<P> {
         );
 
         if let Some(challenge) = self.active_challenges.remove(&node_address) {
-            let local_key = self.key.clone();
-            let local_id = self.node_id;
             match Session::establish_from_challenge(
-                local_key,
-                &local_id,
+                self.key.clone(),
+                &self.node_id,
                 &node_address.node_id,
                 challenge,
                 id_nonce_sig,
