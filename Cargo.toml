@@ -14,8 +14,6 @@ exclude = [".gitignore", ".github/*"]
 [dependencies]
 enr = { version = "0.8.1", features = ["k256", "ed25519"] }
 tokio = { version = "1.15.0", features = ["net", "sync", "macros", "rt"] }
-tokio-stream = "0.1.8"
-tokio-util = { version = "0.6.9", features = ["time"] }
 libp2p-core = { version = "0.36.0", optional = true }
 zeroize = { version = "1.4.3", features = ["zeroize_derive"] }
 futures = "0.3.19"
@@ -43,10 +41,6 @@ more-asserts = "0.2.2"
 [dev-dependencies]
 rand_07 = { package = "rand", version = "0.7" }
 quickcheck = "0.9.2"
-env_logger = "0.9.0"
-hex-literal = "0.3.4"
-simple_logger = "1.16.0"
-tokio-util = { version = "0.6.9", features = ["time"] }
 tokio = { version = "1.15.0", features = ["full"] }
 rand_xorshift = "0.3.0"
 rand_core = "0.6.3"
