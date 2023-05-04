@@ -52,14 +52,14 @@ A simple example of creating this service is as follows:
        .build()
        .unwrap();
 
-   // default configuration
-   let config = Discv5ConfigBuilder::new().build();
-
    // configuration for the sockets to listen on
    let listen_config = ListenConfig::Ipv4 {
        ip: Ipv4Addr::UNSPECIFIED,
        port: 9000,
    };
+
+   // default configuration
+   let config = Discv5ConfigBuilder::new(listen_config).build();
 
    // construct the discv5 server
    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config, listen_config).unwrap();
