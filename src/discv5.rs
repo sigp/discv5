@@ -569,7 +569,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
-        let ip_mode = self.config.ip_mode;
+        let ip_mode = self.ip_mode;
 
         async move {
             let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;

@@ -929,7 +929,7 @@ impl Service {
         enr: Enr,
         callback: Option<oneshot::Sender<Result<Pong, RequestError>>>,
     ) {
-        match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+        match NodeContact::try_from_enr(enr, self.ip_mode) {
             Ok(contact) => {
                 let request_body = RequestBody::Ping {
                     enr_seq: self.local_enr.read().seq(),
