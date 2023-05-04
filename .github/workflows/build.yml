@@ -22,6 +22,17 @@ jobs:
         uses: arduino/setup-protoc@v1
       - name: Lint code for quality and style with Clippy
         run: cargo clippy --workspace --tests --all-features -- -D warnings
+  check-unused-depends:
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+      - uses: actions/checkout@v2
+      - name: Get latest version of +nightly rust
+        run: rustup update nightly
+      - name: Install udeps
+        run: cargo install cargo-udeps --locked
+      - name: Find unused crates
+        run: cargo +nightly udeps --all-targets
   release-tests-ubuntu:
     runs-on: ubuntu-latest
     needs: cargo-fmt
