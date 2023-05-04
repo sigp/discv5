@@ -39,7 +39,11 @@ use tracing::{debug, warn};
 use libp2p_core::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
-use crate::metrics::{Metrics, METRICS};
+use crate::{
+    metrics::{Metrics, METRICS},
+    service::Pong,
+};
+
 lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
@@ -312,6 +316,31 @@ impl<P: ProtocolIdentity> Discv5<P> {
         None
     }
 
+    /// Sends a PING request to a node.
+    pub fn send_ping(
+        &mut self,
+        enr: Enr,
+    ) -> impl Future<Output = Result<Pong, RequestError>> + 'static {
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+            let event = ServiceRequest::Ping(enr, Some(callback_send));
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
+    }
+
     /// Bans a node from the server. This will remove the node from the routing table if it exists
     /// and block all incoming packets from the node until the timeout specified. Setting the
     /// timeout to `None` creates a permanent ban.
@@ -397,7 +426,11 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
-    pub fn enr_insert(&self, key: &str, value: &[u8]) -> Result<Option<Vec<u8>>, EnrError> {
+    pub fn enr_insert<T: rlp::Encodable>(
+        &self,
+        key: &str,
+        value: &T,
+    ) -> Result<Option<Vec<u8>>, EnrError> {
         self.local_enr
             .write()
             .insert(key, value, &self.enr_key.read())
@@ -466,14 +499,33 @@ impl<P: ProtocolIdentity> Discv5<P> {
 
             let (callback_send, callback_recv) = oneshot::channel();
 
-            let event = ServiceRequest::FindEnr(node_contact, callback_send);
+            let event =
+                ServiceRequest::FindNodeDesignated(node_contact.clone(), vec![0], callback_send);
+
+            // send the request
             channel
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
-            callback_recv
+            // await the response
+            match callback_recv
                 .await
                 .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+            {
+                Ok(mut nodes) => {
+                    // This must be for asking for an ENR
+                    if nodes.len() > 1 {
+                        warn!(
+                            "Peer returned more than one ENR for itself. {}",
+                            node_contact
+                        );
+                    }
+                    nodes
+                        .pop()
+                        .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"))
+                }
+                Err(err) => Err(err),
+            }
         }
     }
 
@@ -495,6 +547,35 @@ impl<P: ProtocolIdentity> Discv5<P> {
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
+    }
+
+    /// Send a FINDNODE request for nodes that fall within the given set of distances,
+    /// to the designated peer and wait for a response.
+    pub fn find_node_designated_peer(
+        &self,
+        enr: Enr,
+        distances: Vec<u64>,
+    ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+        let ip_mode = self.config.ip_mode;
+
+        async move {
+            let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+            let event = ServiceRequest::FindNodeDesignated(node_contact, distances, callback_send);
 
             // send the request
             channel

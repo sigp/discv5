@@ -117,9 +117,11 @@ impl NodeContact {
                         .expect("Libp2p key conversion, always valid")
                         .into()
                 }
-                PublicKey::Ed25519(pk) => enr::ed25519_dalek::PublicKey::from_bytes(&pk.encode())
-                    .expect("Libp2p key conversion, always valid")
-                    .into(),
+                PublicKey::Ed25519(pk) => {
+                    enr::ed25519_dalek::VerifyingKey::from_bytes(&pk.encode())
+                        .expect("Libp2p key conversion, always valid")
+                        .into()
+                }
                 _ => return Err("The key type is not supported"),
             };
 

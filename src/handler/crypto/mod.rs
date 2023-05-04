@@ -19,8 +19,7 @@ use enr::{
     k256::{
         self,
         ecdsa::{
-            digest::Update,
-            signature::{DigestSigner, DigestVerifier, Signature as _},
+            signature::{DigestSigner, DigestVerifier},
             Signature,
         },
         sha2::{Digest, Sha256},
@@ -53,10 +52,10 @@ pub(crate) fn generate_session_keys(
     let (secret, ephem_pk) = {
         match contact.public_key() {
             CombinedPublicKey::Secp256k1(remote_pk) => {
-                let ephem_sk = k256::ecdsa::SigningKey::random(rand::thread_rng());
+                let ephem_sk = k256::ecdsa::SigningKey::random(&mut rand::thread_rng());
                 let secret = ecdh(&remote_pk, &ephem_sk);
                 let ephem_pk = ephem_sk.verifying_key();
-                (secret, ephem_pk.to_bytes().to_vec())
+                (secret, ephem_pk.to_sec1_bytes().to_vec())
             }
             CombinedPublicKey::Ed25519(_) => {
                 return Err(Discv5Error::KeyTypeNotSupported("Ed25519"))
@@ -133,11 +132,11 @@ pub(crate) fn sign_nonce(
 
     match signing_key {
         CombinedKey::Secp256k1(key) => {
-            let message = Sha256::new().chain(signing_message);
+            let message = Sha256::new().chain_update(signing_message);
             let signature: Signature = key
                 .try_sign_digest(message)
                 .map_err(|e| Discv5Error::Error(format!("Failed to sign message: {e}")))?;
-            Ok(signature.as_bytes().to_vec())
+            Ok(signature.to_vec())
         }
         CombinedKey::Ed25519(_) => Err(Discv5Error::KeyTypeNotSupported("Ed25519")),
     }
@@ -157,7 +156,7 @@ pub(crate) fn verify_authentication_nonce(
         CombinedPublicKey::Secp256k1(key) => {
             if let Ok(sig) = k256::ecdsa::Signature::try_from(sig) {
                 return key
-                    .verify_digest(Sha256::new().chain(signing_nonce), &sig)
+                    .verify_digest(Sha256::new().chain_update(signing_nonce), &sig)
                     .is_ok();
             }
             false
@@ -262,7 +261,7 @@ mod tests {
                 .unwrap();
 
         let remote_pk = k256::ecdsa::VerifyingKey::from_sec1_bytes(&remote_pubkey).unwrap();
-        let local_sk = k256::ecdsa::SigningKey::from_bytes(&local_secret_key).unwrap();
+        let local_sk = k256::ecdsa::SigningKey::from_slice(&local_secret_key).unwrap();
 
         let secret = ecdh(&remote_pk, &local_sk);
         assert_eq!(secret, expected_secret);
@@ -278,7 +277,7 @@ mod tests {
                 .unwrap();
 
         let remote_pk = k256::ecdsa::VerifyingKey::from_sec1_bytes(&dest_pubkey).unwrap();
-        let local_sk = k256::ecdsa::SigningKey::from_bytes(&ephem_key).unwrap();
+        let local_sk = k256::ecdsa::SigningKey::from_slice(&ephem_key).unwrap();
 
         let secret = ecdh(&remote_pk, &local_sk);
 
@@ -312,7 +311,7 @@ mod tests {
         let expected_sig = hex::decode("94852a1e2318c4e5e9d422c98eaf19d1d90d876b29cd06ca7cb7546d0fff7b484fe86c09a064fe72bdbef73ba8e9c34df0cd2b53e9d65528c2c7f336d5dfc6e6").unwrap();
 
         let challenge_data = ChallengeData::try_from(hex::decode("000000000000000000000000000000006469736376350001010102030405060708090a0b0c00180102030405060708090a0b0c0d0e0f100000000000000000").unwrap().as_slice()).unwrap();
-        let key = k256::ecdsa::SigningKey::from_bytes(&local_secret_key).unwrap();
+        let key = k256::ecdsa::SigningKey::from_slice(&local_secret_key).unwrap();
         let sig = sign_nonce(&key.into(), &challenge_data, &ephemeral_pubkey, &dst_id).unwrap();
 
         assert_eq!(sig, expected_sig);

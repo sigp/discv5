@@ -14,7 +14,7 @@ fn init() {
         .try_init();
 }
 
-fn update_enr(discv5: &mut Discv5, key: &str, value: &[u8]) -> bool {
+fn update_enr<T: rlp::Encodable>(discv5: &mut Discv5, key: &str, value: &T) -> bool {
     discv5.enr_insert(key, value).is_ok()
 }
 
@@ -133,7 +133,7 @@ fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
             loop {
                 // until a value is given within the curve order
                 rng.fill_bytes(&mut b);
-                if let Ok(k) = k256::ecdsa::SigningKey::from_bytes(&b) {
+                if let Ok(k) = k256::ecdsa::SigningKey::from_slice(&b) {
                     break k;
                 }
             }
