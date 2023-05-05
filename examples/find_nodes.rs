@@ -171,7 +171,7 @@ async fn main() {
     let check_evs = args.events;
 
     // construct a 30 second interval to search for new peers.
-    let mut query_interval = tokio::time::interval(Duration::from_secs(1));
+    let mut query_interval = tokio::time::interval(Duration::from_secs(30));
 
     loop {
         tokio::select! {
