@@ -10,7 +10,7 @@ pub enum Discv5Error {
     InvalidMessage,
     /// An invalid ENR was received.
     InvalidEnr,
-    /// An invalid ENR was received.
+    /// The limit for sessions with peers that have an unreachable ENR is reached.
     LimitSessionsUnreachableEnr,
     /// The public key type is known.
     UnknownPublicKey,
