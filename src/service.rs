@@ -1095,13 +1095,16 @@ impl Service {
             for enr in nodes_to_send.into_iter() {
                 let entry_size = rlp::encode(&enr).len();
                 // Responses assume that a session is established. Thus, on top of the encoded
-                // ENR's the packet should be a regular message. A regular message has an IV (16
-                // bytes), and a header of 55 bytes. The find-nodes RPC requires 16 bytes for the ID and the
-                // `total` field. Also there is a 16 byte HMAC for encryption and an extra byte for
-                // RLP encoding.
+                // ENR's the packet should be a session message, which is the same data
+                // structure as a regular message.
+                // A session message has an IV (16 bytes), and a header of 55 bytes. The
+                // find-nodes RPC requires 16 bytes for the ID and the `total` field. Also there
+                // is a 16 byte HMAC for encryption and an extra byte for RLP encoding.
                 //
-                // We could also be responding via an authheader which can take up to 282 bytes in its
-                // header.
+                // We could also be responding via an authheader (this message could be in
+                // contained in a handshake message) which can take up to 282 bytes in
+                // the header, leaving even less space for the NODES response.
+                //
                 // As most messages will be normal messages we will try and pack as many ENR's we
                 // can in and drop the response packet if a user requests an auth message of a very
                 // packed response.
