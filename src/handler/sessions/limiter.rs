@@ -46,18 +46,19 @@ impl SessionLimiter {
         node_address: &NodeAddress,
         enr: &Enr,
     ) -> Result<(), Discv5Error> {
+        if enr.udp4_socket().is_none() || enr.udp6_socket().is_none() {
+            return Ok(());
+        }
         // Empty buffer of expired sessions, and remove any which belong to unreachable ENRs.
         while let Ok(Some(session_index)) = self.rx_expired_sessions.try_next() {
             self.sessions_unreachable_enr_tracker.remove(&session_index);
         }
-        if enr.udp4_socket().is_none() && enr.udp6_socket().is_none() {
-            // Peer is unreachable
-            if self.sessions_unreachable_enr_tracker.len() >= self.limit {
-                return Err(Discv5Error::LimitSessionsUnreachableEnr);
-            }
-            self.sessions_unreachable_enr_tracker
-                .insert(node_address.clone());
+        // Peer is unreachable
+        if self.sessions_unreachable_enr_tracker.len() >= self.limit {
+            return Err(Discv5Error::LimitSessionsUnreachableEnr);
         }
+        self.sessions_unreachable_enr_tracker
+            .insert(node_address.clone());
         Ok(())
     }
 }

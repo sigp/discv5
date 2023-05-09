@@ -321,7 +321,7 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Sets the maximum number of session to peers with unreachable ENRs to allow. Minimum is 1 
+    /// Sets the maximum number of session to peers with unreachable ENRs to allow. Minimum is 1
     /// peer. Default is no limit.
     pub fn unreachable_enr_limit(&mut self, peer_limit: Option<usize>) -> &mut Self {
         self.config.unreachable_enr_limit = peer_limit;
