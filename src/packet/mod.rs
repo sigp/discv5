@@ -142,7 +142,7 @@ pub enum PacketKind {
         enr_record: Option<Enr>,
     },
     /// A session message is a notification, hence it differs from the [`PacketKind::Message`] in
-    /// the way it handles sessions since notifications doesn't trigger responses, a session
+    /// the way it handles sessions since notifications don't trigger responses, a session
     /// message packet doesn't trigger a WHOAREYOU response. If a session doesn't exist to
     /// decrypt or encrypt a notification, it is dropped.
     SessionMessage {
