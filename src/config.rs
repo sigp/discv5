@@ -101,8 +101,8 @@ pub struct Discv5Config {
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
 
     /// The max limit for peers with unreachable ENRs. Benevolent examples of such peers are peers
-    /// that are discovering their externally reachable socket, nodes must assist at least one 
-    /// such peer in discovering their reachable socket via ip voting, and peers behind symmetric 
+    /// that are discovering their externally reachable socket, nodes must assist at least one
+    /// such peer in discovering their reachable socket via ip voting, and peers behind symmetric
     /// NAT. Default is no limit. Minimum is 1.
     pub unreachable_enr_limit: Option<usize>,
 }

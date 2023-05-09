@@ -1,8 +1,9 @@
 use crate::{handler::Challenge, node_info::NonContactable};
+use derive_more::From;
 use rlp::DecoderError;
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, From)]
 /// A general error that is used throughout the Discv5 library.
 pub enum Discv5Error {
     /// An invalid message type was received.
@@ -14,6 +15,7 @@ pub enum Discv5Error {
     /// The public key type is known.
     UnknownPublicKey,
     /// The ENR key used is not supported.
+    #[from(ignore)]
     KeyTypeNotSupported(&'static str),
     /// Failed to derive an ephemeral public key.
     KeyDerivationFailed,
@@ -34,33 +36,30 @@ pub enum Discv5Error {
     /// An RLP decoding error occurred.
     RLPError(DecoderError),
     /// Failed to encrypt a message.
+    #[from(ignore)]
     EncryptionFail(String),
     /// Failed to decrypt a message.
+    #[from(ignore)]
     DecryptionFailed(String),
     /// The custom error has occurred.
+    #[from(ignore)]
     Custom(&'static str),
     /// A generic dynamic error occurred.
+    #[from(ignore)]
     Error(String),
     /// An IO error occurred.
     Io(std::io::Error),
 }
 
-impl From<std::io::Error> for Discv5Error {
-    fn from(err: std::io::Error) -> Discv5Error {
-        Discv5Error::Io(err)
-    }
-}
-
 macro_rules! impl_from_variant {
-    ($(<$($generic: ident$(: $trait: path)*,)+>)*, $from_type: ty, $to_type: ty, $variant: path) => {
-        impl$(<$($generic$(: $trait)*,)+>)* From<$from_type> for $to_type {
+    ($(<$($generic: ident,)+>)*, $from_type: ty, $to_type: ty, $variant: path) => {
+        impl$(<$($generic,)+>)* From<$from_type> for $to_type {
             fn from(_e: $from_type) -> Self {
                 $variant
             }
         }
     };
 }
-
 impl_from_variant!(<T,>, tokio::sync::mpsc::error::SendError<T>, Discv5Error, Self::ServiceChannelClosed);
 impl_from_variant!(, NonContactable, Discv5Error, Self::InvalidEnr);
 

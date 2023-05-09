@@ -40,6 +40,7 @@ more-asserts = "0.2.2"
 async-trait = "0.1.67"
 parse-display-derive = "0.8.0"
 thiserror = "1.0.40"
+derive_more = { version = "0.99.17", default-features = false, features = ["from"] }
 
 [dev-dependencies]
 rand_07 = { package = "rand", version = "0.7" }

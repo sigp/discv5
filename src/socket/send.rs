@@ -1,7 +1,6 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
-use crate::{
-    impl_from_variant_wrap, metrics::METRICS, node_info::NodeAddress, packet::*, Executor,
-};
+use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
+use derive_more::From;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     net::UdpSocket,
@@ -9,6 +8,7 @@ use tokio::{
 };
 use tracing::{debug, trace, warn};
 
+#[derive(From)]
 pub enum Outbound {
     Packet(OutboundPacket),
     KeepHolePunched(SocketAddr),
@@ -22,9 +22,6 @@ impl Outbound {
         }
     }
 }
-
-impl_from_variant_wrap!(OutboundPacket, Outbound, Self::Packet);
-impl_from_variant_wrap!(SocketAddr, Outbound, Self::KeepHolePunched);
 
 pub struct OutboundPacket {
     /// The destination node address

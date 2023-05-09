@@ -110,7 +110,6 @@ pub mod handler;
 mod ipmode;
 pub mod kbucket;
 mod lru_time_cache;
-mod macro_utils;
 pub mod metrics;
 mod node_info;
 pub mod packet;

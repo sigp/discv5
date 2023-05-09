@@ -1,4 +1,4 @@
-use crate::impl_from_variant_wrap;
+use derive_more::From;
 use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp};
 use std::convert::{TryFrom, TryInto};
@@ -55,7 +55,7 @@ where
     fn decode(msg_type: u8, rlp: &Rlp<'_>) -> Result<Self, DecoderError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Display, From)]
 /// A combined type representing the messages which are the payloads of packets.
 pub enum Message {
     /// A request, which contains its [`RequestId`].
@@ -68,10 +68,6 @@ pub enum Message {
     #[display("{0}")]
     Notification(Notification),
 }
-
-impl_from_variant_wrap!(Request, Message, Self::Request);
-impl_from_variant_wrap!(Response, Message, Self::Response);
-impl_from_variant_wrap!(Notification, Message, Self::Notification);
 
 #[allow(dead_code)]
 impl Message {
@@ -107,6 +103,7 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packet::MESSAGE_NONCE_LENGTH;
     use enr::{CombinedKey, Enr, EnrBuilder};
     use std::net::IpAddr;
 
@@ -345,5 +342,51 @@ mod tests {
         let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn test_enocde_decode_relay_init() {
+        // generate a new enr key for the initiator
+        let enr_key = CombinedKey::generate_secp256k1();
+        // construct the initiator's ENR
+        let inr_enr = EnrBuilder::new("v4").build(&enr_key).unwrap();
+
+        // generate a new enr key for the target
+        let enr_key_tgt = CombinedKey::generate_secp256k1();
+        // construct the target's ENR
+        let tgt_enr = EnrBuilder::new("v4").build(&enr_key_tgt).unwrap();
+        let tgt_node_id = tgt_enr.node_id();
+
+        let nonce_bytes = hex::decode("47644922f5d6e951051051ac").unwrap();
+        let mut nonce = [0u8; MESSAGE_NONCE_LENGTH];
+        nonce[MESSAGE_NONCE_LENGTH - nonce_bytes.len()..].copy_from_slice(&nonce_bytes);
+
+        let notif = Message::Notification(Notification::RelayInit(inr_enr, tgt_node_id, nonce));
+
+        println!("{notif}");
+
+        let encoded_notif = notif.clone().encode();
+        let decoded_notif = Message::decode(&encoded_notif).expect("Should decode");
+
+        assert_eq!(notif, decoded_notif.into());
+    }
+
+    #[test]
+    fn test_enocde_decode_relay_msg() {
+        // generate a new enr key for the initiator
+        let enr_key = CombinedKey::generate_secp256k1();
+        // construct the initiator's ENR
+        let inr_enr = EnrBuilder::new("v4").build(&enr_key).unwrap();
+
+        let nonce_bytes = hex::decode("9951051051aceb").unwrap();
+        let mut nonce = [0u8; MESSAGE_NONCE_LENGTH];
+        nonce[MESSAGE_NONCE_LENGTH - nonce_bytes.len()..].copy_from_slice(&nonce_bytes);
+
+        let notif = Message::Notification(Notification::RelayMsg(inr_enr, nonce));
+
+        let encoded_notif = notif.clone().encode();
+        let decoded_notif = Message::decode(&encoded_notif).expect("Should decode");
+
+        assert_eq!(notif, decoded_notif.into());
     }
 }
