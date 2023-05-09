@@ -1,5 +1,4 @@
-use derive_more::From;
-use parse_display_derive::Display;
+use derive_more::{Display, From};
 use rlp::{DecoderError, Rlp};
 use std::convert::{TryFrom, TryInto};
 
@@ -59,13 +58,13 @@ where
 /// A combined type representing the messages which are the payloads of packets.
 pub enum Message {
     /// A request, which contains its [`RequestId`].
-    #[display("{0}")]
+    #[display(fmt = "{_0}")]
     Request(Request),
     /// A Response, which contains the [`RequestId`] of its associated request.
-    #[display("{0}")]
+    #[display(fmt = "{_0}")]
     Response(Response),
     /// A unicast notification.
-    #[display("{0}")]
+    #[display(fmt = "{_0}")]
     Notification(Notification),
 }
 

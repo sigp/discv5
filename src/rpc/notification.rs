@@ -3,8 +3,8 @@ use crate::{
     packet::{MessageNonce, MESSAGE_NONCE_LENGTH},
     Enr,
 };
+use derive_more::Display;
 use enr::NodeId;
-use parse_display_derive::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::convert::TryInto;
 
@@ -17,10 +17,10 @@ pub const NODE_ID_LENGTH: usize = 32;
 #[derive(Debug, Display, PartialEq, Eq, Clone)]
 pub enum Notification {
     /// A notification to initialise a one-shot relay circuit for hole-punching.
-    #[display("Notification: RelayInit: Initiator: {0}, Target: {1}, Nonce: {:2}")]
+    #[display(fmt = "Notification: RelayInit: Initiator: {_0}, Target: {_1}, Nonce: {_2:?}")]
     RelayInit(Enr, NodeId, NonceOfTimedOutMessage),
     /// The notification relayed to target of hole punch attempt.
-    #[display("Notification: RelayMsg: Initiator: {0}, Nonce: {:1}")]
+    #[display(fmt = "Notification: RelayMsg: Initiator: {_0}, Nonce: {_1:?}")]
     RelayMsg(Enr, NonceOfTimedOutMessage),
 }
 

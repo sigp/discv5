@@ -1,12 +1,12 @@
 use super::{MessageType, Payload};
-use parse_display_derive::Display;
+use derive_more::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::convert::TryInto;
 use tracing::{debug, warn};
 
 /// A request sent between nodes.
 #[derive(Debug, Clone, PartialEq, Eq, Display)]
-#[display("Request: id: {id}: {body}")]
+#[display(fmt = "Request: id: {id}: {body}")]
 pub struct Request {
     /// The [`RequestId`] of the request.
     pub id: RequestId,

@@ -1,6 +1,6 @@
 use super::{MessageType, Payload, RequestBody, RequestId};
 use crate::Enr;
-use parse_display_derive::Display;
+use derive_more::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
 use std::{
     convert::TryInto,
@@ -10,7 +10,7 @@ use tracing::debug;
 
 /// A response sent in response to a [`super::Request`]
 #[derive(Debug, Clone, PartialEq, Eq, Display)]
-#[display("Response: id: {id}: {body}")]
+#[display(fmt = "Response: id: {id}: {body}")]
 pub struct Response {
     /// The [`RequestId`] of the request that triggered this response.
     pub id: RequestId,
