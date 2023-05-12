@@ -19,7 +19,7 @@ Status]][Crates Link]
 This is a rust implementation of the [Discovery v5](https://github.com/ethereum/devp2p/blob/master/discv5/discv5.md)
 peer discovery protocol.
 
-Discovery v5 is a protocol designed for encrypted peer discovery and topic advertisement. Each peer/node
+Discovery v5 is a protocol designed for encrypted peer discovery (and topic advertisement tba). Each peer/node
 on the network is identified via it's `ENR` ([Ethereum Node
 Record](https://eips.ethereum.org/EIPS/eip-778)), which is essentially a signed key-value store
 containing the node's public key and optionally IP address and port.

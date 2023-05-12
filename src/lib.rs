@@ -11,7 +11,7 @@
 //! Record](https://eips.ethereum.org/EIPS/eip-778)), which is essentially a signed key-value store
 //! containing the node's public key and optionally IP address and port.
 //!
-//! Discv5 employs a kademlia-like routing table to store and manage discovered peers and topics. The
+//! Discv5 employs a kademlia-like routing table to store and manage discovered peers (and topics tba). The
 //! protocol allows for external IP discovery in NAT environments through regular PING/PONG's with
 //! discovered nodes. Nodes return the external IP address that they have received and a simple
 //! majority is chosen as our external IP address. If an external IP address is updated, this is
@@ -27,11 +27,12 @@
 //!  * Handler - The protocol's communication is encrypted with `AES_GCM`. All node communication
 //!  undergoes a handshake, which results in a [`Session`]. [`Session`]'s are established when
 //!  needed and get dropped after a timeout. This section manages the creation and maintenance of
-//!  sessions between nodes and the encryption/decryption of packets from the socket. It is realised by the [`handler::Handler`] struct and it runs in its own task.
+//!  sessions between nodes and the encryption/decryption of packets from the socket. It is
+//!  realised by the [`handler::Handler`] struct and it runs in its own task.
 //!  * Service - This section contains the protocol-level logic. In particular it manages the
-//!  routing table of known ENR's, topic registration/advertisement and performs various queries
-//!  such as peer discovery. This section is realised by the [`Service`] struct. This also runs in
-//!  it's own thread.
+//!  routing table of known ENR's, (and topic registration/advertisement tba) and performs
+//!  parallel queries for peer discovery. This section is realised by the [`Service`] struct. This
+//!  also runs in it's own thread.
 //!  * Application - This section is the user-facing API which can start/stop the underlying
 //!  tasks, initiate queries and obtain metrics about the underlying server.
 //!
