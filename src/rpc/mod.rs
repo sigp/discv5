@@ -367,7 +367,7 @@ mod tests {
         let encoded_notif = notif.clone().encode();
         let decoded_notif = Message::decode(&encoded_notif).expect("Should decode");
 
-        assert_eq!(notif, decoded_notif.into());
+        assert_eq!(notif, decoded_notif);
     }
 
     #[test]
@@ -386,6 +386,6 @@ mod tests {
         let encoded_notif = notif.clone().encode();
         let decoded_notif = Message::decode(&encoded_notif).expect("Should decode");
 
-        assert_eq!(notif, decoded_notif.into());
+        assert_eq!(notif, decoded_notif);
     }
 }
