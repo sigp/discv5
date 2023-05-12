@@ -271,7 +271,7 @@ impl Session {
                     data: _,
                     remote_enr,
                 } = challenge;
-                remote_enr.unwrap()
+                remote_enr.expect("unreachable")
             }
             MostRecentEnr::Handshake(enr) => enr,
         };
