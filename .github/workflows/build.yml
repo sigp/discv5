@@ -21,8 +21,7 @@ jobs:
       - name: Install protobuf compiler for the libp2p-core dependency
         uses: arduino/setup-protoc@v1
       - name: Lint code for quality and style with Clippy
-        run: cargo clippy --workspace --tests --all-features -- -D warnings \
-            -A clippy::assertions_on_constants 
+        run: cargo clippy --workspace --tests --all-features -- -D warnings -A clippy::assertions_on_constants 
   release-tests-ubuntu:
     runs-on: ubuntu-latest
     needs: cargo-fmt
