@@ -46,7 +46,7 @@ impl SessionLimiter {
         node_address: &NodeAddress,
         enr: &Enr,
     ) -> Result<(), Discv5Error> {
-        if !enr.udp4_socket().is_none() || !enr.udp6_socket().is_none() {
+        if enr.udp4_socket().is_some() || enr.udp6_socket().is_some() {
             return Ok(());
         }
         // Empty buffer of expired sessions, and remove any which belong to unreachable ENRs.
