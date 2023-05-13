@@ -143,26 +143,27 @@ impl RecvHandler {
             return;
         }
         // Decodes the packet
-        let (packet, authenticated_data) = match Packet::decode::<P>(
-            &self.node_id,
-            &self.recv_buffer[..length],
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                // This could be a packet to keep a NAT hole punched for this node in the
-                // sender's NAT, hence only serves purpose for the sender.
-                if length == 0 {
-                    debug!("Appears to be a packet to keep a hole punched in sender's NAT, dropping. src: {}", src_address);
-                } else {
-                    // Could not decode the packet, drop it.
-                    debug!(
-                        "Packet decoding failed, src: {}, error: {:?}",
-                        src_address, e
-                    );
+        let (packet, authenticated_data) =
+            match Packet::decode::<P>(&self.node_id, &self.recv_buffer[..length]) {
+                Ok(p) => p,
+                Err(e) => {
+                    // This could be a packet to keep a NAT hole punched for this node in the
+                    // sender's NAT, hence only serves purpose for the sender.
+                    if length == 0 {
+                        debug!(
+                            "Empty packet, possibly to keep a hole punched, dropping. src: {}",
+                            src_address
+                        );
+                    } else {
+                        // Could not decode the packet, drop it.
+                        debug!(
+                            "Packet decoding failed, src: {}, error: {:?}",
+                            src_address, e
+                        );
+                    }
+                    return;
                 }
-                return;
-            }
-        };
+            };
 
         // If this is not a challenge packet, we immediately know its src_id and so pass it
         // through the second filter.
