@@ -43,7 +43,7 @@ mod test {
     #[tokio::test]
     async fn test_limiter() {
         let max_nodes_unreachable_enr = 2;
-        let session_time_out = Duration::from_secs(10);
+        let session_time_out = Duration::from_secs(1);
         let mut sessions = Sessions::new(3, session_time_out, Some(max_nodes_unreachable_enr));
 
         // first node
