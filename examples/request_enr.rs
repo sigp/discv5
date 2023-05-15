@@ -13,9 +13,9 @@
 //!
 //! This requires the "libp2p" feature.
 #[cfg(feature = "libp2p")]
-use discv5::socket::ListenConfig;
-#[cfg(feature = "libp2p")]
 use discv5::Discv5ConfigBuilder;
+#[cfg(feature = "libp2p")]
+use discv5::ListenConfig;
 #[cfg(feature = "libp2p")]
 use discv5::{enr, enr::CombinedKey, Discv5};
 #[cfg(feature = "libp2p")]

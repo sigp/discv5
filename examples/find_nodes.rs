@@ -19,8 +19,7 @@ use clap::Parser;
 use discv5::{
     enr,
     enr::{k256, CombinedKey},
-    socket::ListenConfig,
-    Discv5, Discv5ConfigBuilder, Discv5Event,
+    Discv5, Discv5ConfigBuilder, Discv5Event, ListenConfig,
 };
 use std::{
     net::{Ipv4Addr, Ipv6Addr},
