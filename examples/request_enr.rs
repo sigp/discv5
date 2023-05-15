@@ -14,9 +14,11 @@
 //! This requires the "libp2p" feature.
 #[cfg(feature = "libp2p")]
 use discv5::socket::ListenConfig;
+#[cfg(feature = "libp2p")]
 use discv5::Discv5ConfigBuilder;
 #[cfg(feature = "libp2p")]
-use discv5::{enr, enr::CombinedKey, Discv5, Discv5Config};
+use discv5::{enr, enr::CombinedKey, Discv5};
+#[cfg(feature = "libp2p")]
 use std::net::Ipv4Addr;
 
 #[cfg(not(feature = "libp2p"))]
