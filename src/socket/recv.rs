@@ -132,10 +132,45 @@ impl RecvHandler {
     /// handler.
     async fn handle_inbound<P: ProtocolIdentity>(
         &mut self,
-        src_address: SocketAddr,
+        mut src_address: SocketAddr,
         length: usize,
         recv_buffer: &[u8; MAX_PACKET_SIZE],
     ) {
+        // Zero out the flowinfo and scope id of v6 socket addresses.
+        //
+        // Flowinfo contains both the Flow label and Traffic Class. These should be ignored by
+        // nodes that do not support them when receiving packets according to
+        // [RFC 2460 section 6](https://datatracker.ietf.org/doc/html/rfc2460#section-6) and
+        // [RFC 2460 section 7](https://datatracker.ietf.org/doc/html/rfc2460#section-7)
+        //
+        // Excerpt from section 6
+        // > Hosts or routers that do not support the functions of the Flow Label field are
+        // > required to set the field to zero when originating a packet, pass the field on unchanged
+        // > when forwarding a packet, and ignore the field when receiving a packet.
+        //
+        // Excerpt from section section 7
+        // > Nodes should ignore and leave unchanged any bits of the Traffic Class field for which
+        // > they do not support a specific use.
+        //
+        // Since we do not forward this information, it's safe to zero it out.
+        //
+        // The scope id usage is formalized in [RFC 4007](https://www.rfc-editor.org/rfc/rfc4007)
+        // and it's necessary to make link local ipv6 addresses routable.
+        //
+        // Since the Enr has no way to communicate scope ids, we opt for zeroing this data in order
+        // to facilitate connectivity for nodes with a link-local address with an only interface.
+        //
+        // At the same time, we accept the risk of colission of nodes in a topology where there are
+        // multiple interfaces and two nodes with the same link-local address. This risk is small
+        // based in additional checks to packets.
+        if let SocketAddr::V6(ref mut v6_socket_addr) = src_address {
+            if v6_socket_addr.flowinfo() != 0 || v6_socket_addr.scope_id() != 0 {
+                trace!("Zeroing out flowinfo and scope_id for v6 socket address. Original {v6_socket_addr}");
+                v6_socket_addr.set_flowinfo(0);
+                v6_socket_addr.set_scope_id(0);
+            }
+        }
+
         // Permit all expected responses
         let permitted = self.expected_responses.read().get(&src_address).is_some();
 
