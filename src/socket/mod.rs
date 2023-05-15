@@ -27,6 +27,8 @@ pub use recv::InboundPacket;
 pub use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
+///
+/// Default implementation is the UNSPECIFIED ipv4 address with port 9000.
 #[derive(Clone, Debug)]
 pub enum ListenConfig {
     Ipv4 {
@@ -151,6 +153,75 @@ impl Socket {
             sender_exit: Some(sender_exit),
             recv_exit: Some(recv_exit),
         })
+    }
+}
+
+impl ListenConfig {
+    pub fn new_ipv4(ip: Ipv4Addr, port: u16) -> ListenConfig {
+        Self::Ipv4 { ip, port }
+    }
+
+    pub fn new_ipv6(ip: Ipv6Addr, port: u16) -> ListenConfig {
+        Self::Ipv6 { ip, port }
+    }
+
+    // Overrides the ipv4 address and port of ipv4 and dual stack configurations. Ipv6
+    // configurations are added ipv4 info making them into dual stack configs.
+    pub fn with_ipv4(self, ip: Ipv4Addr, port: u16) -> ListenConfig {
+        match self {
+            ListenConfig::Ipv4 { .. } => ListenConfig::Ipv4 { ip, port },
+            ListenConfig::Ipv6 {
+                ip: ipv6,
+                port: ipv6_port,
+            } => ListenConfig::DualStack {
+                ipv4: ip,
+                ipv4_port: port,
+                ipv6,
+                ipv6_port,
+            },
+            ListenConfig::DualStack {
+                ipv6, ipv6_port, ..
+            } => ListenConfig::DualStack {
+                ipv4: ip,
+                ipv4_port: port,
+                ipv6,
+                ipv6_port,
+            },
+        }
+    }
+
+    // Overrides the ipv6 address and port of ipv6 and dual stack configurations. Ipv4
+    // configurations are added ipv6 info making them into dual stack configs.
+    pub fn with_ipv6(self, ip: Ipv6Addr, port: u16) -> ListenConfig {
+        match self {
+            ListenConfig::Ipv6 { .. } => ListenConfig::Ipv6 { ip, port },
+            ListenConfig::Ipv4 {
+                ip: ipv4,
+                port: ipv4_port,
+            } => ListenConfig::DualStack {
+                ipv4,
+                ipv4_port,
+                ipv6: ip,
+                ipv6_port: port,
+            },
+            ListenConfig::DualStack {
+                ipv4, ipv4_port, ..
+            } => ListenConfig::DualStack {
+                ipv4,
+                ipv4_port,
+                ipv6: ip,
+                ipv6_port: port,
+            },
+        }
+    }
+}
+
+impl Default for ListenConfig {
+    fn default() -> Self {
+        Self::Ipv4 {
+            ip: Ipv4Addr::UNSPECIFIED,
+            port: 9000,
+        }
     }
 }
 

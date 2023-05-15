@@ -113,20 +113,11 @@ async fn main() {
 
     // the address to listen on.
     let listen_config = match args.socket_kind {
-        SocketKind::Ip4 => ListenConfig::Ipv4 {
-            ip: Ipv4Addr::UNSPECIFIED,
-            port,
-        },
-        SocketKind::Ip6 => ListenConfig::Ipv6 {
-            ip: Ipv6Addr::UNSPECIFIED,
-            port: port6,
-        },
-        SocketKind::Ds => ListenConfig::DualStack {
-            ipv4: Ipv4Addr::UNSPECIFIED,
-            ipv4_port: port,
-            ipv6: Ipv6Addr::UNSPECIFIED,
-            ipv6_port: port6,
-        },
+        SocketKind::Ip4 => ListenConfig::new_ipv4(Ipv4Addr::UNSPECIFIED, port),
+        SocketKind::Ip6 => ListenConfig::new_ipv6(Ipv6Addr::UNSPECIFIED, port6),
+        SocketKind::Ds => ListenConfig::default()
+            .with_ipv4(Ipv4Addr::UNSPECIFIED, port)
+            .with_ipv6(Ipv6Addr::UNSPECIFIED, port6),
     };
 
     // default configuration with packet filtering
