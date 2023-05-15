@@ -633,12 +633,6 @@ impl Service {
 
                 self.send_event(Discv5Event::TalkRequest(req));
             }
-            RequestBody::RegisterTopic { .. } => {
-                debug!("Received RegisterTopic request which is unimplemented");
-            }
-            RequestBody::TopicQuery { .. } => {
-                debug!("Received TopicQuery request which is unimplemented");
-            }
         }
     }
 
@@ -905,12 +899,6 @@ impl Service {
                         }
                         _ => error!("Invalid callback for response"),
                     }
-                }
-                ResponseBody::Ticket { .. } => {
-                    error!("Received a TICKET response. This is unimplemented and should be unreachable.");
-                }
-                ResponseBody::RegisterConfirmation { .. } => {
-                    error!("Received a RegisterConfirmation response. This is unimplemented and should be unreachable.");
                 }
             }
         } else {
