@@ -5,7 +5,7 @@ use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
 };
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 pub struct OutboundPacket {
     /// The destination node address
@@ -24,6 +24,11 @@ pub(crate) struct SendHandler {
     handler_recv: mpsc::Receiver<OutboundPacket>,
     /// Exit channel to shutdown the handler.
     exit: oneshot::Receiver<()>,
+}
+
+enum Error {
+    Io(std::io::Error),
+    SocketMismatch,
 }
 
 impl SendHandler {
@@ -62,8 +67,16 @@ impl SendHandler {
                     if encoded_packet.len() > MAX_PACKET_SIZE {
                         warn!("Sending packet larger than max size: {} max: {}", encoded_packet.len(), MAX_PACKET_SIZE);
                     }
-                    if let Err(e) = self.send(&encoded_packet, &packet.node_address.socket_addr).await {
-                        trace!("Could not send packet. Error: {:?}", e);
+                    let addr = &packet.node_address.socket_addr;
+                    if let Err(e) = self.send(&encoded_packet, addr).await {
+                        match e {
+                            Error::Io(e) => {
+                                trace!("Could not send packet to {addr} . Error: {e}");
+                            },
+                            Error::SocketMismatch => {
+                                error!("Socket mismatch attempting to send a packet to {addr}.")
+                            }
+                        }
                     } else {
                         METRICS.add_sent_bytes(encoded_packet.len());
                     }
@@ -76,20 +89,20 @@ impl SendHandler {
         }
     }
 
-    async fn send(&self, encoded_packet: &[u8], socket_addr: &SocketAddr) -> Result<usize, String> {
+    async fn send(&self, encoded_packet: &[u8], socket_addr: &SocketAddr) -> Result<usize, Error> {
         let socket = match socket_addr {
             SocketAddr::V4(_) => {
                 if let Some(socket) = self.send_ipv4.as_ref() {
                     socket
                 } else {
-                    return Err("No IPv4 socket.".to_string());
+                    return Err(Error::SocketMismatch);
                 }
             }
             SocketAddr::V6(_) => {
                 if let Some(socket) = self.send_ipv6.as_ref() {
                     socket
                 } else {
-                    return Err("No IPv6 socket.".to_string());
+                    return Err(Error::SocketMismatch);
                 }
             }
         };
@@ -97,6 +110,6 @@ impl SendHandler {
         socket
             .send_to(encoded_packet, socket_addr)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(Error::Io)
     }
 }
