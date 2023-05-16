@@ -29,7 +29,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr,
+    rpc, Discv5Config, Discv5Event, Enr, IpMode,
 };
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
@@ -212,6 +212,9 @@ pub struct Service {
 
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Discv5Event>>,
+
+    // Type of socket we are using
+    ip_mode: IpMode,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -275,7 +278,6 @@ impl Service {
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Discv5Config,
-        listen_socket: SocketAddr,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
@@ -287,14 +289,11 @@ impl Service {
             None
         };
 
+        let ip_mode = IpMode::new_from_listen_config(&config.listen_config);
+
         // build the session service
-        let (handler_exit, handler_send, handler_recv) = Handler::spawn::<P>(
-            local_enr.clone(),
-            enr_key.clone(),
-            listen_socket,
-            config.clone(),
-        )
-        .await?;
+        let (handler_exit, handler_send, handler_recv) =
+            Handler::spawn::<P>(local_enr.clone(), enr_key.clone(), config.clone()).await?;
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
@@ -321,6 +320,7 @@ impl Service {
                     event_stream: None,
                     exit,
                     config: config.clone(),
+                    ip_mode,
                 };
 
                 info!("Discv5 Service started");
@@ -332,7 +332,7 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
-        info!("{:?}", self.config.ip_mode);
+        info!("{:?}", self.ip_mode);
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -590,7 +590,7 @@ impl Service {
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
-                    match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+                    match NodeContact::try_from_enr(enr, self.ip_mode) {
                         Ok(contact) => {
                             self.request_find_node_designated_peer(contact, vec![0], None);
                         }
@@ -917,7 +917,7 @@ impl Service {
         enr: Enr,
         callback: Option<oneshot::Sender<Result<Pong, RequestError>>>,
     ) {
-        match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+        match NodeContact::try_from_enr(enr, self.ip_mode) {
             Ok(contact) => {
                 let request_body = RequestBody::Ping {
                     enr_seq: self.local_enr.read().seq(),
@@ -1120,7 +1120,7 @@ impl Service {
     ) {
         // find the ENR associated with the query
         if let Some(enr) = self.find_enr(&return_peer) {
-            match NodeContact::try_from_enr(enr, self.config.ip_mode) {
+            match NodeContact::try_from_enr(enr, self.ip_mode) {
                 Ok(contact) => {
                     let active_request = ActiveRequest {
                         contact,
@@ -1370,7 +1370,7 @@ impl Service {
     /// session key-pair has been negotiated.
     fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
-        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
+        if self.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
         }
 
