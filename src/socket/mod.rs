@@ -161,6 +161,7 @@ impl ListenConfig {
         Self::Ipv4 { ip, port }
     }
 
+    /// Creates a [`ListenConfig`] with an ipv6-only socket.
     pub fn new_ipv6(ip: Ipv6Addr, port: u16) -> ListenConfig {
         Self::Ipv6 { ip, port }
     }
