@@ -148,7 +148,7 @@ impl RecvHandler {
         // > required to set the field to zero when originating a packet, pass the field on unchanged
         // > when forwarding a packet, and ignore the field when receiving a packet.
         //
-        // Excerpt from section section 7
+        // Excerpt from section 7
         // > Nodes should ignore and leave unchanged any bits of the Traffic Class field for which
         // > they do not support a specific use.
         //
