@@ -157,6 +157,7 @@ impl Socket {
 }
 
 impl ListenConfig {
+    /// Creates a [`ListenConfig`] with an ipv4-only socket.
     pub fn new_ipv4(ip: Ipv4Addr, port: u16) -> ListenConfig {
         Self::Ipv4 { ip, port }
     }
