@@ -782,7 +782,7 @@ impl Handler {
                 ephem_pubkey,
                 enr_record,
             ) {
-                Ok((session, enr)) => {
+                Ok((mut session, enr)) => {
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
                     // Verify the ENR is valid
                     if self.verify_enr(&enr, &node_address) {
@@ -813,6 +813,27 @@ impl Handler {
                         // established. If so process them.
                         self.send_next_request::<P>(node_address).await;
                     } else {
+                        // Respond to PING request even if the ENR or NodeAddress don't match
+                        // so that the source node can notice its external address has been changed.
+                        let maybe_ping_request = match session.decrypt_message(message_nonce, message, authenticated_data) {
+                            Ok(m) => match Message::decode(&m) {
+                                Ok(Message::Request(request)) if request.msg_type() == 1 => Some(request),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if let Some(reqeust) = maybe_ping_request {
+                            // TODO: one-time session
+                            debug!("Responding PING request using a one-time session. node_address: {}", node_address);
+                            if let Err(e) = self
+                                .service_send
+                                .send(HandlerOut::Request(node_address.clone(), Box::new(reqeust)))
+                                .await
+                            {
+                                warn!("Failed to report request to application {}", e)
+                            }
+                        }
+
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
                             "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
