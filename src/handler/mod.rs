@@ -191,6 +191,8 @@ pub struct Handler {
     active_challenges: HashMapDelay<NodeAddress, Challenge>,
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
+    /// Established sessions with peers for a specific request.
+    one_time_sessions: LruTimeCache<(NodeAddress, RequestId), Session>,
     /// The channel to receive messages from the application layer.
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
@@ -280,6 +282,11 @@ impl Handler {
                     sessions: LruTimeCache::new(
                         config.session_timeout,
                         Some(config.session_cache_capacity),
+                    ),
+                    // TODO: config
+                    one_time_sessions: LruTimeCache::new(
+                        Duration::from_secs(30),
+                        Some(50),
                     ),
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
@@ -515,17 +522,25 @@ impl Handler {
         node_address: NodeAddress,
         response: Response,
     ) {
+        macro_rules! send {
+            ($session: ident) => {
+                // Encrypt the message and send
+                let packet = match $session.encrypt_message::<P>(self.node_id, &response.encode()) {
+                    Ok(packet) => packet,
+                    Err(e) => {
+                        warn!("Could not encrypt response: {:?}", e);
+                        return;
+                    }
+                };
+                self.send(node_address, packet).await;
+            }
+        }
+
         // Check for an established session
         if let Some(session) = self.sessions.get_mut(&node_address) {
-            // Encrypt the message and send
-            let packet = match session.encrypt_message::<P>(self.node_id, &response.encode()) {
-                Ok(packet) => packet,
-                Err(e) => {
-                    warn!("Could not encrypt response: {:?}", e);
-                    return;
-                }
-            };
-            self.send(node_address, packet).await;
+            send!(session);
+        } else if let Some(mut session) = self.one_time_sessions.remove(&(node_address.clone(), response.id.clone())) {
+            send!(session);
         } else {
             // Either the session is being established or has expired. We simply drop the
             // response in this case.
@@ -814,7 +829,7 @@ impl Handler {
                         self.send_next_request::<P>(node_address).await;
                     } else {
                         // Respond to PING request even if the ENR or NodeAddress don't match
-                        // so that the source node can notice its external address has been changed.
+                        // so that the source node can notice its external IP address has been changed.
                         let maybe_ping_request = match session.decrypt_message(message_nonce, message, authenticated_data) {
                             Ok(m) => match Message::decode(&m) {
                                 Ok(Message::Request(request)) if request.msg_type() == 1 => Some(request),
@@ -823,8 +838,8 @@ impl Handler {
                             _ => None,
                         };
                         if let Some(reqeust) = maybe_ping_request {
-                            // TODO: one-time session
-                            debug!("Responding PING request using a one-time session. node_address: {}", node_address);
+                            debug!("Responding PING request using one-time session. node_address: {}", node_address);
+                            self.one_time_sessions.insert((node_address.clone(), reqeust.id.clone()), session);
                             if let Err(e) = self
                                 .service_send
                                 .send(HandlerOut::Request(node_address.clone(), Box::new(reqeust)))
