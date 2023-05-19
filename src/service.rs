@@ -592,7 +592,7 @@ impl Service {
                             to_request_enr = Some(enr);
                         }
                     }
-                    // don't know of the ENR, drop the request
+                    // don't know the peer, don't request its most recent ENR
                     _ => {}
                 }
                 if let Some(enr) = to_request_enr {
