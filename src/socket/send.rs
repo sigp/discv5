@@ -70,7 +70,7 @@ impl SendHandler {
         loop {
             tokio::select! {
                 Some(outbound) = self.handler_recv.recv() => {
-                    let (dst_addr, encoded_pkt) = match outbound {
+                    let (dst_addr, encoded_packet) = match outbound {
                         Outbound::Packet(outbound_packet) => {
                             let dst_id = outbound_packet.node_address.node_id;
                             let encoded_packet = outbound_packet.packet.encode::<P>(&dst_id);
@@ -82,10 +82,10 @@ impl SendHandler {
                         }
                         Outbound::KeepHolePunched(dst) => (dst, vec![]),
                     };
-                    if let Err(e) = self.send.send_to(&encoded_pkt, &dst_addr).await {
+                    if let Err(e) = self.send.send_to(&encoded_packet, &dst_addr).await {
                         trace!("Could not send packet. Error: {:?}", e);
                     } else {
-                        METRICS.add_sent_bytes(encoded_pkt.len());
+                        METRICS.add_sent_bytes(encoded_packet.len());
                     }
                 }
                 _ = &mut self.exit => {
