@@ -1,16 +1,19 @@
-use crate::{packet::ProtocolIdentity, Executor, IpMode};
+use crate::{packet::ProtocolIdentity, Executor};
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
 use socket2::{Domain, Protocol, Socket as Socket2, Type};
 use std::{
     collections::HashMap,
-    io::{Error, ErrorKind},
-    net::SocketAddr,
+    io::Error,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    net::UdpSocket,
+    sync::{mpsc, oneshot},
+};
 
 mod filter;
 mod recv;
@@ -23,16 +26,35 @@ pub use filter::{
 pub use recv::InboundPacket;
 pub use send::OutboundPacket;
 
+/// Configuration for the sockets to listen on.
+///
+/// Default implementation is the UNSPECIFIED ipv4 address with port 9000.
+#[derive(Clone, Debug)]
+pub enum ListenConfig {
+    Ipv4 {
+        ip: Ipv4Addr,
+        port: u16,
+    },
+    Ipv6 {
+        ip: Ipv6Addr,
+        port: u16,
+    },
+    DualStack {
+        ipv4: Ipv4Addr,
+        ipv4_port: u16,
+        ipv6: Ipv6Addr,
+        ipv6_port: u16,
+    },
+}
+
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig {
     /// The executor to spawn the tasks.
     pub executor: Box<dyn Executor + Send + Sync>,
-    /// The listening socket.
-    pub socket_addr: SocketAddr,
     /// Configuration details for the packet filter.
     pub filter_config: FilterConfig,
     /// Type of socket to create.
-    pub ip_mode: IpMode,
+    pub listen_config: ListenConfig,
     /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
     pub ban_duration: Option<Duration>,
     /// The expected responses reference.
@@ -52,34 +74,15 @@ pub struct Socket {
 impl Socket {
     /// This creates and binds a new UDP socket.
     // In general this function can be expanded to handle more advanced socket creation.
-    async fn new_socket(
-        socket_addr: &SocketAddr,
-        ip_mode: IpMode,
-    ) -> Result<tokio::net::UdpSocket, Error> {
-        match ip_mode {
-            IpMode::Ip4 => match socket_addr {
-                SocketAddr::V6(_) => Err(Error::new(
-                    ErrorKind::InvalidInput,
-                    "Cannot create an ipv4 socket from an ipv6 address",
-                )),
-                ip4 => tokio::net::UdpSocket::bind(ip4).await,
-            },
-            IpMode::Ip6 {
-                enable_mapped_addresses,
-            } => {
-                let addr = match socket_addr {
-                    SocketAddr::V4(_) => Err(Error::new(
-                        ErrorKind::InvalidInput,
-                        "Cannot create an ipv6 socket from an ipv4 address",
-                    )),
-                    SocketAddr::V6(ip6) => Ok((*ip6).into()),
-                }?;
+    async fn new_socket(socket_addr: &SocketAddr) -> Result<UdpSocket, Error> {
+        match socket_addr {
+            SocketAddr::V4(ip4) => UdpSocket::bind(ip4).await,
+            SocketAddr::V6(ip6) => {
                 let socket = Socket2::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-                let only_v6 = !enable_mapped_addresses;
-                socket.set_only_v6(only_v6)?;
+                socket.set_only_v6(true)?;
                 socket.set_nonblocking(true)?;
-                socket.bind(&addr)?;
-                tokio::net::UdpSocket::from_std(socket.into())
+                socket.bind(&SocketAddr::V6(*ip6).into())?;
+                UdpSocket::from_std(socket.into())
             }
         }
     }
@@ -88,25 +91,61 @@ impl Socket {
     /// If this struct is dropped, the send/recv tasks will shutdown.
     /// This needs to be run inside of a tokio executor.
     pub(crate) async fn new<P: ProtocolIdentity>(config: SocketConfig) -> Result<Self, Error> {
-        let socket = Socket::new_socket(&config.socket_addr, config.ip_mode).await?;
+        let SocketConfig {
+            executor,
+            filter_config,
+            listen_config,
+            ban_duration,
+            expected_responses,
+            local_node_id,
+        } = config;
 
-        // Arc the udp socket for the send/recv tasks.
-        let recv_udp = Arc::new(socket);
-        let send_udp = recv_udp.clone();
+        // For recv socket, intentionally forgetting which socket is the ipv4 and which is the ipv6 one.
+        let (first_recv, second_recv, send_ipv4, send_ipv6): (
+            Arc<UdpSocket>,
+            Option<_>,
+            Option<_>,
+            Option<_>,
+        ) = match listen_config {
+            ListenConfig::Ipv4 { ip, port } => {
+                let ipv4_socket = Arc::new(Socket::new_socket(&(ip, port).into()).await?);
+                (ipv4_socket.clone(), None, Some(ipv4_socket), None)
+            }
+            ListenConfig::Ipv6 { ip, port } => {
+                let ipv6_socket = Arc::new(Socket::new_socket(&(ip, port).into()).await?);
+                (ipv6_socket.clone(), None, None, Some(ipv6_socket))
+            }
+            ListenConfig::DualStack {
+                ipv4,
+                ipv4_port,
+                ipv6,
+                ipv6_port,
+            } => {
+                let ipv4_socket = Arc::new(Socket::new_socket(&(ipv4, ipv4_port).into()).await?);
+                let ipv6_socket = Arc::new(Socket::new_socket(&(ipv6, ipv6_port).into()).await?);
+                (
+                    ipv4_socket.clone(),
+                    Some(ipv6_socket.clone()),
+                    Some(ipv4_socket),
+                    Some(ipv6_socket),
+                )
+            }
+        };
 
         // spawn the recv handler
         let recv_config = RecvHandlerConfig {
-            filter_config: config.filter_config,
-            executor: config.executor.clone(),
-            recv: recv_udp,
-            local_node_id: config.local_node_id,
-            expected_responses: config.expected_responses,
-            ban_duration: config.ban_duration,
+            filter_config,
+            executor: executor.clone(),
+            recv: first_recv,
+            second_recv,
+            local_node_id,
+            expected_responses,
+            ban_duration,
         };
 
         let (recv, recv_exit) = RecvHandler::spawn::<P>(recv_config);
         // spawn the sender handler
-        let (send, sender_exit) = SendHandler::spawn::<P>(config.executor.clone(), send_udp);
+        let (send, sender_exit) = SendHandler::spawn::<P>(executor, send_ipv4, send_ipv6);
 
         Ok(Socket {
             send,
@@ -114,6 +153,79 @@ impl Socket {
             sender_exit: Some(sender_exit),
             recv_exit: Some(recv_exit),
         })
+    }
+}
+
+impl ListenConfig {
+    /// Creates a [`ListenConfig`] with an ipv4-only socket.
+    pub fn new_ipv4(ip: Ipv4Addr, port: u16) -> ListenConfig {
+        Self::Ipv4 { ip, port }
+    }
+
+    /// Creates a [`ListenConfig`] with an ipv6-only socket.
+    pub fn new_ipv6(ip: Ipv6Addr, port: u16) -> ListenConfig {
+        Self::Ipv6 { ip, port }
+    }
+
+    // Overrides the ipv4 address and port of ipv4 and dual stack configurations. Ipv6
+    // configurations are added ipv4 info making them into dual stack configs.
+    /// Sets an ipv4 socket. This will override any past ipv4 configuration and will promote the configuration to dual socket if an ipv6 socket is configured.
+    pub fn with_ipv4(self, ip: Ipv4Addr, port: u16) -> ListenConfig {
+        match self {
+            ListenConfig::Ipv4 { .. } => ListenConfig::Ipv4 { ip, port },
+            ListenConfig::Ipv6 {
+                ip: ipv6,
+                port: ipv6_port,
+            } => ListenConfig::DualStack {
+                ipv4: ip,
+                ipv4_port: port,
+                ipv6,
+                ipv6_port,
+            },
+            ListenConfig::DualStack {
+                ipv6, ipv6_port, ..
+            } => ListenConfig::DualStack {
+                ipv4: ip,
+                ipv4_port: port,
+                ipv6,
+                ipv6_port,
+            },
+        }
+    }
+
+    // Overrides the ipv6 address and port of ipv6 and dual stack configurations. Ipv4
+    // configurations are added ipv6 info making them into dual stack configs.
+    /// Sets an ipv6 socket. This will override any past ipv6 configuration and will promote the configuration to dual socket if an ipv4 socket is configured.
+    pub fn with_ipv6(self, ip: Ipv6Addr, port: u16) -> ListenConfig {
+        match self {
+            ListenConfig::Ipv6 { .. } => ListenConfig::Ipv6 { ip, port },
+            ListenConfig::Ipv4 {
+                ip: ipv4,
+                port: ipv4_port,
+            } => ListenConfig::DualStack {
+                ipv4,
+                ipv4_port,
+                ipv6: ip,
+                ipv6_port: port,
+            },
+            ListenConfig::DualStack {
+                ipv4, ipv4_port, ..
+            } => ListenConfig::DualStack {
+                ipv4,
+                ipv4_port,
+                ipv6: ip,
+                ipv6_port: port,
+            },
+        }
+    }
+}
+
+impl Default for ListenConfig {
+    fn default() -> Self {
+        Self::Ipv4 {
+            ip: Ipv4Addr::UNSPECIFIED,
+            port: 9000,
+        }
     }
 }
 

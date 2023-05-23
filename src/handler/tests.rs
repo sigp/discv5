@@ -1,11 +1,15 @@
 #![cfg(test)]
+
 use super::*;
 use crate::{
     packet::DefaultProtocolId,
+    return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
-    Discv5ConfigBuilder,
+    Discv5ConfigBuilder, IpMode,
 };
+use std::net::{Ipv4Addr, Ipv6Addr};
 
+use crate::{handler::HandlerOut::RequestFailed, RequestError::SelfRequest};
 use active_requests::ActiveRequests;
 use enr::EnrBuilder;
 use std::time::Duration;
@@ -35,8 +39,6 @@ async fn simple_session_message() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
-
     let sender_enr = EnrBuilder::new("v4")
         .ip4(ip)
         .udp4(sender_port)
@@ -48,20 +50,32 @@ async fn simple_session_message() {
         .build(&key2)
         .unwrap();
 
+    let sender_listen_config = ListenConfig::Ipv4 {
+        ip: sender_enr.ip4().unwrap(),
+        port: sender_enr.udp4().unwrap(),
+    };
+    let sender_config = Discv5ConfigBuilder::new(sender_listen_config)
+        .enable_packet_filter()
+        .build();
     let (_exit_send, sender_send, _sender_recv) = Handler::spawn::<DefaultProtocolId>(
         arc_rw!(sender_enr.clone()),
         arc_rw!(key1),
-        sender_enr.udp4_socket().unwrap().into(),
-        config.clone(),
+        sender_config,
     )
     .await
     .unwrap();
 
+    let receiver_listen_config = ListenConfig::Ipv4 {
+        ip: receiver_enr.ip4().unwrap(),
+        port: receiver_enr.udp4().unwrap(),
+    };
+    let receiver_config = Discv5ConfigBuilder::new(receiver_listen_config)
+        .enable_packet_filter()
+        .build();
     let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn::<DefaultProtocolId>(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
-        receiver_enr.udp4_socket().unwrap().into(),
-        config,
+        receiver_config,
     )
     .await
     .unwrap();
@@ -112,24 +126,33 @@ async fn multiple_messages() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let config = Discv5ConfigBuilder::new().build();
     let sender_enr = EnrBuilder::new("v4")
         .ip4(ip)
         .udp4(sender_port)
         .build(&key1)
         .unwrap();
+    let sender_listen_config = ListenConfig::Ipv4 {
+        ip: sender_enr.ip4().unwrap(),
+        port: sender_enr.udp4().unwrap(),
+    };
+    let sender_config = Discv5ConfigBuilder::new(sender_listen_config).build();
+
     let receiver_enr = EnrBuilder::new("v4")
         .ip4(ip)
         .udp4(receiver_port)
         .build(&key2)
         .unwrap();
+    let receiver_listen_config = ListenConfig::Ipv4 {
+        ip: receiver_enr.ip4().unwrap(),
+        port: receiver_enr.udp4().unwrap(),
+    };
+    let receiver_config = Discv5ConfigBuilder::new(receiver_listen_config).build();
 
     let (_exit_send, sender_handler, mut sender_handler_recv) =
         Handler::spawn::<DefaultProtocolId>(
             arc_rw!(sender_enr.clone()),
             arc_rw!(key1),
-            sender_enr.udp4_socket().unwrap().into(),
-            config.clone(),
+            sender_config,
         )
         .await
         .unwrap();
@@ -137,8 +160,7 @@ async fn multiple_messages() {
     let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn::<DefaultProtocolId>(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
-        receiver_enr.udp4_socket().unwrap().into(),
-        config,
+        receiver_config,
     )
     .await
     .unwrap();
@@ -252,4 +274,82 @@ async fn test_active_requests_insert() {
     active_requests.check_invariant();
     active_requests.remove_by_nonce(&nonce);
     active_requests.check_invariant();
+}
+
+#[tokio::test]
+async fn test_self_request_ipv4() {
+    init();
+
+    let key = CombinedKey::generate_secp256k1();
+    let enr = EnrBuilder::new("v4")
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(5004)
+        .build(&key)
+        .unwrap();
+    let listen_config = ListenConfig::Ipv4 {
+        ip: enr.ip4().unwrap(),
+        port: enr.udp4().unwrap(),
+    };
+    let config = Discv5ConfigBuilder::new(listen_config)
+        .enable_packet_filter()
+        .build();
+
+    let (_exit_send, send, mut recv) =
+        Handler::spawn::<DefaultProtocolId>(arc_rw!(enr.clone()), arc_rw!(key), config)
+            .await
+            .unwrap();
+
+    // self request (IPv4)
+    let _ = send.send(HandlerIn::Request(
+        NodeContact::try_from_enr(enr.clone(), IpMode::Ip4).unwrap(),
+        Box::new(Request {
+            id: RequestId(vec![1]),
+            body: RequestBody::Ping { enr_seq: 1 },
+        }),
+    ));
+    let handler_out = recv.recv().await;
+    assert_eq!(
+        Some(RequestFailed(RequestId(vec![1]), SelfRequest)),
+        handler_out
+    );
+}
+
+#[tokio::test]
+async fn test_self_request_ipv6() {
+    return_if_ipv6_is_not_supported!();
+
+    init();
+
+    let key = CombinedKey::generate_secp256k1();
+    let enr = EnrBuilder::new("v4")
+        .ip6(Ipv6Addr::LOCALHOST)
+        .udp6(5005)
+        .build(&key)
+        .unwrap();
+    let listen_config = ListenConfig::Ipv6 {
+        ip: enr.ip6().unwrap(),
+        port: enr.udp6().unwrap(),
+    };
+    let config = Discv5ConfigBuilder::new(listen_config)
+        .enable_packet_filter()
+        .build();
+
+    let (_exit_send, send, mut recv) =
+        Handler::spawn::<DefaultProtocolId>(arc_rw!(enr.clone()), arc_rw!(key), config)
+            .await
+            .unwrap();
+
+    // self request (IPv6)
+    let _ = send.send(HandlerIn::Request(
+        NodeContact::try_from_enr(enr, IpMode::Ip6).unwrap(),
+        Box::new(Request {
+            id: RequestId(vec![2]),
+            body: RequestBody::Ping { enr_seq: 1 },
+        }),
+    ));
+    let handler_out = recv.recv().await;
+    assert_eq!(
+        Some(RequestFailed(RequestId(vec![2]), SelfRequest)),
+        handler_out
+    );
 }
