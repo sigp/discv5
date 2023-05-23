@@ -868,7 +868,7 @@ impl Service {
                                                         new_ip6,
                                                     ))
                                                 {
-                                                    warn!("Failed to send socket update {}", e);
+                                                    warn!("Failed to send socket update to handler: {}", e);
                                                 };
                                             }
                                             Err(e) => {
