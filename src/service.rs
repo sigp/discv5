@@ -903,9 +903,9 @@ impl Service {
                                                 warn!("Failed to update local UDP socket. ip: {}, error: {:?}", new_ip4, e);
                                             }
                                         }
-                                        if updated {
-                                            self.ping_connected_peers();
-                                        }
+                                    }
+                                    if updated {
+                                        self.ping_connected_peers();
                                     }
                                 }
                             }
