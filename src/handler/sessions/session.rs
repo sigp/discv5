@@ -182,17 +182,25 @@ impl Session {
     ) -> Result<(Session, Enr), Discv5Error> {
         // check and verify a potential ENR update
 
+        let Challenge { data, remote_enr } = challenge;
+
         // Avoid cloning an ENR
-        let session_enr = match (enr_record, challenge.remote_enr.as_ref()) {
+        let session_enr = match (enr_record, remote_enr) {
             (Some(new_enr), Some(known_enr)) => {
                 if new_enr.seq() > known_enr.seq() {
-                    MostRecentEnr::Handshake(new_enr)
+                    MostRecentEnr::Handshake {
+                        enr: new_enr,
+                        challenge_enr: Some(known_enr),
+                    }
                 } else {
-                    MostRecentEnr::Challenge(known_enr)
+                    MostRecentEnr::Challenge { enr: known_enr }
                 }
             }
-            (Some(new_enr), None) => MostRecentEnr::Handshake(new_enr),
-            (None, Some(known_enr)) => MostRecentEnr::Challenge(known_enr),
+            (Some(new_enr), None) => MostRecentEnr::Handshake {
+                enr: new_enr,
+                challenge_enr: None,
+            },
+            (None, Some(known_enr)) => MostRecentEnr::Challenge { enr: known_enr },
             (None, None) => {
                 warn!(
                         "Peer did not respond with their ENR. Session could not be established. Node: {}",
@@ -214,10 +222,14 @@ impl Session {
         if !crypto::verify_authentication_nonce(
             &remote_public_key,
             ephem_pubkey,
-            &challenge.data,
+            &data,
             local_id,
             id_nonce_sig,
         ) {
+            let challenge = Challenge {
+                data,
+                remote_enr: session_enr.to_challenge_enr(),
+            };
             return Err(Discv5Error::InvalidChallengeSignature(challenge));
         }
 
@@ -229,7 +241,7 @@ impl Session {
             &local_key.read(),
             local_id,
             &node_address.node_id,
-            &challenge.data,
+            &data,
             ephem_pubkey,
         )?;
 
@@ -238,17 +250,7 @@ impl Session {
             decryption_key,
         };
 
-        let session_enr = match session_enr {
-            MostRecentEnr::Challenge(_) => {
-                let Challenge {
-                    data: _,
-                    remote_enr,
-                } = challenge;
-                remote_enr.expect("unreachable")
-            }
-            MostRecentEnr::Handshake(enr) => enr,
-        };
-
+        let session_enr = session_enr.to_most_recent_enr();
         Ok((Session::new(keys), session_enr))
     }
 
@@ -306,16 +308,37 @@ impl Session {
     }
 }
 
-enum MostRecentEnr<'a> {
-    Challenge(&'a Enr),
-    Handshake(Enr),
+enum MostRecentEnr {
+    Challenge {
+        enr: Enr,
+    },
+    Handshake {
+        enr: Enr,
+        challenge_enr: Option<Enr>,
+    },
 }
 
-impl<'a> MostRecentEnr<'a> {
+impl MostRecentEnr {
     fn enr(&self) -> &Enr {
-        match *self {
-            Self::Challenge(enr) => enr,
-            Self::Handshake(ref enr) => enr,
+        match self {
+            Self::Challenge { enr } => enr,
+            Self::Handshake { enr, .. } => enr,
+        }
+    }
+
+    fn to_most_recent_enr(self) -> Enr {
+        match self {
+            MostRecentEnr::Challenge { enr } => enr,
+            MostRecentEnr::Handshake { enr, .. } => enr,
+        }
+    }
+    fn to_challenge_enr(self) -> Option<Enr> {
+        match self {
+            MostRecentEnr::Challenge { enr } => Some(enr),
+            MostRecentEnr::Handshake {
+                enr: _,
+                challenge_enr,
+            } => challenge_enr,
         }
     }
 }
