@@ -1147,8 +1147,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     e
                 )
             }
-            return;
-        };
+        }
     }
 
     /// Handles a response to a request. Re-inserts the request call if the response is a multiple
