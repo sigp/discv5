@@ -215,10 +215,10 @@ pub struct Handler<P: ProtocolIdentity> {
     socket: Socket,
     /// Exit channel to shutdown the handler.
     exit: oneshot::Receiver<()>,
-    /// Access generic when implementing traits for Handler.
-    _phantom: PhantomData<P>,
     /// Types necessary to plug in nat hole punching.
     nat_hole_puncher: NatHolePunchUtils,
+    /// Access generic when implementing traits for Handler.
+    _phantom: PhantomData<P>,
 }
 
 type HandlerReturn = (
