@@ -1071,7 +1071,68 @@ impl<P: ProtocolIdentity> Handler<P> {
         authenticated_data: &[u8],
     ) {
         // check if we have an available session
-        let Some(session) = self.sessions.cache.get_mut(&node_address) else {
+        if let Some(session) = self.sessions.cache.get_mut(&node_address) {
+            // attempt to decrypt and process the message.
+            let message = match session.decrypt_message(message_nonce, message, authenticated_data)
+            {
+                Ok(m) => match Message::decode(&m) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
+                        return;
+                    }
+                },
+                Err(e) => {
+                    // We have a session, but the message could not be decrypted. It is likely the node
+                    // sending this message has dropped their session. In this case, this message is a
+                    // Random packet and we should reply with a WHOAREYOU.
+                    // This means we need to drop the current session and re-establish.
+                    trace!("Decryption failed. Error {}", e);
+                    debug!(
+                        "Message from node: {} is not encrypted with known session keys.",
+                        node_address
+                    );
+                    self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
+                        .await;
+                    // If we haven't already sent a WhoAreYou,
+                    // spawn a WHOAREYOU event to check for highest known ENR
+                    if self.active_challenges.get(&node_address).is_none() {
+                        let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
+                        if let Err(e) = self
+                            .service_send
+                            .send(HandlerOut::WhoAreYou(whoareyou_ref))
+                            .await
+                        {
+                            warn!("Failed to send WhoAreYou to the service {}", e)
+                        }
+                    } else {
+                        trace!("WHOAREYOU packet already sent: {}", node_address);
+                    }
+                    return;
+                }
+            };
+
+            trace!("Received message from: {}", node_address);
+
+            match message {
+                Message::Request(request) => {
+                    // report the request to the application
+                    if let Err(e) = self
+                        .service_send
+                        .send(HandlerOut::Request(node_address, Box::new(request)))
+                        .await
+                    {
+                        warn!("Failed to report request to application {}", e)
+                    }
+                }
+                _ => {
+                    warn!(
+                        "Peer sent message type that shouldn't be sent in packet type Message, {}",
+                        node_address
+                    );
+                }
+            }
+        } else {
             // no session exists
             trace!("Received a message without a session. {}", node_address);
             trace!("Requesting a WHOAREYOU packet to be sent.");
@@ -1086,66 +1147,6 @@ impl<P: ProtocolIdentity> Handler<P> {
                     "Spawn a WHOAREYOU event to check for highest known ENR failed {}",
                     e
                 )
-            }
-            return;
-        };
-        // attempt to decrypt and process the message.
-        let message = match session.decrypt_message(message_nonce, message, authenticated_data) {
-            Ok(m) => match Message::decode(&m) {
-                Ok(p) => p,
-                Err(e) => {
-                    warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
-                    return;
-                }
-            },
-            Err(e) => {
-                // We have a session, but the message could not be decrypted. It is likely the node
-                // sending this message has dropped their session. In this case, this message is a
-                // Random packet and we should reply with a WHOAREYOU.
-                // This means we need to drop the current session and re-establish.
-                trace!("Decryption failed. Error {}", e);
-                debug!(
-                    "Message from node: {} is not encrypted with known session keys.",
-                    node_address
-                );
-                self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
-                    .await;
-                // If we haven't already sent a WhoAreYou,
-                // spawn a WHOAREYOU event to check for highest known ENR
-                if self.active_challenges.get(&node_address).is_none() {
-                    let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
-                    if let Err(e) = self
-                        .service_send
-                        .send(HandlerOut::WhoAreYou(whoareyou_ref))
-                        .await
-                    {
-                        warn!("Failed to send WhoAreYou to the service {}", e)
-                    }
-                } else {
-                    trace!("WHOAREYOU packet already sent: {}", node_address);
-                }
-                return;
-            }
-        };
-
-        trace!("Received message from: {}", node_address);
-
-        match message {
-            Message::Request(request) => {
-                // report the request to the application
-                if let Err(e) = self
-                    .service_send
-                    .send(HandlerOut::Request(node_address, Box::new(request)))
-                    .await
-                {
-                    warn!("Failed to report request to application {}", e)
-                }
-            }
-            _ => {
-                warn!(
-                    "Peer sent message type that shouldn't be sent in packet type Message, {}",
-                    node_address
-                );
             }
         }
     }
