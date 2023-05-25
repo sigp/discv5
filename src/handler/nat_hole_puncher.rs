@@ -31,7 +31,7 @@ pub const USER_AND_DYNAMIC_PORTS: RangeInclusive<u16> = 1025..=u16::MAX;
 /// An error occurred whilst attempting to hole punch NAT.
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("NAT error, failed as initiator a hole punch attempt, {0}")]
+    #[error("NAT error, failed as initiator of a hole punch attempt, {0}")]
     Initiator(Discv5Error),
     #[error("NAT error, failed as relay of a hole punch attempt, {0}")]
     Relay(Discv5Error),
@@ -309,8 +309,7 @@ pub fn is_behind_nat(observed_ip: IpAddr, unused_port_range: &Option<RangeInclus
     };
     for _ in 0..PORT_BIND_TRIES {
         let rnd_port: u16 = rng.gen_range(unused_port_range.clone());
-        let socket_addr: SocketAddr = format!("{}:{}", observed_ip, rnd_port).parse().unwrap();
-        if UdpSocket::bind(socket_addr).is_ok() {
+        if UdpSocket::bind((observed_ip, rnd_port)).is_ok() {
             return false;
         }
     }
