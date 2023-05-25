@@ -405,14 +405,16 @@ impl Service {
                             self.rpc_failure(request_id, error);
                         }
                         HandlerOut::FindHolePunchEnr(tgt_node_id, relay_msg_notif) => {
-                            // check if we know this node id in our routing table
+                            // check if we know this node id in our routing table, otherwise drop
+                            // notification.
+                            // todo(emhane): ban peers that ask us to relay to a peer we very
+                            // unlikely could have sent to them in a NODES response.
                             let key = kbucket::Key::from(tgt_node_id);
-                            let tgt_enr = match self.kbuckets.write().entry(&key) {
-                                kbucket::Entry::Present(entry, _) => Some(entry.value().clone()),
-                                _ => None
-                            };
-                            if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(tgt_enr, relay_msg_notif)) {
-                                warn!("Failed to send target enr to relay proccess, error: {}", e);
+                            if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
+                                let enr = entry.value().clone();
+                                if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(enr, relay_msg_notif)) {
+                                    warn!("Failed to send target enr to relay proccess, error: {}", e);
+                                }
                             }
                         }
                     }

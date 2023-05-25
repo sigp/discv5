@@ -107,9 +107,9 @@ pub enum HandlerIn {
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 
-    /// Response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR if it was found. Also
-    /// returns the [`Notification::RelayMsg`] we intend to relay to that peer if it was found.
-    HolePunchEnr(Option<Enr>, Notification),
+    /// Response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR and the
+    /// [`Notification::RelayMsg`] we intend to relay to that peer.
+    HolePunchEnr(Enr, Notification),
 
     /// Observed socket has been update. The old socket and the current socket.
     SocketUpdate(Option<SocketAddr>, SocketAddr),
@@ -140,8 +140,8 @@ pub enum HandlerOut {
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
 
-    /// Look-up an ENR in k-buckets. Passes the node id of the peer to look up and the 
-    /// [`Notification`] we intend to send to it.
+    /// Look-up an ENR in k-buckets. Passes the node id of the peer to look up and the
+    /// [`Notification::RelayMsg`] we intend to send to it.
     FindHolePunchEnr(NodeId, Notification),
 }
 
@@ -329,7 +329,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                         HandlerIn::HolePunchEnr(tgt_enr, relay_msg_notif) => {
-                            if let Err(e) = self.on_hole_punch_tgt_enr(tgt_enr, relay_msg_notif).await {
+                            if let Err(e) = self.send_relay_msg_notif(tgt_enr, relay_msg_notif).await {
                                 warn!("Failed to relay. Error: {}", e);
                             }
                         }
@@ -1362,14 +1362,11 @@ impl<P: ProtocolIdentity> Handler<P> {
             .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
     }
 
-    async fn on_hole_punch_tgt_enr(
+    async fn send_relay_msg_notif(
         &mut self,
-        tgt_enr: Option<Enr>,
+        tgt_enr: Enr,
         relay_msg_notif: Notification,
     ) -> Result<(), HolePunchError> {
-        let Some(tgt_enr) = tgt_enr else {
-            return Err(HolePunchError::Relay(Discv5Error::Custom("Target enr not found")));
-        };
         let tgt_node_address =
             match NodeContact::try_from_enr(tgt_enr, self.nat_hole_puncher.ip_mode) {
                 Ok(contact) => contact.node_address(),
