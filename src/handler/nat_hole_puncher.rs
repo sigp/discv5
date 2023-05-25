@@ -25,7 +25,7 @@ pub const USER_AND_DYNAMIC_PORTS: RangeInclusive<u16> = 1025..=u16::MAX;
 /// An error occurred whilst attempting to hole punch NAT.
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("NAT error, failed as initiator a hole punch attempt, {0}")]
+    #[error("NAT error, failed as initiator of a hole punch attempt, {0}")]
     Initiator(Discv5Error),
     #[error("NAT error, failed as relay of a hole punch attempt, {0}")]
     Relay(Discv5Error),
