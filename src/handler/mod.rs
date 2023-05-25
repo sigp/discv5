@@ -137,7 +137,7 @@ pub enum HandlerOut {
 
     /// An RPC request failed.
     ///
-    /// This returns the request ID, an error indicating why the request failed.
+    /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
 
     /// A peer has supposed we have passed it another peer in a NODES response, if that is true
