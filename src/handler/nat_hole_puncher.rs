@@ -172,8 +172,7 @@ pub fn is_behind_nat(
     };
     for _ in 0..retries {
         let rnd_port: u16 = rng.gen_range(unused_port_range.clone());
-        let socket_addr: SocketAddr = format!("{}:{}", observed_ip, rnd_port).parse().unwrap();
-        if UdpSocket::bind(socket_addr).is_ok() {
+        if UdpSocket::bind((observed_ip, rnd_port)).is_ok() {
             return false;
         }
     }
