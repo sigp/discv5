@@ -415,6 +415,8 @@ impl Service {
                                 if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(enr, relay_msg_notif)) {
                                     warn!("Failed to send target enr to relay proccess, error: {}", e);
                                 }
+                            } else {
+                                warn!("Peer {tgt_node_id} requested relaying to a peer not in k-buckets, {relay_msg_notif}");
                             }
                         }
                     }
