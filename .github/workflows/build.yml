@@ -43,7 +43,7 @@ jobs:
       - name: Install protobuf compiler for the libp2p-core dependency
         uses: arduino/setup-protoc@v1
       - name: Run tests in release
-        run: cargo test --all --release --all-features
+        run: cargo test --all --release --all-features -- --skip ipv6 #  ipv6 tests don't run in github ci https://github.com/actions/runner-images/issues/668  
   check-rustdoc-links:
     name: Check rustdoc intra-doc links
     runs-on: ubuntu-latest

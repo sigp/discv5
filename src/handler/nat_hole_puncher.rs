@@ -330,6 +330,7 @@ mod test {
         assert!(is_behind_nat(IpAddr::from([8, 8, 8, 8]), &None));
     }
 
+    // ipv6 tests don't run in github ci https://github.com/actions/runner-images/issues/668
     #[test]
     fn test_is_not_behind_nat_ipv6() {
         assert!(!is_behind_nat(
@@ -338,6 +339,7 @@ mod test {
         ));
     }
 
+    // ipv6 tests don't run in github ci https://github.com/actions/runner-images/issues/668
     #[test]
     fn test_is_behind_nat_ipv6() {
         // google's ipv6
