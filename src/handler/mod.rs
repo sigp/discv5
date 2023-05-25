@@ -107,7 +107,7 @@ pub enum HandlerIn {
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 
-    /// Response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR and the
+    /// A response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR and the
     /// [`Notification::RelayMsg`] we intend to relay to that peer.
     HolePunchEnr(Enr, Notification),
 
