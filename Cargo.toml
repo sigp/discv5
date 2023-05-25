@@ -37,7 +37,6 @@ lru = "0.7.1"
 hashlink = "0.7.0"
 delay_map = "0.3.0"
 more-asserts = "0.2.2"
-async-trait = "0.1.67"
 thiserror = "1.0.40"
 derive_more = { version = "0.99.17", default-features = false, features = ["from", "display"] }
 

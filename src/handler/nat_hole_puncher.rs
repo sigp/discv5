@@ -1,5 +1,10 @@
-use crate::{node_info::NodeAddress, packet::MessageNonce, Discv5Error, Enr, IpMode};
-use async_trait::async_trait;
+use crate::{
+    handler::{Handler, HandlerOut, WhoAreYouRef},
+    node_info::{NodeAddress, NodeContact},
+    packet::MessageNonce,
+    rpc::{Notification, Payload},
+    Discv5Error, Enr, IpMode, ProtocolIdentity,
+};
 use delay_map::HashSetDelay;
 use enr::NodeId;
 use futures::{Stream, StreamExt};
@@ -14,6 +19,7 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
+use tracing::{trace, warn};
 
 /// The expected shortest lifetime in most NAT configurations of a punched hole in seconds.
 pub const DEFAULT_HOLE_PUNCH_LIFETIME: u64 = 20;
@@ -33,34 +39,165 @@ pub enum Error {
     Target(Discv5Error),
 }
 
-#[async_trait]
-pub trait NatHolePunch {
-    /// A request times out. Should trigger the initiation of a hole punch attempt, given a
-    /// transitive route to the target exists.
-    async fn on_request_time_out(
-        &mut self,
-        relay: NodeAddress,
-        local_enr: Enr, // initiator-enr
-        timed_out_nonce: MessageNonce,
-        target_session_index: NodeAddress,
-    ) -> Result<(), Error>;
-    /// A RelayInit notification is received over discv5 indicating this node is the relay. Should
-    /// trigger sending a RelayMsg to the target.
-    async fn on_relay_init(
-        &mut self,
-        initr: Enr,
-        tgt: NodeId,
-        timed_out_nonce: MessageNonce,
-    ) -> Result<(), Error>;
-    /// A RelayMsg notification is received over discv5 indicating this node is the target. Should
-    /// trigger a WHOAREYOU to be sent to the initiator using the `nonce` in the RelayMsg.
-    async fn on_relay_msg(
-        &mut self,
-        initr: Enr,
-        timed_out_nonce: MessageNonce,
-    ) -> Result<(), Error>;
-    /// A punched hole closes. Should trigger an empty packet to be sent to the peer.
-    async fn on_hole_punch_expired(&mut self, dst: SocketAddr) -> Result<(), Error>;
+/// A request times out. Should trigger the initiation of a hole punch attempt, given a
+/// transitive route to the target exists.
+pub async fn on_request_time_out<P: ProtocolIdentity>(
+    handler: &mut Handler<P>,
+    relay: NodeAddress,
+    local_enr: Enr, // initiator-enr
+    timed_out_nonce: MessageNonce,
+    target_session_index: NodeAddress,
+) -> Result<(), Error> {
+    // Another hole punch process with this target may have just completed.
+    if handler.sessions.cache.get(&target_session_index).is_some() {
+        return Ok(());
+    }
+    if let Some(session) = handler.sessions.cache.get_mut(&relay) {
+        let relay_init_notif =
+            Notification::RelayInit(local_enr, target_session_index.node_id, timed_out_nonce);
+        trace!(
+            "Sending notif to relay {}. relay init: {}",
+            relay.node_id,
+            relay_init_notif,
+        );
+        // Encrypt the message and send
+        let packet =
+            match session.encrypt_notification::<P>(handler.node_id, &relay_init_notif.encode()) {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(Error::Initiator(e));
+                }
+            };
+        handler.send(relay, packet).await;
+    } else {
+        // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
+        // within the time out of the udp entrypoint for the target peer in the initiator's
+        // router, set by the original timed out FINDNODE request from the initiator, as the
+        // initiator may also be behind a NAT.
+        warn!(
+            "Session is not established. Dropping relay notification for relay: {}",
+            relay.node_id
+        );
+    }
+    Ok(())
+}
+
+/// A RelayInit notification is received over discv5 indicating this node is the relay. Should
+/// trigger sending a RelayMsg to the target.
+pub async fn on_relay_init<P: ProtocolIdentity>(
+    handler: &mut Handler<P>,
+    initr: Enr,
+    tgt: NodeId,
+    timed_out_nonce: MessageNonce,
+) -> Result<(), Error> {
+    // Assemble the notification for the target
+    let relay_msg_notif = Notification::RelayMsg(initr, timed_out_nonce);
+
+    // Check for target peer in our kbuckets otherwise drop notification.
+    if let Err(e) = handler
+        .service_send
+        .send(HandlerOut::FindHolePunchEnr(tgt, relay_msg_notif))
+        .await
+    {
+        return Err(Error::Relay(e.into()));
+    }
+    Ok(())
+}
+
+/// A RelayMsg notification is received over discv5 indicating this node is the target. Should
+/// trigger a WHOAREYOU to be sent to the initiator using the `nonce` in the RelayMsg.
+pub async fn on_relay_msg<P: ProtocolIdentity>(
+    handler: &mut Handler<P>,
+    initr: Enr,
+    timed_out_nonce: MessageNonce,
+) -> Result<(), Error> {
+    let initiator_node_address =
+        match NodeContact::try_from_enr(initr, handler.nat_hole_puncher.ip_mode) {
+            Ok(contact) => contact.node_address(),
+            Err(e) => return Err(Error::Target(e.into())),
+        };
+
+    // A session may already have been established.
+    if handler
+        .sessions
+        .cache
+        .get(&initiator_node_address)
+        .is_some()
+    {
+        trace!(
+            "Session already established with initiator: {}",
+            initiator_node_address
+        );
+        return Ok(());
+    }
+    // Possibly, an attempt to punch this hole, using another relay, is in progress.
+    if handler
+        .active_challenges
+        .get(&initiator_node_address)
+        .is_some()
+    {
+        trace!(
+            "WHOAREYOU packet already sent to initiator: {}",
+            initiator_node_address
+        );
+        return Ok(());
+    }
+    // If not hole punch attempts are in progress, spawn a WHOAREYOU event to punch a hole in
+    // our NAT for initiator.
+    let whoareyou_ref = WhoAreYouRef(initiator_node_address, timed_out_nonce);
+    if let Err(e) = handler
+        .service_send
+        .send(HandlerOut::WhoAreYou(whoareyou_ref))
+        .await
+    {
+        return Err(Error::Target(e.into()));
+    }
+    Ok(())
+}
+
+pub async fn send_relay_msg_notif<P: ProtocolIdentity>(
+    handler: &mut Handler<P>,
+    tgt_enr: Enr,
+    relay_msg_notif: Notification,
+) -> Result<(), Error> {
+    let tgt_node_address =
+        match NodeContact::try_from_enr(tgt_enr, handler.nat_hole_puncher.ip_mode) {
+            Ok(contact) => contact.node_address(),
+            Err(e) => return Err(Error::Relay(e.into())),
+        };
+    if let Some(session) = handler.sessions.cache.get_mut(&tgt_node_address) {
+        trace!(
+            "Sending notif to target {}. relay msg: {}",
+            tgt_node_address.node_id,
+            relay_msg_notif,
+        );
+        // Encrypt the notification and send
+        let packet =
+            match session.encrypt_notification::<P>(handler.node_id, &relay_msg_notif.encode()) {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(Error::Relay(e));
+                }
+            };
+        handler.send(tgt_node_address, packet).await;
+        Ok(())
+    } else {
+        // Either the session is being established or has expired. We simply drop the
+        // notification in this case to ensure hole punch round-trip time stays within the
+        // time out of the udp entrypoint for the target peer in the initiator's NAT, set by
+        // the original timed out FINDNODE request from the initiator, as the initiator may
+        // also be behind a NAT.
+        Err(Error::Relay(Discv5Error::SessionNotEstablished))
+    }
+}
+
+/// A punched hole closes. Should trigger an empty packet to be sent to the peer.
+pub async fn on_hole_punch_expired<P: ProtocolIdentity>(
+    handler: &mut Handler<P>,
+    dst: SocketAddr,
+) -> Result<(), Error> {
+    handler.send_outbound(dst.into()).await;
+    Ok(())
 }
 
 /// Types necessary implement trait [`NatHolePunch`] on [`super::Handler`].
