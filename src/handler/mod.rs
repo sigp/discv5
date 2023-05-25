@@ -65,6 +65,7 @@ mod tests;
 
 use crate::metrics::METRICS;
 pub use crate::node_info::{NodeAddress, NodeContact};
+pub use sessions::MIN_SESSIONS_UNREACHABLE_ENR;
 
 use active_requests::ActiveRequests;
 use nat_hole_puncher::{Error as HolePunchError, NatHolePunch, NatHolePunchUtils};

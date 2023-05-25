@@ -1,6 +1,5 @@
 use crate::{node_info::NodeAddress, Discv5Error, Enr};
 use std::collections::HashSet;
-use tracing::warn;
 
 /// The minimum number of peers to accept sessions with that have an unreachable ENR, i.e. cater
 /// requests for, at a time. Benevolent peers of this type could for example be symmetrically
@@ -22,17 +21,8 @@ pub(crate) struct SessionLimiter {
 impl SessionLimiter {
     pub fn new(
         rx_expired_sessions: futures::channel::mpsc::Receiver<NodeAddress>,
-        unreachable_enr_limit: usize,
+        limit: usize,
     ) -> Self {
-        let limit = if unreachable_enr_limit < MIN_SESSIONS_UNREACHABLE_ENR {
-            warn!(
-                "unreachable ENR limit from config too low, setting to minimum {}",
-                MIN_SESSIONS_UNREACHABLE_ENR
-            );
-            MIN_SESSIONS_UNREACHABLE_ENR
-        } else {
-            unreachable_enr_limit
-        };
         SessionLimiter {
             sessions_unreachable_enr_tracker: Default::default(),
             rx_expired_sessions,

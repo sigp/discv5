@@ -1,6 +1,6 @@
 use crate::{
-    ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, PermitBanList, RateLimiter,
-    RateLimiterBuilder,
+    handler::MIN_SESSIONS_UNREACHABLE_ENR, ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr,
+    Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
 };
 ///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
@@ -335,6 +335,9 @@ impl Discv5ConfigBuilder {
         };
 
         assert!(self.config.incoming_bucket_limit <= MAX_NODES_PER_BUCKET);
+        if let Some(limit) = self.config.unreachable_enr_limit {
+            assert!(limit >= MIN_SESSIONS_UNREACHABLE_ENR);
+        }
 
         self.config.clone()
     }

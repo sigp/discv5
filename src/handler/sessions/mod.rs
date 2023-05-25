@@ -6,6 +6,7 @@ mod limiter;
 mod session;
 
 use limiter::SessionLimiter;
+pub use limiter::MIN_SESSIONS_UNREACHABLE_ENR;
 pub use session::Session;
 
 pub struct Sessions {
