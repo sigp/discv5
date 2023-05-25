@@ -140,10 +140,8 @@ pub enum HandlerOut {
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
 
-    /// A peer has supposed we have passed it another peer in a NODES response, if that is true
-    /// (very probably not false) then the ENR of that peer is returned in a
-    /// [`HandlerIn::HolePunchEnr`]. Holds the NodeId to look up and the
-    /// [`Notification::RelayMsg`] we intend to relay to that peer if we find it.
+    /// Look-up an ENR in k-buckets. Passes the node id of the peer to look up and the 
+    /// [`Notification`] we intend to send to it.
     FindHolePunchEnr(NodeId, Notification),
 }
 
