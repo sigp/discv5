@@ -24,7 +24,7 @@ use tracing::{trace, warn};
 /// The expected shortest lifetime in most NAT configurations of a punched hole in seconds.
 pub const DEFAULT_HOLE_PUNCH_LIFETIME: u64 = 20;
 /// The default number of ports to try before concluding that the local node is behind NAT.
-pub const DEFAULT_PORT_BIND_TRIES: usize = 4;
+pub const PORT_BIND_TRIES: usize = 4;
 /// Port range that is not impossible to bind to.
 pub const USER_AND_DYNAMIC_PORTS: RangeInclusive<u16> = 1025..=u16::MAX;
 
@@ -200,7 +200,7 @@ pub async fn on_hole_punch_expired<P: ProtocolIdentity>(
     Ok(())
 }
 
-/// Types necessary implement trait [`NatHolePunch`] on [`super::Handler`].
+/// Types necessary to implement nat hole punching for [`Handler`].
 pub(crate) struct NatHolePunchUtils {
     /// Ip mode as set in config.
     pub ip_mode: IpMode,
@@ -213,15 +213,23 @@ pub(crate) struct NatHolePunchUtils {
     /// Keeps track if this node needs to send a packet to a peer in order to keep a hole punched
     /// for it in its NAT.
     pub hole_punch_tracker: HashSetDelay<SocketAddr>,
+    /// Ports to trie to bind to check if this node is behind NAT.
+    pub unused_port_range: Option<RangeInclusive<u16>>,
 }
 
 impl NatHolePunchUtils {
-    pub(crate) fn new(listen_port: u16, local_enr: &Enr, ip_mode: IpMode) -> Self {
+    pub(crate) fn new(
+        listen_port: u16,
+        local_enr: &Enr,
+        ip_mode: IpMode,
+        unused_port_range: Option<RangeInclusive<u16>>,
+    ) -> Self {
         let mut nat_hole_puncher = NatHolePunchUtils {
             ip_mode,
             is_behind_nat: None,
             new_peer_latest_relay: Default::default(),
             hole_punch_tracker: HashSetDelay::new(Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME)),
+            unused_port_range,
         };
         // Optimistically only test one advertised socket, ipv4 has precedence. If it is
         // reachable, assumption is made that also the other ip version socket is reachable.
@@ -272,7 +280,7 @@ impl NatHolePunchUtils {
         let Some(ip) = observed_ip else {
             return;
         };
-        self.is_behind_nat = Some(is_behind_nat(ip, None, None));
+        self.is_behind_nat = Some(is_behind_nat(ip, &self.unused_port_range));
     }
 }
 
@@ -291,23 +299,15 @@ impl Stream for NatHolePunchUtils {
 
 /// Helper function to test if the local node is behind NAT based on the node's observed reachable
 /// socket.
-pub fn is_behind_nat(
-    observed_ip: IpAddr,
-    unused_port_range: Option<RangeInclusive<u16>>,
-    max_retries: Option<usize>,
-) -> bool {
+pub fn is_behind_nat(observed_ip: IpAddr, unused_port_range: &Option<RangeInclusive<u16>>) -> bool {
     // If the node cannot bind to the observed address at any of some random ports, we
     // conclude it is behind NAT.
     let mut rng = rand::thread_rng();
     let unused_port_range = match unused_port_range {
         Some(range) => range,
-        None => USER_AND_DYNAMIC_PORTS,
+        None => &USER_AND_DYNAMIC_PORTS,
     };
-    let retries = match max_retries {
-        Some(max) => max,
-        None => DEFAULT_PORT_BIND_TRIES,
-    };
-    for _ in 0..retries {
+    for _ in 0..PORT_BIND_TRIES {
         let rnd_port: u16 = rng.gen_range(unused_port_range.clone());
         let socket_addr: SocketAddr = format!("{}:{}", observed_ip, rnd_port).parse().unwrap();
         if UdpSocket::bind(socket_addr).is_ok() {
@@ -315,4 +315,36 @@ pub fn is_behind_nat(
         }
     }
     true
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_is_not_behind_nat() {
+        assert!(!is_behind_nat(IpAddr::from([127, 0, 0, 1]), &None));
+    }
+
+    #[test]
+    fn test_is_behind_nat() {
+        assert!(is_behind_nat(IpAddr::from([8, 8, 8, 8]), &None));
+    }
+
+    #[test]
+    fn test_is_not_behind_nat_ipv6() {
+        assert!(!is_behind_nat(
+            IpAddr::from([0u16, 0u16, 0u16, 0u16, 0u16, 0u16, 0u16, 1u16]),
+            &None,
+        ));
+    }
+
+    #[test]
+    fn test_is_behind_nat_ipv6() {
+        // google's ipv6
+        assert!(is_behind_nat(
+            IpAddr::from([2001, 4860, 4860, 0u16, 0u16, 0u16, 0u16, 0u16]),
+            &None,
+        ));
+    }
 }

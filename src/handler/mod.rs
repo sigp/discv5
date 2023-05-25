@@ -269,8 +269,12 @@ impl<P: ProtocolIdentity> Handler<P> {
         // Attempt to bind to the socket before spinning up the send/recv tasks.
         let socket = Socket::new::<P>(socket_config).await?;
 
-        let nat_hole_puncher =
-            NatHolePunchUtils::new(listen_socket.port(), &enr.read(), config.ip_mode);
+        let nat_hole_puncher = NatHolePunchUtils::new(
+            listen_socket.port(),
+            &enr.read(),
+            config.ip_mode,
+            config.unused_port_range.clone(),
+        );
 
         let sessions = Sessions::new(
             config.session_cache_capacity,
