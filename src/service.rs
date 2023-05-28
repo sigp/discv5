@@ -1384,7 +1384,7 @@ impl Service {
             ConnectionDirectionInstruction::Incoming => ConnectionDirection::Incoming,
             ConnectionDirectionInstruction::Outgoing => ConnectionDirection::Outgoing,
             ConnectionDirectionInstruction::IncomingIfNotExists => {
-                let key = kbucket::Key::from(node_id.clone());
+                let key = kbucket::Key::from(node_id);
                 match self.kbuckets.write().entry(&key) {
                     Entry::Present(_, status) if status.is_connected() => status.direction,
                     _ => ConnectionDirection::Incoming,
