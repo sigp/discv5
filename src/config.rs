@@ -35,6 +35,12 @@ pub struct Discv5Config {
     /// The maximum number of established sessions to maintain. Default: 1000.
     pub session_cache_capacity: usize,
 
+    /// The one-time session timeout. Default: 30 seconds.
+    pub one_time_session_timeout: Duration,
+
+    /// The maximum number of established one-time sessions to maintain. Default: 100.
+    pub one_time_session_cache_capacity: usize,
+
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
     pub enr_update: bool,
 
@@ -127,6 +133,8 @@ impl Discv5ConfigBuilder {
             request_retries: 1,
             session_timeout: Duration::from_secs(86400),
             session_cache_capacity: 1000,
+            one_time_session_timeout: Duration::from_secs(30),
+            one_time_session_cache_capacity: 100,
             enr_update: true,
             max_nodes_response: 16,
             enr_peer_update_min: 10,
@@ -196,6 +204,18 @@ impl Discv5ConfigBuilder {
     /// The maximum number of established sessions to maintain.
     pub fn session_cache_capacity(&mut self, capacity: usize) -> &mut Self {
         self.config.session_cache_capacity = capacity;
+        self
+    }
+
+    /// The one-time session timeout.
+    pub fn one_time_session_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.config.one_time_session_timeout = timeout;
+        self
+    }
+
+    /// The maximum number of established one-time sessions to maintain.
+    pub fn one_time_session_cache_capacity(&mut self, capacity: usize) -> &mut Self {
+        self.config.one_time_session_cache_capacity = capacity;
         self
     }
 
@@ -325,6 +345,11 @@ impl std::fmt::Debug for Discv5Config {
             .field("request_retries", &self.request_retries)
             .field("session_timeout", &self.session_timeout)
             .field("session_cache_capacity", &self.session_cache_capacity)
+            .field("one_time_session_timeout", &self.one_time_session_timeout)
+            .field(
+                "one_time_session_cache_capacity",
+                &self.one_time_session_cache_capacity,
+            )
             .field("enr_update", &self.enr_update)
             .field("query_parallelism", &self.query_parallelism)
             .field("report_discovered_peers", &self.report_discovered_peers)

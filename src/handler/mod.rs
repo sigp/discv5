@@ -283,8 +283,10 @@ impl Handler {
                         config.session_timeout,
                         Some(config.session_cache_capacity),
                     ),
-                    // TODO: config
-                    one_time_sessions: LruTimeCache::new(Duration::from_secs(30), Some(50)),
+                    one_time_sessions: LruTimeCache::new(
+                        config.one_time_session_timeout,
+                        Some(config.one_time_session_cache_capacity),
+                    ),
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
                     service_send,
