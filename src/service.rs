@@ -164,9 +164,7 @@ pub enum ServiceRequest {
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
-use crate::discv5::PERMIT_BAN_LIST;
-use crate::handler::ConnectionDirectionInstruction;
-use crate::kbucket::Entry;
+use crate::{discv5::PERMIT_BAN_LIST, handler::ConnectionDirectionInstruction, kbucket::Entry};
 
 pub struct Service {
     /// Configuration parameters.
