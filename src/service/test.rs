@@ -164,3 +164,61 @@ async fn test_updating_connection_on_ping() {
     let node = buckets.iter_ref().next().unwrap();
     assert!(node.status.is_connected())
 }
+
+#[tokio::test]
+async fn test_updating_connection_direction_on_new_session() {
+    init();
+
+    let enr_key1 = CombinedKey::generate_secp256k1();
+    let ip = "127.0.0.1".parse().unwrap();
+    let enr = EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(10001)
+        .build(&enr_key1)
+        .unwrap();
+
+    let enr_key2 = CombinedKey::generate_secp256k1();
+    let ip2 = "127.0.0.1".parse().unwrap();
+    let enr2 = EnrBuilder::new("v4")
+        .ip4(ip2)
+        .udp4(10002)
+        .build(&enr_key2)
+        .unwrap();
+
+    let mut service = build_service::<DefaultProtocolId>(
+        Arc::new(RwLock::new(enr)),
+        Arc::new(RwLock::new(enr_key1)),
+        false,
+    )
+    .await;
+
+    // None -> Incoming
+    service.inject_session_established(
+        enr2.clone(),
+        ConnectionDirectionInstruction::IncomingIfNotExists,
+    );
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+
+    // Incoming -> Outgoing
+    service.inject_session_established(enr2.clone(), ConnectionDirectionInstruction::Outgoing);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Outgoing, status.direction);
+
+    // Outgoing -> Outgoing (no changes as the outgoing connection exists)
+    service.inject_session_established(
+        enr2.clone(),
+        ConnectionDirectionInstruction::IncomingIfNotExists,
+    );
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Outgoing, status.direction);
+
+    // Outgoing -> Incoming
+    service.inject_session_established(enr2, ConnectionDirectionInstruction::Incoming);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+}
