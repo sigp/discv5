@@ -843,16 +843,16 @@ impl Handler {
                             },
                             _ => None,
                         };
-                        if let Some(reqeust) = maybe_ping_request {
+                        if let Some(request) = maybe_ping_request {
                             debug!(
                                 "Responding PING request using one-time session. node_address: {}",
                                 node_address
                             );
                             self.one_time_sessions
-                                .insert((node_address.clone(), reqeust.id.clone()), session);
+                                .insert((node_address.clone(), request.id.clone()), session);
                             if let Err(e) = self
                                 .service_send
-                                .send(HandlerOut::Request(node_address.clone(), Box::new(reqeust)))
+                                .send(HandlerOut::Request(node_address.clone(), Box::new(request)))
                                 .await
                             {
                                 warn!("Failed to report request to application {}", e)
