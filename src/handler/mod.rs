@@ -819,6 +819,16 @@ impl Handler {
                         // established. If so process them.
                         self.send_next_request::<P>(node_address).await;
                     } else {
+                        // IP's or NodeAddress don't match. Drop the session.
+                        warn!(
+                            "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
+                            enr.udp4_socket(),
+                            enr.udp6_socket(),
+                            node_address
+                        );
+                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
+                            .await;
+
                         // Respond to PING request even if the ENR or NodeAddress don't match
                         // so that the source node can notice its external IP address has been changed.
                         let maybe_ping_request = match session.decrypt_message(
@@ -843,22 +853,12 @@ impl Handler {
                                 .insert((node_address.clone(), request.id.clone()), session);
                             if let Err(e) = self
                                 .service_send
-                                .send(HandlerOut::Request(node_address.clone(), Box::new(request)))
+                                .send(HandlerOut::Request(node_address, Box::new(request)))
                                 .await
                             {
                                 warn!("Failed to report request to application {}", e)
                             }
                         }
-
-                        // IP's or NodeAddress don't match. Drop the session.
-                        warn!(
-                            "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
-                            enr.udp4_socket(),
-                            enr.udp6_socket(),
-                            node_address
-                        );
-                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
-                            .await;
                     }
                 }
                 Err(Discv5Error::InvalidChallengeSignature(challenge)) => {
