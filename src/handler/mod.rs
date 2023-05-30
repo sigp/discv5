@@ -519,35 +519,26 @@ impl Handler {
         node_address: NodeAddress,
         response: Response,
     ) {
-        macro_rules! send {
-            ($session: ident) => {
-                // Encrypt the message and send
-                let packet = match $session.encrypt_message::<P>(self.node_id, &response.encode()) {
-                    Ok(packet) => packet,
-                    Err(e) => {
-                        warn!("Could not encrypt response: {:?}", e);
-                        return;
-                    }
-                };
-                self.send(node_address, packet).await;
-            };
-        }
-
         // Check for an established session
-        if let Some(session) = self.sessions.get_mut(&node_address) {
-            send!(session);
+        let packet = if let Some(session) = self.sessions.get_mut(&node_address) {
+            session.encrypt_message::<P>(self.node_id, &response.encode())
         } else if let Some(mut session) = self
             .one_time_sessions
             .remove(&(node_address.clone(), response.id.clone()))
         {
-            send!(session);
+            session.encrypt_message::<P>(self.node_id, &response.encode())
         } else {
             // Either the session is being established or has expired. We simply drop the
             // response in this case.
-            warn!(
+            return warn!(
                 "Session is not established. Dropping response {} for node: {}",
                 response, node_address.node_id
             );
+        };
+
+        match packet {
+            Ok(packet) => self.send(node_address, packet).await,
+            Err(e) => return warn!("Could not encrypt response: {:?}", e),
         }
     }
 
