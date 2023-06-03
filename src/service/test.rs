@@ -178,7 +178,7 @@ async fn test_updating_connection_direction_on_new_session() {
         .unwrap();
 
     let enr_key2 = CombinedKey::generate_secp256k1();
-    let ip2 = "127.0.0.1".parse().unwrap();
+    let ip2 = std::net::Ipv4Addr::LOCALHOST;
     let enr2 = EnrBuilder::new("v4")
         .ip4(ip2)
         .udp4(10002)
