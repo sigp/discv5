@@ -192,7 +192,7 @@ pub struct Handler {
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
     /// Established sessions with peers for a specific request.
-    one_time_sessions: LruTimeCache<(NodeAddress, RequestId), Session>,
+    one_time_sessions: LruTimeCache<NodeAddress, (RequestId, Session)>,
     /// The channel to receive messages from the application layer.
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
@@ -522,9 +522,7 @@ impl Handler {
         // Check for an established session
         let packet = if let Some(session) = self.sessions.get_mut(&node_address) {
             session.encrypt_message::<P>(self.node_id, &response.encode())
-        } else if let Some(mut session) = self
-            .one_time_sessions
-            .remove(&(node_address.clone(), response.id.clone()))
+        } else if let Some(mut session) = self.remove_one_time_session(&node_address, &response.id)
         {
             session.encrypt_message::<P>(self.node_id, &response.encode())
         } else {
@@ -850,7 +848,7 @@ impl Handler {
                                 node_address
                             );
                             self.one_time_sessions
-                                .insert((node_address.clone(), request.id.clone()), session);
+                                .insert(node_address.clone(), (request.id.clone(), session));
                             if let Err(e) = self
                                 .service_send
                                 .send(HandlerOut::Request(node_address, Box::new(request)))
@@ -1155,6 +1153,24 @@ impl Handler {
             METRICS
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
+        }
+    }
+
+    /// Remove one-time session by the given NodeAddress and RequestId if exists.
+    fn remove_one_time_session(
+        &mut self,
+        node_address: &NodeAddress,
+        request_id: &RequestId,
+    ) -> Option<Session> {
+        match self.one_time_sessions.get(node_address) {
+            Some((id, _)) if id == request_id => {
+                let (_, session) = self
+                    .one_time_sessions
+                    .remove(&node_address)
+                    .expect("one-time session must exist");
+                Some(session)
+            }
+            _ => None,
         }
     }
 
