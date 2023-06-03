@@ -536,7 +536,7 @@ impl Handler {
 
         match packet {
             Ok(packet) => self.send(node_address, packet).await,
-            Err(e) => return warn!("Could not encrypt response: {:?}", e),
+            Err(e) => warn!("Could not encrypt response: {:?}", e),
         }
     }
 
@@ -1166,7 +1166,7 @@ impl Handler {
             Some((id, _)) if id == request_id => {
                 let (_, session) = self
                     .one_time_sessions
-                    .remove(&node_address)
+                    .remove(node_address)
                     .expect("one-time session must exist");
                 Some(session)
             }
