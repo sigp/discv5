@@ -1162,7 +1162,7 @@ impl Handler {
         node_address: &NodeAddress,
         request_id: &RequestId,
     ) -> Option<Session> {
-        match self.one_time_sessions.get(node_address) {
+        match self.one_time_sessions.peek(node_address) {
             Some((id, _)) if id == request_id => {
                 let (_, session) = self
                     .one_time_sessions
