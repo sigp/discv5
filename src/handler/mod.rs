@@ -113,7 +113,7 @@ pub enum HandlerOut {
     /// A session is only considered established once we have received a signed ENR from the
     /// node and either the observed `SocketAddr` matches the one declared in the ENR or the
     /// ENR declares no `SocketAddr`.
-    Established(Enr, SocketAddr, ConnectionDirectionInstruction),
+    Established(Enr, SocketAddr, ConnectionUpdate),
 
     /// A Request has been received from a node on the network.
     Request(NodeAddress, Box<Request>),
@@ -142,7 +142,7 @@ pub enum ConnectionDirection {
 
 /// An instruction from the handler to the service how to update the connection direction.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ConnectionDirectionInstruction {
+pub enum ConnectionUpdate {
     /// Incoming.
     Incoming,
     /// Outgoing.
@@ -693,13 +693,11 @@ impl Handler {
                 // outgoing session is that we originally sent a RANDOM packet (signifying we did
                 // not have a session for a request) and the packet is not a PING (we are not
                 // trying to update an old session that may have expired.
-                let connection_direction_instruction = {
+                let connection_update = {
                     match (request_call.initiating_session(), &request_call.body()) {
-                        (true, RequestBody::Ping { .. }) => {
-                            ConnectionDirectionInstruction::Incoming
-                        }
-                        (true, _) => ConnectionDirectionInstruction::Outgoing,
-                        (false, _) => ConnectionDirectionInstruction::IncomingIfNotExists,
+                        (true, RequestBody::Ping { .. }) => ConnectionUpdate::Incoming,
+                        (true, _) => ConnectionUpdate::Outgoing,
+                        (false, _) => ConnectionUpdate::IncomingIfNotExists,
                     }
                 };
 
@@ -718,7 +716,7 @@ impl Handler {
                     .send(HandlerOut::Established(
                         enr,
                         node_address.socket_addr,
-                        connection_direction_instruction,
+                        connection_update,
                     ))
                     .await
                     .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
@@ -808,7 +806,7 @@ impl Handler {
                             .send(HandlerOut::Established(
                                 enr,
                                 node_address.socket_addr,
-                                ConnectionDirectionInstruction::Incoming,
+                                ConnectionUpdate::Incoming,
                             ))
                             .await
                         {
@@ -989,7 +987,7 @@ impl Handler {
                                                 .send(HandlerOut::Established(
                                                     enr,
                                                     node_address.socket_addr,
-                                                    ConnectionDirectionInstruction::Outgoing,
+                                                    ConnectionUpdate::Outgoing,
                                                 ))
                                                 .await
                                             {

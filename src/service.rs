@@ -164,7 +164,7 @@ pub enum ServiceRequest {
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
-use crate::{discv5::PERMIT_BAN_LIST, handler::ConnectionDirectionInstruction, kbucket::Entry};
+use crate::{discv5::PERMIT_BAN_LIST, handler::ConnectionUpdate, kbucket::Entry};
 
 pub struct Service {
     /// Configuration parameters.
@@ -1368,11 +1368,7 @@ impl Service {
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(
-        &mut self,
-        enr: Enr,
-        direction_instruction: ConnectionDirectionInstruction,
-    ) {
+    fn inject_session_established(&mut self, enr: Enr, connection_update: ConnectionUpdate) {
         // Ignore sessions with non-contactable ENRs
         if self.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
@@ -1380,10 +1376,10 @@ impl Service {
 
         let node_id = enr.node_id();
 
-        let direction = match direction_instruction {
-            ConnectionDirectionInstruction::Incoming => ConnectionDirection::Incoming,
-            ConnectionDirectionInstruction::Outgoing => ConnectionDirection::Outgoing,
-            ConnectionDirectionInstruction::IncomingIfNotExists => {
+        let direction = match connection_update {
+            ConnectionUpdate::Incoming => ConnectionDirection::Incoming,
+            ConnectionUpdate::Outgoing => ConnectionDirection::Outgoing,
+            ConnectionUpdate::IncomingIfNotExists => {
                 let key = kbucket::Key::from(node_id);
                 match self.kbuckets.write().entry(&key) {
                     Entry::Present(_, status) if status.is_connected() => status.direction,
