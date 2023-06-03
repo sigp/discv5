@@ -164,7 +164,7 @@ pub enum ServiceRequest {
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
-use crate::{discv5::PERMIT_BAN_LIST, handler::ConnectionUpdate, kbucket::Entry};
+use crate::{discv5::PERMIT_BAN_LIST, handler::ConnectionUpdate};
 
 pub struct Service {
     /// Configuration parameters.
@@ -1381,8 +1381,13 @@ impl Service {
             ConnectionUpdate::Outgoing => ConnectionDirection::Outgoing,
             ConnectionUpdate::IncomingIfNotExists => {
                 let key = kbucket::Key::from(node_id);
-                match self.kbuckets.write().entry(&key) {
-                    Entry::Present(_, status) if status.is_connected() => status.direction,
+                match self
+                    .kbuckets
+                    .read()
+                    .get_bucket(&key)
+                    .map(|bucket| bucket.get(&key))
+                {
+                    Some(Some(node)) if node.status.is_connected() => node.status.direction,
                     _ => ConnectionDirection::Incoming,
                 }
             }
