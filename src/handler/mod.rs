@@ -191,7 +191,7 @@ pub struct Handler {
     active_challenges: HashMapDelay<NodeAddress, Challenge>,
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
-    /// Established sessions with peers for a specific request.
+    /// Established sessions with peers for a specific request, stored just one per node.
     one_time_sessions: LruTimeCache<NodeAddress, (RequestId, Session)>,
     /// The channel to receive messages from the application layer.
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
