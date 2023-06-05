@@ -6,7 +6,7 @@ use socket2::{Domain, Protocol, Socket as Socket2, Type};
 use std::{
     collections::HashMap,
     io::Error,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, IpAddr},
     sync::Arc,
     time::Duration,
 };
@@ -218,6 +218,20 @@ impl ListenConfig {
             },
         }
     }
+
+
+    pub fn from_ip(self, ip: IpAddr, port: u16) -> ListenConfig {
+        match ip {
+            IpAddr::V4(ip) => ListenConfig::Ipv4 {
+                ip,
+                port
+            },
+            IpAddr::V6(ip) => ListenConfig::Ipv6 {
+                ip, port
+            }
+        }
+    }
+
 }
 
 impl Default for ListenConfig {
@@ -225,6 +239,21 @@ impl Default for ListenConfig {
         Self::Ipv4 {
             ip: Ipv4Addr::UNSPECIFIED,
             port: 9000,
+        }
+    }
+}
+
+impl From<SocketAddr> for ListenConfig {
+    fn from(socket_addr: SocketAddr) -> Self {
+        match socket_addr {
+            SocketAddr::V4(socket) => ListenConfig::Ipv4 { 
+                ip: *socket.ip(),
+                port: socket.port()
+            },
+            SocketAddr::V6(socket) => ListenConfig::Ipv6 { 
+                ip: *socket.ip(), 
+                port: socket.port()
+            },
         }
     }
 }
