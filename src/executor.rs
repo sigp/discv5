@@ -1,6 +1,5 @@
-///! A simple trait to allow generic executors or wrappers for spawning the discv5 tasks.
-use std::future::Future;
-use std::pin::Pin;
+//! A simple trait to allow generic executors or wrappers for spawning the discv5 tasks.
+use std::{future::Future, pin::Pin};
 
 pub trait Executor: ExecutorClone {
     /// Run the given future in the background until it ends.
