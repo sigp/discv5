@@ -6,7 +6,7 @@ use socket2::{Domain, Protocol, Socket as Socket2, Type};
 use std::{
     collections::HashMap,
     io::Error,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, IpAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, IpAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::Duration,
 };
@@ -220,6 +220,8 @@ impl ListenConfig {
     }
 
 
+    /// If an [`IpAddr`] is known, a ListenConfig can be created based on the version. This will
+    /// not create a dual stack configuration.
     pub fn from_ip(self, ip: IpAddr, port: u16) -> ListenConfig {
         match ip {
             IpAddr::V4(ip) => ListenConfig::Ipv4 {
@@ -229,6 +231,18 @@ impl ListenConfig {
             IpAddr::V6(ip) => ListenConfig::Ipv6 {
                 ip, port
             }
+        }
+    }
+
+    /// Allows optional ipv4 and ipv6 addresses to be entered to create a [`ListenConfig`]. If both
+    /// are specified a dual-stack configuration will result. This will panic if both parameters
+    /// are None.
+    pub fn from_multiple_ips(ipv4: Option<SocketAddrV4>, ipv6: Option<SocketAddrV6>) -> ListenConfig { 
+        match (ipv4,ipv6) {
+            (Some(ipv4), None) => ListenConfig::Ipv4 { ip: *ipv4.ip(), port: ipv4.port() },
+            (None, Some(ipv6)) => ListenConfig::Ipv6 { ip: *ipv6.ip(), port: ipv6.port() },
+            (Some(ipv4), Some(ipv6)) => ListenConfig::DualStack { ipv4: *ipv4.ip(), ipv4_port: ipv4.port(), ipv6: *ipv6.ip(), ipv6_port: ipv6.port()  },
+            (None, None) => panic!("At least one IP address must be entered.")
         }
     }
 
