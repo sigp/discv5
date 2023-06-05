@@ -237,7 +237,7 @@ impl ListenConfig {
     /// Allows optional ipv4 and ipv6 addresses to be entered to create a [`ListenConfig`]. If both
     /// are specified a dual-stack configuration will result. This will panic if both parameters
     /// are None.
-    pub fn from_multiple_ips(ipv4: Option<SocketAddrV4>, ipv6: Option<SocketAddrV6>) -> ListenConfig { 
+    pub fn from_two_sockets(ipv4: Option<SocketAddrV4>, ipv6: Option<SocketAddrV6>) -> ListenConfig { 
         match (ipv4,ipv6) {
             (Some(ipv4), None) => ListenConfig::Ipv4 { ip: *ipv4.ip(), port: ipv4.port() },
             (None, Some(ipv6)) => ListenConfig::Ipv6 { ip: *ipv6.ip(), port: ipv6.port() },
