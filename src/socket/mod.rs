@@ -6,7 +6,7 @@ use socket2::{Domain, Protocol, Socket as Socket2, Type};
 use std::{
     collections::HashMap,
     io::Error,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, IpAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::Duration,
 };
@@ -167,8 +167,8 @@ impl ListenConfig {
         Self::Ipv6 { ip, port }
     }
 
-    // Overrides the ipv4 address and port of ipv4 and dual stack configurations. Ipv6
-    // configurations are added ipv4 info making them into dual stack configs.
+    /// Overrides the ipv4 address and port of ipv4 and dual stack configurations. Ipv6
+    /// configurations are added ipv4 info making them into dual stack configs.
     /// Sets an ipv4 socket. This will override any past ipv4 configuration and will promote the configuration to dual socket if an ipv6 socket is configured.
     pub fn with_ipv4(self, ip: Ipv4Addr, port: u16) -> ListenConfig {
         match self {
@@ -193,8 +193,8 @@ impl ListenConfig {
         }
     }
 
-    // Overrides the ipv6 address and port of ipv6 and dual stack configurations. Ipv4
-    // configurations are added ipv6 info making them into dual stack configs.
+    /// Overrides the ipv6 address and port of ipv6 and dual stack configurations. Ipv4
+    /// configurations are added ipv6 info making them into dual stack configs.
     /// Sets an ipv6 socket. This will override any past ipv6 configuration and will promote the configuration to dual socket if an ipv4 socket is configured.
     pub fn with_ipv6(self, ip: Ipv6Addr, port: u16) -> ListenConfig {
         match self {
@@ -219,33 +219,40 @@ impl ListenConfig {
         }
     }
 
-
     /// If an [`IpAddr`] is known, a ListenConfig can be created based on the version. This will
     /// not create a dual stack configuration.
     pub fn from_ip(self, ip: IpAddr, port: u16) -> ListenConfig {
         match ip {
-            IpAddr::V4(ip) => ListenConfig::Ipv4 {
-                ip,
-                port
-            },
-            IpAddr::V6(ip) => ListenConfig::Ipv6 {
-                ip, port
-            }
+            IpAddr::V4(ip) => ListenConfig::Ipv4 { ip, port },
+            IpAddr::V6(ip) => ListenConfig::Ipv6 { ip, port },
         }
     }
 
     /// Allows optional ipv4 and ipv6 addresses to be entered to create a [`ListenConfig`]. If both
     /// are specified a dual-stack configuration will result. This will panic if both parameters
     /// are None.
-    pub fn from_two_sockets(ipv4: Option<SocketAddrV4>, ipv6: Option<SocketAddrV6>) -> ListenConfig { 
-        match (ipv4,ipv6) {
-            (Some(ipv4), None) => ListenConfig::Ipv4 { ip: *ipv4.ip(), port: ipv4.port() },
-            (None, Some(ipv6)) => ListenConfig::Ipv6 { ip: *ipv6.ip(), port: ipv6.port() },
-            (Some(ipv4), Some(ipv6)) => ListenConfig::DualStack { ipv4: *ipv4.ip(), ipv4_port: ipv4.port(), ipv6: *ipv6.ip(), ipv6_port: ipv6.port()  },
-            (None, None) => panic!("At least one IP address must be entered.")
+    pub fn from_two_sockets(
+        ipv4: Option<SocketAddrV4>,
+        ipv6: Option<SocketAddrV6>,
+    ) -> ListenConfig {
+        match (ipv4, ipv6) {
+            (Some(ipv4), None) => ListenConfig::Ipv4 {
+                ip: *ipv4.ip(),
+                port: ipv4.port(),
+            },
+            (None, Some(ipv6)) => ListenConfig::Ipv6 {
+                ip: *ipv6.ip(),
+                port: ipv6.port(),
+            },
+            (Some(ipv4), Some(ipv6)) => ListenConfig::DualStack {
+                ipv4: *ipv4.ip(),
+                ipv4_port: ipv4.port(),
+                ipv6: *ipv6.ip(),
+                ipv6_port: ipv6.port(),
+            },
+            (None, None) => panic!("At least one IP address must be entered."),
         }
     }
-
 }
 
 impl Default for ListenConfig {
@@ -260,13 +267,13 @@ impl Default for ListenConfig {
 impl From<SocketAddr> for ListenConfig {
     fn from(socket_addr: SocketAddr) -> Self {
         match socket_addr {
-            SocketAddr::V4(socket) => ListenConfig::Ipv4 { 
+            SocketAddr::V4(socket) => ListenConfig::Ipv4 {
                 ip: *socket.ip(),
-                port: socket.port()
+                port: socket.port(),
             },
-            SocketAddr::V6(socket) => ListenConfig::Ipv6 { 
-                ip: *socket.ip(), 
-                port: socket.port()
+            SocketAddr::V6(socket) => ListenConfig::Ipv6 {
+                ip: *socket.ip(),
+                port: socket.port(),
             },
         }
     }
