@@ -22,7 +22,7 @@ use discv5::{
     Discv5, Discv5ConfigBuilder, Discv5Event, ListenConfig,
 };
 use std::{
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     time::Duration,
 };
 use tracing::{info, warn};
@@ -112,8 +112,8 @@ async fn main() {
 
     // the address to listen on.
     let listen_config = match args.socket_kind {
-        SocketKind::Ip4 => ListenConfig::new_ipv4(Ipv4Addr::UNSPECIFIED, port),
-        SocketKind::Ip6 => ListenConfig::new_ipv6(Ipv6Addr::UNSPECIFIED, port6),
+        SocketKind::Ip4 => ListenConfig::from_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+        SocketKind::Ip6 => ListenConfig::from_ip(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port6),
         SocketKind::Ds => ListenConfig::default()
             .with_ipv4(Ipv4Addr::UNSPECIFIED, port)
             .with_ipv6(Ipv6Addr::UNSPECIFIED, port6),
