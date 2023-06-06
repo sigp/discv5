@@ -211,7 +211,20 @@ async fn test_updating_connection_direction_on_new_session() {
     assert_eq!(ConnectionDirection::Outgoing, status.direction);
 
     // Outgoing -> Incoming
-    service.inject_session_established(enr2, ConnectionUpdate::Incoming);
+    service.inject_session_established(enr2.clone(), ConnectionUpdate::Incoming);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+
+    // Outgoing (disconnected) -> Incoming
+    let key = &kbucket::Key::from(enr2.node_id());
+    let result = service.kbuckets.write().update_node_status(
+        key,
+        ConnectionState::Disconnected,
+        Some(ConnectionDirection::Outgoing),
+    );
+    assert!(matches!(result, UpdateResult::Updated));
+    service.inject_session_established(enr2, ConnectionUpdate::IncomingIfNotExists);
     let status = service.kbuckets.read().iter_ref().next().unwrap().status;
     assert!(status.is_connected());
     assert_eq!(ConnectionDirection::Incoming, status.direction);
