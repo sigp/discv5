@@ -192,8 +192,8 @@ impl ListenConfig {
         }
     }
 
-    /// Overrides the ipv4 address and port of ipv4 and dual stack configurations. Ipv6
-    /// configurations are added ipv4 info making them into dual stack configs.
+    // Overrides the ipv4 address and port of ipv4 and dual stack configurations. Ipv6
+    // configurations are added ipv4 info making them into dual stack configs.
     /// Sets an ipv4 socket. This will override any past ipv4 configuration and will promote the configuration to dual socket if an ipv6 socket is configured.
     pub fn with_ipv4(self, ip: Ipv4Addr, port: u16) -> ListenConfig {
         match self {
@@ -218,8 +218,8 @@ impl ListenConfig {
         }
     }
 
-    /// Overrides the ipv6 address and port of ipv6 and dual stack configurations. Ipv4
-    /// configurations are added ipv6 info making them into dual stack configs.
+    // Overrides the ipv6 address and port of ipv6 and dual stack configurations. Ipv4
+    // configurations are added ipv6 info making them into dual stack configs.
     /// Sets an ipv6 socket. This will override any past ipv6 configuration and will promote the configuration to dual socket if an ipv4 socket is configured.
     pub fn with_ipv6(self, ip: Ipv6Addr, port: u16) -> ListenConfig {
         match self {
