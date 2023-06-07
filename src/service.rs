@@ -1133,7 +1133,8 @@ impl Service {
                     return;
                 }
                 Err(NonContactable { enr }) => {
-                    error!("Query {} has a non contactable enr: {}", *query_id, enr);
+                    // This can happen quite often in ipv6 only nodes
+                    debug!("Query {} has a non contactable enr: {}", *query_id, enr);
                 }
             }
         } else {

@@ -6,7 +6,7 @@ use socket2::{Domain, Protocol, Socket as Socket2, Type};
 use std::{
     collections::HashMap,
     io::Error,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::Duration,
 };
@@ -157,14 +157,39 @@ impl Socket {
 }
 
 impl ListenConfig {
-    /// Creates a [`ListenConfig`] with an ipv4-only socket.
-    pub fn new_ipv4(ip: Ipv4Addr, port: u16) -> ListenConfig {
-        Self::Ipv4 { ip, port }
+    /// If an [`IpAddr`] is known, a ListenConfig can be created based on the version. This will
+    /// not create a dual stack configuration.
+    pub fn from_ip(ip: IpAddr, port: u16) -> ListenConfig {
+        match ip {
+            IpAddr::V4(ip) => ListenConfig::Ipv4 { ip, port },
+            IpAddr::V6(ip) => ListenConfig::Ipv6 { ip, port },
+        }
     }
 
-    /// Creates a [`ListenConfig`] with an ipv6-only socket.
-    pub fn new_ipv6(ip: Ipv6Addr, port: u16) -> ListenConfig {
-        Self::Ipv6 { ip, port }
+    /// Allows optional ipv4 and ipv6 addresses to be entered to create a [`ListenConfig`]. If both
+    /// are specified a dual-stack configuration will result. This will panic if both parameters
+    /// are None.
+    pub fn from_two_sockets(
+        ipv4: Option<SocketAddrV4>,
+        ipv6: Option<SocketAddrV6>,
+    ) -> ListenConfig {
+        match (ipv4, ipv6) {
+            (Some(ipv4), None) => ListenConfig::Ipv4 {
+                ip: *ipv4.ip(),
+                port: ipv4.port(),
+            },
+            (None, Some(ipv6)) => ListenConfig::Ipv6 {
+                ip: *ipv6.ip(),
+                port: ipv6.port(),
+            },
+            (Some(ipv4), Some(ipv6)) => ListenConfig::DualStack {
+                ipv4: *ipv4.ip(),
+                ipv4_port: ipv4.port(),
+                ipv6: *ipv6.ip(),
+                ipv6_port: ipv6.port(),
+            },
+            (None, None) => panic!("At least one IP address must be entered."),
+        }
     }
 
     // Overrides the ipv4 address and port of ipv4 and dual stack configurations. Ipv6
@@ -225,6 +250,21 @@ impl Default for ListenConfig {
         Self::Ipv4 {
             ip: Ipv4Addr::UNSPECIFIED,
             port: 9000,
+        }
+    }
+}
+
+impl From<SocketAddr> for ListenConfig {
+    fn from(socket_addr: SocketAddr) -> Self {
+        match socket_addr {
+            SocketAddr::V4(socket) => ListenConfig::Ipv4 {
+                ip: *socket.ip(),
+                port: socket.port(),
+            },
+            SocketAddr::V6(socket) => ListenConfig::Ipv6 {
+                ip: *socket.ip(),
+                port: socket.port(),
+            },
         }
     }
 }
