@@ -166,7 +166,7 @@ async fn test_updating_connection_on_ping() {
 }
 
 #[tokio::test]
-async fn test_updating_connection_direction_on_new_session() {
+async fn test_connection_direction_on_inject_session_established() {
     init();
 
     let enr_key1 = CombinedKey::generate_secp256k1();
@@ -192,40 +192,29 @@ async fn test_updating_connection_direction_on_new_session() {
     )
     .await;
 
-    // None -> Incoming
-    service.inject_session_established(enr2.clone(), ConnectionUpdate::IncomingIfNotExists);
-    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
-    assert!(status.is_connected());
-    assert_eq!(ConnectionDirection::Incoming, status.direction);
-
-    // Incoming -> Outgoing
-    service.inject_session_established(enr2.clone(), ConnectionUpdate::Outgoing);
-    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
-    assert!(status.is_connected());
-    assert_eq!(ConnectionDirection::Outgoing, status.direction);
-
-    // Outgoing -> Outgoing (no changes as the outgoing connection exists)
-    service.inject_session_established(enr2.clone(), ConnectionUpdate::IncomingIfNotExists);
-    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
-    assert!(status.is_connected());
-    assert_eq!(ConnectionDirection::Outgoing, status.direction);
-
-    // Outgoing -> Incoming
-    service.inject_session_established(enr2.clone(), ConnectionUpdate::Incoming);
-    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
-    assert!(status.is_connected());
-    assert_eq!(ConnectionDirection::Incoming, status.direction);
-
-    // Outgoing (disconnected) -> Incoming
     let key = &kbucket::Key::from(enr2.node_id());
+
+    // Test that the existing connection direction is not updated.
+    // Incoming
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Incoming);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Outgoing);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+
+    // (disconnected) Outgoing
     let result = service.kbuckets.write().update_node_status(
         key,
         ConnectionState::Disconnected,
         Some(ConnectionDirection::Outgoing),
     );
     assert!(matches!(result, UpdateResult::Updated));
-    service.inject_session_established(enr2, ConnectionUpdate::IncomingIfNotExists);
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Incoming);
     let status = service.kbuckets.read().iter_ref().next().unwrap().status;
     assert!(status.is_connected());
-    assert_eq!(ConnectionDirection::Incoming, status.direction);
+    assert_eq!(ConnectionDirection::Outgoing, status.direction);
 }

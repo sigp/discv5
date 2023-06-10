@@ -164,7 +164,7 @@ pub enum ServiceRequest {
     RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
 }
 
-use crate::{discv5::PERMIT_BAN_LIST, handler::ConnectionUpdate};
+use crate::discv5::PERMIT_BAN_LIST;
 
 pub struct Service {
     /// Configuration parameters.
@@ -1368,7 +1368,7 @@ impl Service {
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr, connection_update: ConnectionUpdate) {
+    fn inject_session_established(&mut self, enr: Enr, connection_direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
@@ -1376,21 +1376,17 @@ impl Service {
 
         let node_id = enr.node_id();
 
-        let direction = match connection_update {
-            ConnectionUpdate::Incoming => ConnectionDirection::Incoming,
-            ConnectionUpdate::Outgoing => ConnectionDirection::Outgoing,
-            ConnectionUpdate::IncomingIfNotExists => {
-                let key = kbucket::Key::from(node_id);
-                match self
-                    .kbuckets
-                    .read()
-                    .get_bucket(&key)
-                    .map(|bucket| bucket.get(&key))
-                {
-                    Some(Some(node)) if node.status.is_connected() => node.status.direction,
-                    _ => ConnectionDirection::Incoming,
-                }
-            }
+        // We never update connection direction if a node already exists in the routing table as we
+        // don't want to promote the direction like from incoming to outgoing.
+        let key = kbucket::Key::from(node_id);
+        let direction = match self
+            .kbuckets
+            .read()
+            .get_bucket(&key)
+            .map(|bucket| bucket.get(&key))
+        {
+            Some(Some(node)) => node.status.direction,
+            _ => connection_direction,
         };
 
         debug!(
