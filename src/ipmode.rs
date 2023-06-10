@@ -1,11 +1,10 @@
+//! A set of configuration parameters to tune the discovery protocol.
 use crate::{
     socket::ListenConfig,
     Enr,
     IpMode::{DualStack, Ip4, Ip6},
 };
 use std::net::SocketAddr;
-
-///! A set of configuration parameters to tune the discovery protocol.
 
 /// Sets the socket type to be established and also determines the type of ENRs that we will store
 /// in our routing table.

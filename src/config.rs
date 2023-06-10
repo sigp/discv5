@@ -1,8 +1,8 @@
+//! A set of configuration parameters to tune the discovery protocol.
 use crate::{
     kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, PermitBanList, RateLimiter,
     RateLimiterBuilder,
 };
-///! A set of configuration parameters to tune the discovery protocol.
 use std::time::Duration;
 
 /// Configuration parameters that define the performance of the discovery network.
