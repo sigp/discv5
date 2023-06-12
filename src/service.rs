@@ -1377,7 +1377,7 @@ impl Service {
         let node_id = enr.node_id();
 
         // We never update connection direction if a node already exists in the routing table as we
-        // don't want to promote the direction like from incoming to outgoing.
+        // don't want to promote the direction from incoming to outgoing.
         let key = kbucket::Key::from(node_id);
         let direction = match self
             .kbuckets
