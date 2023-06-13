@@ -682,12 +682,10 @@ impl Handler {
                 // outgoing session is that we originally sent a RANDOM packet (signifying we did
                 // not have a session for a request) and the packet is not a PING (we are not
                 // trying to update an old session that may have expired.
-                let connection_direction = {
-                    match (request_call.initiating_session(), &request_call.body()) {
-                        (true, RequestBody::Ping { .. }) => ConnectionDirection::Incoming,
-                        (true, _) => ConnectionDirection::Outgoing,
-                        (false, _) => ConnectionDirection::Incoming,
-                    }
+                let connection_direction = if request_call.initiating_session() {
+                    ConnectionDirection::Outgoing
+                } else {
+                    ConnectionDirection::Incoming
                 };
 
                 // We already know the ENR. Send the handshake response packet
