@@ -164,3 +164,57 @@ async fn test_updating_connection_on_ping() {
     let node = buckets.iter_ref().next().unwrap();
     assert!(node.status.is_connected())
 }
+
+#[tokio::test]
+async fn test_connection_direction_on_inject_session_established() {
+    init();
+
+    let enr_key1 = CombinedKey::generate_secp256k1();
+    let ip = std::net::Ipv4Addr::LOCALHOST;
+    let enr = EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(10001)
+        .build(&enr_key1)
+        .unwrap();
+
+    let enr_key2 = CombinedKey::generate_secp256k1();
+    let ip2 = std::net::Ipv4Addr::LOCALHOST;
+    let enr2 = EnrBuilder::new("v4")
+        .ip4(ip2)
+        .udp4(10002)
+        .build(&enr_key2)
+        .unwrap();
+
+    let mut service = build_service::<DefaultProtocolId>(
+        Arc::new(RwLock::new(enr)),
+        Arc::new(RwLock::new(enr_key1)),
+        false,
+    )
+    .await;
+
+    let key = &kbucket::Key::from(enr2.node_id());
+
+    // Test that the existing connection direction is not updated.
+    // Incoming
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Incoming);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Outgoing);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+
+    // (disconnected) Outgoing
+    let result = service.kbuckets.write().update_node_status(
+        key,
+        ConnectionState::Disconnected,
+        Some(ConnectionDirection::Outgoing),
+    );
+    assert!(matches!(result, UpdateResult::Updated));
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Incoming);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Outgoing, status.direction);
+}

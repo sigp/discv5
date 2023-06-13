@@ -318,7 +318,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
 
     /// Sends a PING request to a node.
     pub fn send_ping(
-        &mut self,
+        &self,
         enr: Enr,
     ) -> impl Future<Output = Result<Pong, RequestError>> + 'static {
         let (callback_send, callback_recv) = oneshot::channel();
