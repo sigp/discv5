@@ -9,7 +9,10 @@ use crate::{
 };
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use crate::{handler::HandlerOut::RequestFailed, RequestError::SelfRequest};
+use crate::{
+    handler::{session::build_dummy_session, HandlerOut::RequestFailed},
+    RequestError::SelfRequest,
+};
 use active_requests::ActiveRequests;
 use enr::EnrBuilder;
 use std::time::Duration;
@@ -19,6 +22,66 @@ fn init() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
+}
+
+async fn build_handler<P: ProtocolIdentity>() -> Handler {
+    let config = Discv5ConfigBuilder::new(ListenConfig::default()).build();
+    let key = CombinedKey::generate_secp256k1();
+    let enr = EnrBuilder::new("v4")
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(9000)
+        .build(&key)
+        .unwrap();
+    let mut listen_sockets = SmallVec::default();
+    listen_sockets.push((Ipv4Addr::LOCALHOST, 9000).into());
+    let node_id = enr.node_id();
+    let filter_expected_responses = Arc::new(RwLock::new(HashMap::new()));
+
+    let socket = {
+        let socket_config = {
+            let filter_config = FilterConfig {
+                enabled: config.enable_packet_filter,
+                rate_limiter: config.filter_rate_limiter.clone(),
+                max_nodes_per_ip: config.filter_max_nodes_per_ip,
+                max_bans_per_ip: config.filter_max_bans_per_ip,
+            };
+
+            socket::SocketConfig {
+                executor: config.executor.clone().expect("Executor must exist"),
+                filter_config,
+                listen_config: config.listen_config.clone(),
+                local_node_id: node_id,
+                expected_responses: filter_expected_responses.clone(),
+                ban_duration: config.ban_duration,
+            }
+        };
+
+        Socket::new::<P>(socket_config).await.unwrap()
+    };
+    let (_, service_recv) = mpsc::unbounded_channel();
+    let (service_send, _) = mpsc::channel(50);
+    let (_, exit) = oneshot::channel();
+
+    Handler {
+        request_retries: config.request_retries,
+        node_id,
+        enr: Arc::new(RwLock::new(enr)),
+        key: Arc::new(RwLock::new(key)),
+        active_requests: ActiveRequests::new(config.request_timeout),
+        pending_requests: HashMap::new(),
+        filter_expected_responses,
+        sessions: LruTimeCache::new(config.session_timeout, Some(config.session_cache_capacity)),
+        one_time_sessions: LruTimeCache::new(
+            config.one_time_session_timeout,
+            Some(config.one_time_session_cache_capacity),
+        ),
+        active_challenges: HashMapDelay::new(config.request_timeout),
+        service_recv,
+        service_send,
+        listen_sockets,
+        socket,
+        exit,
+    }
 }
 
 macro_rules! arc_rw {
@@ -352,4 +415,41 @@ async fn test_self_request_ipv6() {
         Some(RequestFailed(RequestId(vec![2]), SelfRequest)),
         handler_out
     );
+}
+
+#[tokio::test]
+async fn remove_one_time_session() {
+    let mut handler = build_handler::<DefaultProtocolId>().await;
+
+    let enr = {
+        let key = CombinedKey::generate_secp256k1();
+        EnrBuilder::new("v4")
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(9000)
+            .build(&key)
+            .unwrap()
+    };
+    let node_address = NodeAddress::new("127.0.0.1:9000".parse().unwrap(), enr.node_id());
+    let request_id = RequestId::random();
+    let session = build_dummy_session();
+    handler
+        .one_time_sessions
+        .insert(node_address.clone(), (request_id.clone(), session));
+
+    let other_request_id = RequestId::random();
+    assert!(handler
+        .remove_one_time_session(&node_address, &other_request_id)
+        .is_none());
+    assert_eq!(1, handler.one_time_sessions.len());
+
+    let other_node_address = NodeAddress::new("127.0.0.1:9001".parse().unwrap(), enr.node_id());
+    assert!(handler
+        .remove_one_time_session(&other_node_address, &request_id)
+        .is_none());
+    assert_eq!(1, handler.one_time_sessions.len());
+
+    assert!(handler
+        .remove_one_time_session(&node_address, &request_id)
+        .is_some());
+    assert_eq!(0, handler.one_time_sessions.len());
 }
