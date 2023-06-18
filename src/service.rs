@@ -1396,6 +1396,8 @@ impl Service {
         );
         self.connection_updated(node_id, ConnectionStatus::Connected(enr.clone(), direction));
 
+        // PING immediately if the direction is outgoing. This allows us to receive a PONG without
+        // waiting for the ping_interval, making ENR updates faster.
         if matches!(direction, ConnectionDirection::Outgoing) {
             self.send_ping(enr, None);
         }
