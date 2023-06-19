@@ -844,7 +844,7 @@ impl Handler {
                         };
                         if let Some(request) = maybe_ping_request {
                             debug!(
-                                "Responding PING request using one-time session. node_address: {}",
+                                "Responding to a PING request using a one-time session. node_address: {}",
                                 node_address
                             );
                             self.one_time_sessions
