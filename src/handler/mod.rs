@@ -857,10 +857,11 @@ impl Handler {
                                 .insert(node_address.clone(), (request.id.clone(), session));
                             if let Err(e) = self
                                 .service_send
-                                .send(HandlerOut::Request(node_address, Box::new(request)))
+                                .send(HandlerOut::Request(node_address.clone(), Box::new(request)))
                                 .await
                             {
-                                warn!("Failed to report request to application {}", e)
+                                warn!("Failed to report request to application {}", e);
+                                self.one_time_sessions.remove(&node_address);
                             }
                         }
                     }
