@@ -73,6 +73,12 @@ use session::Session;
 // seconds).
 const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
+// The one-time session timeout.
+const ONE_TIME_SESSION_TIMEOUT: u64 = 30;
+
+// The maximum number of established one-time sessions to maintain.
+const ONE_TIME_SESSION_CACHE_CAPACITY: usize = 100;
+
 /// Messages sent from the application layer to `Handler`.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
@@ -284,8 +290,8 @@ impl Handler {
                         Some(config.session_cache_capacity),
                     ),
                     one_time_sessions: LruTimeCache::new(
-                        config.one_time_session_timeout,
-                        Some(config.one_time_session_cache_capacity),
+                        Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
+                        Some(ONE_TIME_SESSION_CACHE_CAPACITY),
                     ),
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
