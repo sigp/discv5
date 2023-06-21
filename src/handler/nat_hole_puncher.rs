@@ -299,7 +299,7 @@ impl Stream for NatHolePunchUtils {
 
 /// Helper function to test if the local node is behind NAT based on the node's observed reachable
 /// socket.
-pub fn is_behind_nat(observed_ip: IpAddr, unused_port_range: &Option<RangeInclusive<u16>>) -> bool {
+fn is_behind_nat(observed_ip: IpAddr, unused_port_range: &Option<RangeInclusive<u16>>) -> bool {
     // If the node cannot bind to the observed address at any of some random ports, we
     // conclude it is behind NAT.
     let mut rng = rand::thread_rng();
