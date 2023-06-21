@@ -274,6 +274,7 @@ impl<P: ProtocolIdentity> Handler<P> {
             &enr.read(),
             config.ip_mode,
             config.unused_port_range.clone(),
+            config.ban_duration,
         );
 
         let sessions = Sessions::new(
@@ -1042,7 +1043,17 @@ impl<P: ProtocolIdentity> Handler<P> {
             }
             Message::Notification(notif) => match notif {
                 Notification::RelayInit(initr, tgt, timed_out_nonce) => {
-                    if let Err(e) =
+                    let initr_node_id = initr.node_id();
+                    if initr_node_id != node_address.node_id {
+                        warn!("peer {node_address} tried to initiate hole punch attempt for another node {initr_node_id}, banning peer {node_address}");
+                        self.fail_session(&node_address, RequestError::MaliciousRelayInit, true)
+                            .await;
+                        let ban_timeout = self
+                            .nat_hole_puncher
+                            .ban_duration
+                            .map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                    } else if let Err(e) =
                         nat_hole_puncher::on_relay_init(self, initr, tgt, timed_out_nonce).await
                     {
                         warn!("failed handling notification to relay for {node_address}, {e}");

@@ -127,6 +127,9 @@ pub enum RequestError {
     InvalidMultiaddr(&'static str),
     /// Failure generating random numbers during request.
     EntropyFailure(&'static str),
+    /// Malicious peer tried to initiate nat hole punching for another peer. todo(emhane): this is
+    /// notification error.
+    MaliciousRelayInit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

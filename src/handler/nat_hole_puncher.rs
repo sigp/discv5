@@ -215,6 +215,8 @@ pub(crate) struct NatHolePunchUtils {
     pub hole_punch_tracker: HashSetDelay<SocketAddr>,
     /// Ports to trie to bind to check if this node is behind NAT.
     pub unused_port_range: Option<RangeInclusive<u16>>,
+    /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
+    pub ban_duration: Option<Duration>,
 }
 
 impl NatHolePunchUtils {
@@ -223,6 +225,7 @@ impl NatHolePunchUtils {
         local_enr: &Enr,
         ip_mode: IpMode,
         unused_port_range: Option<RangeInclusive<u16>>,
+        ban_duration: Option<Duration>,
     ) -> Self {
         let mut nat_hole_puncher = NatHolePunchUtils {
             ip_mode,
@@ -230,6 +233,7 @@ impl NatHolePunchUtils {
             new_peer_latest_relay: Default::default(),
             hole_punch_tracker: HashSetDelay::new(Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME)),
             unused_port_range,
+            ban_duration,
         };
         // Optimistically only test one advertised socket, ipv4 has precedence. If it is
         // reachable, assumption is made that also the other ip version socket is reachable.
