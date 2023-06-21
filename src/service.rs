@@ -1369,13 +1369,27 @@ impl Service {
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr, direction: ConnectionDirection) {
+    fn inject_session_established(&mut self, enr: Enr, connection_direction: ConnectionDirection) {
         // Ignore sessions with non-contactable ENRs
         if self.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
         }
 
         let node_id = enr.node_id();
+
+        // We never update connection direction if a node already exists in the routing table as we
+        // don't want to promote the direction from incoming to outgoing.
+        let key = kbucket::Key::from(node_id);
+        let direction = match self
+            .kbuckets
+            .read()
+            .get_bucket(&key)
+            .map(|bucket| bucket.get(&key))
+        {
+            Some(Some(node)) => node.status.direction,
+            _ => connection_direction,
+        };
+
         debug!(
             "Session established with Node: {}, direction: {}",
             node_id, direction
