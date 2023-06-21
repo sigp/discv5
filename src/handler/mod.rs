@@ -1040,19 +1040,33 @@ impl<P: ProtocolIdentity> Handler<P> {
                 // Handle standard responses
                 self.handle_response(node_address, response).await;
             }
-            Message::Notification(notif) => {
-                let res = match notif {
-                    Notification::RelayInit(initr, tgt, timed_out_nonce) => {
+            Message::Notification(notif) => match notif {
+                Notification::RelayInit(initr, tgt, timed_out_nonce) => {
+                    if let Err(e) =
                         nat_hole_puncher::on_relay_init(self, initr, tgt, timed_out_nonce).await
+                    {
+                        warn!("failed handling notification to relay for {node_address}, {e}");
                     }
-                    Notification::RelayMsg(initr, timed_out_nonce) => {
-                        nat_hole_puncher::on_relay_msg(self, initr, timed_out_nonce).await
-                    }
-                };
-                if let Err(e) = res {
-                    warn!("failed handling notification from {node_address}, {e}");
                 }
-            }
+                Notification::RelayMsg(initr, timed_out_nonce) => {
+                    match self.nat_hole_puncher.is_behind_nat {
+                        Some(false) => {
+                            // initr may not be malicious and initiated a hole punch attempt when
+                            // a request to this node timed out for another reason
+                            debug!("peer {node_address} relayed a hole punch notification but we are not behind nat");
+                        }
+                        _ => {
+                            if let Err(e) =
+                                nat_hole_puncher::on_relay_msg(self, initr, timed_out_nonce).await
+                            {
+                                warn!(
+                                    "failed handling notification relayed from {node_address}, {e}"
+                                );
+                            }
+                        }
+                    }
+                }
+            },
             _ => {
                 warn!(
                     "Peer sent message type that shouldn't be sent in packet type Message, {}",
