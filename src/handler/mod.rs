@@ -73,6 +73,12 @@ use session::Session;
 // seconds).
 const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
+// The one-time session timeout.
+const ONE_TIME_SESSION_TIMEOUT: u64 = 30;
+
+// The maximum number of established one-time sessions to maintain.
+const ONE_TIME_SESSION_CACHE_CAPACITY: usize = 100;
+
 /// Messages sent from the application layer to `Handler`.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
@@ -191,6 +197,8 @@ pub struct Handler {
     active_challenges: HashMapDelay<NodeAddress, Challenge>,
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
+    /// Established sessions with peers for a specific request, stored just one per node.
+    one_time_sessions: LruTimeCache<NodeAddress, (RequestId, Session)>,
     /// The channel to receive messages from the application layer.
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
@@ -280,6 +288,10 @@ impl Handler {
                     sessions: LruTimeCache::new(
                         config.session_timeout,
                         Some(config.session_cache_capacity),
+                    ),
+                    one_time_sessions: LruTimeCache::new(
+                        Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
+                        Some(ONE_TIME_SESSION_CACHE_CAPACITY),
                     ),
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
@@ -516,23 +528,23 @@ impl Handler {
         response: Response,
     ) {
         // Check for an established session
-        if let Some(session) = self.sessions.get_mut(&node_address) {
-            // Encrypt the message and send
-            let packet = match session.encrypt_message::<P>(self.node_id, &response.encode()) {
-                Ok(packet) => packet,
-                Err(e) => {
-                    warn!("Could not encrypt response: {:?}", e);
-                    return;
-                }
-            };
-            self.send(node_address, packet).await;
+        let packet = if let Some(session) = self.sessions.get_mut(&node_address) {
+            session.encrypt_message::<P>(self.node_id, &response.encode())
+        } else if let Some(mut session) = self.remove_one_time_session(&node_address, &response.id)
+        {
+            session.encrypt_message::<P>(self.node_id, &response.encode())
         } else {
             // Either the session is being established or has expired. We simply drop the
             // response in this case.
-            warn!(
+            return warn!(
                 "Session is not established. Dropping response {} for node: {}",
                 response, node_address.node_id
             );
+        };
+
+        match packet {
+            Ok(packet) => self.send(node_address, packet).await,
+            Err(e) => warn!("Could not encrypt response: {:?}", e),
         }
     }
 
@@ -780,7 +792,7 @@ impl Handler {
                 ephem_pubkey,
                 enr_record,
             ) {
-                Ok((session, enr)) => {
+                Ok((mut session, enr)) => {
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
                     // Verify the ENR is valid
                     if self.verify_enr(&enr, &node_address) {
@@ -820,6 +832,38 @@ impl Handler {
                         );
                         self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                             .await;
+
+                        // Respond to PING request even if the ENR or NodeAddress don't match
+                        // so that the source node can notice its external IP address has been changed.
+                        let maybe_ping_request = match session.decrypt_message(
+                            message_nonce,
+                            message,
+                            authenticated_data,
+                        ) {
+                            Ok(m) => match Message::decode(&m) {
+                                Ok(Message::Request(request)) if request.msg_type() == 1 => {
+                                    Some(request)
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        if let Some(request) = maybe_ping_request {
+                            debug!(
+                                "Responding to a PING request using a one-time session. node_address: {}",
+                                node_address
+                            );
+                            self.one_time_sessions
+                                .insert(node_address.clone(), (request.id.clone(), session));
+                            if let Err(e) = self
+                                .service_send
+                                .send(HandlerOut::Request(node_address.clone(), Box::new(request)))
+                                .await
+                            {
+                                warn!("Failed to report request to application {}", e);
+                                self.one_time_sessions.remove(&node_address);
+                            }
+                        }
                     }
                 }
                 Err(Discv5Error::InvalidChallengeSignature(challenge)) => {
@@ -1116,6 +1160,24 @@ impl Handler {
             METRICS
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
+        }
+    }
+
+    /// Remove one-time session by the given NodeAddress and RequestId if exists.
+    fn remove_one_time_session(
+        &mut self,
+        node_address: &NodeAddress,
+        request_id: &RequestId,
+    ) -> Option<Session> {
+        match self.one_time_sessions.peek(node_address) {
+            Some((id, _)) if id == request_id => {
+                let (_, session) = self
+                    .one_time_sessions
+                    .remove(node_address)
+                    .expect("one-time session must exist");
+                Some(session)
+            }
+            _ => None,
         }
     }
 
