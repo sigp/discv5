@@ -1401,7 +1401,7 @@ impl Service {
             "Session established with Node: {}, direction: {}",
             node_id, direction
         );
-        self.connection_updated(node_id, ConnectionStatus::Connected(enr.clone(), direction));
+        self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
