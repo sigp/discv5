@@ -1269,6 +1269,13 @@ impl Service {
                     state: ConnectionState::Connected,
                     direction,
                 };
+
+                if direction == ConnectionDirection::Outgoing {
+                    // PING immediately if the direction is outgoing. This allows us to receive a PONG without
+                    // waiting for the ping_interval, making ENR updates faster.
+                    self.send_ping(enr.clone(), None);
+                }
+
                 match self.kbuckets.write().insert_or_update(&key, enr, status) {
                     InsertResult::Inserted => {
                         // We added this peer to the table
@@ -1395,12 +1402,6 @@ impl Service {
             node_id, direction
         );
         self.connection_updated(node_id, ConnectionStatus::Connected(enr.clone(), direction));
-
-        // PING immediately if the direction is outgoing. This allows us to receive a PONG without
-        // waiting for the ping_interval, making ENR updates faster.
-        if matches!(direction, ConnectionDirection::Outgoing) {
-            self.send_ping(enr, None);
-        }
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
