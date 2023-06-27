@@ -1270,7 +1270,11 @@ impl Service {
                     direction,
                 };
 
-                match self.kbuckets.write().insert_or_update(&key, enr.clone(), status) {
+                let insert_result =
+                    self.kbuckets
+                        .write()
+                        .insert_or_update(&key, enr.clone(), status);
+                match insert_result {
                     InsertResult::Inserted => {
                         // We added this peer to the table
                         debug!("New connected node added to routing table: {}", node_id);
