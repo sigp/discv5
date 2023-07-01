@@ -106,7 +106,7 @@ impl NodeContact {
         let peer_id = p2p.ok_or("The p2p protocol must be specified in the multiaddr")?;
 
         let public_key: CombinedPublicKey =
-            match PublicKey::from_protobuf_encoding(&peer_id.to_bytes()[2..])
+            match PublicKey::try_decode_protobuf(&peer_id.to_bytes()[2..])
                 .map_err(|_| "Invalid public key")?
             {
                 PublicKey::Secp256k1(pk) => {
