@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 #[cfg(feature = "libp2p")]
 use libp2p_core::{multiaddr::Protocol, Multiaddr};
 #[cfg(feature = "libp2p")]
-use libp2p_identity::PublicKey;
+use libp2p_identity::{KeyType, PublicKey};
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
@@ -105,22 +105,25 @@ impl NodeContact {
         let ip_addr = ip_addr.ok_or("An IP address must be specified in the multiaddr")?;
         let peer_id = p2p.ok_or("The p2p protocol must be specified in the multiaddr")?;
 
-        let public_key: CombinedPublicKey =
-            match PublicKey::try_decode_protobuf(&peer_id.to_bytes()[2..])
-                .map_err(|_| "Invalid public key")?
-            {
-                PublicKey::Secp256k1(pk) => {
-                    enr::k256::ecdsa::VerifyingKey::from_sec1_bytes(&pk.encode_uncompressed())
-                        .expect("Libp2p key conversion, always valid")
-                        .into()
-                }
-                PublicKey::Ed25519(pk) => {
-                    enr::ed25519_dalek::VerifyingKey::from_bytes(&pk.encode())
-                        .expect("Libp2p key conversion, always valid")
-                        .into()
-                }
+        let public_key: CombinedPublicKey = {
+            let pk = PublicKey::try_decode_protobuf(&peer_id.to_bytes()[2..])
+                .map_err(|_| "Invalid public key")?;
+            match pk.key_type() {
+                KeyType::Secp256k1 => enr::k256::ecdsa::VerifyingKey::from_sec1_bytes(
+                    &pk.try_into_secp256k1()
+                        .expect("Must be secp256k1")
+                        .to_bytes_uncompressed(),
+                )
+                .expect("Libp2p key conversion, always valid")
+                .into(),
+                KeyType::Ed25519 => enr::ed25519_dalek::VerifyingKey::from_bytes(
+                    &pk.try_into_ed25519().expect("Must be ed25519").to_bytes(),
+                )
+                .expect("Libp2p key conversion, always valid")
+                .into(),
                 _ => return Err("The key type is not supported"),
-            };
+            }
+        };
 
         Ok(NodeContact {
             public_key,

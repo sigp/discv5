@@ -15,8 +15,7 @@ exclude = [".gitignore", ".github/*"]
 enr = { version = "0.8.1", features = ["k256", "ed25519"] }
 tokio = { version = "1.15.0", features = ["net", "sync", "macros", "rt"] }
 libp2p-core = { version = "0.40.0", optional = true }
-libp2p-identity = { version = "0.2.1", optional = true }
-#multihash-codetable = { version = "0.1.0", optional = true }
+libp2p-identity = { version = "0.2.1", features = ["ed25519", "secp256k1"], optional = true }
 zeroize = { version = "1.4.3", features = ["zeroize_derive"] }
 futures = "0.3.19"
 uint = { version = "0.9.1", default-features = false }
