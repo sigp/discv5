@@ -4,7 +4,9 @@ use enr::{CombinedPublicKey, NodeId};
 use std::net::SocketAddr;
 
 #[cfg(feature = "libp2p")]
-use libp2p_core::{identity::PublicKey, multiaddr::Protocol, multihash, Multiaddr};
+use libp2p_core::{multiaddr::Protocol, multihash, Multiaddr};
+#[cfg(feature = "libp2p")]
+use libp2p_identity::PublicKey;
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
