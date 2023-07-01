@@ -4,7 +4,7 @@ use enr::{CombinedPublicKey, NodeId};
 use std::net::SocketAddr;
 
 #[cfg(feature = "libp2p")]
-use libp2p_core::{multiaddr::Protocol, multihash, Multiaddr};
+use libp2p_core::{multiaddr::Protocol, Multiaddr};
 #[cfg(feature = "libp2p")]
 use libp2p_identity::PublicKey;
 
@@ -96,22 +96,17 @@ impl NodeContact {
                 Protocol::Udp(port) => udp_port = Some(port),
                 Protocol::Ip4(addr) => ip_addr = Some(addr.into()),
                 Protocol::Ip6(addr) => ip_addr = Some(addr.into()),
-                Protocol::P2p(multihash) => p2p = Some(multihash),
+                Protocol::P2p(peer_id) => p2p = Some(peer_id),
                 _ => {}
             }
         }
 
         let udp_port = udp_port.ok_or("A UDP port must be specified in the multiaddr")?;
         let ip_addr = ip_addr.ok_or("An IP address must be specified in the multiaddr")?;
-        let multihash = p2p.ok_or("The p2p protocol must be specified in the multiaddr")?;
-
-        // verify the correct key type
-        if multihash.code() != u64::from(multihash::Code::Identity) {
-            return Err("The key type is unsupported");
-        }
+        let peer_id = p2p.ok_or("The p2p protocol must be specified in the multiaddr")?;
 
         let public_key: CombinedPublicKey =
-            match PublicKey::from_protobuf_encoding(&multihash.to_bytes()[2..])
+            match PublicKey::from_protobuf_encoding(&peer_id.to_bytes()[2..])
                 .map_err(|_| "Invalid public key")?
             {
                 PublicKey::Secp256k1(pk) => {
