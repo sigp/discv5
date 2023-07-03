@@ -70,7 +70,6 @@ async fn build_handler<P: ProtocolIdentity>(
         enr: Arc::new(RwLock::new(enr)),
         key: Arc::new(RwLock::new(key)),
         active_requests: ActiveRequests::new(config.request_timeout),
-        pending_requests: HashMap::new(),
         filter_expected_responses,
         sessions: LruTimeCache::new(config.session_timeout, Some(config.session_cache_capacity)),
         one_time_sessions: LruTimeCache::new(
