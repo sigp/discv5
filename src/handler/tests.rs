@@ -330,39 +330,145 @@ async fn multiple_messages() {
     }
 }
 
+fn create_node() -> Enr {
+    let key = CombinedKey::generate_secp256k1();
+    let ip = "127.0.0.1".parse().unwrap();
+    let port = 8080 + rand::random::<u16>() % 1000;
+    EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(port)
+        .build(&key)
+        .unwrap()
+}
+
+fn create_req_call(node: &Enr) -> (RequestCall, NodeAddress) {
+    let node_contact: NodeContact = node.clone().into();
+    let packet = Packet::new_random(&node.node_id()).unwrap();
+    let id = HandlerReqId::Internal(RequestId::random());
+    let request = RequestBody::Ping { enr_seq: 1 };
+    let initiating_session = true;
+    let node_addr = node_contact.node_address();
+    let req = RequestCall::new(node_contact, packet, id, request, initiating_session);
+    (req, node_addr)
+}
+
 #[tokio::test]
 async fn test_active_requests_insert() {
     const EXPIRY: Duration = Duration::from_secs(5);
     let mut active_requests = ActiveRequests::new(EXPIRY);
 
-    // Create the test values needed
-    let port = 5000;
-    let ip = "127.0.0.1".parse().unwrap();
-
-    let key = CombinedKey::generate_secp256k1();
-
-    let enr = EnrBuilder::new("v4")
-        .ip4(ip)
-        .udp4(port)
-        .build(&key)
-        .unwrap();
-    let node_id = enr.node_id();
-
-    let contact: NodeContact = enr.into();
-    let node_address = contact.node_address();
-
-    let packet = Packet::new_random(&node_id).unwrap();
-    let id = HandlerReqId::Internal(RequestId::random());
-    let request = RequestBody::Ping { enr_seq: 1 };
-    let initiating_session = true;
-    let request_call = RequestCall::new(contact, packet, id, request, initiating_session);
+    let node_1 = create_node();
+    let node_2 = create_node();
+    let (req_1, req_1_addr) = create_req_call(&node_1);
+    let (req_2, req_2_addr) = create_req_call(&node_2);
+    let (req_3, req_3_addr) = create_req_call(&node_2);
 
     // insert the pair and verify the mapping remains in sync
-    let nonce = *request_call.packet().message_nonce();
-    active_requests.insert(node_address, request_call);
+    active_requests.insert(req_1_addr, req_1);
     active_requests.check_invariant();
-    active_requests.remove_by_nonce(&nonce);
+    active_requests.insert(req_2_addr, req_2);
     active_requests.check_invariant();
+    active_requests.insert(req_3_addr, req_3);
+    active_requests.check_invariant();
+}
+
+#[tokio::test]
+async fn test_active_requests_remove_requests() {
+    const EXPIRY: Duration = Duration::from_secs(5);
+    let mut active_requests = ActiveRequests::new(EXPIRY);
+
+    let node_1 = create_node();
+    let node_2 = create_node();
+    let (req_1, req_1_addr) = create_req_call(&node_1);
+    let (req_2, req_2_addr) = create_req_call(&node_2);
+    let (req_3, req_3_addr) = create_req_call(&node_2);
+    active_requests.insert(req_1_addr.clone(), req_1);
+    active_requests.insert(req_2_addr.clone(), req_2);
+    active_requests.insert(req_3_addr.clone(), req_3);
+    active_requests.check_invariant();
+    let reqs = active_requests.remove_requests(&req_1_addr).unwrap();
+    assert_eq!(reqs.len(), 1);
+    active_requests.check_invariant();
+    let reqs = active_requests.remove_requests(&req_2_addr).unwrap();
+    assert_eq!(reqs.len(), 2);
+    active_requests.check_invariant();
+    assert!(active_requests.remove_requests(&req_3_addr).is_err());
+}
+
+#[tokio::test]
+async fn test_active_requests_remove_request() {
+    const EXPIRY: Duration = Duration::from_secs(5);
+    let mut active_requests = ActiveRequests::new(EXPIRY);
+
+    let node_1 = create_node();
+    let node_2 = create_node();
+    let (req_1, req_1_addr) = create_req_call(&node_1);
+    let (req_2, req_2_addr) = create_req_call(&node_2);
+    let (req_3, req_3_addr) = create_req_call(&node_2);
+    let req_1_id = req_1.id().into();
+    let req_2_id = req_2.id().into();
+    let req_3_id = req_3.id().into();
+
+    active_requests.insert(req_1_addr.clone(), req_1);
+    active_requests.insert(req_2_addr.clone(), req_2);
+    active_requests.insert(req_3_addr.clone(), req_3);
+    active_requests.check_invariant();
+    let req_id: RequestId = active_requests
+        .remove_request(&req_1_addr, &req_1_id)
+        .unwrap()
+        .id()
+        .into();
+    assert_eq!(req_id, req_1_id);
+    active_requests.check_invariant();
+    let req_id: RequestId = active_requests
+        .remove_request(&req_2_addr, &req_2_id)
+        .unwrap()
+        .id()
+        .into();
+    assert_eq!(req_id, req_2_id);
+    active_requests.check_invariant();
+    let req_id: RequestId = active_requests
+        .remove_request(&req_3_addr, &req_3_id)
+        .unwrap()
+        .id()
+        .into();
+    assert_eq!(req_id, req_3_id);
+    active_requests.check_invariant();
+    assert!(active_requests
+        .remove_request(&req_3_addr, &req_3_id)
+        .is_err());
+}
+
+#[tokio::test]
+async fn test_active_requests_remove_by_nonce() {
+    const EXPIRY: Duration = Duration::from_secs(5);
+    let mut active_requests = ActiveRequests::new(EXPIRY);
+
+    let node_1 = create_node();
+    let node_2 = create_node();
+    let (req_1, req_1_addr) = create_req_call(&node_1);
+    let (req_2, req_2_addr) = create_req_call(&node_2);
+    let (req_3, req_3_addr) = create_req_call(&node_2);
+    let req_1_nonce = req_1.packet().message_nonce().clone();
+    let req_2_nonce = req_2.packet().message_nonce().clone();
+    let req_3_nonce = req_3.packet().message_nonce().clone();
+
+    active_requests.insert(req_1_addr.clone(), req_1);
+    active_requests.insert(req_2_addr.clone(), req_2);
+    active_requests.insert(req_3_addr.clone(), req_3);
+    active_requests.check_invariant();
+
+    let req = active_requests.remove_by_nonce(&req_1_nonce).unwrap();
+    assert_eq!(req.0, req_1_addr);
+    active_requests.check_invariant();
+    let req = active_requests.remove_by_nonce(&req_2_nonce).unwrap();
+    assert_eq!(req.0, req_2_addr);
+    active_requests.check_invariant();
+    let req = active_requests.remove_by_nonce(&req_3_nonce).unwrap();
+    assert_eq!(req.0, req_3_addr);
+    active_requests.check_invariant();
+    let random_nonce = rand::random();
+    assert!(active_requests.remove_by_nonce(&random_nonce).is_err());
 }
 
 #[tokio::test]

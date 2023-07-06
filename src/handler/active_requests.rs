@@ -1,5 +1,23 @@
 use super::*;
 use delay_map::HashMapDelay;
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActiveRequestsError {
+    InvalidState,
+}
+
+impl fmt::Display for ActiveRequestsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ActiveRequestsError::InvalidState => {
+                write!(f, "Invalid state: active requests mappings are not in sync")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ActiveRequestsError {}
 
 pub(super) struct ActiveRequests {
     /// A list of raw messages we are awaiting a response from the remote.
@@ -34,83 +52,78 @@ impl ActiveRequests {
     }
 
     // Remove a single request identified by its nonce.
-    // Returns None if the nonce is not found.
-    pub fn remove_by_nonce(&mut self, nonce: &MessageNonce) -> Option<(NodeAddress, RequestCall)> {
-        let node_address = match self.active_requests_nonce_mapping.remove(nonce) {
-            Some(node_address) => node_address,
-            None => return None,
-        };
-        let mut requests = match self.active_requests_mapping.remove(&node_address) {
-            Some(requests) => match requests.len() {
-                0 => return None,
-                _ => requests,
-            },
-            None => return None,
-        };
+    pub fn remove_by_nonce(
+        &mut self,
+        nonce: &MessageNonce,
+    ) -> Result<(NodeAddress, RequestCall), ActiveRequestsError> {
+        let node_address = self
+            .active_requests_nonce_mapping
+            .remove(nonce)
+            .ok_or_else(|| ActiveRequestsError::InvalidState)?;
+        let mut requests = self
+            .active_requests_mapping
+            .remove(&node_address)
+            .ok_or_else(|| ActiveRequestsError::InvalidState)?;
         let index = match requests
             .iter()
             .position(|req| req.packet().message_nonce() == nonce)
         {
             Some(index) => index,
             None => {
-                return None;
+                // if nonce req is missing, reinsert remaining requests into mapping
+                self.active_requests_mapping
+                    .insert(node_address.clone(), requests);
+                return Err(ActiveRequestsError::InvalidState);
             }
         };
         let req = requests.remove(index);
         self.active_requests_mapping
             .insert(node_address.clone(), requests);
-        Some((node_address, req))
+        Ok((node_address, req))
     }
 
     // Remove all requests associated with a node.
-    // Returns None if the node is not found.
-    pub fn remove_requests(&mut self, node_address: &NodeAddress) -> Option<Vec<RequestCall>> {
+    pub fn remove_requests(
+        &mut self,
+        node_address: &NodeAddress,
+    ) -> Result<Vec<RequestCall>, ActiveRequestsError> {
         let requests = self
             .active_requests_mapping
             .remove(&node_address)
-            .unwrap_or_default();
+            .ok_or_else(|| ActiveRequestsError::InvalidState)?;
         for req in &requests {
             self.active_requests_nonce_mapping
                 .remove(req.packet().message_nonce());
         }
-        Some(requests)
+        Ok(requests)
     }
 
     // Remove a single request identified by its id.
-    // Returns None if the node is not found.
     pub fn remove_request(
         &mut self,
         node_address: &NodeAddress,
         id: &RequestId,
-    ) -> Option<RequestCall> {
-        let mut reqs = match self.active_requests_mapping.remove(node_address) {
-            Some(reqs) => reqs,
-            None => return None,
-        };
-        match reqs.len() {
-            0 => None,
-            _ => {
-                let index = reqs.iter().position(|req| {
-                    let req_id = match req.id() {
-                        HandlerReqId::Internal(id) | HandlerReqId::External(id) => id,
-                    };
-                    req_id == id
-                });
-                let index = match index {
-                    Some(index) => index,
-                    None => return None,
-                };
-                let req = reqs.remove(index);
-                // Remove the associated nonce mapping.
-                match self
-                    .active_requests_nonce_mapping
-                    .remove(req.packet().message_nonce())
-                {
-                    Some(_) => Some(req),
-                    None => None,
-                }
-            }
-        }
+    ) -> Result<RequestCall, ActiveRequestsError> {
+        let reqs = self
+            .active_requests_mapping
+            .get(node_address)
+            .ok_or_else(|| ActiveRequestsError::InvalidState)?;
+        let index = reqs
+            .iter()
+            .position(|req| {
+                let req_id: RequestId = req.id().into();
+                &req_id == id
+            })
+            .ok_or_else(|| ActiveRequestsError::InvalidState)?;
+        let nonce = reqs
+            .get(index)
+            .ok_or_else(|| ActiveRequestsError::InvalidState)?
+            .packet()
+            .message_nonce()
+            .clone();
+        // Remove the associated nonce mapping.
+        let (_, request_call) = self.remove_by_nonce(&nonce)?;
+        Ok(request_call)
     }
 
     /// Checks that `active_requests_mapping` and `active_requests_nonce_mapping` are in sync.
@@ -127,8 +140,8 @@ impl ActiveRequests {
             }
         }
 
-        for (address, request) in self.active_requests_mapping.iter() {
-            for req in request {
+        for (address, requests) in self.active_requests_mapping.iter() {
+            for req in requests {
                 let nonce = req.packet().message_nonce();
                 if !self.active_requests_nonce_mapping.contains_key(nonce) {
                     panic!("Address {} maps to request with nonce {:?}, which does not exist in `active_requests_nonce_mapping`", address, nonce);
@@ -141,13 +154,16 @@ impl ActiveRequests {
 impl Stream for ActiveRequests {
     type Item = Result<(NodeAddress, RequestCall), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // should we move timeout management to active_requests_nonce_mapping?
         match self.active_requests_mapping.poll_next_unpin(cx) {
             Poll::Ready(Some(Ok((node_address, mut request_calls)))) => {
                 let request_call = request_calls.remove(0);
+                // reinsert remaining requests into mapping
+                self.active_requests_mapping
+                    .insert(node_address.clone(), request_calls);
+                // remove the nonce mapping
                 self.active_requests_nonce_mapping
                     .remove(request_call.packet().message_nonce())
-                    .expect("fuck");
+                    .expect("Invariant violated: nonce mapping does not exist for request");
                 Poll::Ready(Some(Ok((node_address, request_call))))
             }
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
