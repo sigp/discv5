@@ -285,7 +285,7 @@ impl PacketKind {
                 })
             }
             3 => {
-                // Decoding a notification packet
+                // Decoding a SessionMessage packet
                 // This should only contain a 32 byte NodeId.
                 if auth_data.len() != 32 {
                     return Err(PacketError::InvalidAuthDataSize);
