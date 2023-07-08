@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn test_enocde_decode_relay_init() {
+    fn test_encode_decode_relay_init() {
         // generate a new enr key for the initiator
         let enr_key = CombinedKey::generate_secp256k1();
         // construct the initiator's ENR
