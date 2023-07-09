@@ -14,7 +14,8 @@ exclude = [".gitignore", ".github/*"]
 [dependencies]
 enr = { version = "0.8.1", features = ["k256", "ed25519"] }
 tokio = { version = "1.15.0", features = ["net", "sync", "macros", "rt"] }
-libp2p-core = { version = "0.36.0", optional = true }
+libp2p-core = { version = "0.40.0", optional = true }
+libp2p-identity = { version = "0.2.1", features = ["ed25519", "secp256k1"], optional = true }
 zeroize = { version = "1.4.3", features = ["zeroize_derive"] }
 futures = "0.3.19"
 uint = { version = "0.9.1", default-features = false }
@@ -48,5 +49,5 @@ clap = { version = "3.1", features = ["derive"] }
 if-addrs = "0.10.1"
 
 [features]
-libp2p = ["libp2p-core"]
+libp2p = ["libp2p-core", "libp2p-identity"]
 serde = ["enr/serde"]

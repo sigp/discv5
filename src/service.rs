@@ -1269,11 +1269,23 @@ impl Service {
                     state: ConnectionState::Connected,
                     direction,
                 };
-                match self.kbuckets.write().insert_or_update(&key, enr, status) {
+
+                let insert_result =
+                    self.kbuckets
+                        .write()
+                        .insert_or_update(&key, enr.clone(), status);
+                match insert_result {
                     InsertResult::Inserted => {
                         // We added this peer to the table
                         debug!("New connected node added to routing table: {}", node_id);
                         self.peers_to_ping.insert(node_id);
+
+                        // PING immediately if the direction is outgoing. This allows us to receive
+                        // a PONG without waiting for the ping_interval, making ENR updates faster.
+                        if direction == ConnectionDirection::Outgoing {
+                            self.send_ping(enr, None);
+                        }
+
                         let event = Discv5Event::NodeInserted {
                             node_id,
                             replaced: None,
