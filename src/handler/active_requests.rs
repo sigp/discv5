@@ -21,19 +21,19 @@ impl std::error::Error for ActiveRequestsError {}
 
 pub(super) struct ActiveRequests {
     /// A list of raw messages we are awaiting a response from the remote.
-    active_requests_mapping: HashMapDelay<NodeAddress, Vec<RequestCall>>,
+    active_requests_mapping: HashMap<NodeAddress, Vec<RequestCall>>,
     // WHOAREYOU messages do not include the source node id. We therefore maintain another
     // mapping of active_requests via message_nonce. This allows us to match WHOAREYOU
     // requests with active requests sent.
-    /// A mapping of all pending active raw requests message nonces to their NodeAddress.
-    active_requests_nonce_mapping: HashMap<MessageNonce, NodeAddress>,
+    /// A mapping of all active raw requests message nonces to their NodeAddress.
+    active_requests_nonce_mapping: HashMapDelay<MessageNonce, NodeAddress>,
 }
 
 impl ActiveRequests {
     pub fn new(request_timeout: Duration) -> Self {
         ActiveRequests {
-            active_requests_mapping: HashMapDelay::new(request_timeout),
-            active_requests_nonce_mapping: HashMap::new(),
+            active_requests_mapping: HashMap::new(),
+            active_requests_nonce_mapping: HashMapDelay::new(request_timeout),
         }
     }
 
@@ -71,14 +71,18 @@ impl ActiveRequests {
             Some(index) => index,
             None => {
                 // if nonce req is missing, reinsert remaining requests into mapping
-                self.active_requests_mapping
-                    .insert(node_address.clone(), requests);
+                if !requests.is_empty() {
+                    self.active_requests_mapping
+                        .insert(node_address.clone(), requests);
+                }
                 return Err(ActiveRequestsError::InvalidState);
             }
         };
         let req = requests.remove(index);
-        self.active_requests_mapping
-            .insert(node_address.clone(), requests);
+        if !requests.is_empty() {
+            self.active_requests_mapping
+                .insert(node_address.clone(), requests);
+        }
         Ok((node_address, req))
     }
 
@@ -154,17 +158,25 @@ impl ActiveRequests {
 impl Stream for ActiveRequests {
     type Item = Result<(NodeAddress, RequestCall), String>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.active_requests_mapping.poll_next_unpin(cx) {
-            Poll::Ready(Some(Ok((node_address, mut request_calls)))) => {
-                let request_call = request_calls.remove(0);
-                // reinsert remaining requests into mapping
-                self.active_requests_mapping
-                    .insert(node_address.clone(), request_calls);
-                // remove the nonce mapping
-                self.active_requests_nonce_mapping
-                    .remove(request_call.packet().message_nonce())
-                    .expect("Invariant violated: nonce mapping does not exist for request");
-                Poll::Ready(Some(Ok((node_address, request_call))))
+        match self.active_requests_nonce_mapping.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok((nonce, node_address)))) => {
+                // remove the associated mapping
+                let mut reqs = self
+                    .active_requests_mapping
+                    .remove(&node_address)
+                    .ok_or_else(|| ActiveRequestsError::InvalidState)
+                    .unwrap();
+                let index = reqs
+                    .iter()
+                    .position(|req| req.packet().message_nonce() == &nonce)
+                    .ok_or_else(|| ActiveRequestsError::InvalidState)
+                    .unwrap();
+                let req = reqs.remove(index);
+                if reqs.len() > 0 {
+                    self.active_requests_mapping
+                        .insert(node_address.clone(), reqs);
+                }
+                Poll::Ready(Some(Ok((node_address, req))))
             }
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
             Poll::Ready(None) => Poll::Ready(None),
