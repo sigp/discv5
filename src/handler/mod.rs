@@ -169,9 +169,16 @@ enum HandlerReqId {
     External(RequestId),
 }
 
-impl Into<RequestId> for &HandlerReqId {
-    fn into(self) -> RequestId {
-        match self {
+/// A request queued for sending.
+struct PendingRequest {
+    contact: NodeContact,
+    request_id: HandlerReqId,
+    request: RequestBody,
+}
+
+impl From<&HandlerReqId> for RequestId {
+    fn from(id: &HandlerReqId) -> Self {
+        match id {
             HandlerReqId::Internal(id) => id.clone(),
             HandlerReqId::External(id) => id.clone(),
         }
@@ -193,6 +200,8 @@ pub struct Handler {
     active_requests: ActiveRequests,
     /// The expected responses by SocketAddr which allows packets to pass the underlying filter.
     filter_expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
+    /// Requests awaiting a handshake completion.
+    pending_requests: HashMap<NodeAddress, Vec<PendingRequest>>,
     /// Currently in-progress outbound handshakes (WHOAREYOU packets) with peers.
     active_challenges: HashMapDelay<NodeAddress, Challenge>,
     /// Established sessions with peers.
@@ -283,6 +292,7 @@ impl Handler {
                     enr,
                     key,
                     active_requests: ActiveRequests::new(config.request_timeout),
+                    pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions: LruTimeCache::new(
                         config.session_timeout,
@@ -391,7 +401,7 @@ impl Handler {
                     socket_addr: inbound_packet.src_address,
                     node_id: src_id,
                 };
-                self.handle_message::<P>(
+                self.handle_message(
                     node_address,
                     message_nonce,
                     &inbound_packet.message,
@@ -463,6 +473,20 @@ impl Handler {
             return Err(RequestError::SelfRequest);
         }
 
+        // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
+        if self.active_challenges.get(&node_address).is_some() {
+            trace!("Request queued for node: {}", node_address);
+            self.pending_requests
+                .entry(node_address)
+                .or_insert_with(Vec::new)
+                .push(PendingRequest {
+                    contact,
+                    request_id,
+                    request,
+                });
+            return Ok(());
+        }
+
         let (packet, initiating_session) = {
             if let Some(session) = self.sessions.get_mut(&node_address) {
                 // Encrypt the message and send
@@ -477,14 +501,23 @@ impl Handler {
                     .map_err(|e| RequestError::EncryptionFailed(format!("{e:?}")))?;
                 (packet, false)
             } else {
-                // No session exists, start a new handshake
+                // No session exists, start a new handshake initiating a new session
                 trace!(
                     "Starting session. Sending random packet to: {}",
                     node_address
                 );
                 let packet =
                     Packet::new_random(&self.node_id).map_err(RequestError::EntropyFailure)?;
-                // We are initiating a new session
+                // Queue the request for sending after the handshake completes
+                self.pending_requests
+                    .entry(node_address.clone())
+                    .or_insert_with(Vec::new)
+                    .push(PendingRequest {
+                        contact: contact.clone(),
+                        request_id: request_id.clone(),
+                        request: request.clone(),
+                    });
+
                 (packet, true)
             }
         };
@@ -587,7 +620,7 @@ impl Handler {
         // Check that this challenge matches a known active request.
         // If this message passes all the requisite checks, a request call is returned.
         let mut request_call = match self.active_requests.remove_by_nonce(&request_nonce) {
-            Ok((node_address, request_call)) => {
+            Some((node_address, request_call)) => {
                 // Verify that the src_addresses match
                 if node_address.socket_addr != src_address {
                     debug!("Received a WHOAREYOU packet for a message with a non-expected source. Source {}, expected_source: {} message_nonce {}", src_address, node_address.socket_addr, hex::encode(request_nonce));
@@ -597,7 +630,7 @@ impl Handler {
                 }
                 request_call
             }
-            Err(_) => {
+            None => {
                 trace!("Received a WHOAREYOU packet that references an unknown or expired request. Source {}, message_nonce {}", src_address, hex::encode(request_nonce));
                 return;
             }
@@ -797,7 +830,7 @@ impl Handler {
                             warn!("Failed to inform of established session {}", e)
                         }
                         self.new_session(node_address.clone(), session);
-                        self.handle_message::<P>(
+                        self.handle_message(
                             node_address.clone(),
                             message_nonce,
                             message,
@@ -806,7 +839,7 @@ impl Handler {
                         .await;
                         // We could have pending messages that were awaiting this session to be
                         // established. If so process them.
-                        self.replay_active_requests::<P>(&node_address).await;
+                        self.send_pending_requests::<P>(&node_address).await;
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
@@ -876,24 +909,49 @@ impl Handler {
         }
     }
 
+    async fn send_pending_requests<P: ProtocolIdentity>(&mut self, node_address: &NodeAddress) {
+        let pending_requests = self
+            .pending_requests
+            .remove(node_address)
+            .unwrap_or_default();
+        for req in pending_requests {
+            if let Err(request_error) = self
+                .send_request::<P>(req.contact, req.request_id.clone(), req.request)
+                .await
+            {
+                warn!("Failed to send next pending request {request_error}");
+                // Inform the service that the request failed
+                match req.request_id {
+                    HandlerReqId::Internal(_) => {
+                        // An internal request could not be sent. For now we do nothing about
+                        // this.
+                    }
+                    HandlerReqId::External(id) => {
+                        if let Err(e) = self
+                            .service_send
+                            .send(HandlerOut::RequestFailed(id, request_error))
+                            .await
+                        {
+                            warn!("Failed to inform that request failed {e}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     async fn replay_active_requests<P: ProtocolIdentity>(&mut self, node_address: &NodeAddress) {
         let active_requests = self
             .active_requests
             .remove_requests(node_address)
             .unwrap_or_default();
         for req in active_requests {
-            let request_id = req.id().clone();
-            if let Err(request_error) = self
-                .send_request::<P>(
-                    req.contact().clone(),
-                    request_id.clone(),
-                    req.body().clone(),
-                )
-                .await
+            let (req_id, contact, body) = req.into_request_parts();
+            if let Err(request_error) = self.send_request::<P>(contact, req_id.clone(), body).await
             {
                 warn!("Failed to send next awaiting request {request_error}");
                 // Inform the service that the request failed
-                match request_id {
+                match req_id {
                     HandlerReqId::Internal(_) => {
                         // An internal request could not be sent. For now we do nothing about
                         // this.
@@ -914,7 +972,7 @@ impl Handler {
 
     /// Handle a standard message that does not contain an authentication header.
     #[allow(clippy::single_match)]
-    async fn handle_message<P: ProtocolIdentity>(
+    async fn handle_message(
         &mut self,
         node_address: NodeAddress,
         message_nonce: MessageNonce,
@@ -1016,7 +1074,7 @@ impl Handler {
                         }
                     }
                     // Handle standard responses
-                    self.handle_response::<P>(node_address, response).await;
+                    self.handle_response(node_address, response).await;
                 }
             }
         } else {
@@ -1040,13 +1098,9 @@ impl Handler {
 
     /// Handles a response to a request. Re-inserts the request call if the response is a multiple
     /// Nodes response.
-    async fn handle_response<P: ProtocolIdentity>(
-        &mut self,
-        node_address: NodeAddress,
-        response: Response,
-    ) {
+    async fn handle_response(&mut self, node_address: NodeAddress, response: Response) {
         // Find a matching request, if any
-        if let Ok(mut request_call) = self
+        if let Some(mut request_call) = self
             .active_requests
             .remove_request(&node_address, &response.id)
         {
@@ -1177,7 +1231,7 @@ impl Handler {
             .await;
     }
 
-    /// Removes a session, fails all of that session's active requests, and updates associated metrics and fields.
+    /// Removes a session, fails all of that session's active & pending requests, and updates associated metrics and fields.
     async fn fail_session(
         &mut self,
         node_address: &NodeAddress,
@@ -1190,6 +1244,26 @@ impl Handler {
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
         }
+        // fail all pending requests
+        if let Some(to_remove) = self.pending_requests.remove(node_address) {
+            for PendingRequest { request_id, .. } in to_remove {
+                match request_id {
+                    HandlerReqId::Internal(_) => {
+                        // Do not report failures on requests belonging to the handler.
+                    }
+                    HandlerReqId::External(id) => {
+                        if let Err(e) = self
+                            .service_send
+                            .send(HandlerOut::RequestFailed(id, error.clone()))
+                            .await
+                        {
+                            warn!("Failed to inform request failure {}", e)
+                        }
+                    }
+                }
+            }
+        }
+        // fail all active requests
         for req in self
             .active_requests
             .remove_requests(node_address)

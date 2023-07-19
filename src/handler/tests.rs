@@ -70,6 +70,7 @@ async fn build_handler<P: ProtocolIdentity>(
         enr: Arc::new(RwLock::new(enr)),
         key: Arc::new(RwLock::new(key)),
         active_requests: ActiveRequests::new(config.request_timeout),
+        pending_requests: HashMap::new(),
         filter_expected_responses,
         sessions: LruTimeCache::new(config.session_timeout, Some(config.session_cache_capacity)),
         one_time_sessions: LruTimeCache::new(
@@ -392,7 +393,7 @@ async fn test_active_requests_remove_requests() {
     let reqs = active_requests.remove_requests(&req_2_addr).unwrap();
     assert_eq!(reqs.len(), 2);
     active_requests.check_invariant();
-    assert!(active_requests.remove_requests(&req_3_addr).is_err());
+    assert!(active_requests.remove_requests(&req_3_addr).is_none());
 }
 
 #[tokio::test]
@@ -436,7 +437,7 @@ async fn test_active_requests_remove_request() {
     active_requests.check_invariant();
     assert!(active_requests
         .remove_request(&req_3_addr, &req_3_id)
-        .is_err());
+        .is_none());
 }
 
 #[tokio::test]
@@ -449,9 +450,9 @@ async fn test_active_requests_remove_by_nonce() {
     let (req_1, req_1_addr) = create_req_call(&node_1);
     let (req_2, req_2_addr) = create_req_call(&node_2);
     let (req_3, req_3_addr) = create_req_call(&node_2);
-    let req_1_nonce = req_1.packet().message_nonce().clone();
-    let req_2_nonce = req_2.packet().message_nonce().clone();
-    let req_3_nonce = req_3.packet().message_nonce().clone();
+    let req_1_nonce = *req_1.packet().message_nonce();
+    let req_2_nonce = *req_2.packet().message_nonce();
+    let req_3_nonce = *req_3.packet().message_nonce();
 
     active_requests.insert(req_1_addr.clone(), req_1);
     active_requests.insert(req_2_addr.clone(), req_2);
@@ -468,7 +469,7 @@ async fn test_active_requests_remove_by_nonce() {
     assert_eq!(req.0, req_3_addr);
     active_requests.check_invariant();
     let random_nonce = rand::random();
-    assert!(active_requests.remove_by_nonce(&random_nonce).is_err());
+    assert!(active_requests.remove_by_nonce(&random_nonce).is_none());
 }
 
 #[tokio::test]

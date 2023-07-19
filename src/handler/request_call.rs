@@ -119,4 +119,9 @@ impl RequestCall {
     pub fn remaining_responses_mut(&mut self) -> &mut Option<u64> {
         &mut self.remaining_responses
     }
+
+    /// Returns the id, contact, and request body for this call.
+    pub fn into_request_parts(self) -> (HandlerReqId, NodeContact, RequestBody) {
+        (self.request_id, self.contact, self.request)
+    }
 }
