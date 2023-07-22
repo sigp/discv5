@@ -38,6 +38,8 @@ use futures::prelude::*;
 use more_asserts::debug_unreachable;
 use parking_lot::RwLock;
 use rpc::*;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
@@ -229,6 +231,7 @@ struct ActiveRequest {
     pub callback: Option<CallbackResponse>,
 }
 
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug)]
 pub struct Pong {
     /// The current ENR sequence number of the responder.
