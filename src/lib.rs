@@ -34,13 +34,13 @@
 //! ## Event Stream
 //!
 //! The [`Discv5`] struct provides access to an event-stream which allows the user to listen to
-//! [`Discv5Event`] that get generated from the underlying server. The stream can be obtained from
-//! the [`Discv5::event_stream`] function.
+//! [`Event`] that get generated from the underlying server. The stream can be obtained from the
+//! [`Discv5::event_stream`] function.
 //!
 //! ## Runtimes
 //!
 //! Discv5 requires a tokio runtime with timing and io enabled. An explicit runtime can be given
-//! via the configuration. See the [`Discv5ConfigBuilder`] for further details. Such a runtime must
+//! via the configuration. See the [`ConfigBuilder`] for further details. Such a runtime must
 //! implement the [`Executor`] trait.
 //!
 //! If an explicit runtime is not provided via the configuration parameters, it is assumed that a
@@ -53,7 +53,7 @@
 //! A simple example of creating this service is as follows:
 //!
 //! ```rust
-//!    use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, Discv5ConfigBuilder};
+//!    use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, ConfigBuilder};
 //!    use discv5::socket::ListenConfig;
 //!    use std::net::{Ipv4Addr, SocketAddr};
 //!
@@ -75,7 +75,7 @@
 //!    };
 //!
 //!    // default configuration
-//!    let config = Discv5ConfigBuilder::new(listen_config).build();
+//!    let config = ConfigBuilder::new(listen_config).build();
 //!
 //!    // construct the discv5 server
 //!    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();

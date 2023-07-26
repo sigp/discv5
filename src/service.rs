@@ -1496,7 +1496,7 @@ impl Service {
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
-    /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
+    /// [`Event::NodeInserted`] variant if a new node has been inserted into the routing table.
     async fn bucket_maintenance_poll(kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>) -> Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.

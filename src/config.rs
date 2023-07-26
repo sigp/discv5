@@ -316,7 +316,7 @@ impl ConfigBuilder {
 
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Discv5Config")
+        f.debug_struct("Config")
             .field("filter_enabled", &self.enable_packet_filter)
             .field("request_timeout", &self.request_timeout)
             .field("vote_duration", &self.vote_duration)

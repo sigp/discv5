@@ -120,7 +120,7 @@ async fn main() {
     };
 
     // default configuration with packet filtering
-    // let config = Discv5ConfigBuilder::new(listen_config).enable_packet_filter().build();
+    // let config = ConfigBuilder::new(listen_config).enable_packet_filter().build();
 
     // default configuration without packet filtering
     let config = ConfigBuilder::new(listen_config).build();
