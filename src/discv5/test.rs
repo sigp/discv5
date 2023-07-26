@@ -26,7 +26,7 @@ async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
     for port in base_port..base_port + n as u16 {
         let enr_key = CombinedKey::generate_secp256k1();
         let listen_config = ListenConfig::Ipv4 { ip, port };
-        let config = Discv5ConfigBuilder::new(listen_config).build();
+        let config = ConfigBuilder::new(listen_config).build();
 
         let enr = EnrBuilder::new("v4")
             .ip4(ip)
@@ -50,7 +50,7 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
         let port = base_port + i as u16;
 
         let listen_config = ListenConfig::Ipv4 { ip, port };
-        let config = Discv5ConfigBuilder::new(listen_config).build();
+        let config = ConfigBuilder::new(listen_config).build();
 
         let enr = EnrBuilder::new("v4")
             .ip4(ip)
@@ -75,7 +75,7 @@ async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>, base_port: u16) 
             ip: Ipv6Addr::LOCALHOST,
             port,
         };
-        let config = Discv5ConfigBuilder::new(listen_config).build();
+        let config = ConfigBuilder::new(listen_config).build();
 
         let enr = EnrBuilder::new("v4")
             .ip6(Ipv6Addr::LOCALHOST)
@@ -106,7 +106,7 @@ async fn build_nodes_from_keypairs_dual_stack(
             ipv6: Ipv6Addr::LOCALHOST,
             ipv6_port,
         };
-        let config = Discv5ConfigBuilder::new(listen_config).build();
+        let config = ConfigBuilder::new(listen_config).build();
 
         let enr = EnrBuilder::new("v4")
             .ip4(Ipv4Addr::LOCALHOST)
@@ -753,7 +753,7 @@ async fn test_table_limits() {
         ip: enr.ip4().unwrap(),
         port: enr.udp4().unwrap(),
     };
-    let config = Discv5ConfigBuilder::new(listen_config).ip_limit().build();
+    let config = ConfigBuilder::new(listen_config).ip_limit().build();
 
     // let socket_addr = enr.udp_socket().unwrap();
     let discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
@@ -822,7 +822,7 @@ async fn test_bucket_limits() {
         ip: enr.ip4().unwrap(),
         port: enr.udp4().unwrap(),
     };
-    let config = Discv5ConfigBuilder::new(listen_config).ip_limit().build();
+    let config = ConfigBuilder::new(listen_config).ip_limit().build();
 
     let discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
     for enr in enrs {

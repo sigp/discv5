@@ -27,9 +27,9 @@
 //! Messages from a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
-    config::Discv5Config,
+    config::Config,
     discv5::PERMIT_BAN_LIST,
-    error::{Discv5Error, RequestError},
+    error::{Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
@@ -222,7 +222,7 @@ impl Handler {
     pub async fn spawn<P: ProtocolIdentity>(
         enr: Arc<RwLock<Enr>>,
         key: Arc<RwLock<CombinedKey>>,
-        config: Discv5Config,
+        config: Config,
     ) -> Result<HandlerReturn, std::io::Error> {
         let (exit_sender, exit) = oneshot::channel();
         // create the channels to send/receive messages from the application
@@ -866,7 +866,7 @@ impl Handler {
                         }
                     }
                 }
-                Err(Discv5Error::InvalidChallengeSignature(challenge)) => {
+                Err(Error::InvalidChallengeSignature(challenge)) => {
                     warn!(
                         "Authentication header contained invalid signature. Ignoring packet from: {}",
                         node_address

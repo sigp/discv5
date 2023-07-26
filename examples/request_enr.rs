@@ -13,7 +13,7 @@
 //!
 //! This requires the "libp2p" feature.
 #[cfg(feature = "libp2p")]
-use discv5::Discv5ConfigBuilder;
+use discv5::ConfigBuilder;
 #[cfg(feature = "libp2p")]
 use discv5::ListenConfig;
 #[cfg(feature = "libp2p")]

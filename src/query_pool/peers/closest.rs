@@ -23,7 +23,7 @@
 //
 use super::*;
 use crate::{
-    config::Discv5Config,
+    config::Config,
     kbucket::{Distance, Key, MAX_NODES_PER_BUCKET},
 };
 use std::{
@@ -76,7 +76,7 @@ pub struct FindNodeQueryConfig {
 }
 
 impl FindNodeQueryConfig {
-    pub fn new_from_config(config: &Discv5Config) -> Self {
+    pub fn new_from_config(config: &Config) -> Self {
         Self {
             parallelism: config.query_parallelism,
             num_results: MAX_NODES_PER_BUCKET,

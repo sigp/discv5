@@ -116,9 +116,9 @@ extern crate lazy_static;
 
 pub type Enr = enr::Enr<enr::CombinedKey>;
 
-pub use crate::discv5::{Discv5, Discv5Event};
-pub use config::{Discv5Config, Discv5ConfigBuilder};
-pub use error::{Discv5Error, QueryError, RequestError, ResponseError};
+pub use crate::discv5::{Discv5, Event};
+pub use config::{Config, ConfigBuilder};
+pub use error::{Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
 pub use ipmode::IpMode;
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};

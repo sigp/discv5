@@ -6,7 +6,7 @@
 //! encryption and key-derivation algorithms. Future versions may abstract some of these to allow
 //! for different algorithms.
 use crate::{
-    error::Discv5Error,
+    error::Error,
     node_info::NodeContact,
     packet::{ChallengeData, MessageNonce},
 };
@@ -48,7 +48,7 @@ pub(crate) fn generate_session_keys(
     local_id: &NodeId,
     contact: &NodeContact,
     challenge_data: &ChallengeData,
-) -> Result<(Key, Key, Vec<u8>), Discv5Error> {
+) -> Result<(Key, Key, Vec<u8>), Error> {
     let (secret, ephem_pk) = {
         match contact.public_key() {
             CombinedPublicKey::Secp256k1(remote_pk) => {
@@ -57,9 +57,7 @@ pub(crate) fn generate_session_keys(
                 let ephem_pk = ephem_sk.verifying_key();
                 (secret, ephem_pk.to_sec1_bytes().to_vec())
             }
-            CombinedPublicKey::Ed25519(_) => {
-                return Err(Discv5Error::KeyTypeNotSupported("Ed25519"))
-            }
+            CombinedPublicKey::Ed25519(_) => return Err(Error::KeyTypeNotSupported("Ed25519")),
         }
     };
 
@@ -74,7 +72,7 @@ fn derive_key(
     first_id: &NodeId,
     second_id: &NodeId,
     challenge_data: &ChallengeData,
-) -> Result<(Key, Key), Discv5Error> {
+) -> Result<(Key, Key), Error> {
     let mut info = [0u8; INFO_LENGTH];
     info[0..26].copy_from_slice(KEY_AGREEMENT_STRING.as_bytes());
     info[26..26 + NODE_ID_LENGTH].copy_from_slice(&first_id.raw());
@@ -84,7 +82,7 @@ fn derive_key(
 
     let mut okm = [0u8; 2 * KEY_LENGTH];
     hk.expand(&info, &mut okm)
-        .map_err(|_| Discv5Error::KeyDerivationFailed)?;
+        .map_err(|_| Error::KeyDerivationFailed)?;
 
     let mut initiator_key: Key = Default::default();
     let mut recipient_key: Key = Default::default();
@@ -101,17 +99,17 @@ pub(crate) fn derive_keys_from_pubkey(
     remote_id: &NodeId,
     challenge_data: &ChallengeData,
     ephem_pubkey: &[u8],
-) -> Result<(Key, Key), Discv5Error> {
+) -> Result<(Key, Key), Error> {
     let secret = {
         match local_key {
             CombinedKey::Secp256k1(key) => {
                 // convert remote pubkey into secp256k1 public key
                 // the key type should match our own node record
                 let remote_pubkey = k256::ecdsa::VerifyingKey::from_sec1_bytes(ephem_pubkey)
-                    .map_err(|_| Discv5Error::InvalidRemotePublicKey)?;
+                    .map_err(|_| Error::InvalidRemotePublicKey)?;
                 ecdh(&remote_pubkey, key)
             }
-            CombinedKey::Ed25519(_) => return Err(Discv5Error::KeyTypeNotSupported("Ed25519")),
+            CombinedKey::Ed25519(_) => return Err(Error::KeyTypeNotSupported("Ed25519")),
         }
     };
 
@@ -127,7 +125,7 @@ pub(crate) fn sign_nonce(
     challenge_data: &ChallengeData,
     ephem_pubkey: &[u8],
     dst_id: &NodeId,
-) -> Result<Vec<u8>, Discv5Error> {
+) -> Result<Vec<u8>, Error> {
     let signing_message = generate_signing_nonce(challenge_data, ephem_pubkey, dst_id);
 
     match signing_key {
@@ -135,10 +133,10 @@ pub(crate) fn sign_nonce(
             let message = Sha256::new().chain_update(signing_message);
             let signature: Signature = key
                 .try_sign_digest(message)
-                .map_err(|e| Discv5Error::Error(format!("Failed to sign message: {e}")))?;
+                .map_err(|e| Error::Error(format!("Failed to sign message: {e}")))?;
             Ok(signature.to_vec())
         }
-        CombinedKey::Ed25519(_) => Err(Discv5Error::KeyTypeNotSupported("Ed25519")),
+        CombinedKey::Ed25519(_) => Err(Error::KeyTypeNotSupported("Ed25519")),
     }
 }
 
@@ -191,9 +189,9 @@ pub(crate) fn decrypt_message(
     message_nonce: MessageNonce,
     msg: &[u8],
     aad: &[u8],
-) -> Result<Vec<u8>, Discv5Error> {
+) -> Result<Vec<u8>, Error> {
     if msg.len() < 16 {
-        return Err(Discv5Error::DecryptionFailed(
+        return Err(Error::DecryptionFailed(
             "Message not long enough to contain a MAC".into(),
         ));
     }
@@ -201,7 +199,7 @@ pub(crate) fn decrypt_message(
     let aead = Aes128Gcm::new(GenericArray::from_slice(key));
     let payload = Payload { msg, aad };
     aead.decrypt(GenericArray::from_slice(&message_nonce), payload)
-        .map_err(|e| Discv5Error::DecryptionFailed(e.to_string()))
+        .map_err(|e| Error::DecryptionFailed(e.to_string()))
 }
 
 /* Encryption related functions */
@@ -213,11 +211,11 @@ pub(crate) fn encrypt_message(
     message_nonce: MessageNonce,
     msg: &[u8],
     aad: &[u8],
-) -> Result<Vec<u8>, Discv5Error> {
+) -> Result<Vec<u8>, Error> {
     let aead = Aes128Gcm::new(GenericArray::from_slice(key));
     let payload = Payload { msg, aad };
     aead.encrypt(GenericArray::from_slice(&message_nonce), payload)
-        .map_err(|e| Discv5Error::DecryptionFailed(e.to_string()))
+        .map_err(|e| Error::DecryptionFailed(e.to_string()))
 }
 
 #[cfg(test)]

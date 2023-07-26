@@ -12,7 +12,7 @@ use crate::{
     rpc::RequestId,
     service::{ActiveRequest, Service},
     socket::ListenConfig,
-    Discv5ConfigBuilder, Enr,
+    ConfigBuilder, Enr,
 };
 use enr::{CombinedKey, EnrBuilder};
 use parking_lot::RwLock;
@@ -48,7 +48,7 @@ async fn build_service<P: ProtocolIdentity>(
         ip: local_enr.read().ip4().unwrap(),
         port: local_enr.read().udp4().unwrap(),
     };
-    let config = Discv5ConfigBuilder::new(listen_config)
+    let config = ConfigBuilder::new(listen_config)
         .executor(Box::<crate::executor::TokioExecutor>::default())
         .build();
     // build the session service
