@@ -21,7 +21,7 @@ impl ActiveRequests {
         }
     }
 
-    // Insert a new request into the active requests mapping.
+    /// Insert a new request into the active requests mapping.
     pub fn insert(&mut self, node_address: NodeAddress, request_call: RequestCall) {
         let nonce = *request_call.packet().message_nonce();
         self.active_requests_mapping
@@ -32,37 +32,29 @@ impl ActiveRequests {
             .insert(nonce, node_address);
     }
 
-    // Remove a single request identified by its nonce.
+    /// Remove a single request identified by its nonce.
     pub fn remove_by_nonce(&mut self, nonce: &MessageNonce) -> Option<(NodeAddress, RequestCall)> {
-        let node_address = match self.active_requests_nonce_mapping.remove(nonce) {
-            Some(val) => val,
-            None => return None,
-        };
+        let node_address = self.active_requests_nonce_mapping.remove(nonce)?;
         match self.active_requests_mapping.entry(node_address.clone()) {
             Entry::Vacant(_) => {
                 debug_unreachable!("expected to find node address in active_requests_mapping");
                 error!("expected to find node address in active_requests_mapping");
                 None
             }
-            Entry::Occupied(mut requests) => {
-                let index = requests
-                    .get()
-                    .iter()
-                    .position(|req| req.packet().message_nonce() == nonce)
-                    .expect("to find request call by nonce");
-                Some((node_address, requests.get_mut().remove(index)))
-            }
+            Entry::Occupied(mut requests) => requests
+                .get()
+                .iter()
+                .position(|req| req.packet().message_nonce() == nonce)
+                .map(|index| (node_address, requests.get_mut().remove(index))),
         }
     }
 
-    // Remove all requests associated with a node.
+    /// Remove all requests associated with a node.
     pub fn remove_requests(&mut self, node_address: &NodeAddress) -> Option<Vec<RequestCall>> {
-        let requests = match self.active_requests_mapping.remove(node_address) {
-            Some(val) => val,
-            None => return None,
-        };
+        let requests = self.active_requests_mapping.remove(node_address)?;
         // Account for node addresses in `active_requests_nonce_mapping` with an empty list
         if requests.is_empty() {
+            debug_unreachable!("expected to find requests in active_requests_mapping");
             return None;
         }
         for req in &requests {
@@ -78,7 +70,7 @@ impl ActiveRequests {
         Some(requests)
     }
 
-    // Remove a single request identified by its id.
+    /// Remove a single request identified by its id.
     pub fn remove_request(
         &mut self,
         node_address: &NodeAddress,
@@ -90,13 +82,7 @@ impl ActiveRequests {
                 let index = requests.get().iter().position(|req| {
                     let req_id: RequestId = req.id().into();
                     &req_id == id
-                });
-                let index = match index {
-                    Some(index) => index,
-                    // Node address existence in active requests mapping does not guarantee request
-                    // id existence.
-                    None => return None,
-                };
+                })?;
                 let request_call = requests.get_mut().remove(index);
                 // Remove the associated nonce mapping.
                 self.active_requests_nonce_mapping
@@ -137,14 +123,19 @@ impl Stream for ActiveRequests {
         match self.active_requests_nonce_mapping.poll_next_unpin(cx) {
             Poll::Ready(Some(Ok((nonce, node_address)))) => {
                 match self.active_requests_mapping.entry(node_address.clone()) {
-                    Entry::Vacant(_) => panic!("invalid ActiveRequests state"),
+                    Entry::Vacant(_) => Poll::Ready(None),
                     Entry::Occupied(mut requests) => {
-                        let index = requests
+                        match requests
                             .get()
                             .iter()
                             .position(|req| req.packet().message_nonce() == &nonce)
-                            .expect("to find request call by nonce");
-                        Poll::Ready(Some(Ok((node_address, requests.get_mut().remove(index)))))
+                        {
+                            Some(index) => Poll::Ready(Some(Ok((
+                                node_address,
+                                requests.get_mut().remove(index),
+                            )))),
+                            None => Poll::Ready(None),
+                        }
                     }
                 }
             }
