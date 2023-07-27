@@ -2,9 +2,9 @@
 //!
 //! This provides the main struct for running and interfacing with a discovery v5 server.
 //!
-//! A [`Discv5`] struct needs to be created either with an [`crate::executor::Executor`] specified in the
-//! [`Discv5Config`] via the [`crate::Discv5ConfigBuilder`] or in the presence of a tokio runtime that has
-//! timing and io enabled.
+//! A [`Discv5`] struct needs to be created either with an [`crate::executor::Executor`] specified
+//! in the [`Config`] via the [`crate::ConfigBuilder`] or in the presence of a tokio runtime that
+//! has timing and io enabled.
 //!
 //! Once a [`Discv5`] struct has been created the service is started by running the [`Discv5::start`]
 //! functions with a UDP socket. This will start a discv5 server in the background listening on the
@@ -13,7 +13,7 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
-    error::{Discv5Error, QueryError, RequestError},
+    error::{Error, QueryError, RequestError},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
@@ -21,7 +21,7 @@ use crate::{
     node_info::NodeContact,
     packet::ProtocolIdentity,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
-    DefaultProtocolId, Discv5Config, Enr, IpMode,
+    Config, DefaultProtocolId, Enr, IpMode,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
@@ -53,7 +53,7 @@ mod test;
 
 /// Events that can be produced by the `Discv5` event stream.
 #[derive(Debug)]
-pub enum Discv5Event {
+pub enum Event {
     /// A node has been discovered from a FINDNODES request.
     ///
     /// The ENR of the node is returned. Various properties can be derived from the ENR.
@@ -81,7 +81,7 @@ pub struct Discv5<P = DefaultProtocolId>
 where
     P: ProtocolIdentity,
 {
-    config: Discv5Config,
+    config: Config,
     /// The channel to make requests from the main service.
     service_channel: Option<mpsc::Sender<ServiceRequest>>,
     /// The exit channel to shutdown the underlying service.
@@ -102,7 +102,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
-        mut config: Discv5Config,
+        mut config: Config,
     ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
@@ -154,10 +154,10 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
-    pub async fn start(&mut self) -> Result<(), Discv5Error> {
+    pub async fn start(&mut self) -> Result<(), Error> {
         if self.service_channel.is_some() {
             warn!("Service is already started");
-            return Err(Discv5Error::ServiceAlreadyStarted);
+            return Err(Error::ServiceAlreadyStarted);
         }
 
         // create the main service
@@ -670,7 +670,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     /// Creates an event stream channel which can be polled to receive Discv5 events.
     pub fn event_stream(
         &self,
-    ) -> impl Future<Output = Result<mpsc::Receiver<Discv5Event>, Discv5Error>> + 'static {
+    ) -> impl Future<Output = Result<mpsc::Receiver<Event>, Error>> + 'static {
         let channel = self.clone_channel();
 
         async move {
@@ -682,20 +682,18 @@ impl<P: ProtocolIdentity> Discv5<P> {
             channel
                 .send(event)
                 .await
-                .map_err(|_| Discv5Error::ServiceChannelClosed)?;
+                .map_err(|_| Error::ServiceChannelClosed)?;
 
-            callback_recv
-                .await
-                .map_err(|_| Discv5Error::ServiceChannelClosed)
+            callback_recv.await.map_err(|_| Error::ServiceChannelClosed)
         }
     }
 
     /// Internal helper function to send events to the Service.
-    fn clone_channel(&self) -> Result<mpsc::Sender<ServiceRequest>, Discv5Error> {
+    fn clone_channel(&self) -> Result<mpsc::Sender<ServiceRequest>, Error> {
         if let Some(channel) = self.service_channel.as_ref() {
             Ok(channel.clone())
         } else {
-            Err(Discv5Error::ServiceNotStarted)
+            Err(Error::ServiceNotStarted)
         }
     }
 }

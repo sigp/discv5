@@ -4,7 +4,7 @@ use std::fmt;
 
 #[derive(Debug)]
 /// A general error that is used throughout the Discv5 library.
-pub enum Discv5Error {
+pub enum Error {
     /// An invalid ENR was received.
     InvalidEnr,
     /// The public key type is known.
@@ -41,9 +41,9 @@ pub enum Discv5Error {
     Io(std::io::Error),
 }
 
-impl From<std::io::Error> for Discv5Error {
-    fn from(err: std::io::Error) -> Discv5Error {
-        Discv5Error::Io(err)
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Error {
+        Error::Io(err)
     }
 }
 
@@ -127,7 +127,7 @@ pub enum QueryError {
     InvalidMultiaddr(String),
 }
 
-impl fmt::Display for Discv5Error {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
     }

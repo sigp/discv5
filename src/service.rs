@@ -29,7 +29,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr, IpMode,
+    rpc, Config, Enr, Event, IpMode,
 };
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
@@ -161,14 +161,14 @@ pub enum ServiceRequest {
     Ping(Enr, Option<oneshot::Sender<Result<Pong, RequestError>>>),
     /// Sets up an event stream where the discv5 server will return various events such as
     /// discovered nodes as it traverses the DHT.
-    RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
+    RequestEventStream(oneshot::Sender<mpsc::Receiver<Event>>),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
 
 pub struct Service {
     /// Configuration parameters.
-    config: Discv5Config,
+    config: Config,
 
     /// The local ENR of the server.
     local_enr: Arc<RwLock<Enr>>,
@@ -211,7 +211,7 @@ pub struct Service {
     peers_to_ping: HashSetDelay<NodeId>,
 
     /// A channel that the service emits events on.
-    event_stream: Option<mpsc::Sender<Discv5Event>>,
+    event_stream: Option<mpsc::Sender<Event>>,
 
     // Type of socket we are using
     ip_mode: IpMode,
@@ -277,7 +277,7 @@ impl Service {
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
-        config: Discv5Config,
+        config: Config,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
@@ -378,7 +378,7 @@ impl Service {
                 Some(event) = self.handler_recv.recv() => {
                     match event {
                         HandlerOut::Established(enr, socket_addr, direction) => {
-                            self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
+                            self.send_event(Event::SessionEstablished(enr.clone(), socket_addr));
                             self.inject_session_established(enr, direction);
                         }
                         HandlerOut::Request(node_address, request) => {
@@ -631,7 +631,7 @@ impl Service {
                     sender: Some(self.handler_send.clone()),
                 };
 
-                self.send_event(Discv5Event::TalkRequest(req));
+                self.send_event(Event::TalkRequest(req));
             }
         }
     }
@@ -836,9 +836,7 @@ impl Service {
                                                     "Local UDP ip6 socket updated to: {}",
                                                     new_ip6,
                                                 );
-                                                self.send_event(Discv5Event::SocketUpdated(
-                                                    new_ip6,
-                                                ));
+                                                self.send_event(Event::SocketUpdated(new_ip6));
                                             }
                                             Err(e) => {
                                                 warn!("Failed to update local UDP ip6 socket. ip6: {}, error: {:?}", new_ip6, e);
@@ -855,9 +853,7 @@ impl Service {
                                             Ok(_) => {
                                                 updated = true;
                                                 info!("Local UDP socket updated to: {}", new_ip4);
-                                                self.send_event(Discv5Event::SocketUpdated(
-                                                    new_ip4,
-                                                ));
+                                                self.send_event(Event::SocketUpdated(new_ip4));
                                             }
                                             Err(e) => {
                                                 warn!("Failed to update local UDP socket. ip: {}, error: {:?}", new_ip4, e);
@@ -1170,7 +1166,7 @@ impl Service {
         }
     }
 
-    fn send_event(&mut self, event: Discv5Event) {
+    fn send_event(&mut self, event: Event) {
         if let Some(stream) = self.event_stream.as_mut() {
             if let Err(mpsc::error::TrySendError::Closed(_)) = stream.try_send(event) {
                 // If the stream has been dropped prevent future attempts to send events
@@ -1190,7 +1186,7 @@ impl Service {
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
             if self.config.report_discovered_peers {
-                self.send_event(Discv5Event::Discovered(enr.clone()));
+                self.send_event(Event::Discovered(enr.clone()));
             }
 
             // ignore peers that don't pass the table filter
@@ -1286,7 +1282,7 @@ impl Service {
                             self.send_ping(enr, None);
                         }
 
-                        let event = Discv5Event::NodeInserted {
+                        let event = Event::NodeInserted {
                             node_id,
                             replaced: None,
                         };
@@ -1500,14 +1496,12 @@ impl Service {
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
-    /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
-    async fn bucket_maintenance_poll(
-        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
-    ) -> Discv5Event {
+    /// [`Event::NodeInserted`] variant if a new node has been inserted into the routing table.
+    async fn bucket_maintenance_poll(kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>) -> Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.
             if let Some(entry) = kbuckets.write().take_applied_pending() {
-                let event = Discv5Event::NodeInserted {
+                let event = Event::NodeInserted {
                     node_id: entry.inserted.into_preimage(),
                     replaced: entry.evicted.map(|n| n.key.into_preimage()),
                 };

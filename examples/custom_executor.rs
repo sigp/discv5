@@ -9,7 +9,7 @@
 //! $ cargo run --example custom_executor <BASE64ENR>
 //! ```
 
-use discv5::{enr, enr::CombinedKey, Discv5, Discv5ConfigBuilder, Discv5Event, ListenConfig};
+use discv5::{enr, enr::CombinedKey, ConfigBuilder, Discv5, Event, ListenConfig};
 use std::net::Ipv4Addr;
 
 fn main() {
@@ -39,7 +39,7 @@ fn main() {
         .unwrap();
 
     // default configuration - uses the current executor
-    let config = Discv5ConfigBuilder::new(listen_config).build();
+    let config = ConfigBuilder::new(listen_config).build();
 
     // construct the discv5 server
     let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
@@ -72,10 +72,10 @@ fn main() {
 
         loop {
             match event_stream.recv().await {
-                Some(Discv5Event::SocketUpdated(addr)) => {
+                Some(Event::SocketUpdated(addr)) => {
                     println!("Nodes ENR socket address has been updated to: {addr:?}");
                 }
-                Some(Discv5Event::Discovered(enr)) => {
+                Some(Event::Discovered(enr)) => {
                     println!("A peer has been discovered: {}", enr.node_id());
                 }
                 _ => {}

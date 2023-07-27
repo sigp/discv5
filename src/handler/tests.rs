@@ -5,7 +5,7 @@ use crate::{
     packet::DefaultProtocolId,
     return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
-    Discv5ConfigBuilder, IpMode,
+    ConfigBuilder, IpMode,
 };
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -25,7 +25,7 @@ fn init() {
 }
 
 async fn build_handler<P: ProtocolIdentity>() -> Handler {
-    let config = Discv5ConfigBuilder::new(ListenConfig::default()).build();
+    let config = ConfigBuilder::new(ListenConfig::default()).build();
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4")
         .ip4(Ipv4Addr::LOCALHOST)
@@ -117,7 +117,7 @@ async fn simple_session_message() {
         ip: sender_enr.ip4().unwrap(),
         port: sender_enr.udp4().unwrap(),
     };
-    let sender_config = Discv5ConfigBuilder::new(sender_listen_config)
+    let sender_config = ConfigBuilder::new(sender_listen_config)
         .enable_packet_filter()
         .build();
     let (_exit_send, sender_send, _sender_recv) = Handler::spawn::<DefaultProtocolId>(
@@ -132,7 +132,7 @@ async fn simple_session_message() {
         ip: receiver_enr.ip4().unwrap(),
         port: receiver_enr.udp4().unwrap(),
     };
-    let receiver_config = Discv5ConfigBuilder::new(receiver_listen_config)
+    let receiver_config = ConfigBuilder::new(receiver_listen_config)
         .enable_packet_filter()
         .build();
     let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn::<DefaultProtocolId>(
@@ -198,7 +198,7 @@ async fn multiple_messages() {
         ip: sender_enr.ip4().unwrap(),
         port: sender_enr.udp4().unwrap(),
     };
-    let sender_config = Discv5ConfigBuilder::new(sender_listen_config).build();
+    let sender_config = ConfigBuilder::new(sender_listen_config).build();
 
     let receiver_enr = EnrBuilder::new("v4")
         .ip4(ip)
@@ -209,7 +209,7 @@ async fn multiple_messages() {
         ip: receiver_enr.ip4().unwrap(),
         port: receiver_enr.udp4().unwrap(),
     };
-    let receiver_config = Discv5ConfigBuilder::new(receiver_listen_config).build();
+    let receiver_config = ConfigBuilder::new(receiver_listen_config).build();
 
     let (_exit_send, sender_handler, mut sender_handler_recv) =
         Handler::spawn::<DefaultProtocolId>(
@@ -353,7 +353,7 @@ async fn test_self_request_ipv4() {
         ip: enr.ip4().unwrap(),
         port: enr.udp4().unwrap(),
     };
-    let config = Discv5ConfigBuilder::new(listen_config)
+    let config = ConfigBuilder::new(listen_config)
         .enable_packet_filter()
         .build();
 
@@ -393,7 +393,7 @@ async fn test_self_request_ipv6() {
         ip: enr.ip6().unwrap(),
         port: enr.udp6().unwrap(),
     };
-    let config = Discv5ConfigBuilder::new(listen_config)
+    let config = ConfigBuilder::new(listen_config)
         .enable_packet_filter()
         .build();
 

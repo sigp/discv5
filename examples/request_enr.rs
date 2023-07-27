@@ -13,7 +13,7 @@
 //!
 //! This requires the "libp2p" feature.
 #[cfg(feature = "libp2p")]
-use discv5::Discv5ConfigBuilder;
+use discv5::ConfigBuilder;
 #[cfg(feature = "libp2p")]
 use discv5::ListenConfig;
 #[cfg(feature = "libp2p")]
@@ -46,7 +46,7 @@ async fn main() {
     let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
 
     // default discv5 configuration
-    let config = Discv5ConfigBuilder::new(listen_config).build();
+    let config = ConfigBuilder::new(listen_config).build();
 
     let multiaddr = std::env::args()
         .nth(1)
