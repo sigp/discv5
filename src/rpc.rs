@@ -12,6 +12,7 @@ impl From<RequestId> for Vec<u8> {
         id.0
     }
 }
+
 impl RequestId {
     /// Decodes the ID from a raw bytes.
     pub fn decode(data: Vec<u8>) -> Result<Self, DecoderError> {
