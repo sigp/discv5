@@ -15,8 +15,8 @@
 use crate::{
     error::{Error, QueryError, RequestError},
     kbucket::{
-        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        NodeStatus, UpdateResult,
+        self, AsNode, ConnectionDirection, ConnectionState, FailureReason, InsertResult,
+        KBucketsTable, Node, NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
     packet::ProtocolIdentity,
@@ -77,17 +77,17 @@ pub enum Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
-pub struct Discv5<P = DefaultProtocolId>
-where
-    P: ProtocolIdentity,
-{
+pub struct Discv5<
+    P: ProtocolIdentity = DefaultProtocolId,
+    N: AsNode<NodeId, Enr> + Clone + Send + Sync + 'static = Node<NodeId, Enr>,
+> {
     config: Config,
     /// The channel to make requests from the main service.
     service_channel: Option<mpsc::Sender<ServiceRequest>>,
     /// The exit channel to shutdown the underlying service.
     service_exit: Option<oneshot::Sender<()>>,
     /// The routing table of the discv5 service.
-    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+    kbuckets: Arc<RwLock<KBucketsTable<N, NodeId, Enr>>>,
     /// The local ENR of the server.
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
@@ -98,7 +98,11 @@ where
     _phantom: PhantomData<P>,
 }
 
-impl<P: ProtocolIdentity> Discv5<P> {
+impl<P, N> Discv5<P, N>
+where
+    P: ProtocolIdentity,
+    N: AsNode<NodeId, Enr> + Clone + Send + Sync + 'static,
+{
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
@@ -302,7 +306,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 
     /// Returns the routing table of the discv5 service
-    pub fn kbuckets(&self) -> KBucketsTable<NodeId, Enr> {
+    pub fn kbuckets(&self) -> KBucketsTable<N, NodeId, Enr> {
         self.kbuckets.read().clone()
     }
 
@@ -698,7 +702,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 }
 
-impl<P: ProtocolIdentity> Drop for Discv5<P> {
+impl<P: ProtocolIdentity, N: AsNode<NodeId, Enr> + Clone + Send + Sync> Drop for Discv5<P, N> {
     fn drop(&mut self) {
         self.shutdown();
     }

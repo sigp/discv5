@@ -21,8 +21,8 @@ use crate::{
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
-        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
+        self, AsNode, ConnectionDirection, ConnectionState, FailureReason, InsertResult,
+        KBucketsTable, Node, NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
     packet::{ProtocolIdentity, MAX_PACKET_SIZE},
@@ -166,7 +166,7 @@ pub enum ServiceRequest {
 
 use crate::discv5::PERMIT_BAN_LIST;
 
-pub struct Service {
+pub struct Service<N = Node<NodeId, Enr>> {
     /// Configuration parameters.
     config: Config,
 
@@ -177,7 +177,7 @@ pub struct Service {
     enr_key: Arc<RwLock<CombinedKey>>,
 
     /// Storage of the ENR record for each node.
-    kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+    kbuckets: Arc<RwLock<KBucketsTable<N, NodeId, Enr>>>,
 
     /// All the iterative queries we are currently performing.
     queries: QueryPool<QueryInfo, NodeId, Enr>,
@@ -267,7 +267,10 @@ impl Default for NodesResponse {
     }
 }
 
-impl Service {
+impl<N> Service<N>
+where
+    N: AsNode<NodeId, Enr> + Send + Sync + 'static,
+{
     /// Builds the `Service` main struct.
     ///
     /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
@@ -276,7 +279,7 @@ impl Service {
     pub async fn spawn<P: ProtocolIdentity>(
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
-        kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
+        kbuckets: Arc<RwLock<KBucketsTable<N, NodeId, Enr>>>,
         config: Config,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
@@ -414,7 +417,7 @@ impl Service {
                 event = Service::bucket_maintenance_poll(&self.kbuckets) => {
                     self.send_event(event);
                 }
-                query_event = Service::query_event_poll(&mut self.queries) => {
+                query_event = Service::<N>::query_event_poll(&mut self.queries) => {
                     match query_event {
                         QueryEvent::Waiting(query_id, node_id, request_body) => {
                             self.send_rpc_query(query_id, node_id, request_body);
@@ -1394,7 +1397,7 @@ impl Service {
             .get_bucket(&key)
             .map(|bucket| bucket.get(&key))
         {
-            Some(Some(node)) => node.status.direction,
+            Some(Some(node)) => node.node_ref().status.direction,
             _ => connection_direction,
         };
 
@@ -1497,13 +1500,15 @@ impl Service {
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
     /// [`Event::NodeInserted`] variant if a new node has been inserted into the routing table.
-    async fn bucket_maintenance_poll(kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>) -> Event {
+    async fn bucket_maintenance_poll(
+        kbuckets: &Arc<RwLock<KBucketsTable<N, NodeId, Enr>>>,
+    ) -> Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.
             if let Some(entry) = kbuckets.write().take_applied_pending() {
                 let event = Event::NodeInserted {
                     node_id: entry.inserted.into_preimage(),
-                    replaced: entry.evicted.map(|n| n.key.into_preimage()),
+                    replaced: entry.evicted.map(|n| n.take().key.into_preimage()),
                 };
                 return Poll::Ready(event);
             }
