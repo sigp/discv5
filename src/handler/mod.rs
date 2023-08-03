@@ -508,16 +508,6 @@ impl Handler {
                 );
                 let packet =
                     Packet::new_random(&self.node_id).map_err(RequestError::EntropyFailure)?;
-                // Queue the request for sending after the handshake completes
-                self.pending_requests
-                    .entry(node_address.clone())
-                    .or_insert_with(Vec::new)
-                    .push(PendingRequest {
-                        contact: contact.clone(),
-                        request_id: request_id.clone(),
-                        request: request.clone(),
-                    });
-
                 (packet, true)
             }
         };
@@ -759,7 +749,7 @@ impl Handler {
                 }
             }
         }
-        self.new_session(node_address, session);
+        self.new_session::<P>(node_address, session).await;
     }
 
     /// Verifies a Node ENR to it's observed address. If it fails, any associated session is also
@@ -829,7 +819,7 @@ impl Handler {
                         {
                             warn!("Failed to inform of established session {}", e)
                         }
-                        self.new_session(node_address.clone(), session);
+                        self.new_session::<P>(node_address.clone(), session).await;
                         self.handle_message(
                             node_address.clone(),
                             message_nonce,
@@ -1173,9 +1163,14 @@ impl Handler {
         self.active_requests.insert(node_address, request_call);
     }
 
-    fn new_session(&mut self, node_address: NodeAddress, session: Session) {
+    async fn new_session<P: ProtocolIdentity>(
+        &mut self,
+        node_address: NodeAddress,
+        session: Session,
+    ) {
         if let Some(current_session) = self.sessions.get_mut(&node_address) {
             current_session.update(session);
+            self.replay_active_requests::<P>(&node_address).await;
         } else {
             self.sessions.insert(node_address, session);
             METRICS
