@@ -121,6 +121,7 @@ pub use config::{Config, ConfigBuilder};
 pub use error::{Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
 pub use ipmode::IpMode;
+pub use kbucket::node::{NodeRecord, RecordMut, RecordRef, TakenRecord};
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};
 pub use packet::{DefaultProtocolId, ProtocolIdentity};
 pub use permit_ban::PermitBanList;

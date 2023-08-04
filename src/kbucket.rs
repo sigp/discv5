@@ -71,6 +71,7 @@ mod bucket;
 mod entry;
 mod filter;
 mod key;
+pub mod node;
 
 pub use entry::*;
 
@@ -78,10 +79,11 @@ pub use crate::handler::ConnectionDirection;
 use arrayvec::{self, ArrayVec};
 use bucket::KBucket;
 pub use bucket::{
-    AsNode, ConnectionState, FailureReason, InsertResult as BucketInsertResult, UpdateResult,
+    ConnectionState, FailureReason, InsertResult as BucketInsertResult, UpdateResult,
     MAX_NODES_PER_BUCKET,
 };
 pub use filter::{Filter, IpBucketFilter, IpTableFilter};
+use node::NodeRecord;
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
@@ -218,7 +220,7 @@ impl BucketIndex {
 
 impl<TNode, TNodeId, TVal> KBucketsTable<TNode, TNodeId, TVal>
 where
-    TNode: AsNode<TNodeId, TVal>,
+    TNode: NodeRecord<TNodeId, TVal>,
     TNodeId: Clone,
     TVal: Eq,
 {
@@ -392,7 +394,7 @@ where
 
             // If the node doesn't exist, insert it
             if bucket.position(key).is_none() {
-                match bucket.insert(AsNode::new(key.clone(), value, status)) {
+                match bucket.insert(NodeRecord::new(key.clone(), value, status)) {
                     bucket::InsertResult::NodeExists => unreachable!("Node must exist"),
                     bucket::InsertResult::Full => InsertResult::Failed(FailureReason::BucketFull),
                     bucket::InsertResult::TooManyIncoming => {
@@ -718,7 +720,7 @@ where
 
 /// An iterator over (some projection of) the closest entries in a
 /// `KBucketsTable` w.r.t. some target `Key`.
-struct ClosestIter<'a, TTarget, TNodeId, TVal: Eq, TNode: AsNode<TNodeId, TVal>, TMap, TOut> {
+struct ClosestIter<'a, TTarget, TNodeId, TVal: Eq, TNode: NodeRecord<TNodeId, TVal>, TMap, TOut> {
     /// A reference to the target key whose distance to the local key determines
     /// the order in which the buckets are traversed. The resulting
     /// array from projecting the entries of each bucket using `fmap` is
@@ -833,7 +835,7 @@ impl Iterator for ClosestBucketsIter {
 impl<TTarget, TNodeId, TVal, TNode, TMap, TOut> Iterator
     for ClosestIter<'_, TTarget, TNodeId, TVal, TNode, TMap, TOut>
 where
-    TNode: AsNode<TNodeId, TVal>,
+    TNode: NodeRecord<TNodeId, TVal>,
     TNodeId: Clone,
     TVal: Eq,
     TMap: Fn(&KBucket<TNode, TNodeId, TVal>) -> ArrayVec<TOut, MAX_NODES_PER_BUCKET>,

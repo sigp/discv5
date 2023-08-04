@@ -26,8 +26,7 @@
 
 pub use super::{
     bucket::{
-        AppliedPending, AsNode, ConnectionState, InsertResult, Node, NodeStatus,
-        MAX_NODES_PER_BUCKET,
+        AppliedPending, ConnectionState, InsertResult, Node, NodeStatus, MAX_NODES_PER_BUCKET,
     },
     key::*,
     ConnectionDirection,
@@ -89,7 +88,7 @@ struct EntryRef<'a, TPeer, TPeerId, TVal: Eq> {
 
 impl<'a, TPeer, TPeerId, TVal> Entry<'a, TPeer, TPeerId, TVal>
 where
-    TPeer: AsNode<TPeerId, TVal>,
+    TPeer: NodeRecord<TPeerId, TVal>,
     TPeerId: Clone,
     TVal: Eq,
 {
@@ -116,7 +115,7 @@ pub struct PresentEntry<'a, TPeer, TPeerId, TVal: Eq>(EntryRef<'a, TPeer, TPeerI
 
 impl<'a, TPeer, TPeerId, TVal> PresentEntry<'a, TPeer, TPeerId, TVal>
 where
-    TPeer: AsNode<TPeerId, TVal>,
+    TPeer: NodeRecord<TPeerId, TVal>,
     TPeerId: Clone,
     TVal: Eq,
 {
@@ -176,7 +175,7 @@ pub struct PendingEntry<'a, TPeer, TPeerId, TVal: Eq>(EntryRef<'a, TPeer, TPeerI
 
 impl<'a, TPeer, TPeerId, TVal: Eq> PendingEntry<'a, TPeer, TPeerId, TVal>
 where
-    TPeer: AsNode<TPeerId, TVal>,
+    TPeer: NodeRecord<TPeerId, TVal>,
     TPeerId: Clone,
     TVal: Eq,
 {
@@ -211,7 +210,7 @@ pub struct AbsentEntry<'a, TPeer, TPeerId, TVal: Eq>(EntryRef<'a, TPeer, TPeerId
 
 impl<'a, TPeer, TPeerId, TVal> AbsentEntry<'a, TPeer, TPeerId, TVal>
 where
-    TPeer: AsNode<TPeerId, TVal>,
+    TPeer: NodeRecord<TPeerId, TVal>,
     TPeerId: Clone,
     TVal: Eq,
 {
@@ -223,6 +222,6 @@ where
     pub fn insert(self, value: TVal, status: NodeStatus) -> InsertResult<TPeerId> {
         self.0
             .bucket
-            .insert(AsNode::new(self.0.key.clone(), value, status))
+            .insert(NodeRecord::new(self.0.key.clone(), value, status))
     }
 }

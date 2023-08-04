@@ -89,7 +89,11 @@ impl NodeStatus {
     }
 }
 
-impl<TNode: AsNode<TNodeId, TVal>, TNodeId, TVal: Eq> PendingNode<TNode, TNodeId, TVal> {
+impl<TNode, TNodeId, TVal> PendingNode<TNode, TNodeId, TVal>
+where
+    TNode: NodeRecord<TNodeId, TVal>,
+    TVal: Eq,
+{
     pub fn status(&self) -> NodeStatus {
         *self.node.node_ref().status
     }
@@ -114,52 +118,6 @@ pub struct Node<TNodeId, TVal: Eq> {
     pub value: TVal,
     /// The status of the node.
     pub status: NodeStatus,
-}
-
-/// Returned by [AsNode::node_mut(&self)]
-pub struct AsNodeRef<'a, TNodeId, TVal> {
-    pub key: &'a Key<TNodeId>,
-    pub value: &'a TVal,
-    pub status: &'a NodeStatus,
-}
-
-/// Returned by [AsNode::node_ref(&self)].
-pub struct AsNodeRefMut<'a, TNodeId, TVal> {
-    pub key: &'a mut Key<TNodeId>,
-    pub value: &'a mut TVal,
-    pub status: &'a mut NodeStatus,
-}
-
-/// Common interface for types that are insertable into a k-bucket and
-/// hold information about a peer in the Kademlia DHT.
-pub trait AsNode<TNodeId, TVal: Eq> {
-    fn new(key: Key<TNodeId>, value: TVal, status: NodeStatus) -> Self;
-    fn node_ref(&self) -> AsNodeRef<'_, TNodeId, TVal>;
-    fn node_mut(&mut self) -> AsNodeRefMut<'_, TNodeId, TVal>;
-    fn take(self) -> Node<TNodeId, TVal>;
-}
-
-impl<TNodeId, TVal: Eq> AsNode<TNodeId, TVal> for Node<TNodeId, TVal> {
-    fn new(key: Key<TNodeId>, value: TVal, status: NodeStatus) -> Self {
-        Node { key, value, status }
-    }
-    fn node_ref(&self) -> AsNodeRef<'_, TNodeId, TVal> {
-        AsNodeRef {
-            key: &self.key,
-            value: &self.value,
-            status: &self.status,
-        }
-    }
-    fn node_mut(&mut self) -> AsNodeRefMut<'_, TNodeId, TVal> {
-        AsNodeRefMut {
-            key: &mut self.key,
-            value: &mut self.value,
-            status: &mut self.status,
-        }
-    }
-    fn take(self) -> Node<TNodeId, TVal> {
-        self
-    }
 }
 
 /// The position of a node in a `KBucket`, i.e. a non-negative integer
@@ -299,7 +257,7 @@ impl<TNode, TNodeId, TVal: Eq> AppliedPending<TNode, TNodeId, TVal> {
 
 impl<TNode, TNodeId, TVal> KBucket<TNode, TNodeId, TVal>
 where
-    TNode: AsNode<TNodeId, TVal>,
+    TNode: NodeRecord<TNodeId, TVal>,
     TNodeId: Clone,
     TVal: Eq,
 {

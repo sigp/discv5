@@ -15,7 +15,7 @@
 use crate::{
     error::{Error, QueryError, RequestError},
     kbucket::{
-        self, AsNode, ConnectionDirection, ConnectionState, FailureReason, InsertResult,
+        self, node::NodeRecord, ConnectionDirection, ConnectionState, FailureReason, InsertResult,
         KBucketsTable, Node, NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
@@ -79,7 +79,7 @@ pub enum Event {
 /// interacting with the underlying service.
 pub struct Discv5<
     P: ProtocolIdentity = DefaultProtocolId,
-    N: AsNode<NodeId, Enr> + Clone + Send + Sync + 'static = Node<NodeId, Enr>,
+    N: NodeRecord<NodeId, Enr> + Clone + Send + Sync + 'static = Node<NodeId, Enr>,
 > {
     config: Config,
     /// The channel to make requests from the main service.
@@ -101,7 +101,7 @@ pub struct Discv5<
 impl<P, N> Discv5<P, N>
 where
     P: ProtocolIdentity,
-    N: AsNode<NodeId, Enr> + Clone + Send + Sync + 'static,
+    N: NodeRecord<NodeId, Enr> + Clone + Send + Sync + 'static,
 {
     pub fn new(
         local_enr: Enr,
@@ -702,7 +702,7 @@ where
     }
 }
 
-impl<P: ProtocolIdentity, N: AsNode<NodeId, Enr> + Clone + Send + Sync> Drop for Discv5<P, N> {
+impl<P: ProtocolIdentity, N: NodeRecord<NodeId, Enr> + Clone + Send + Sync> Drop for Discv5<P, N> {
     fn drop(&mut self) {
         self.shutdown();
     }

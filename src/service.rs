@@ -21,7 +21,7 @@ use crate::{
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
-        self, AsNode, ConnectionDirection, ConnectionState, FailureReason, InsertResult,
+        self, node::NodeRecord, ConnectionDirection, ConnectionState, FailureReason, InsertResult,
         KBucketsTable, Node, NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
@@ -269,7 +269,7 @@ impl Default for NodesResponse {
 
 impl<N> Service<N>
 where
-    N: AsNode<NodeId, Enr> + Send + Sync + 'static,
+    N: NodeRecord<NodeId, Enr> + Send + Sync + 'static,
 {
     /// Builds the `Service` main struct.
     ///
