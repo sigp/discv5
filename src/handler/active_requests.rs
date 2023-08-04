@@ -76,9 +76,12 @@ impl ActiveRequests {
         node_address: &NodeAddress,
         id: &RequestId,
     ) -> Option<RequestCall> {
-        match self.active_requests_mapping.entry(node_address.to_owned()) {
+        match self.active_requests_mapping.entry(node_address.clone()) {
             Entry::Vacant(_) => None,
             Entry::Occupied(mut requests) => {
+                if requests.get().is_empty() {
+                    return None;
+                }
                 let index = requests.get().iter().position(|req| {
                     let req_id: RequestId = req.id().into();
                     &req_id == id
@@ -125,6 +128,9 @@ impl Stream for ActiveRequests {
                 match self.active_requests_mapping.entry(node_address.clone()) {
                     Entry::Vacant(_) => Poll::Ready(None),
                     Entry::Occupied(mut requests) => {
+                        if requests.get().is_empty() {
+                            return Poll::Ready(None);
+                        }
                         match requests
                             .get()
                             .iter()

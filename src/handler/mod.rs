@@ -1170,6 +1170,8 @@ impl Handler {
     ) {
         if let Some(current_session) = self.sessions.get_mut(&node_address) {
             current_session.update(session);
+            // If a session is re-established, due to a new handshake during an ongoing
+            // session, we need to replay any active requests from the prior session.
             self.replay_active_requests::<P>(&node_address).await;
         } else {
             self.sessions.insert(node_address, session);
@@ -1278,8 +1280,8 @@ impl Handler {
                     }
                 }
             }
+            self.remove_expected_response(node_address.socket_addr);
         }
-        self.remove_expected_response(node_address.socket_addr);
     }
 
     /// Sends a packet to the send handler to be encoded and sent.
