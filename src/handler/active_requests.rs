@@ -41,11 +41,17 @@ impl ActiveRequests {
                 error!("expected to find node address in active_requests_mapping");
                 None
             }
-            Entry::Occupied(mut requests) => requests
-                .get()
-                .iter()
-                .position(|req| req.packet().message_nonce() == nonce)
-                .map(|index| (node_address, requests.get_mut().remove(index))),
+            Entry::Occupied(mut requests) => {
+                let result = requests
+                    .get()
+                    .iter()
+                    .position(|req| req.packet().message_nonce() == nonce)
+                    .map(|index| (node_address, requests.get_mut().remove(index)));
+                if requests.get().is_empty() {
+                    requests.remove();
+                }
+                result
+            }
         }
     }
 
@@ -79,14 +85,14 @@ impl ActiveRequests {
         match self.active_requests_mapping.entry(node_address.clone()) {
             Entry::Vacant(_) => None,
             Entry::Occupied(mut requests) => {
-                if requests.get().is_empty() {
-                    return None;
-                }
                 let index = requests.get().iter().position(|req| {
                     let req_id: RequestId = req.id().into();
                     &req_id == id
                 })?;
                 let request_call = requests.get_mut().remove(index);
+                if requests.get().is_empty() {
+                    requests.remove();
+                }
                 // Remove the associated nonce mapping.
                 self.active_requests_nonce_mapping
                     .remove(request_call.packet().message_nonce());
@@ -128,18 +134,18 @@ impl Stream for ActiveRequests {
                 match self.active_requests_mapping.entry(node_address.clone()) {
                     Entry::Vacant(_) => Poll::Ready(None),
                     Entry::Occupied(mut requests) => {
-                        if requests.get().is_empty() {
-                            return Poll::Ready(None);
-                        }
                         match requests
                             .get()
                             .iter()
                             .position(|req| req.packet().message_nonce() == &nonce)
                         {
-                            Some(index) => Poll::Ready(Some(Ok((
-                                node_address,
-                                requests.get_mut().remove(index),
-                            )))),
+                            Some(index) => {
+                                let result = (node_address, requests.get_mut().remove(index));
+                                if requests.get().is_empty() {
+                                    requests.remove();
+                                }
+                                Poll::Ready(Some(Ok(result)))
+                            }
                             None => Poll::Ready(None),
                         }
                     }
