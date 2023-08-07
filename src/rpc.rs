@@ -133,10 +133,7 @@ impl Request {
                 let mut s = RlpStream::new();
                 s.begin_list(2);
                 s.append(&id.as_bytes());
-                s.begin_list(distances.len());
-                for distance in distances {
-                    s.append(&distance);
-                }
+                s.append_list(&distances);
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -307,8 +304,9 @@ impl Message {
         }
 
         let msg_type = data[0];
+        let data = &data[1..];
 
-        let rlp = rlp::Rlp::new(&data[1..]);
+        let rlp = rlp::Rlp::new(data);
 
         let list_len = rlp.item_count().and_then(|size| {
             if size < 2 {
@@ -317,6 +315,12 @@ impl Message {
                 Ok(size)
             }
         })?;
+
+        // verify there is no extra data
+        let payload_info = rlp.payload_info()?;
+        if data.len() != payload_info.header_len + payload_info.value_len {
+            return Err(DecoderError::RlpInconsistentLengthAndData);
+        }
 
         let id = RequestId::decode(rlp.val_at::<Vec<u8>>(0)?)?;
 
@@ -745,5 +749,24 @@ mod tests {
         let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn reject_extra_data() {
+        let data = [6, 194, 0, 75];
+        let msg = Message::decode(&data).unwrap();
+        assert_eq!(
+            msg,
+            Message::Response(Response {
+                id: RequestId(vec![0]),
+                body: ResponseBody::Talk { response: vec![75] }
+            })
+        );
+
+        let data2 = [6, 193, 0, 75, 252];
+        Message::decode(&data2).expect_err("should reject extra data");
+
+        let data3 = [6, 194, 0, 75, 252];
+        Message::decode(&data3).expect_err("should reject extra data");
     }
 }
