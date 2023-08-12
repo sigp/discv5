@@ -214,16 +214,28 @@ async fn multiple_messages() {
     };
     let receiver_config = ConfigBuilder::new(receiver_listen_config).build();
 
-    let (_exit_send, sender_handler, mut sender_handler_recv, mut handler) =
+    let (exit_send, sender_handler, mut sender_handler_recv, mut handler) =
         build_handler::<DefaultProtocolId>(sender_enr.clone(), key1, sender_config).await;
     let sender_fut = async move {
+        // Start sender handler.
         handler.start::<DefaultProtocolId>().await;
+        // After the handler has been terminated test the handler's states.
+        assert!(handler.pending_requests.is_empty());
+        assert_eq!(0, handler.active_requests.count().await);
+        assert!(handler.active_challenges.is_empty());
+        assert!(handler.filter_expected_responses.read().is_empty());
     };
 
-    let (_exit_recv, recv_send, mut receiver_handler, mut handler) =
+    let (exit_recv, recv_send, mut receiver_handler, mut handler) =
         build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await;
     let receiver_fut = async move {
+        // Start receiver handler.
         handler.start::<DefaultProtocolId>().await;
+        // After the handler has been terminated test the handler's states.
+        assert!(handler.pending_requests.is_empty());
+        assert_eq!(0, handler.active_requests.count().await);
+        assert!(handler.active_challenges.is_empty());
+        assert!(handler.filter_expected_responses.read().is_empty());
     };
 
     let send_message = Box::new(Request {
@@ -252,6 +264,7 @@ async fn multiple_messages() {
     let recv_send_message = send_message.clone();
 
     let sender = async move {
+        let mut response_count = 0usize;
         loop {
             match sender_handler_recv.recv().await {
                 Some(HandlerOut::Established(_, _, _)) => {
@@ -261,6 +274,15 @@ async fn multiple_messages() {
                             receiver_enr.clone().into(),
                             send_message.clone(),
                         ));
+                    }
+                }
+                Some(HandlerOut::Response(_, _)) => {
+                    response_count += 1;
+                    if response_count == messages_to_send {
+                        // Notify the handlers that the message exchange has been completed.
+                        exit_send.send(()).unwrap();
+                        exit_recv.send(()).unwrap();
+                        return;
                     }
                 }
                 _ => continue,
@@ -292,12 +314,12 @@ async fn multiple_messages() {
     };
 
     let sleep_future = sleep(Duration::from_millis(100));
+    let message_exchange = async move {
+        let _ = tokio::join!(sender_fut, sender, receiver_fut, receiver);
+    };
 
     tokio::select! {
-        _ = sender_fut => {}
-        _ = sender => {}
-        _ = receiver => {}
-        _ = receiver_fut => {}
+        _ = message_exchange => {}
         _ = sleep_future => {
             panic!("Test timed out");
         }
