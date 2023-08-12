@@ -24,14 +24,16 @@ fn init() {
         .try_init();
 }
 
-async fn build_handler<P: ProtocolIdentity>() -> Handler {
-    let config = ConfigBuilder::new(ListenConfig::default()).build();
-    let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4")
-        .ip4(Ipv4Addr::LOCALHOST)
-        .udp4(9000)
-        .build(&key)
-        .unwrap();
+async fn build_handler<P: ProtocolIdentity>(
+    enr: Enr,
+    key: CombinedKey,
+    config: Config,
+) -> (
+    oneshot::Sender<()>,
+    mpsc::UnboundedSender<HandlerIn>,
+    mpsc::Receiver<HandlerOut>,
+    Handler,
+) {
     let mut listen_sockets = SmallVec::default();
     listen_sockets.push((Ipv4Addr::LOCALHOST, 9000).into());
     let node_id = enr.node_id();
@@ -58,11 +60,11 @@ async fn build_handler<P: ProtocolIdentity>() -> Handler {
 
         Socket::new::<P>(socket_config).await.unwrap()
     };
-    let (_, service_recv) = mpsc::unbounded_channel();
-    let (service_send, _) = mpsc::channel(50);
-    let (_, exit) = oneshot::channel();
+    let (handler_send, service_recv) = mpsc::unbounded_channel();
+    let (service_send, handler_recv) = mpsc::channel(50);
+    let (exit_sender, exit) = oneshot::channel();
 
-    Handler {
+    let handler = Handler {
         request_retries: config.request_retries,
         node_id,
         enr: Arc::new(RwLock::new(enr)),
@@ -81,7 +83,8 @@ async fn build_handler<P: ProtocolIdentity>() -> Handler {
         listen_sockets,
         socket,
         exit,
-    }
+    };
+    (exit_sender, handler_send, handler_recv, handler)
 }
 
 macro_rules! arc_rw {
@@ -211,22 +214,17 @@ async fn multiple_messages() {
     };
     let receiver_config = ConfigBuilder::new(receiver_listen_config).build();
 
-    let (_exit_send, sender_handler, mut sender_handler_recv) =
-        Handler::spawn::<DefaultProtocolId>(
-            arc_rw!(sender_enr.clone()),
-            arc_rw!(key1),
-            sender_config,
-        )
-        .await
-        .unwrap();
+    let (_exit_send, sender_handler, mut sender_handler_recv, mut handler) =
+        build_handler::<DefaultProtocolId>(sender_enr.clone(), key1, sender_config).await;
+    let sender_fut = async move {
+        handler.start::<DefaultProtocolId>().await;
+    };
 
-    let (_exit_recv, recv_send, mut receiver_handler) = Handler::spawn::<DefaultProtocolId>(
-        arc_rw!(receiver_enr.clone()),
-        arc_rw!(key2),
-        receiver_config,
-    )
-    .await
-    .unwrap();
+    let (_exit_recv, recv_send, mut receiver_handler, mut handler) =
+        build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await;
+    let receiver_fut = async move {
+        handler.start::<DefaultProtocolId>().await;
+    };
 
     let send_message = Box::new(Request {
         id: RequestId(vec![1]),
@@ -296,8 +294,10 @@ async fn multiple_messages() {
     let sleep_future = sleep(Duration::from_millis(100));
 
     tokio::select! {
+        _ = sender_fut => {}
         _ = sender => {}
         _ = receiver => {}
+        _ = receiver_fut => {}
         _ = sleep_future => {
             panic!("Test timed out");
         }
@@ -419,7 +419,14 @@ async fn test_self_request_ipv6() {
 
 #[tokio::test]
 async fn remove_one_time_session() {
-    let mut handler = build_handler::<DefaultProtocolId>().await;
+    let config = ConfigBuilder::new(ListenConfig::default()).build();
+    let key = CombinedKey::generate_secp256k1();
+    let enr = EnrBuilder::new("v4")
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(9000)
+        .build(&key)
+        .unwrap();
+    let (_, _, _, mut handler) = build_handler::<DefaultProtocolId>(enr, key, config).await;
 
     let enr = {
         let key = CombinedKey::generate_secp256k1();
