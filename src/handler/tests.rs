@@ -197,26 +197,23 @@ async fn multiple_messages() {
         .udp4(sender_port)
         .build(&key1)
         .unwrap();
-    let sender_listen_config = ListenConfig::Ipv4 {
-        ip: sender_enr.ip4().unwrap(),
-        port: sender_enr.udp4().unwrap(),
-    };
-    let sender_config = ConfigBuilder::new(sender_listen_config).build();
 
     let receiver_enr = EnrBuilder::new("v4")
         .ip4(ip)
         .udp4(receiver_port)
         .build(&key2)
         .unwrap();
-    let receiver_listen_config = ListenConfig::Ipv4 {
-        ip: receiver_enr.ip4().unwrap(),
-        port: receiver_enr.udp4().unwrap(),
-    };
-    let receiver_config = ConfigBuilder::new(receiver_listen_config).build();
 
-    let (exit_send, sender_handler, mut sender_handler_recv, mut handler) =
-        build_handler::<DefaultProtocolId>(sender_enr.clone(), key1, sender_config).await;
-    let sender_fut = async move {
+    // Build sender handler
+    let (sender_exit, sender_send, mut sender_recv, mut handler) = {
+        let sender_listen_config = ListenConfig::Ipv4 {
+            ip: sender_enr.ip4().unwrap(),
+            port: sender_enr.udp4().unwrap(),
+        };
+        let sender_config = ConfigBuilder::new(sender_listen_config).build();
+        build_handler::<DefaultProtocolId>(sender_enr.clone(), key1, sender_config).await
+    };
+    let sender = async move {
         // Start sender handler.
         handler.start::<DefaultProtocolId>().await;
         // After the handler has been terminated test the handler's states.
@@ -226,9 +223,16 @@ async fn multiple_messages() {
         assert!(handler.filter_expected_responses.read().is_empty());
     };
 
-    let (exit_recv, recv_send, mut receiver_handler, mut handler) =
-        build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await;
-    let receiver_fut = async move {
+    // Build receiver handler
+    let (receiver_exit, receiver_send, mut receiver_recv, mut handler) = {
+        let receiver_listen_config = ListenConfig::Ipv4 {
+            ip: receiver_enr.ip4().unwrap(),
+            port: receiver_enr.udp4().unwrap(),
+        };
+        let receiver_config = ConfigBuilder::new(receiver_listen_config).build();
+        build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await
+    };
+    let receiver = async move {
         // Start receiver handler.
         handler.start::<DefaultProtocolId>().await;
         // After the handler has been terminated test the handler's states.
@@ -244,7 +248,7 @@ async fn multiple_messages() {
     });
 
     // sender to send the first message then await for the session to be established
-    let _ = sender_handler.send(HandlerIn::Request(
+    let _ = sender_send.send(HandlerIn::Request(
         receiver_enr.clone().into(),
         send_message.clone(),
     ));
@@ -263,14 +267,14 @@ async fn multiple_messages() {
     let mut message_count = 0usize;
     let recv_send_message = send_message.clone();
 
-    let sender = async move {
+    let sender_ops = async move {
         let mut response_count = 0usize;
         loop {
-            match sender_handler_recv.recv().await {
+            match sender_recv.recv().await {
                 Some(HandlerOut::Established(_, _, _)) => {
                     // now the session is established, send the rest of the messages
                     for _ in 0..messages_to_send - 1 {
-                        let _ = sender_handler.send(HandlerIn::Request(
+                        let _ = sender_send.send(HandlerIn::Request(
                             receiver_enr.clone().into(),
                             send_message.clone(),
                         ));
@@ -280,8 +284,8 @@ async fn multiple_messages() {
                     response_count += 1;
                     if response_count == messages_to_send {
                         // Notify the handlers that the message exchange has been completed.
-                        exit_send.send(()).unwrap();
-                        exit_recv.send(()).unwrap();
+                        sender_exit.send(()).unwrap();
+                        receiver_exit.send(()).unwrap();
                         return;
                     }
                 }
@@ -290,18 +294,19 @@ async fn multiple_messages() {
         }
     };
 
-    let receiver = async move {
+    let receiver_ops = async move {
         loop {
-            match receiver_handler.recv().await {
+            match receiver_recv.recv().await {
                 Some(HandlerOut::WhoAreYou(wru_ref)) => {
-                    let _ = recv_send.send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())));
+                    let _ =
+                        receiver_send.send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())));
                 }
                 Some(HandlerOut::Request(addr, request)) => {
                     assert_eq!(request, recv_send_message);
                     message_count += 1;
                     // required to send a pong response to establish the session
-                    let _ =
-                        recv_send.send(HandlerIn::Response(addr, Box::new(pong_response.clone())));
+                    let _ = receiver_send
+                        .send(HandlerIn::Response(addr, Box::new(pong_response.clone())));
                     if message_count == messages_to_send {
                         return;
                     }
@@ -315,7 +320,7 @@ async fn multiple_messages() {
 
     let sleep_future = sleep(Duration::from_millis(100));
     let message_exchange = async move {
-        let _ = tokio::join!(sender_fut, sender, receiver_fut, receiver);
+        let _ = tokio::join!(sender, sender_ops, receiver, receiver_ops);
     };
 
     tokio::select! {
