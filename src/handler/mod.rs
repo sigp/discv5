@@ -344,9 +344,9 @@ impl Handler {
                     self.handle_request_timeout(node_address, active_request).await;
                 }
                 Some(Ok((node_address, _challenge))) = self.active_challenges.next() => {
-                    // A challenge has expired. There could be active requests impacted by this
-                    // challenge. We replay them here
-                    self.replay_active_requests::<P>(&node_address).await;
+                    // A challenge has expired. There could be pending requests awaiting this
+                    // challenge. We process them here
+                    self.send_pending_requests::<P>(&node_address).await;
                 }
                 _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
                 _ = &mut self.exit => {
@@ -473,7 +473,7 @@ impl Handler {
             return Err(RequestError::SelfRequest);
         }
 
-        // If there is already an active request or an active challenge (WHOAREYOU sent) for this node, add to pending requests
+        // If there is already an active challenge (WHOAREYOU sent) for this node, add to pending requests
         if self.active_challenges.get(&node_address).is_some() {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
