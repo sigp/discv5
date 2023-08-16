@@ -749,7 +749,8 @@ impl Handler {
                 }
             }
         }
-        self.new_session::<P>(node_address, session).await;
+        self.new_session::<P>(node_address, session, Some(request_nonce))
+            .await;
     }
 
     /// Verifies a Node ENR to it's observed address. If it fails, any associated session is also
@@ -819,7 +820,11 @@ impl Handler {
                         {
                             warn!("Failed to inform of established session {}", e)
                         }
-                        self.new_session::<P>(node_address.clone(), session).await;
+                        // When (re-)establishing a session from an outgoing challenge, we do not need
+                        // to filter out this request from active requests, so we do not pass
+                        // the message nonce on to `new_session`.
+                        self.new_session::<P>(node_address.clone(), session, None)
+                            .await;
                         self.handle_message(
                             node_address.clone(),
                             message_nonce,
@@ -930,11 +935,19 @@ impl Handler {
         }
     }
 
-    async fn replay_active_requests<P: ProtocolIdentity>(&mut self, node_address: &NodeAddress) {
+    async fn replay_active_requests<P: ProtocolIdentity>(
+        &mut self,
+        node_address: &NodeAddress,
+        message_nonce: Option<MessageNonce>,
+    ) {
         let active_requests = self
             .active_requests
             .remove_requests(node_address)
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            // Skip the active request that was used to establish the new session,
+            // as it has already been handled and shouldn't be replayed.
+            .filter(|req| Some(*req.packet().message_nonce()) != message_nonce);
         for req in active_requests {
             let (req_id, contact, body) = req.into_request_parts();
             if let Err(request_error) = self.send_request::<P>(contact, req_id.clone(), body).await
@@ -1167,12 +1180,17 @@ impl Handler {
         &mut self,
         node_address: NodeAddress,
         session: Session,
+        // Optional message nonce is required to filter out the request that was used in the
+        // handshake to re-establish a session, if applicable.
+        message_nonce: Option<MessageNonce>,
     ) {
         if let Some(current_session) = self.sessions.get_mut(&node_address) {
             current_session.update(session);
             // If a session is re-established, due to a new handshake during an ongoing
-            // session, we need to replay any active requests from the prior session.
-            self.replay_active_requests::<P>(&node_address).await;
+            // session, we need to replay any active requests from the prior session, excluding
+            // the request that was used to re-establish the session handshake.
+            self.replay_active_requests::<P>(&node_address, message_nonce)
+                .await;
         } else {
             self.sessions.insert(node_address, session);
             METRICS
