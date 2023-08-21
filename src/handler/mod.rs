@@ -793,6 +793,8 @@ impl Handler {
                 enr_record,
             ) {
                 Ok((mut session, enr)) => {
+                    // Remove the expected response for the challenge.
+                    self.remove_expected_response(node_address.socket_addr);
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
                     // Verify the ENR is valid
                     if self.verify_enr(&enr, &node_address) {
