@@ -707,7 +707,7 @@ impl Handler {
                 };
 
                 // We already know the ENR. Send the handshake response packet
-                trace!("Sending Authentication response to node: {}", node_address);
+                trace!("Sending Authentication response to node: {} ({:?})", node_address, request_call.id());
                 request_call.update_packet(auth_packet.clone());
                 request_call.set_handshake_sent();
                 request_call.set_initiating_session(false);
@@ -731,7 +731,7 @@ impl Handler {
 
                 // Send the Auth response
                 let contact = request_call.contact().clone();
-                trace!("Sending Authentication response to node: {}", node_address);
+                trace!("Sending Authentication response to node: {} ({:?})", node_address, request_call.id());
                 request_call.update_packet(auth_packet.clone());
                 request_call.set_handshake_sent();
                 // Reinsert the request_call
@@ -940,6 +940,11 @@ impl Handler {
         node_address: &NodeAddress,
         message_nonce: Option<MessageNonce>,
     ) {
+        trace!(
+            "Replaying active requests. {}, {:?}",
+            node_address,
+            message_nonce
+        );
         let active_requests = self
             .active_requests
             .remove_requests(node_address)
@@ -950,6 +955,12 @@ impl Handler {
             .filter(|req| Some(*req.packet().message_nonce()) != message_nonce);
         for req in active_requests {
             let (req_id, contact, body) = req.into_request_parts();
+            trace!(
+                "Active request to be replayed. {:?}, {}, {}",
+                req_id,
+                contact,
+                body
+            );
             if let Err(request_error) = self.send_request::<P>(contact, req_id.clone(), body).await
             {
                 warn!("Failed to send next awaiting request {request_error}");
