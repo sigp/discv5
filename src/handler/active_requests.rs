@@ -87,13 +87,7 @@ impl ActiveRequests {
             .get(node_address)?
             .iter()
             .filter(|req| req.packet().message_nonce() != except)
-            .map(|req| {
-                match req.id() {
-                    HandlerReqId::Internal(id) => id,
-                    HandlerReqId::External(id) => id,
-                }
-                .clone()
-            })
+            .map(|req| req.id().into())
             .collect::<Vec<_>>();
 
         let mut requests = vec![];
