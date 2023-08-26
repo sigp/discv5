@@ -961,6 +961,9 @@ impl Handler {
                 contact,
                 body
             );
+            // Remove the request from the packet filter here since the request is added in
+            // `self.send_request()` again.
+            self.remove_expected_response(contact.socket_addr());
             if let Err(request_error) = self.send_request::<P>(contact, req_id.clone(), body).await
             {
                 warn!("Failed to send next awaiting request {request_error}");
