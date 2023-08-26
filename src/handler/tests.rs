@@ -8,6 +8,7 @@ use crate::{
     ConfigBuilder, IpMode,
 };
 use std::{
+    collections::HashSet,
     net::{Ipv4Addr, Ipv6Addr},
     ops::Add,
 };
@@ -716,40 +717,50 @@ async fn test_replay_active_requests() {
         assert!(handler.filter_expected_responses.read().is_empty());
     };
 
-    // sender to send the first message then await for the session to be established
-    let _ = sender_send.send(HandlerIn::Request(
-        receiver_enr.clone().into(),
-        Box::new(Request {
-            id: RequestId(vec![1]),
-            body: RequestBody::Ping { enr_seq: 1 },
-        }),
-    ));
-
     let messages_to_send = 5usize;
 
     let sender_ops = async move {
         let mut response_count = 0usize;
+        let mut expected_request_ids = HashSet::new();
+        expected_request_ids.insert(RequestId(vec![1]));
+
+        // sender to send the first message then await for the session to be established
+        let _ = sender_send.send(HandlerIn::Request(
+            receiver_enr.clone().into(),
+            Box::new(Request {
+                id: RequestId(vec![1]),
+                body: RequestBody::Ping { enr_seq: 1 },
+            }),
+        ));
+
+        match sender_recv.recv().await {
+            Some(HandlerOut::Established(_, _, _)) => {
+                // Sleep until receiver's session expired.
+                tokio::time::sleep(receiver_session_timeout.add(Duration::from_millis(500))).await;
+                // send the rest of the messages
+                for req_id in 2..=messages_to_send {
+                    let request_id = RequestId(vec![req_id as u8]);
+                    expected_request_ids.insert(request_id.clone());
+                    let _ = sender_send.send(HandlerIn::Request(
+                        receiver_enr.clone().into(),
+                        Box::new(Request {
+                            id: request_id,
+                            body: RequestBody::Ping { enr_seq: 1 },
+                        }),
+                    ));
+                }
+            }
+            handler_out => panic!("Unexpected message: {:?}", handler_out),
+        }
+
         loop {
             match sender_recv.recv().await {
-                Some(HandlerOut::Established(_, _, _)) => {
-                    // Sleep until receiver's session expired.
-                    tokio::time::sleep(receiver_session_timeout.add(Duration::from_millis(500)))
-                        .await;
-                    // now the session is established, send the rest of the messages
-                    for req_id in 2..=messages_to_send {
-                        let _ = sender_send.send(HandlerIn::Request(
-                            receiver_enr.clone().into(),
-                            Box::new(Request {
-                                id: RequestId(vec![req_id as u8]),
-                                body: RequestBody::Ping { enr_seq: 1 },
-                            }),
-                        ));
-                    }
-                }
-                Some(HandlerOut::Response(_, _)) => {
+                Some(HandlerOut::Response(_, response)) => {
+                    assert!(expected_request_ids.remove(&response.id));
                     response_count += 1;
                     if response_count == messages_to_send {
                         // Notify the handlers that the message exchange has been completed.
+                        assert!(expected_request_ids.is_empty());
                         sender_exit.send(()).unwrap();
                         receiver_exit.send(()).unwrap();
                         return;
