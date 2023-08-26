@@ -694,6 +694,7 @@ impl Handler {
         // All sent requests must have an associated node_id. Therefore the following
         // must not panic.
         let node_address = request_call.contact().node_address();
+        let auth_message_nonce = auth_packet.header.message_nonce;
         match request_call.contact().enr() {
             Some(enr) => {
                 // NOTE: Here we decide if the session is outgoing or ingoing. The condition for an
@@ -749,7 +750,7 @@ impl Handler {
                 }
             }
         }
-        self.new_session::<P>(node_address, session, Some(request_nonce))
+        self.new_session::<P>(node_address, session, Some(auth_message_nonce))
             .await;
     }
 
