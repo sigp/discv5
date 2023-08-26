@@ -955,6 +955,8 @@ impl Handler {
             message_nonce
         );
         let active_requests = if let Some(nonce) = message_nonce {
+            // Except the active request that was used to establish the new session, as it has
+            // already been handled and shouldn't be replayed.
             self.active_requests
                 .remove_requests_except(node_address, &nonce)
         } else {
