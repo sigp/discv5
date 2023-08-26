@@ -708,7 +708,11 @@ impl Handler {
                 };
 
                 // We already know the ENR. Send the handshake response packet
-                trace!("Sending Authentication response to node: {} ({:?})", node_address, request_call.id());
+                trace!(
+                    "Sending Authentication response to node: {} ({:?})",
+                    node_address,
+                    request_call.id()
+                );
                 request_call.update_packet(auth_packet.clone());
                 request_call.set_handshake_sent();
                 request_call.set_initiating_session(false);
@@ -732,7 +736,11 @@ impl Handler {
 
                 // Send the Auth response
                 let contact = request_call.contact().clone();
-                trace!("Sending Authentication response to node: {} ({:?})", node_address, request_call.id());
+                trace!(
+                    "Sending Authentication response to node: {} ({:?})",
+                    node_address,
+                    request_call.id()
+                );
                 request_call.update_packet(auth_packet.clone());
                 request_call.set_handshake_sent();
                 // Reinsert the request_call
