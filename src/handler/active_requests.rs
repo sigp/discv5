@@ -76,6 +76,39 @@ impl ActiveRequests {
         Some(requests)
     }
 
+    /// Remove requests associated with a node, except for the request that has the given message nonce.
+    pub fn remove_requests_except(
+        &mut self,
+        node_address: &NodeAddress,
+        except: &MessageNonce,
+    ) -> Option<Vec<RequestCall>> {
+        let request_ids = self
+            .active_requests_mapping
+            .get(node_address)?
+            .iter()
+            .filter(|req| req.packet().message_nonce() != except)
+            .map(|req| {
+                match req.id() {
+                    HandlerReqId::Internal(id) => id,
+                    HandlerReqId::External(id) => id,
+                }
+                .clone()
+            })
+            .collect::<Vec<_>>();
+
+        let mut requests = vec![];
+        for id in request_ids.iter() {
+            match self.remove_request(node_address, id) {
+                Some(request_call) => requests.push(request_call),
+                None => {
+                    debug_unreachable!("expected to find request with id");
+                    error!("expected to find request with id");
+                }
+            }
+        }
+        Some(requests)
+    }
+
     /// Remove a single request identified by its id.
     pub fn remove_request(
         &mut self,

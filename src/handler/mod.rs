@@ -946,14 +946,13 @@ impl Handler {
             node_address,
             message_nonce
         );
-        let active_requests = self
-            .active_requests
-            .remove_requests(node_address)
-            .unwrap_or_default()
-            .into_iter()
-            // Skip the active request that was used to establish the new session,
-            // as it has already been handled and shouldn't be replayed.
-            .filter(|req| Some(*req.packet().message_nonce()) != message_nonce);
+        let active_requests = if let Some(nonce) = message_nonce {
+            self.active_requests
+                .remove_requests_except(node_address, &nonce)
+        } else {
+            self.active_requests.remove_requests(node_address)
+        }
+        .unwrap_or_default();
         for req in active_requests {
             let (req_id, contact, body) = req.into_request_parts();
             trace!(
