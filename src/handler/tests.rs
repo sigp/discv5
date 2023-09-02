@@ -411,7 +411,7 @@ async fn test_active_requests_remove_requests_except() {
     let (req_2, req_2_addr) = create_req_call(&node_2);
     let (req_3, req_3_addr) = create_req_call(&node_2);
 
-    let req_2_nonce = req_2.packet().header.message_nonce.clone();
+    let req_2_nonce = req_2.packet().header.message_nonce;
     let req_3_id: RequestId = req_3.id().into();
 
     active_requests.insert(req_1_addr, req_1);
@@ -731,7 +731,7 @@ async fn test_replay_active_requests() {
             port: receiver_enr.udp4().unwrap(),
         };
         let receiver_config = ConfigBuilder::new(receiver_listen_config)
-            .session_timeout(receiver_session_timeout.clone())
+            .session_timeout(receiver_session_timeout)
             .build();
         build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await
     };
