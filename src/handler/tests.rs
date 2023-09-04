@@ -685,8 +685,8 @@ async fn remove_one_time_session() {
 #[tokio::test]
 async fn test_replay_active_requests() {
     init();
-    let sender_port = 5004;
-    let receiver_port = 5005;
+    let sender_port = 5006;
+    let receiver_port = 5007;
     let ip = "127.0.0.1".parse().unwrap();
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
