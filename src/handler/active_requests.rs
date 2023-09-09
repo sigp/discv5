@@ -32,6 +32,10 @@ impl ActiveRequests {
             .insert(nonce, node_address);
     }
 
+    pub fn get(&self, node_address: &NodeAddress) -> Option<&Vec<RequestCall>> {
+        self.active_requests_mapping.get(node_address)
+    }
+
     /// Remove a single request identified by its nonce.
     pub fn remove_by_nonce(&mut self, nonce: &MessageNonce) -> Option<(NodeAddress, RequestCall)> {
         let node_address = self.active_requests_nonce_mapping.remove(nonce)?;

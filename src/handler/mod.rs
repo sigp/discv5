@@ -473,8 +473,11 @@ impl Handler {
             return Err(RequestError::SelfRequest);
         }
 
-        // If there is already an active challenge (WHOAREYOU sent) for this node, add to pending requests
-        if self.active_challenges.get(&node_address).is_some() {
+        // If there is already an active challenge (WHOAREYOU sent) for this node, or if we are
+        // awaiting a session with this node to be established, add the request to pending requests.
+        if self.active_challenges.get(&node_address).is_some()
+            || self.is_awaiting_session_to_be_established(&node_address)
+        {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
@@ -758,8 +761,11 @@ impl Handler {
                 }
             }
         }
-        self.new_session::<P>(node_address, session, Some(auth_message_nonce))
+        self.new_session::<P>(node_address.clone(), session, Some(auth_message_nonce))
             .await;
+        // We could have pending messages that were awaiting this session to be
+        // established. If so process them.
+        self.send_pending_requests::<P>(&node_address).await;
     }
 
     /// Verifies a Node ENR to it's observed address. If it fails, any associated session is also
@@ -1347,5 +1353,20 @@ impl Handler {
             .write()
             .ban_nodes
             .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
+    }
+
+    /// Returns whether a session with this node does not exist and a request that initiates
+    /// a session has been sent.
+    fn is_awaiting_session_to_be_established(&mut self, node_address: &NodeAddress) -> bool {
+        if self.sessions.get(node_address).is_some() {
+            // session exists
+            return false;
+        }
+
+        if let Some(requests) = self.active_requests.get(node_address) {
+            requests.iter().any(|req| req.initiating_session())
+        } else {
+            false
+        }
     }
 }
