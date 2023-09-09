@@ -845,3 +845,197 @@ async fn test_replay_active_requests() {
         }
     }
 }
+
+// Tests sending pending requests.
+//
+// Sender attempts to send multiple requests in parallel, but due to the absence of a session, only
+// one of the requests from Sender is sent and others are inserted into `pending_requests`.
+// The pending requests are sent once a session is established.
+//
+// ```mermaid
+// sequenceDiagram
+//     participant Sender
+//     participant Receiver
+//
+//     Note over Sender: No session with Receiver
+//
+//     rect rgb(10, 10, 10)
+//     Note left of Sender: Sender attempts to send multiple requests in parallel <br> but no session with Receiver.<br> So Sender sends a random packet for the first request, <br>and the rest of the requests are inserted into pending_requests.
+//     par
+//     Sender ->> Receiver: Random packet (id:1)
+//     Note over Sender: Insert the request into `active_requests`
+//     and
+//     Note over Sender: Insert Request(id:2) into *pending_requests*
+//     and
+//     Note over Sender: Insert Request(id:3) into *pending_requests*
+//     end
+//     end
+//
+//     Receiver ->> Sender: WHOAREYOU (id:1)
+//
+//     Note over Sender: New session established with Receiver
+//     Sender ->> Receiver: Handshake message (id:1)
+//
+//
+//     Note over Receiver: New session established with Sender
+//
+//     rect rgb(0, 100, 0)
+//     Note over Sender: Send pending requests since a session has been established.
+//     Sender ->> Receiver: Request (id:2)
+//     Sender ->> Receiver: Request (id:3)
+//     end
+//
+//     Receiver ->> Sender: Response (id:1)
+//     Receiver ->> Sender: Response (id:2)
+//     Receiver ->> Sender: Response (id:3)
+//
+//     Note over Sender: The request (id:1) completed.
+//     Note over Sender: The request (id:2) completed.
+//     Note over Sender: The request (id:3) completed.
+// ```
+#[tokio::test]
+async fn test_send_pending_request() {
+    init();
+    let sender_port = 5008;
+    let receiver_port = 5009;
+    let ip = "127.0.0.1".parse().unwrap();
+    let key1 = CombinedKey::generate_secp256k1();
+    let key2 = CombinedKey::generate_secp256k1();
+
+    let sender_enr = EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(sender_port)
+        .build(&key1)
+        .unwrap();
+
+    let receiver_enr = EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(receiver_port)
+        .build(&key2)
+        .unwrap();
+
+    // Build sender handler
+    let (sender_exit, sender_send, mut sender_recv, mut handler) = {
+        let sender_listen_config = ListenConfig::Ipv4 {
+            ip: sender_enr.ip4().unwrap(),
+            port: sender_enr.udp4().unwrap(),
+        };
+        let sender_config = ConfigBuilder::new(sender_listen_config).build();
+        build_handler::<DefaultProtocolId>(sender_enr.clone(), key1, sender_config).await
+    };
+    let sender = async move {
+        // Start sender handler.
+        handler.start::<DefaultProtocolId>().await;
+        // After the handler has been terminated test the handler's states.
+        assert!(handler.pending_requests.is_empty());
+        assert_eq!(0, handler.active_requests.count().await);
+        assert!(handler.active_challenges.is_empty());
+        assert!(handler.filter_expected_responses.read().is_empty());
+    };
+
+    // Build receiver handler
+    // Shorten receiver's timeout to reproduce session expired.
+    let receiver_session_timeout = Duration::from_secs(1);
+    let (receiver_exit, receiver_send, mut receiver_recv, mut handler) = {
+        let receiver_listen_config = ListenConfig::Ipv4 {
+            ip: receiver_enr.ip4().unwrap(),
+            port: receiver_enr.udp4().unwrap(),
+        };
+        let receiver_config = ConfigBuilder::new(receiver_listen_config)
+            .session_timeout(receiver_session_timeout)
+            .build();
+        build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await
+    };
+    let receiver = async move {
+        // Start receiver handler.
+        handler.start::<DefaultProtocolId>().await;
+        // After the handler has been terminated test the handler's states.
+        assert!(handler.pending_requests.is_empty());
+        assert_eq!(0, handler.active_requests.count().await);
+        assert!(handler.active_challenges.is_empty());
+        assert!(handler.filter_expected_responses.read().is_empty());
+    };
+
+    let messages_to_send = 3usize;
+
+    let sender_ops = async move {
+        let mut response_count = 0usize;
+        let mut expected_request_ids = HashSet::new();
+
+        // send requests
+        for req_id in 1..=messages_to_send {
+            let request_id = RequestId(vec![req_id as u8]);
+            expected_request_ids.insert(request_id.clone());
+            let _ = sender_send.send(HandlerIn::Request(
+                receiver_enr.clone().into(),
+                Box::new(Request {
+                    id: request_id,
+                    body: RequestBody::Ping { enr_seq: 1 },
+                }),
+            ));
+        }
+
+        loop {
+            match sender_recv.recv().await {
+                Some(HandlerOut::Response(_, response)) => {
+                    assert!(expected_request_ids.remove(&response.id));
+                    response_count += 1;
+                    if response_count == messages_to_send {
+                        // Notify the handlers that the message exchange has been completed.
+                        assert!(expected_request_ids.is_empty());
+                        sender_exit.send(()).unwrap();
+                        receiver_exit.send(()).unwrap();
+                        return;
+                    }
+                }
+                _ => continue,
+            };
+        }
+    };
+
+    let receiver_ops = async move {
+        let mut message_count = 0usize;
+        loop {
+            match receiver_recv.recv().await {
+                Some(HandlerOut::WhoAreYou(wru_ref)) => {
+                    receiver_send
+                        .send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())))
+                        .unwrap();
+                }
+                Some(HandlerOut::Request(addr, request)) => {
+                    assert!(matches!(request.body, RequestBody::Ping { .. }));
+                    let pong_response = Response {
+                        id: request.id,
+                        body: ResponseBody::Pong {
+                            enr_seq: 1,
+                            ip: ip.into(),
+                            port: sender_port,
+                        },
+                    };
+                    receiver_send
+                        .send(HandlerIn::Response(addr, Box::new(pong_response)))
+                        .unwrap();
+                    message_count += 1;
+                    if message_count == messages_to_send {
+                        return;
+                    }
+                }
+                _ => {
+                    continue;
+                }
+            }
+        }
+    };
+
+    let sleep_future = sleep(Duration::from_secs(5));
+    let message_exchange = async move {
+        let _ = tokio::join!(sender, sender_ops, receiver, receiver_ops);
+    };
+
+    tokio::select! {
+        _ = message_exchange => {}
+        _ = sleep_future => {
+            panic!("Test timed out");
+        }
+    }
+}
