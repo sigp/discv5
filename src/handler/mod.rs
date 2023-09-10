@@ -925,6 +925,11 @@ impl Handler {
             .remove(node_address)
             .unwrap_or_default();
         for req in pending_requests {
+            trace!(
+                "Sending pending request {} to {node_address}. {}",
+                RequestId::from(&req.request_id),
+                req.request,
+            );
             if let Err(request_error) = self
                 .send_request::<P>(req.contact, req.request_id.clone(), req.request)
                 .await
