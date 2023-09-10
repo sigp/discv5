@@ -977,10 +977,8 @@ impl Handler {
         for req in active_requests {
             let (req_id, contact, body) = req.into_request_parts();
             trace!(
-                "Active request to be replayed. {:?}, {}, {}",
-                req_id,
-                contact,
-                body
+                "Active request to be replayed. {}, {contact}, {body}",
+                RequestId::from(&req_id),
             );
             // Remove the request from the packet filter here since the request is added in
             // `self.send_request()` again.
