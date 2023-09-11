@@ -763,9 +763,6 @@ impl Handler {
         }
         self.new_session::<P>(node_address.clone(), session, Some(auth_message_nonce))
             .await;
-        // We could have pending messages that were awaiting this session to be
-        // established. If so process them.
-        self.send_pending_requests::<P>(&node_address).await;
     }
 
     /// Verifies a Node ENR to it's observed address. If it fails, any associated session is also
@@ -847,9 +844,6 @@ impl Handler {
                             authenticated_data,
                         )
                         .await;
-                        // We could have pending messages that were awaiting this session to be
-                        // established. If so process them.
-                        self.send_pending_requests::<P>(&node_address).await;
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
@@ -1225,10 +1219,13 @@ impl Handler {
             self.replay_active_requests::<P>(&node_address, message_nonce)
                 .await;
         } else {
-            self.sessions.insert(node_address, session);
+            self.sessions.insert(node_address.clone(), session);
             METRICS
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
+            // We could have pending messages that were awaiting this session to be
+            // established. If so process them.
+            self.send_pending_requests::<P>(&node_address).await;
         }
     }
 
