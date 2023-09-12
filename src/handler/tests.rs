@@ -874,10 +874,6 @@ async fn test_replay_active_requests() {
 //     Receiver ->> Sender: WHOAREYOU (id:1)
 //
 //     Note over Sender: New session established with Receiver
-//     Sender ->> Receiver: Handshake message (id:1)
-//
-//
-//     Note over Receiver: New session established with Sender
 //
 //     rect rgb(0, 100, 0)
 //     Note over Sender: Send pending requests since a session has been established.
@@ -885,13 +881,17 @@ async fn test_replay_active_requests() {
 //     Sender ->> Receiver: Request (id:3)
 //     end
 //
-//     Receiver ->> Sender: Response (id:1)
+//     Sender ->> Receiver: Handshake message (id:1)
+//
+//     Note over Receiver: New session established with Sender
+//
 //     Receiver ->> Sender: Response (id:2)
 //     Receiver ->> Sender: Response (id:3)
+//     Receiver ->> Sender: Response (id:1)
 //
-//     Note over Sender: The request (id:1) completed.
 //     Note over Sender: The request (id:2) completed.
 //     Note over Sender: The request (id:3) completed.
+//     Note over Sender: The request (id:1) completed.
 // ```
 #[tokio::test]
 async fn test_send_pending_request() {
