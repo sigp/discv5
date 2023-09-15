@@ -446,10 +446,7 @@ impl Message {
                 };
                 Message::Response(Response {
                     id,
-                    body: ResponseBody::Nodes {
-                        total,
-                        nodes,
-                    },
+                    body: ResponseBody::Nodes { total, nodes },
                 })
             }
             5 => {
