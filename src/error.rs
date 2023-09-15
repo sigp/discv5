@@ -1,5 +1,5 @@
 use crate::{handler::Challenge, node_info::NonContactable};
-use rlp::DecoderError;
+use alloy_rlp::Error as DecoderError;
 use std::fmt;
 
 #[derive(Debug)]
