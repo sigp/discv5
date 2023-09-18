@@ -685,8 +685,8 @@ async fn test_predicate_search() {
     // Update `num_nodes` with the required attnet value
     let num_nodes = total_nodes / 2;
 
-    let required_attnet_value = Bytes::copy_from_slice(&vec![1, 0, 0, 0]);
-    let unwanted_attnet_value = Bytes::copy_from_slice(&vec![0, 0, 0, 0]);
+    let required_attnet_value = Bytes::copy_from_slice(&[1, 0, 0, 0]);
+    let unwanted_attnet_value = Bytes::copy_from_slice(&[0, 0, 0, 0]);
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
     println!("Target node: {}", target_node.local_enr().node_id());
 
