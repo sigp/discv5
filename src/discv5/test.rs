@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::{socket::ListenConfig, Discv5, *};
+use bytes::Bytes;
 use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{
@@ -683,8 +684,9 @@ async fn test_predicate_search() {
 
     // Update `num_nodes` with the required attnet value
     let num_nodes = total_nodes / 2;
-    let required_attnet_value: Vec<u8> = vec![1, 0, 0, 0];
-    let unwanted_attnet_value: Vec<u8> = vec![0, 0, 0, 0];
+    
+    let required_attnet_value = Bytes::copy_from_slice(&vec![1, 0, 0, 0]);
+    let unwanted_attnet_value = Bytes::copy_from_slice(&vec![0, 0, 0, 0]);
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
     println!("Target node: {}", target_node.local_enr().node_id());
 
@@ -711,7 +713,7 @@ async fn test_predicate_search() {
     // Predicate function for filtering enrs
     let predicate = move |enr: &Enr<CombinedKey>| {
         if let Some(v) = enr.get("attnets") {
-            v == required_attnet_value.as_slice()
+            v == required_attnet_value.to_vec().as_slice()
         } else {
             false
         }
