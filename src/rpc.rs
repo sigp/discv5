@@ -124,12 +124,8 @@ impl Request {
         match self.body {
             RequestBody::Ping { enr_seq } => {
                 let mut list = Vec::<u8>::new();
-                list.append(&mut id.as_bytes().to_vec());
-                let mut tmp_enr_seq = alloy_rlp::encode(enr_seq);
-                if tmp_enr_seq.len() != 1 {
-                    tmp_enr_seq.remove(0);
-                }
-                list.append(&mut tmp_enr_seq);
+                list.append(&mut alloy_rlp::encode(id.as_bytes()));
+                list.append(&mut alloy_rlp::encode(enr_seq));
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -150,14 +146,11 @@ impl Request {
                 buf.extend_from_slice(&list);
                 buf
             }
-            RequestBody::Talk {
-                mut protocol,
-                mut request,
-            } => {
+            RequestBody::Talk { protocol, request } => {
                 let mut list = Vec::<u8>::new();
-                list.append(&mut id.as_bytes().to_vec());
-                list.append(&mut protocol);
-                list.append(&mut request);
+                list.append(&mut alloy_rlp::encode(id.as_bytes()));
+                list.append(&mut alloy_rlp::encode(Bytes::copy_from_slice(&protocol)));
+                list.append(&mut alloy_rlp::encode(Bytes::copy_from_slice(&request)));
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -247,7 +240,7 @@ impl Response {
             ResponseBody::Talk { response } => {
                 let mut list = Vec::<u8>::new();
                 list.append(&mut alloy_rlp::encode(id.as_bytes()));
-                list.append(&mut alloy_rlp::encode(response));
+                list.append(&mut alloy_rlp::encode(Bytes::copy_from_slice(&response)));
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -451,11 +444,14 @@ impl Message {
             }
             5 => {
                 // Talk Request
-                let protocol = Vec::<u8>::decode(payload)?;
-                let request = Vec::<u8>::decode(payload)?;
+                let protocol = Bytes::decode(payload)?;
+                let request = Bytes::decode(payload)?;
                 Message::Request(Request {
                     id,
-                    body: RequestBody::Talk { protocol, request },
+                    body: RequestBody::Talk {
+                        protocol: protocol.to_vec(),
+                        request: request.to_vec(),
+                    },
                 })
             }
             6 => {
