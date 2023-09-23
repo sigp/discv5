@@ -124,7 +124,7 @@ async fn build_nodes_from_keypairs_dual_stack(
 }
 
 /// Generate `n` deterministic keypairs from a given seed.
-fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
+pub(crate) fn generate_deterministic_keypair(n: usize, seed: u64) -> Vec<CombinedKey> {
     let mut keypairs = Vec::new();
     for i in 0..n {
         let sk = {
