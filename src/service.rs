@@ -728,10 +728,8 @@ impl Service {
 
                     // handle the case that there is more than one response
                     if total > 1 {
-                        let mut current_response = self
-                            .active_nodes_responses
-                            .remove(&id)
-                            .unwrap_or_default();
+                        let mut current_response =
+                            self.active_nodes_responses.remove(&id).unwrap_or_default();
 
                         debug!(
                             "Nodes Response: {} of {} received",
