@@ -329,7 +329,7 @@ async fn test_handling_concurrent_responses() {
 
     // Finally, handle the second response to `Request1`.
     service.handle_rpc_response(
-        node_address.clone(),
+        node_address,
         Response {
             id: RequestId(vec![1]),
             body: ResponseBody::Nodes {
