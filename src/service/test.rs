@@ -235,7 +235,7 @@ async fn test_handling_concurrent_responses() {
         let enr_key = keypairs.pop().unwrap();
         let enr = EnrBuilder::new("v4")
             .ip4("127.0.0.1".parse().unwrap())
-            .udp4(10001)
+            .udp4(10005)
             .build(&enr_key)
             .unwrap();
         build_service::<DefaultProtocolId>(
@@ -248,7 +248,7 @@ async fn test_handling_concurrent_responses() {
 
     let node_contact: NodeContact = EnrBuilder::new("v4")
         .ip4("127.0.0.1".parse().unwrap())
-        .udp4(10002)
+        .udp4(10006)
         .build(&keypairs.remove(0))
         .unwrap()
         .into();
@@ -287,7 +287,7 @@ async fn test_handling_concurrent_responses() {
         .map(|(i, key)| {
             EnrBuilder::new("v4")
                 .ip4("127.0.0.1".parse().unwrap())
-                .udp4(10003 + i as u16)
+                .udp4(10007 + i as u16)
                 .build(key)
                 .unwrap()
         })
