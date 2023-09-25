@@ -192,13 +192,13 @@ impl Response {
         match self.body {
             ResponseBody::Pong { enr_seq, ip, port } => {
                 let mut list = Vec::<u8>::new();
-                list.append(&mut alloy_rlp::encode(id.as_bytes()));
-                list.append(&mut alloy_rlp::encode(enr_seq));
+                id.as_bytes().encode(&mut list);
+                enr_seq.encode(&mut list);
                 match ip {
-                    IpAddr::V4(addr) => list.append(&mut alloy_rlp::encode(addr.octets())),
-                    IpAddr::V6(addr) => list.append(&mut alloy_rlp::encode(addr.octets())),
+                    IpAddr::V4(addr) => addr.encode(&mut list),
+                    IpAddr::V6(addr) => addr.encode(&mut list),
                 };
-                list.append(&mut alloy_rlp::encode(port));
+                port.encode(&mut list);
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -209,21 +209,21 @@ impl Response {
             }
             ResponseBody::Nodes { total, nodes } => {
                 let mut list = Vec::<u8>::new();
-                list.append(&mut alloy_rlp::encode(id.as_bytes()));
-                list.append(&mut alloy_rlp::encode(total));
+                id.as_bytes().encode(&mut list);
+                total.encode(&mut list);
                 if !nodes.is_empty() {
                     let mut out = BytesMut::new();
                     for node in nodes.clone() {
                         node.encode(&mut out);
                     }
-                    let tmp = Header {
+                    let tmp_header = Header {
                         list: true,
                         payload_length: out.to_vec().len(),
                     };
                     let mut tmp_out = BytesMut::new();
-                    tmp.encode(&mut tmp_out);
+                    tmp_header.encode(&mut tmp_out);
                     tmp_out.extend_from_slice(&out);
-                    list.append(&mut tmp_out.to_vec());
+                    list.extend_from_slice(&tmp_out);
                 } else {
                     let mut out = BytesMut::new();
                     nodes.encode(&mut out);
@@ -239,8 +239,8 @@ impl Response {
             }
             ResponseBody::Talk { response } => {
                 let mut list = Vec::<u8>::new();
-                list.append(&mut alloy_rlp::encode(id.as_bytes()));
-                list.append(&mut alloy_rlp::encode(Bytes::copy_from_slice(&response)));
+                id.as_bytes().encode(&mut list);
+                response.encode(&mut list);
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -427,7 +427,7 @@ impl Message {
                     let mut enr_list_rlp = Vec::<Enr<CombinedKey>>::new();
                     while !payload.is_empty() {
                         let enr_rlp = Enr::<CombinedKey>::decode(payload)?;
-                        payload.advance(enr_rlp.length() - 2);
+                        payload.advance(enr_rlp.size() - 2);
                         enr_list_rlp.append(&mut vec![enr_rlp]);
                     }
                     if enr_list_rlp.is_empty() {
