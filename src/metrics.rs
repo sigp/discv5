@@ -9,9 +9,23 @@ lazy_static! {
 #[derive(Default)]
 pub struct ErrorMetrics {
     /// Total number of errors that have occurred
-    pub total_errors: usize,
+    pub total_errors: AtomicUsize,
     /// Total number of warnings that have occurred
-    pub total_warnings: usize,
+    pub total_warnings: AtomicUsize,
+}
+
+impl ErrorMetrics {
+    pub fn inc_total_errors(&self) {
+        let current_total_errors = self.total_errors.load(Ordering::Relaxed);
+        self.total_errors
+            .store(current_total_errors.saturating_add(1), Ordering::Relaxed);
+    }
+
+    pub fn inc_total_warnings(&self) {
+        let current_total_errors = self.total_errors.load(Ordering::Relaxed);
+        self.total_errors
+            .store(current_total_errors.saturating_add(1), Ordering::Relaxed);
+    }
 }
 
 /// A collection of metrics used throughout the server.
@@ -54,6 +68,14 @@ impl InternalMetrics {
         let current_bytes_sent = self.bytes_sent.load(Ordering::Relaxed);
         self.bytes_sent
             .store(current_bytes_sent.saturating_add(bytes), Ordering::Relaxed);
+    }
+
+    pub fn error(&self) {
+        self.error_metrics.inc_total_errors()
+    }
+
+    pub fn warning(&self) {
+        self.error_metrics.inc_total_errors()
     }
 }
 
