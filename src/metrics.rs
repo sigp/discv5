@@ -4,6 +4,16 @@ lazy_static! {
     pub static ref METRICS: InternalMetrics = InternalMetrics::default();
 }
 
+/// Represents metrics pertaining to errors and warnings that occur throughout
+/// the course of server operation
+#[derive(Default)]
+pub struct ErrorMetrics {
+    /// Total number of errors that have occurred
+    pub total_errors: usize,
+    /// Total number of warnings that have occurred
+    pub total_warnings: usize,
+}
+
 /// A collection of metrics used throughout the server.
 pub struct InternalMetrics {
     /// The number of active UDP sessions that are currently established.
@@ -16,6 +26,8 @@ pub struct InternalMetrics {
     pub bytes_sent: AtomicUsize,
     /// The number of bytes received.
     pub bytes_recv: AtomicUsize,
+    /// Information about errors
+    pub error_metrics: ErrorMetrics,
 }
 
 impl Default for InternalMetrics {
@@ -26,6 +38,7 @@ impl Default for InternalMetrics {
             unsolicited_requests_per_window: AtomicUsize::new(0),
             bytes_sent: AtomicUsize::new(0),
             bytes_recv: AtomicUsize::new(0),
+            error_metrics: ErrorMetrics::default(),
         }
     }
 }
