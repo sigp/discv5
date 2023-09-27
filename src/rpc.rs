@@ -124,8 +124,8 @@ impl Request {
         match self.body {
             RequestBody::Ping { enr_seq } => {
                 let mut list = Vec::<u8>::new();
-                list.append(&mut alloy_rlp::encode(id.as_bytes()));
-                list.append(&mut alloy_rlp::encode(enr_seq));
+                id.as_bytes().encode(&mut list);
+                enr_seq.encode(&mut list);
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -136,8 +136,8 @@ impl Request {
             }
             RequestBody::FindNode { distances } => {
                 let mut list = Vec::<u8>::new();
-                list.append(&mut alloy_rlp::encode(id.as_bytes()));
-                list.append(&mut alloy_rlp::encode(distances));
+                id.as_bytes().encode(&mut list);
+                distances.encode(&mut list);
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -148,9 +148,9 @@ impl Request {
             }
             RequestBody::Talk { protocol, request } => {
                 let mut list = Vec::<u8>::new();
-                list.append(&mut alloy_rlp::encode(id.as_bytes()));
-                list.append(&mut alloy_rlp::encode(Bytes::copy_from_slice(&protocol)));
-                list.append(&mut alloy_rlp::encode(Bytes::copy_from_slice(&request)));
+                id.as_bytes().encode(&mut list);
+                protocol.encode(&mut list);
+                request.encode(&mut list);
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
