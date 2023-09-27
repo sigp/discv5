@@ -913,6 +913,8 @@ impl Handler {
         }
     }
 
+    /// Send all pending requests corresponding to the given node address, that were waiting for a
+    /// new session to be established or when an active outgoing challenge has expired.
     async fn send_pending_requests<P: ProtocolIdentity>(&mut self, node_address: &NodeAddress) {
         let pending_requests = self
             .pending_requests
@@ -949,9 +951,13 @@ impl Handler {
         }
     }
 
+    /// Replays all active requests for the given node address, in the case that a new session has
+    /// been established. If an optional message nonce is provided, the corresponding request will
+    /// be skipped, eg. the request that established the new session.
     async fn replay_active_requests<P: ProtocolIdentity>(
         &mut self,
         node_address: &NodeAddress,
+        // Optional message nonce to filter out the request used to establish the session.
         message_nonce: Option<MessageNonce>,
     ) {
         trace!(
@@ -1203,6 +1209,8 @@ impl Handler {
         self.active_requests.insert(node_address, request_call);
     }
 
+    /// Establishes a new session with a peer, or re-establishes an existing session if a
+    /// new challenge was issued during an ongoing session.
     async fn new_session<P: ProtocolIdentity>(
         &mut self,
         node_address: NodeAddress,
