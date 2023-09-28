@@ -18,7 +18,7 @@ pub struct ErrorMetrics {
     /// Total number of warnings that have occurred
     pub total_warnings: AtomicUsize,
     /// Individual errors that have occurred, with their associated counts
-    pub errors: RwLock<HashMap<String, AtomicUsize>>,
+    pub errors: RwLock<HashMap<&'static str, AtomicUsize>>,
 }
 
 impl ErrorMetrics {
@@ -34,12 +34,12 @@ impl ErrorMetrics {
             .store(current_total_errors.saturating_add(1), Ordering::Relaxed);
     }
 
-    pub fn inc_individual_error(&self, error: String) {
-        if let Some(curr_count) = self.errors.read().get(error.as_str()) {
+    pub fn inc_individual_error(&self, error: &'static str) {
+        if let Some(curr_count) = self.errors.read().get(error) {
             let curr_count = curr_count.load(Ordering::Relaxed);
             self.errors
                 .write()
-                .get_mut(error.as_str())
+                .get_mut(error)
                 .unwrap()
                 .store(curr_count.saturating_add(1), Ordering::Relaxed);
         } else {
@@ -47,7 +47,7 @@ impl ErrorMetrics {
         }
     }
 
-    pub fn as_raw(&self) -> HashMap<String, usize> {
+    pub fn as_raw(&self) -> HashMap<&'static str, usize> {
         self.errors
             .read()
             .iter()
@@ -98,7 +98,7 @@ impl InternalMetrics {
             .store(current_bytes_sent.saturating_add(bytes), Ordering::Relaxed);
     }
 
-    pub fn error(&self, error: String) {
+    pub fn error(&self, error: &'static str) {
         self.error_metrics.inc_total_errors();
         self.error_metrics.inc_individual_error(error);
     }
@@ -116,7 +116,7 @@ pub struct Metrics {
     /// The number of bytes received.
     pub bytes_recv: usize,
     /// Counts of both individual and aggregate errors that have occurred
-    pub errors: HashMap<String, usize>,
+    pub errors: HashMap<&'static str, usize>,
 }
 
 impl From<&METRICS> for Metrics {
