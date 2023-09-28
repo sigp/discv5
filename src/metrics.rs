@@ -34,7 +34,7 @@ impl ErrorMetrics {
             .store(current_total_errors.saturating_add(1), Ordering::Relaxed);
     }
 
-    pub fn inc_individual_error(&mut self, error: String) {
+    pub fn inc_individual_error(&self, error: String) {
         if let Some(curr_count) = self.errors.read().get(error.as_str()) {
             let curr_count = curr_count.load(Ordering::Relaxed);
             self.errors
@@ -98,7 +98,7 @@ impl InternalMetrics {
             .store(current_bytes_sent.saturating_add(bytes), Ordering::Relaxed);
     }
 
-    pub fn error(&mut self, error: String) {
+    pub fn error(&self, error: String) {
         self.error_metrics.inc_total_errors();
         self.error_metrics.inc_individual_error(error);
     }
