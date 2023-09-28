@@ -346,6 +346,10 @@ impl Message {
             return Err(DecoderError::Custom("Invalid format of header"));
         }
 
+        if header.payload_length != payload.len() {
+            return Err(DecoderError::Custom("Reject the extra data"));
+        }
+
         if payload.is_empty() {
             return Err(DecoderError::Custom("Payload is empty"));
         }
@@ -457,9 +461,6 @@ impl Message {
             6 => {
                 // Talk Response
                 let response = Bytes::decode(payload)?;
-                if !payload.is_empty() {
-                    return Err(DecoderError::Custom("Payload is empty"));
-                }
                 Message::Response(Response {
                     id,
                     body: ResponseBody::Talk {
@@ -763,5 +764,14 @@ mod tests {
 
         let data3 = [6, 194, 0, 75, 252];
         Message::decode(&data3).expect_err("should reject extra data");
+
+        let data4 = [6, 193, 0, 63];
+        Message::decode(&data4).expect_err("should reject extra data");
+
+        let data5 = [6, 193, 128, 75];
+        Message::decode(&data5).expect_err("should reject extra data");
+
+        let data6 = [6, 193, 128, 128];
+        Message::decode(&data6).expect_err("should reject extra data");
     }
 }
