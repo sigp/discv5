@@ -3,6 +3,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use parking_lot::RwLock;
+
 lazy_static! {
     pub static ref METRICS: InternalMetrics = InternalMetrics::default();
 }
@@ -16,7 +18,7 @@ pub struct ErrorMetrics {
     /// Total number of warnings that have occurred
     pub total_warnings: AtomicUsize,
     /// Individual errors that have occurred, with their associated counts
-    pub errors: HashMap<String, AtomicUsize>,
+    pub errors: RwLock<HashMap<String, AtomicUsize>>,
 }
 
 impl ErrorMetrics {
@@ -33,19 +35,21 @@ impl ErrorMetrics {
     }
 
     pub fn inc_individual_error(&mut self, error: String) {
-        if let Some(curr_count) = self.errors.get(error.as_str()) {
+        if let Some(curr_count) = self.errors.read().get(error.as_str()) {
             let curr_count = curr_count.load(Ordering::Relaxed);
             self.errors
+                .write()
                 .get_mut(error.as_str())
                 .unwrap()
                 .store(curr_count.saturating_add(1), Ordering::Relaxed);
         } else {
-            self.errors.insert(error, 0.into());
+            self.errors.write().insert(error, 0.into());
         }
     }
 
     pub fn as_raw(&self) -> HashMap<String, usize> {
         self.errors
+            .read()
             .iter()
             .map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed)))
             .collect()
