@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 lazy_static! {
     pub static ref METRICS: InternalMetrics = InternalMetrics::default();
@@ -6,12 +9,14 @@ lazy_static! {
 
 /// Represents metrics pertaining to errors and warnings that occur throughout
 /// the course of server operation
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ErrorMetrics {
     /// Total number of errors that have occurred
     pub total_errors: AtomicUsize,
     /// Total number of warnings that have occurred
     pub total_warnings: AtomicUsize,
+    /// Individual errors that have occurred, with their associated counts
+    pub errors: HashMap<String, AtomicUsize>,
 }
 
 impl ErrorMetrics {
@@ -25,6 +30,25 @@ impl ErrorMetrics {
         let current_total_errors = self.total_errors.load(Ordering::Relaxed);
         self.total_errors
             .store(current_total_errors.saturating_add(1), Ordering::Relaxed);
+    }
+
+    pub fn inc_individual_error(&mut self, error: String) {
+        if let Some(curr_count) = self.errors.get(error.as_str()) {
+            let curr_count = curr_count.load(Ordering::Relaxed);
+            self.errors
+                .get_mut(error.as_str())
+                .unwrap()
+                .store(curr_count.saturating_add(1), Ordering::Relaxed);
+        } else {
+            self.errors.insert(error, 0.into());
+        }
+    }
+
+    pub fn as_raw(&self) -> HashMap<String, usize> {
+        self.errors
+            .iter()
+            .map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed)))
+            .collect()
     }
 }
 
@@ -70,12 +94,9 @@ impl InternalMetrics {
             .store(current_bytes_sent.saturating_add(bytes), Ordering::Relaxed);
     }
 
-    pub fn error(&self) {
-        self.error_metrics.inc_total_errors()
-    }
-
-    pub fn warning(&self) {
-        self.error_metrics.inc_total_errors()
+    pub fn error(&mut self, error: String) {
+        self.error_metrics.inc_total_errors();
+        self.error_metrics.inc_individual_error(error);
     }
 }
 
@@ -90,6 +111,8 @@ pub struct Metrics {
     pub bytes_sent: usize,
     /// The number of bytes received.
     pub bytes_recv: usize,
+    /// Counts of both individual and aggregate errors that have occurred
+    pub errors: HashMap<String, usize>,
 }
 
 impl From<&METRICS> for Metrics {
@@ -102,6 +125,7 @@ impl From<&METRICS> for Metrics {
                 / internal_metrics.moving_window as f64,
             bytes_sent: internal_metrics.bytes_sent.load(Ordering::Relaxed),
             bytes_recv: internal_metrics.bytes_recv.load(Ordering::Relaxed),
+            errors: internal_metrics.error_metrics.as_raw(),
         }
     }
 }
