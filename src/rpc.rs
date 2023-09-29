@@ -227,7 +227,7 @@ impl Response {
                 } else {
                     let mut out = BytesMut::new();
                     nodes.encode(&mut out);
-                    list.append(&mut out.to_vec());
+                    list.extend_from_slice(&out);
                 }
                 let header = Header {
                     list: true,
@@ -240,7 +240,7 @@ impl Response {
             ResponseBody::Talk { response } => {
                 let mut list = Vec::<u8>::new();
                 id.as_bytes().encode(&mut list);
-                response.encode(&mut list);
+                response.as_slice().encode(&mut list);
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -350,21 +350,19 @@ impl Message {
             return Err(DecoderError::Custom("Reject the extra data"));
         }
 
-        if payload.is_empty() {
-            return Err(DecoderError::Custom("Payload is empty"));
-        }
-
         let id_bytes = Bytes::decode(payload)?;
         let id = RequestId(id_bytes.to_vec());
 
         let message = match msg_type {
             1 => {
                 // PingRequest
+                let enr_seq = u64::decode(payload)?;
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
+                }
                 Message::Request(Request {
                     id,
-                    body: RequestBody::Ping {
-                        enr_seq: u64::decode(payload)?,
-                    },
+                    body: RequestBody::Ping { enr_seq },
                 })
             }
             2 => {
@@ -399,6 +397,9 @@ impl Message {
                     }
                 };
                 let port = u16::decode(payload)?;
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
+                }
                 Message::Response(Response {
                     id,
                     body: ResponseBody::Pong { enr_seq, ip, port },
@@ -417,7 +418,9 @@ impl Message {
                         return Err(DecoderError::Custom("FINDNODE request distance invalid"));
                     }
                 }
-
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
+                }
                 Message::Request(Request {
                     id,
                     body: RequestBody::FindNode { distances },
@@ -427,7 +430,10 @@ impl Message {
                 // NodesResponse
                 let total = u64::decode(payload)?;
                 let nodes = {
-                    Header::decode(payload)?;
+                    let header = Header::decode(payload)?;
+                    if !header.list {
+                        return Err(DecoderError::Custom("Invalid format of header"));
+                    }
                     let mut enr_list_rlp = Vec::<Enr<CombinedKey>>::new();
                     while !payload.is_empty() {
                         let enr_rlp = Enr::<CombinedKey>::decode(payload)?;
@@ -441,6 +447,9 @@ impl Message {
                         enr_list_rlp
                     }
                 };
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
+                }
                 Message::Response(Response {
                     id,
                     body: ResponseBody::Nodes { total, nodes },
@@ -448,19 +457,22 @@ impl Message {
             }
             5 => {
                 // Talk Request
-                let protocol = Bytes::decode(payload)?;
-                let request = Bytes::decode(payload)?;
+                let protocol = Vec::<u8>::decode(payload)?;
+                let request = Vec::<u8>::decode(payload)?;
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
+                }
                 Message::Request(Request {
                     id,
-                    body: RequestBody::Talk {
-                        protocol: protocol.to_vec(),
-                        request: request.to_vec(),
-                    },
+                    body: RequestBody::Talk { protocol, request },
                 })
             }
             6 => {
                 // Talk Response
                 let response = Bytes::decode(payload)?;
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
+                }
                 Message::Response(Response {
                     id,
                     body: ResponseBody::Talk {
@@ -481,7 +493,7 @@ impl Message {
 mod tests {
     use super::*;
     use enr::EnrBuilder;
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn ref_test_encode_request_ping() {
@@ -758,6 +770,7 @@ mod tests {
                 body: ResponseBody::Talk { response: vec![75] }
             })
         );
+        assert_eq!(data.to_vec(), msg.encode());
 
         let data2 = [6, 193, 0, 75, 252];
         Message::decode(&data2).expect_err("should reject extra data");
