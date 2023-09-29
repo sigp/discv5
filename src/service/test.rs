@@ -19,6 +19,9 @@ use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
+/// Default UDP port number to use for tests requiring UDP exposure
+pub const DEFAULT_UDP_PORT: u16 = 0;
+
 fn _connected_state() -> NodeStatus {
     NodeStatus {
         state: ConnectionState::Connected,
@@ -105,14 +108,14 @@ async fn test_updating_connection_on_ping() {
     let ip = "127.0.0.1".parse().unwrap();
     let enr = EnrBuilder::new("v4")
         .ip4(ip)
-        .udp4(10001)
+        .udp4(DEFAULT_UDP_PORT)
         .build(&enr_key1)
         .unwrap();
     let ip2 = "127.0.0.1".parse().unwrap();
     let enr_key2 = CombinedKey::generate_secp256k1();
     let enr2 = EnrBuilder::new("v4")
         .ip4(ip2)
-        .udp4(10002)
+        .udp4(DEFAULT_UDP_PORT)
         .build(&enr_key2)
         .unwrap();
 
@@ -141,7 +144,7 @@ async fn test_updating_connection_on_ping() {
         body: ResponseBody::Pong {
             enr_seq: 2,
             ip: ip2.into(),
-            port: 10002,
+            port: DEFAULT_UDP_PORT,
         },
     };
 
@@ -173,7 +176,7 @@ async fn test_connection_direction_on_inject_session_established() {
     let ip = std::net::Ipv4Addr::LOCALHOST;
     let enr = EnrBuilder::new("v4")
         .ip4(ip)
-        .udp4(10001)
+        .udp4(DEFAULT_UDP_PORT)
         .build(&enr_key1)
         .unwrap();
 
@@ -181,7 +184,7 @@ async fn test_connection_direction_on_inject_session_established() {
     let ip2 = std::net::Ipv4Addr::LOCALHOST;
     let enr2 = EnrBuilder::new("v4")
         .ip4(ip2)
-        .udp4(10002)
+        .udp4(DEFAULT_UDP_PORT)
         .build(&enr_key2)
         .unwrap();
 
