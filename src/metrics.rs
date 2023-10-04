@@ -9,6 +9,26 @@ lazy_static! {
     pub static ref METRICS: InternalMetrics = InternalMetrics::default();
 }
 
+pub const SEND_EMPTY_TALK_RESP_FAIL: &str = "send_empty_talk_response_failed";
+pub const SEND_WHOAREYOU_FAIL: &str = "send_whoareyou_fail";
+pub const RPC_REQ_TIMEOUT: &str = "rpc_req_timeout";
+pub const RPC_REQ_FAIL: &str = "rpc_req_fail";
+pub const QUERY_RES_ENR_MISSING: &str = "query_res_enr_missing";
+pub const QUERY_CALLBACK_DROPPED: &str = "query_callback_dropped";
+pub const NO_KNOWN_CLOSEST_PEERS: &str = "no_known_closest_peers";
+pub const CALLBACK_FAILED: &str = "callback_failed";
+pub const TRUNCATING_NODES: &str = "truncating_nodes";
+pub const INCORRECT_RESP_TYPE: &str = "incorrect_resp_type";
+pub const SEND_RESP_FAIL: &str = "send_resp_fail";
+pub const PEER_MULTIPLE_ENRS: &str = "peer_multiple_enrs";
+pub const RPC_RESP_MISMATCH: &str = "rpc_resp_mismatch";
+pub const SOCK_UPDATE_FAIL: &str = "sock_update_fail";
+pub const SEND_FINDNODES_RESP_FAIL: &str = "send_findnodes_resp_fail";
+pub const RPC_NODE_RESP_FAIL: &str = "rpc_node_resp_fail";
+pub const NODE_UPDATE_DISCONNECT_FAIL: &str = "node_update_disconnect_fail";
+pub const PEER_SENT_BAD_ENR: &str = "peer_sent_bad_enr";
+pub const SEND_EMPTY_FINDNODES_RESP_FAIL: &str = "send_empty_findnodes_resp_fail";
+
 /// Represents metrics pertaining to errors and warnings that occur throughout
 /// the course of server operation
 #[derive(Debug, Default)]
@@ -51,7 +71,7 @@ impl ErrorMetrics {
         self.errors
             .read()
             .iter()
-            .map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed)))
+            .map(|(k, v)| (*k, v.load(Ordering::Relaxed)))
             .collect()
     }
 }
