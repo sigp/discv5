@@ -55,8 +55,17 @@ impl ErrorMetrics {
     }
 
     pub fn inc_individual_error(&self, error: &'static str) {
-        if let Some(curr_count) = self.errors.read().get(error) {
-            let curr_count = curr_count.load(Ordering::Relaxed);
+        let lock = self.errors.read();
+
+        let curr_count: Option<usize> = if let Some(t) = lock.get(error) {
+            Some(t.load(Ordering::Relaxed))
+        } else {
+            None
+        };
+
+        drop(lock);
+
+        if let Some(curr_count) = curr_count {
             self.errors
                 .write()
                 .get_mut(error)
