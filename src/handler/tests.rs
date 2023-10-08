@@ -401,34 +401,6 @@ async fn test_active_requests_remove_requests() {
 }
 
 #[tokio::test]
-async fn test_active_requests_remove_requests_except() {
-    const EXPIRY: Duration = Duration::from_secs(5);
-    let mut active_requests = ActiveRequests::new(EXPIRY);
-
-    let node_1 = create_node();
-    let node_2 = create_node();
-    let (req_1, req_1_addr) = create_req_call(&node_1);
-    let (req_2, req_2_addr) = create_req_call(&node_2);
-    let (req_3, req_3_addr) = create_req_call(&node_2);
-
-    let req_2_nonce = req_2.packet().header.message_nonce;
-    let req_3_id: RequestId = req_3.id().into();
-
-    active_requests.insert(req_1_addr, req_1);
-    active_requests.insert(req_2_addr.clone(), req_2);
-    active_requests.insert(req_3_addr, req_3);
-
-    let removed_requests = active_requests
-        .remove_requests_except(&req_2_addr, &req_2_nonce)
-        .unwrap();
-    active_requests.check_invariant();
-
-    assert_eq!(1, removed_requests.len());
-    let removed_request_id: RequestId = removed_requests.first().unwrap().id().into();
-    assert_eq!(removed_request_id, req_3_id);
-}
-
-#[tokio::test]
 async fn test_active_requests_remove_request() {
     const EXPIRY: Duration = Duration::from_secs(5);
     let mut active_requests = ActiveRequests::new(EXPIRY);

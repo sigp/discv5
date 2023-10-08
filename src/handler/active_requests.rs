@@ -32,6 +32,42 @@ impl ActiveRequests {
             .insert(nonce, node_address);
     }
 
+    pub fn update_packet(&mut self, old_nonce: MessageNonce, new_packet: Packet) {
+        let node_address =
+            if let Some(node_address) = self.active_requests_nonce_mapping.remove(&old_nonce) {
+                node_address
+            } else {
+                debug_unreachable!("expected to find nonce in active_requests_nonce_mapping");
+                error!("expected to find nonce in active_requests_nonce_mapping");
+                return;
+            };
+
+        self.active_requests_nonce_mapping.insert(
+            new_packet.header.message_nonce.clone(),
+            node_address.clone(),
+        );
+
+        match self.active_requests_mapping.entry(node_address) {
+            Entry::Occupied(mut requests) => {
+                let maybe_request_call = requests
+                    .get_mut()
+                    .iter_mut()
+                    .find(|req| req.packet().message_nonce() == &old_nonce);
+
+                if let Some(request_call) = maybe_request_call {
+                    request_call.update_packet(new_packet);
+                } else {
+                    debug_unreachable!("expected to find request call in active_requests_mapping");
+                    error!("expected to find request call in active_requests_mapping");
+                }
+            }
+            Entry::Vacant(_) => {
+                debug_unreachable!("expected to find node address in active_requests_mapping");
+                error!("expected to find node address in active_requests_mapping");
+            }
+        }
+    }
+
     pub fn get(&self, node_address: &NodeAddress) -> Option<&Vec<RequestCall>> {
         self.active_requests_mapping.get(node_address)
     }
@@ -75,33 +111,6 @@ impl ActiveRequests {
             {
                 debug_unreachable!("expected to find req with nonce");
                 error!("expected to find req with nonce");
-            }
-        }
-        Some(requests)
-    }
-
-    /// Remove requests associated with a node, except for the request that has the given message nonce.
-    pub fn remove_requests_except(
-        &mut self,
-        node_address: &NodeAddress,
-        except: &MessageNonce,
-    ) -> Option<Vec<RequestCall>> {
-        let request_ids = self
-            .active_requests_mapping
-            .get(node_address)?
-            .iter()
-            .filter(|req| req.packet().message_nonce() != except)
-            .map(|req| req.id().into())
-            .collect::<Vec<_>>();
-
-        let mut requests = vec![];
-        for id in request_ids.iter() {
-            match self.remove_request(node_address, id) {
-                Some(request_call) => requests.push(request_call),
-                None => {
-                    debug_unreachable!("expected to find request with id");
-                    error!("expected to find request with id");
-                }
             }
         }
         Some(requests)
