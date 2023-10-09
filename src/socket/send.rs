@@ -1,5 +1,10 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
-use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
+use crate::{
+    metrics::{METRICS, SOCK_MISMATCH_ON_SEND},
+    node_info::NodeAddress,
+    packet::*,
+    Executor,
+};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     net::UdpSocket,
@@ -74,6 +79,7 @@ impl SendHandler {
                                 trace!("Could not send packet to {addr} . Error: {e}");
                             },
                             Error::SocketMismatch => {
+                                let _ = &METRICS.error(SOCK_MISMATCH_ON_SEND);
                                 error!("Socket mismatch attempting to send a packet to {addr}.")
                             }
                         }

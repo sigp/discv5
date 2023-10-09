@@ -1,3 +1,5 @@
+use crate::metrics::{NO_MATCHING_NONCE, NO_MATCHING_REQ_CALL};
+
 use super::*;
 use delay_map::HashMapDelay;
 use more_asserts::debug_unreachable;
@@ -39,6 +41,7 @@ impl ActiveRequests {
                 None => {
                     debug_unreachable!("A matching request call doesn't exist");
                     error!("A matching request call doesn't exist");
+                    let _ = &METRICS.error(NO_MATCHING_REQ_CALL);
                     None
                 }
             },
@@ -58,6 +61,7 @@ impl ActiveRequests {
                     None => {
                         debug_unreachable!("A matching nonce mapping doesn't exist");
                         error!("A matching nonce mapping doesn't exist");
+                        let _ = &METRICS.error(NO_MATCHING_NONCE);
                         None
                     }
                 }

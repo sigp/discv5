@@ -30,6 +30,8 @@
 
 #![allow(dead_code)]
 
+use crate::metrics::{KBUCKET_NOT_FULL, METRICS};
+
 use super::*;
 use tracing::{debug, error};
 
@@ -354,6 +356,7 @@ where
                         }
                         InsertResult::Full => unreachable!("Bucket cannot be full"),
                         InsertResult::Pending { .. } | InsertResult::NodeExists => {
+                            let _ = &METRICS.error(KBUCKET_NOT_FULL);
                             error!("Bucket is not full or double node")
                         }
                         InsertResult::FailedFilter => debug!("Pending node failed filter"),

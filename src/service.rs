@@ -25,11 +25,12 @@ use crate::{
         NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
     },
     metrics::{
-        CALLBACK_FAILED, INCORRECT_RESP_TYPE, METRICS, NODE_UPDATE_DISCONNECT_FAIL,
-        NO_KNOWN_CLOSEST_PEERS, PEER_MULTIPLE_ENRS, PEER_SENT_BAD_ENR, QUERY_CALLBACK_DROPPED,
-        QUERY_RES_ENR_MISSING, RPC_NODE_RESP_FAIL, RPC_REQ_FAIL, RPC_REQ_TIMEOUT,
-        RPC_RESP_MISMATCH, SEND_EMPTY_FINDNODES_RESP_FAIL, SEND_EMPTY_TALK_RESP_FAIL,
-        SEND_RESP_FAIL, SEND_WHOAREYOU_FAIL, SOCK_UPDATE_FAIL, TRUNCATING_NODES,
+        CALLBACK_FAILED, EV_CHAN_RET_FAIL, INCORRECT_RESP_TYPE, METRICS,
+        NODE_UPDATE_DISCONNECT_FAIL, NO_KNOWN_CLOSEST_PEERS, PEER_MULTIPLE_ENRS, PEER_SENT_BAD_ENR,
+        QUERY_CALLBACK_DROPPED, QUERY_RES_ENR_MISSING, RECV_RESP_UNEXPECTED, RPC_NODE_RESP_FAIL,
+        RPC_REQ_FAIL, RPC_REQ_TIMEOUT, RPC_RESP_MISMATCH, SEND_EMPTY_FINDNODES_RESP_FAIL,
+        SEND_EMPTY_TALK_RESP_FAIL, SEND_RESP_FAIL, SEND_WHOAREYOU_FAIL, SOCK_UPDATE_FAIL,
+        TRUNCATING_NODES, UNREACHABLE_ENR,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
     packet::{ProtocolIdentity, MAX_PACKET_SIZE},
@@ -379,6 +380,7 @@ impl Service {
                             self.event_stream = Some(event_stream);
                             if callback.send(event_stream_recv).is_err() {
                                 error!("Failed to return the event stream channel");
+                                let _ = &METRICS.error(EV_CHAN_RET_FAIL);
                             }
                         }
                     }
@@ -618,6 +620,7 @@ impl Service {
                                 "Stored ENR is not contactable! This should never happen {}",
                                 enr
                             );
+                            let _ = &METRICS.error(UNREACHABLE_ENR);
                         }
                     }
                 }
@@ -671,6 +674,7 @@ impl Service {
             let expected_node_address = active_request.contact.node_address();
             if expected_node_address != node_address {
                 debug_unreachable!("Handler returned a response not matching the used socket addr");
+                let _ = &METRICS.error(RECV_RESP_UNEXPECTED);
                 return error!("Received a response from an unexpected address. Expected {}, received {}, request_id {}", expected_node_address, node_address, id);
             }
 

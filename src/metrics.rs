@@ -29,6 +29,15 @@ pub const NODE_UPDATE_DISCONNECT_FAIL: &str = "node_update_disconnect_fail";
 pub const PEER_SENT_BAD_ENR: &str = "peer_sent_bad_enr";
 pub const SEND_EMPTY_FINDNODES_RESP_FAIL: &str = "send_empty_findnodes_resp_fail";
 
+pub const NO_MATCHING_REQ_CALL: &str = "no_matching_req_call";
+pub const NO_MATCHING_NONCE: &str = "no_matching_nonce";
+pub const SESS_GENERATE_FAIL: &str = "sess_generate_fail";
+pub const KBUCKET_NOT_FULL: &str = "kbucket_not_full";
+pub const SOCK_MISMATCH_ON_SEND: &str = "sock_mismatch_on_send";
+pub const EV_CHAN_RET_FAIL: &str = "ev_chan_ret_fail";
+pub const UNREACHABLE_ENR: &str = "unreachable_enr";
+pub const RECV_RESP_UNEXPECTED: &str = "recv_resp_unexpected";
+
 /// Represents metrics pertaining to errors and warnings that occur throughout
 /// the course of server operation
 #[derive(Debug, Default)]

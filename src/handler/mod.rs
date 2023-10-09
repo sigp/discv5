@@ -30,6 +30,7 @@ use crate::{
     config::Config,
     discv5::PERMIT_BAN_LIST,
     error::{Error, RequestError},
+    metrics::SESS_GENERATE_FAIL,
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
@@ -668,6 +669,7 @@ impl Handler {
             Ok(v) => v,
             Err(e) => {
                 error!("Could not generate a session. Error: {:?}", e);
+                let _ = &METRICS.error(SESS_GENERATE_FAIL);
                 self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                     .await;
                 return;
