@@ -94,7 +94,7 @@
 //!    });
 //! ```
 
-mod config;
+pub mod config;
 mod discv5;
 mod error;
 mod executor;
