@@ -218,7 +218,7 @@ impl Response {
                     }
                     let tmp_header = Header {
                         list: true,
-                        payload_length: out.to_vec().len(),
+                        payload_length: out.len(),
                     };
                     let mut tmp_out = BytesMut::new();
                     tmp_header.encode(&mut tmp_out);
