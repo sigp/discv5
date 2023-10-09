@@ -3,6 +3,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use crate::service;
+
 lazy_static! {
     pub static ref METRICS: InternalMetrics = InternalMetrics::default();
 }
@@ -71,16 +73,46 @@ impl InternalMetrics {
     /// This (atomically) increments the appropriate internal counter for the failure type
     pub fn log_failure(&self, failure: FailureSeverity) {
         match failure {
-            FailureSeverity::Critical => self.increment_field(&self.total_criticals),
-            FailureSeverity::Error => self.increment_field(&self.total_errors),
-            FailureSeverity::Warning => self.increment_field(&self.total_warnings),
+            FailureSeverity::Critical => Self::increment_field(&self.total_criticals),
+            FailureSeverity::Error => Self::increment_field(&self.total_errors),
+            FailureSeverity::Warning => Self::increment_field(&self.total_warnings),
         }
+    }
+
+    pub fn failures(&self, severity: FailureSeverity) -> usize {
+        match severity {
+            FailureSeverity::Critical => Self::read_field(&self.total_criticals),
+            FailureSeverity::Error => Self::read_field(&self.total_errors),
+            FailureSeverity::Warning => Self::read_field(&self.total_warnings),
+        }
+    }
+
+    /// Returns the total number of critical failures that have occurred
+    pub fn criticals(&self) -> usize {
+        self.failures(FailureSeverity::Critical)
+    }
+
+    /// Returns the total number of errors that have occurred
+    pub fn errors(&self) -> usize {
+        self.failures(FailureSeverity::Error)
+    }
+
+    /// Returns the total number of warnings that have occurred
+    pub fn warnings(&self) -> usize {
+        self.failures(FailureSeverity::Warning)
+    }
+
+    /// Retrieves the value of the `AtomicUsize` at the end of the provided reference
+    ///
+    /// Uses the `Relaxed` memory ordering to do so
+    fn read_field(field: &AtomicUsize) -> usize {
+        field.load(Ordering::Relaxed)
     }
 
     /// Increments the `AtomicUsize` at the end of the provided reference
     ///
     /// Uses the `Relaxed` memory ordering to do so
-    fn increment_field(&self, field: &AtomicUsize) {
+    fn increment_field(field: &AtomicUsize) {
         let curr_val = field.load(Ordering::Relaxed);
         field.store(curr_val.saturating_add(1), Ordering::Relaxed);
     }
@@ -97,8 +129,12 @@ pub struct Metrics {
     pub bytes_sent: usize,
     /// The number of bytes received.
     pub bytes_recv: usize,
-    /// Counts of both individual and aggregate errors that have occurred
-    pub errors: HashMap<&'static str, usize>,
+    /// Total number of critical failures that have occurred
+    pub total_criticals: usize,
+    /// Total number of errors that have occurred
+    pub total_errors: usize,
+    /// Total number of warnings that have occurred
+    pub total_warnings: usize,
 }
 
 impl From<&METRICS> for Metrics {
@@ -111,7 +147,9 @@ impl From<&METRICS> for Metrics {
                 / internal_metrics.moving_window as f64,
             bytes_sent: internal_metrics.bytes_sent.load(Ordering::Relaxed),
             bytes_recv: internal_metrics.bytes_recv.load(Ordering::Relaxed),
-            errors: internal_metrics.error_metrics.as_raw(),
+            total_criticals: internal_metrics.criticals(),
+            total_errors: internal_metrics.errors(),
+            total_warnings: internal_metrics.warnings(),
         }
     }
 }
