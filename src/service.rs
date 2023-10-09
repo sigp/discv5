@@ -101,7 +101,7 @@ impl Drop for TalkRequest {
             Box::new(response),
         )) {
             warn!("Failed to send empty talk response {}", e);
-            let _ = &METRICS.error(SEND_EMPTY_TALK_RESP_FAIL);
+            let _ = &METRICS.warning(SEND_EMPTY_TALK_RESP_FAIL);
         }
     }
 }
@@ -400,24 +400,24 @@ impl Service {
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
                                 if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
                                     warn!("Failed to send whoareyou {}", e);
-                                    let _ = &METRICS.error(SEND_WHOAREYOU_FAIL);
+                                    let _ = &METRICS.warning(SEND_WHOAREYOU_FAIL);
                                 };
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
                                 if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
                                     warn!("Failed to send who are you to unknown enr peer {}", e);
-                                    let _ = &METRICS.error(SEND_WHOAREYOU_FAIL);
+                                    let _ = &METRICS.warning(SEND_WHOAREYOU_FAIL);
                                 }
                             }
                         }
                         HandlerOut::RequestFailed(request_id, error) => {
                             if let RequestError::Timeout = error {
                                 debug!("RPC Request timed out. id: {}", request_id);
-                                let _ = &METRICS.error(RPC_REQ_TIMEOUT);
+                                let _ = &METRICS.warning(RPC_REQ_TIMEOUT);
                             } else {
                                 warn!("RPC Request failed: id: {}, error {:?}", request_id, error);
-                                let _ = &METRICS.error(RPC_REQ_FAIL);
+                                let _ = &METRICS.warning(RPC_REQ_FAIL);
                             }
                             self.rpc_failure(request_id, error);
                         }
@@ -448,12 +448,12 @@ impl Service {
                                 }
                                 else {
                                     warn!("ENR not present in queries results");
-                                    let _ = &METRICS.error(QUERY_RES_ENR_MISSING);
+                                    let _ = &METRICS.warning(QUERY_RES_ENR_MISSING);
                                 }
                             }
                             if result.target.callback.send(found_enrs).is_err() {
                                 warn!("Callback dropped for query {}. Results dropped", *id);
-                                    let _ = &METRICS.error(QUERY_CALLBACK_DROPPED);
+                                    let _ = &METRICS.warning(QUERY_CALLBACK_DROPPED);
                             }
                         }
                     }
@@ -500,10 +500,10 @@ impl Service {
 
         if known_closest_peers.is_empty() {
             warn!("No known_closest_peers found. Return empty result without sending query.");
-            let _ = &METRICS.error(NO_KNOWN_CLOSEST_PEERS);
+            let _ = &METRICS.warning(NO_KNOWN_CLOSEST_PEERS);
             if target.callback.send(vec![]).is_err() {
                 warn!("Failed to callback");
-                let _ = &METRICS.error(CALLBACK_FAILED);
+                let _ = &METRICS.warning(CALLBACK_FAILED);
             }
         } else {
             let query_config = FindNodeQueryConfig::new_from_config(&self.config);
@@ -546,10 +546,10 @@ impl Service {
 
         if known_closest_peers.is_empty() {
             warn!("No known_closest_peers found. Return empty result without sending query.");
-            let _ = &METRICS.error(NO_KNOWN_CLOSEST_PEERS);
+            let _ = &METRICS.warning(NO_KNOWN_CLOSEST_PEERS);
             if target.callback.send(vec![]).is_err() {
                 warn!("Failed to callback");
-                let _ = &METRICS.error(CALLBACK_FAILED);
+                let _ = &METRICS.warning(CALLBACK_FAILED);
             }
         } else {
             let mut query_config = PredicateQueryConfig::new_from_config(&self.config);
@@ -638,7 +638,7 @@ impl Service {
                     .send(HandlerIn::Response(node_address, Box::new(response)))
                 {
                     warn!("Failed to send response {}", e);
-                    let _ = &METRICS.error(SEND_RESP_FAIL);
+                    let _ = &METRICS.warning(SEND_RESP_FAIL);
                 }
             }
             RequestBody::Talk { protocol, request } => {
@@ -679,7 +679,7 @@ impl Service {
                     "Node gave an incorrect response type. Ignoring response from: {}",
                     node_address
                 );
-                let _ = &METRICS.error(INCORRECT_RESP_TYPE);
+                let _ = &METRICS.warning(INCORRECT_RESP_TYPE);
                 return;
             }
 
@@ -692,7 +692,7 @@ impl Service {
                             "NodesResponse has a total larger than {}, nodes will be truncated",
                             MAX_NODES_RESPONSES
                         );
-                        let _ = &METRICS.error(TRUNCATING_NODES);
+                        let _ = &METRICS.warning(TRUNCATING_NODES);
                     }
 
                     // These are sanitized and ordered
@@ -705,7 +705,7 @@ impl Service {
                     {
                         if let Err(e) = callback.send(Ok(nodes)) {
                             warn!("Failed to send response in callback {:?}", e);
-                            let _ = &METRICS.error(CALLBACK_FAILED);
+                            let _ = &METRICS.warning(CALLBACK_FAILED);
                         }
                         return;
                     }
@@ -722,7 +722,7 @@ impl Service {
                                 "Peer returned more than one ENR for itself. Blacklisting {}",
                                 node_address
                             );
-                            let _ = &METRICS.error(PEER_MULTIPLE_ENRS);
+                            let _ = &METRICS.warning(PEER_MULTIPLE_ENRS);
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                             nodes.retain(|enr| {
@@ -744,7 +744,7 @@ impl Service {
                                 "Peer sent invalid ENR. Blacklisting {}",
                                 active_request.contact
                             );
-                            let _ = &METRICS.error(PEER_SENT_BAD_ENR);
+                            let _ = &METRICS.warning(PEER_SENT_BAD_ENR);
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         }
@@ -805,7 +805,7 @@ impl Service {
                         let response = Pong { enr_seq, ip, port };
                         if let Err(e) = callback.send(Ok(response)) {
                             warn!("Failed to send callback response {:?}", e);
-                            let _ = &METRICS.error(CALLBACK_FAILED);
+                            let _ = &METRICS.warning(CALLBACK_FAILED);
                         };
                     } else {
                         let socket = SocketAddr::new(ip, port);
@@ -865,7 +865,7 @@ impl Service {
                                             }
                                             Err(e) => {
                                                 warn!("Failed to update local UDP ip6 socket. ip6: {}, error: {:?}", new_ip6, e);
-                                                let _ = &METRICS.error(SOCK_UPDATE_FAIL);
+                                                let _ = &METRICS.warning(SOCK_UPDATE_FAIL);
                                             }
                                         }
                                     }
@@ -883,7 +883,7 @@ impl Service {
                                             }
                                             Err(e) => {
                                                 warn!("Failed to update local UDP socket. ip: {}, error: {:?}", new_ip4, e);
-                                                let _ = &METRICS.error(SOCK_UPDATE_FAIL);
+                                                let _ = &METRICS.warning(SOCK_UPDATE_FAIL);
                                             }
                                         }
                                     }
@@ -918,7 +918,7 @@ impl Service {
                         Some(CallbackResponse::Talk(callback)) => {
                             if let Err(e) = callback.send(Ok(response)) {
                                 warn!("Failed to send callback response {:?}", e);
-                                let _ = &METRICS.error(CALLBACK_FAILED);
+                                let _ = &METRICS.warning(CALLBACK_FAILED);
                             };
                         }
                         _ => error!("Invalid callback for response"),
@@ -930,7 +930,7 @@ impl Service {
                 "Received an RPC response which doesn't match a request. Id: {}",
                 id
             );
-            let _ = &METRICS.error(RPC_RESP_MISMATCH);
+            let _ = &METRICS.warning(RPC_RESP_MISMATCH);
         }
     }
 
@@ -1071,7 +1071,7 @@ impl Service {
                 .send(HandlerIn::Response(node_address, Box::new(response)))
             {
                 warn!("Failed to send empty FINDNODES response {}", e);
-                let _ = &METRICS.error(SEND_EMPTY_FINDNODES_RESP_FAIL);
+                let _ = &METRICS.warning(SEND_EMPTY_FINDNODES_RESP_FAIL);
             }
         } else {
             // build the NODES response
@@ -1132,7 +1132,7 @@ impl Service {
                     Box::new(response),
                 )) {
                     warn!("Failed to send FINDNODES response {}", e);
-                    let _ = &METRICS.error(SEND_EMPTY_FINDNODES_RESP_FAIL);
+                    let _ = &METRICS.warning(SEND_EMPTY_FINDNODES_RESP_FAIL);
                 }
             }
         }
@@ -1373,7 +1373,7 @@ impl Service {
                                 "Could not update node to disconnected. Node: {}, Reason: {:?}",
                                 node_id, others
                             );
-                            let _ = &METRICS.error(NODE_UPDATE_DISCONNECT_FAIL);
+                            let _ = &METRICS.warning(NODE_UPDATE_DISCONNECT_FAIL);
                         }
                     },
                     _ => {
@@ -1481,7 +1481,7 @@ impl Service {
                                 "NODES Response failed, but was partially processed from: {}",
                                 active_request.contact
                             );
-                            let _ = &METRICS.error(RPC_NODE_RESP_FAIL);
+                            let _ = &METRICS.warning(RPC_NODE_RESP_FAIL);
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
@@ -1502,7 +1502,7 @@ impl Service {
                                 "Failed RPC request: {}: {} ",
                                 active_request.request_body, active_request.contact
                             );
-                            let _ = &METRICS.error(RPC_REQ_FAIL);
+                            let _ = &METRICS.warning(RPC_REQ_FAIL);
                         }
                     }
                 }

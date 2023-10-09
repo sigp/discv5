@@ -39,6 +39,8 @@ pub struct ErrorMetrics {
     pub total_warnings: AtomicUsize,
     /// Individual errors that have occurred, with their associated counts
     pub errors: RwLock<HashMap<&'static str, AtomicUsize>>,
+    /// Individual warnings that have occurred, with their associated counts
+    pub warnings: RwLock<HashMap<&'static str, AtomicUsize>>,
 }
 
 impl ErrorMetrics {
@@ -69,6 +71,24 @@ impl ErrorMetrics {
                 .store(curr_count.saturating_add(1), Ordering::Relaxed);
         } else {
             self.errors.write().insert(error, 0.into());
+        }
+    }
+
+    pub fn inc_individual_warning(&self, warning: &'static str) {
+        let lock = self.warnings.read();
+
+        let curr_count: Option<usize> = lock.get(warning).map(|t| t.load(Ordering::Relaxed));
+
+        drop(lock);
+
+        if let Some(curr_count) = curr_count {
+            self.warnings
+                .write()
+                .get_mut(warning)
+                .unwrap()
+                .store(curr_count.saturating_add(1), Ordering::Relaxed);
+        } else {
+            self.warnings.write().insert(warning, 0.into());
         }
     }
 
@@ -126,6 +146,11 @@ impl InternalMetrics {
     pub fn error(&self, error: &'static str) {
         self.error_metrics.inc_total_errors();
         self.error_metrics.inc_individual_error(error);
+    }
+
+    pub fn warning(&self, warning: &'static str) {
+        self.error_metrics.inc_total_warnings();
+        self.error_metrics.inc_individual_warning(warning);
     }
 }
 
