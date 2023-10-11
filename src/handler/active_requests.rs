@@ -32,6 +32,7 @@ impl ActiveRequests {
             .insert(nonce, node_address);
     }
 
+    /// Update the underlying packet for the request via message nonce.
     pub fn update_packet(&mut self, old_nonce: MessageNonce, new_packet: Packet) {
         let node_address =
             if let Some(node_address) = self.active_requests_nonce_mapping.remove(&old_nonce) {
