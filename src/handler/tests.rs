@@ -477,6 +477,35 @@ async fn test_active_requests_remove_by_nonce() {
 }
 
 #[tokio::test]
+async fn test_active_requests_update_packet() {
+    const EXPIRY: Duration = Duration::from_secs(5);
+    let mut active_requests = ActiveRequests::new(EXPIRY);
+
+    let node_1 = create_node();
+    let node_2 = create_node();
+    let (req_1, req_1_addr) = create_req_call(&node_1);
+    let (req_2, req_2_addr) = create_req_call(&node_2);
+    let (req_3, req_3_addr) = create_req_call(&node_2);
+
+    let old_nonce = *req_2.packet().message_nonce();
+    active_requests.insert(req_1_addr.clone(), req_1);
+    active_requests.insert(req_2_addr.clone(), req_2);
+    active_requests.insert(req_3_addr.clone(), req_3);
+    active_requests.check_invariant();
+
+    let new_packet = Packet::new_random(&node_2.node_id()).unwrap();
+    let new_nonce = new_packet.message_nonce().clone();
+    active_requests.update_packet(old_nonce.clone(), new_packet.clone());
+    active_requests.check_invariant();
+
+    assert_eq!(2, active_requests.get(&req_2_addr).unwrap().len());
+    assert!(active_requests.remove_by_nonce(&old_nonce).is_none());
+    let (addr, req) = active_requests.remove_by_nonce(&new_nonce).unwrap();
+    assert_eq!(addr, req_2_addr);
+    assert_eq!(req.packet(), &new_packet);
+}
+
+#[tokio::test]
 async fn test_self_request_ipv4() {
     init();
 
