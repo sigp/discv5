@@ -436,8 +436,14 @@ impl Message {
                     }
                     let mut enr_list_rlp = Vec::<Enr<CombinedKey>>::new();
                     while !payload.is_empty() {
-                        let enr_rlp = Enr::<CombinedKey>::decode(payload)?;
-                        payload.advance(enr_rlp.size() - 2);
+                        let node_header = Header::decode(&mut &payload[..])?;
+                        if !node_header.list {
+                            return Err(DecoderError::Custom("Invalid format of header"));
+                        }
+                        let enr_rlp = Enr::<CombinedKey>::decode(
+                            &mut &payload[..node_header.payload_length + 2],
+                        )?;
+                        payload.advance(enr_rlp.size());
                         enr_list_rlp.append(&mut vec![enr_rlp]);
                     }
                     if enr_list_rlp.is_empty() {
