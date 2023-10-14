@@ -975,6 +975,8 @@ impl Handler {
                 .unwrap_or(&mut vec![])
                 .iter()
                 .filter(|req| {
+                    // Except the active request that was used to establish the new session, as it has
+                    // already been handled and shouldn't be replayed.
                     if let Some(nonce) = message_nonce.as_ref() {
                         req.packet().message_nonce() != nonce
                     } else {
@@ -997,7 +999,8 @@ impl Handler {
         };
 
         for (old_nonce, new_packet) in packets {
-            self.active_requests.update_packet(old_nonce, new_packet.clone());
+            self.active_requests
+                .update_packet(old_nonce, new_packet.clone());
             self.send(node_address.clone(), new_packet).await;
         }
     }
