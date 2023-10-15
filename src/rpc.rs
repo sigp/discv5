@@ -539,7 +539,11 @@ mod tests {
         let port = 5000;
         let message = Message::Response(Response {
             id,
-            body: ResponseBody::Pong { enr_seq, ip, port },
+            body: ResponseBody::Pong {
+                enr_seq,
+                ip,
+                port: port.try_into().unwrap(),
+            },
         });
 
         // expected hex output
@@ -656,7 +660,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: "127.0.0.1".parse().unwrap(),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -674,7 +678,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V6(Ipv4Addr::new(192, 0, 2, 1).to_ipv6_mapped()),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -685,7 +689,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -700,7 +704,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
