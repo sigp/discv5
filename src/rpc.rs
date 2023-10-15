@@ -1,6 +1,10 @@
 use enr::{CombinedKey, Enr};
 use rlp::{DecoderError, RlpStream};
-use std::net::{IpAddr, Ipv6Addr};
+use std::{
+    convert::TryInto,
+    net::{IpAddr, Ipv6Addr},
+    num::NonZeroU16,
+};
 use tracing::{debug, warn};
 
 /// Type to manage the request IDs.
@@ -89,7 +93,7 @@ pub enum ResponseBody {
         /// Our external IP address as observed by the responder.
         ip: IpAddr,
         /// Our external UDP port as observed by the responder.
-        port: u16,
+        port: NonZeroU16,
     },
     /// A NODES response.
     Nodes {
@@ -186,7 +190,7 @@ impl Response {
                     IpAddr::V4(addr) => s.append(&(&addr.octets() as &[u8])),
                     IpAddr::V6(addr) => s.append(&(&addr.octets() as &[u8])),
                 };
-                s.append(&port);
+                s.append(&port.get());
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -378,15 +382,20 @@ impl Message {
                         return Err(DecoderError::RlpIncorrectListLen);
                     }
                 };
-                let port = rlp.val_at::<u16>(3)?;
-                Message::Response(Response {
-                    id,
-                    body: ResponseBody::Pong {
-                        enr_seq: rlp.val_at::<u64>(1)?,
-                        ip,
-                        port,
-                    },
-                })
+                let raw_port = rlp.val_at::<u16>(3)?;
+                if let Ok(port) = raw_port.try_into() {
+                    Message::Response(Response {
+                        id,
+                        body: ResponseBody::Pong {
+                            enr_seq: rlp.val_at::<u64>(1)?,
+                            ip,
+                            port,
+                        },
+                    })
+                } else {
+                    debug!("The port number should be non zero: {raw_port}");
+                    return Err(DecoderError::Custom("PONG response port number invalid"));
+                }
             }
             3 => {
                 // FindNodeRequest
