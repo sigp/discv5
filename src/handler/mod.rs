@@ -482,7 +482,7 @@ impl Handler {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(PendingRequest {
                     contact,
                     request_id,
@@ -967,12 +967,12 @@ impl Handler {
             message_nonce
         );
 
-        let packets = if let Some(session) = self.sessions.get_mut(&node_address) {
+        let packets = if let Some(session) = self.sessions.get_mut(node_address) {
             let mut packets = vec![];
             for request_call in self
                 .active_requests
                 .get(node_address)
-                .unwrap_or(&mut vec![])
+                .unwrap_or(&vec![])
                 .iter()
                 .filter(|req| {
                     // Except the active request that was used to establish the new session, as it has
@@ -988,7 +988,7 @@ impl Handler {
                     .encrypt_message::<P>(self.node_id, &request_call.encode())
                     .unwrap();
 
-                packets.push((request_call.packet().message_nonce().clone(), new_packet));
+                packets.push((*request_call.packet().message_nonce(), new_packet));
             }
 
             packets

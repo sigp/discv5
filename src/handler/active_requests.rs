@@ -26,7 +26,7 @@ impl ActiveRequests {
         let nonce = *request_call.packet().message_nonce();
         self.active_requests_mapping
             .entry(node_address.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(request_call);
         self.active_requests_nonce_mapping
             .insert(nonce, node_address);
@@ -43,10 +43,8 @@ impl ActiveRequests {
                 return;
             };
 
-        self.active_requests_nonce_mapping.insert(
-            new_packet.header.message_nonce.clone(),
-            node_address.clone(),
-        );
+        self.active_requests_nonce_mapping
+            .insert(new_packet.header.message_nonce, node_address.clone());
 
         match self.active_requests_mapping.entry(node_address) {
             Entry::Occupied(mut requests) => {
