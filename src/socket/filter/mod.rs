@@ -6,6 +6,7 @@ use enr::NodeId;
 use lru::LruCache;
 use std::{
     collections::HashSet,
+    convert::TryInto,
     net::{IpAddr, SocketAddr},
     sync::atomic::Ordering,
     time::{Duration, Instant},
@@ -67,8 +68,8 @@ impl Filter {
                 expected_packets_per_second,
                 METRICS.moving_window,
             ),
-            known_addrs: LruCache::new(KNOWN_ADDRS_SIZE),
-            banned_nodes: LruCache::new(BANNED_NODES_SIZE),
+            known_addrs: LruCache::new(KNOWN_ADDRS_SIZE.try_into().unwrap()),
+            banned_nodes: LruCache::new(BANNED_NODES_SIZE.try_into().unwrap()),
             ban_duration,
             max_nodes_per_ip: config.max_nodes_per_ip,
             max_bans_per_ip: config.max_bans_per_ip,
