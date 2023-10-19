@@ -144,7 +144,7 @@ async fn test_updating_connection_on_ping() {
         body: ResponseBody::Pong {
             enr_seq: 2,
             ip: ip2.into(),
-            port: DEFAULT_UDP_PORT.try_into().unwrap(),
+            port: 9000.try_into().unwrap(),
         },
     };
 
