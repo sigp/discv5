@@ -69,6 +69,17 @@ impl IpMode {
     }
 }
 
+/// Copied from the standard library. See <https://github.com/rust-lang/rust/issues/27709>
+/// The current code is behind the `ip` feature.
+pub const fn to_ipv4_mapped(ip: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    match ip.octets() {
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b, c, d] => {
+            Some(std::net::Ipv4Addr::new(a, b, c, d))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,16 +239,5 @@ mod tests {
             .ip_mode(Ip6)
             .expect_ip6(Ipv6Addr::LOCALHOST)
             .test();
-    }
-}
-
-/// Copied from the standard library. See <https://github.com/rust-lang/rust/issues/27709>
-/// The current code is behind the `ip` feature.
-pub const fn to_ipv4_mapped(ip: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
-    match ip.octets() {
-        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b, c, d] => {
-            Some(std::net::Ipv4Addr::new(a, b, c, d))
-        }
-        _ => None,
     }
 }
