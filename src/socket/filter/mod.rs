@@ -6,8 +6,8 @@ use enr::NodeId;
 use lru::LruCache;
 use std::{
     collections::HashSet,
-    convert::TryInto,
     net::{IpAddr, SocketAddr},
+    num::NonZeroUsize,
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -20,9 +20,16 @@ pub use config::FilterConfig;
 use rate_limiter::{LimitKind, RateLimiter};
 
 /// The maximum number of IPs to retain when calculating the number of nodes per IP.
-const KNOWN_ADDRS_SIZE: usize = 500;
+const KNOWN_ADDRS_SIZE: NonZeroUsize = match NonZeroUsize::new(500) {
+    Some(non_zero) => non_zero,
+    None => unreachable!(),
+};
 /// The number of IPs to retain at any given time that have banned nodes.
-const BANNED_NODES_SIZE: usize = 50;
+const BANNED_NODES_SIZE: NonZeroUsize = match NonZeroUsize::new(50) {
+    Some(non_zero) => non_zero,
+    None => unreachable!(),
+};
+
 /// The maximum number of packets to keep record of for metrics if the rate limiter is not
 /// specified.
 const DEFAULT_PACKETS_PER_SECOND: usize = 20;
@@ -68,8 +75,8 @@ impl Filter {
                 expected_packets_per_second,
                 METRICS.moving_window,
             ),
-            known_addrs: LruCache::new(KNOWN_ADDRS_SIZE.try_into().unwrap()),
-            banned_nodes: LruCache::new(BANNED_NODES_SIZE.try_into().unwrap()),
+            known_addrs: LruCache::new(KNOWN_ADDRS_SIZE),
+            banned_nodes: LruCache::new(BANNED_NODES_SIZE),
             ban_duration,
             max_nodes_per_ip: config.max_nodes_per_ip,
             max_bans_per_ip: config.max_bans_per_ip,

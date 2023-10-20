@@ -40,7 +40,7 @@ more-asserts = "0.3"
 
 [dev-dependencies]
 rand_07 = { package = "rand", version = "0.7" }
-quickcheck = "1"
+quickcheck = "0.9"
 tokio = { version = "1", features = ["full"] }
 rand_xorshift = "0.3"
 rand_core = "0.6"
