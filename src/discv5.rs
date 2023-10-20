@@ -301,6 +301,13 @@ impl<P: ProtocolIdentity> Discv5<P> {
         self.local_enr.read().clone()
     }
 
+    /// Identical to `Discv5::local_enr` except that this exposes the `Arc` itself.
+    ///
+    /// This is useful for synchronising views of the local ENR outside of `Discv5`.
+    pub fn external_enr(&self) -> Arc<RwLock<Enr>> {
+        self.local_enr.clone()
+    }
+
     /// Returns the routing table of the discv5 service
     pub fn kbuckets(&self) -> KBucketsTable<NodeId, Enr> {
         self.kbuckets.read().clone()
