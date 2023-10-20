@@ -14,7 +14,7 @@ use crate::{
     socket::ListenConfig,
     ConfigBuilder, Enr,
 };
-use enr::{CombinedKey, EnrBuilder};
+use enr::CombinedKey;
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
@@ -103,14 +103,10 @@ async fn test_updating_connection_on_ping() {
     init();
     let enr_key1 = CombinedKey::generate_secp256k1();
     let ip = "127.0.0.1".parse().unwrap();
-    let enr = EnrBuilder::new("v4")
-        .ip4(ip)
-        .udp4(10001)
-        .build(&enr_key1)
-        .unwrap();
+    let enr = Enr::builder().ip4(ip).udp4(10001).build(&enr_key1).unwrap();
     let ip2 = "127.0.0.1".parse().unwrap();
     let enr_key2 = CombinedKey::generate_secp256k1();
-    let enr2 = EnrBuilder::new("v4")
+    let enr2 = Enr::builder()
         .ip4(ip2)
         .udp4(10002)
         .build(&enr_key2)
@@ -171,15 +167,11 @@ async fn test_connection_direction_on_inject_session_established() {
 
     let enr_key1 = CombinedKey::generate_secp256k1();
     let ip = std::net::Ipv4Addr::LOCALHOST;
-    let enr = EnrBuilder::new("v4")
-        .ip4(ip)
-        .udp4(10001)
-        .build(&enr_key1)
-        .unwrap();
+    let enr = Enr::builder().ip4(ip).udp4(10001).build(&enr_key1).unwrap();
 
     let enr_key2 = CombinedKey::generate_secp256k1();
     let ip2 = std::net::Ipv4Addr::LOCALHOST;
-    let enr2 = EnrBuilder::new("v4")
+    let enr2 = Enr::builder()
         .ip4(ip2)
         .udp4(10002)
         .build(&enr_key2)

@@ -14,7 +14,7 @@ use crate::{
     RequestError::SelfRequest,
 };
 use active_requests::ActiveRequests;
-use enr::EnrBuilder;
+use enr::Enr;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -25,7 +25,7 @@ fn init() {
 }
 
 async fn build_handler<P: ProtocolIdentity>(
-    enr: Enr,
+    enr: Enr<CombinedKey>,
     key: CombinedKey,
     config: Config,
 ) -> (
@@ -105,12 +105,12 @@ async fn simple_session_message() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let sender_enr = EnrBuilder::new("v4")
+    let sender_enr = Enr::builder()
         .ip4(ip)
         .udp4(sender_port)
         .build(&key1)
         .unwrap();
-    let receiver_enr = EnrBuilder::new("v4")
+    let receiver_enr = Enr::builder()
         .ip4(ip)
         .udp4(receiver_port)
         .build(&key2)
@@ -192,13 +192,13 @@ async fn multiple_messages() {
     let key1 = CombinedKey::generate_secp256k1();
     let key2 = CombinedKey::generate_secp256k1();
 
-    let sender_enr = EnrBuilder::new("v4")
+    let sender_enr = Enr::builder()
         .ip4(ip)
         .udp4(sender_port)
         .build(&key1)
         .unwrap();
 
-    let receiver_enr = EnrBuilder::new("v4")
+    let receiver_enr = Enr::builder()
         .ip4(ip)
         .udp4(receiver_port)
         .build(&key2)
@@ -342,11 +342,7 @@ async fn test_active_requests_insert() {
 
     let key = CombinedKey::generate_secp256k1();
 
-    let enr = EnrBuilder::new("v4")
-        .ip4(ip)
-        .udp4(port)
-        .build(&key)
-        .unwrap();
+    let enr = Enr::builder().ip4(ip).udp4(port).build(&key).unwrap();
     let node_id = enr.node_id();
 
     let contact: NodeContact = enr.into();
@@ -371,7 +367,7 @@ async fn test_self_request_ipv4() {
     init();
 
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4")
+    let enr = Enr::builder()
         .ip4(Ipv4Addr::LOCALHOST)
         .udp4(5004)
         .build(&key)
@@ -411,7 +407,7 @@ async fn test_self_request_ipv6() {
     init();
 
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4")
+    let enr = Enr::builder()
         .ip6(Ipv6Addr::LOCALHOST)
         .udp6(5005)
         .build(&key)
@@ -448,7 +444,7 @@ async fn test_self_request_ipv6() {
 async fn remove_one_time_session() {
     let config = ConfigBuilder::new(ListenConfig::default()).build();
     let key = CombinedKey::generate_secp256k1();
-    let enr = EnrBuilder::new("v4")
+    let enr = Enr::builder()
         .ip4(Ipv4Addr::LOCALHOST)
         .udp4(9000)
         .build(&key)
@@ -457,7 +453,7 @@ async fn remove_one_time_session() {
 
     let enr = {
         let key = CombinedKey::generate_secp256k1();
-        EnrBuilder::new("v4")
+        Enr::builder()
             .ip4(Ipv4Addr::LOCALHOST)
             .udp4(9000)
             .build(&key)

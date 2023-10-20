@@ -2,7 +2,7 @@
 
 use crate::{socket::ListenConfig, Discv5, *};
 use bytes::Bytes;
-use enr::{k256, CombinedKey, Enr, EnrBuilder, EnrKey, NodeId};
+use enr::{k256, CombinedKey, Enr, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{
     collections::HashMap,
@@ -29,11 +29,7 @@ async fn build_nodes(n: usize, base_port: u16) -> Vec<Discv5> {
         let listen_config = ListenConfig::Ipv4 { ip, port };
         let config = ConfigBuilder::new(listen_config).build();
 
-        let enr = EnrBuilder::new("v4")
-            .ip4(ip)
-            .udp4(port)
-            .build(&enr_key)
-            .unwrap();
+        let enr = Enr::builder().ip4(ip).udp4(port).build(&enr_key).unwrap();
         // transport for building a swarm
         let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
         discv5.start().await.unwrap();
@@ -53,11 +49,7 @@ async fn build_nodes_from_keypairs(keys: Vec<CombinedKey>, base_port: u16) -> Ve
         let listen_config = ListenConfig::Ipv4 { ip, port };
         let config = ConfigBuilder::new(listen_config).build();
 
-        let enr = EnrBuilder::new("v4")
-            .ip4(ip)
-            .udp4(port)
-            .build(&enr_key)
-            .unwrap();
+        let enr = Enr::builder().ip4(ip).udp4(port).build(&enr_key).unwrap();
 
         let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
         discv5.start().await.unwrap();
@@ -78,7 +70,7 @@ async fn build_nodes_from_keypairs_ipv6(keys: Vec<CombinedKey>, base_port: u16) 
         };
         let config = ConfigBuilder::new(listen_config).build();
 
-        let enr = EnrBuilder::new("v4")
+        let enr = Enr::builder()
             .ip6(Ipv6Addr::LOCALHOST)
             .udp6(port)
             .build(&enr_key)
@@ -109,7 +101,7 @@ async fn build_nodes_from_keypairs_dual_stack(
         };
         let config = ConfigBuilder::new(listen_config).build();
 
-        let enr = EnrBuilder::new("v4")
+        let enr = Enr::builder()
             .ip4(Ipv4Addr::LOCALHOST)
             .udp4(ipv4_port)
             .ip6(Ipv6Addr::LOCALHOST)
@@ -746,11 +738,7 @@ async fn test_table_limits() {
     let mut keypairs = generate_deterministic_keypair(12, 9487);
     let ip: Ipv4Addr = "127.0.0.1".parse().unwrap();
     let enr_key: CombinedKey = keypairs.remove(0);
-    let enr = EnrBuilder::new("v4")
-        .ip4(ip)
-        .udp4(9050)
-        .build(&enr_key)
-        .unwrap();
+    let enr = Enr::builder().ip4(ip).udp4(9050).build(&enr_key).unwrap();
     let listen_config = ListenConfig::Ipv4 {
         ip: enr.ip4().unwrap(),
         port: enr.udp4().unwrap(),
@@ -765,7 +753,7 @@ async fn test_table_limits() {
         .map(|i| {
             let ip: Ipv4Addr = Ipv4Addr::new(192, 168, 1, i as u8);
             let enr_key: CombinedKey = keypairs.remove(0);
-            EnrBuilder::new("v4")
+            Enr::builder()
                 .ip4(ip)
                 .udp4(9050 + i as u16)
                 .build(&enr_key)
@@ -784,11 +772,7 @@ async fn test_table_limits() {
 async fn test_bucket_limits() {
     let enr_key = CombinedKey::generate_secp256k1();
     let ip: Ipv4Addr = "127.0.0.1".parse().unwrap();
-    let enr = EnrBuilder::new("v4")
-        .ip4(ip)
-        .udp4(9500)
-        .build(&enr_key)
-        .unwrap();
+    let enr = Enr::builder().ip4(ip).udp4(9500).build(&enr_key).unwrap();
     let bucket_limit: usize = 2;
     // Generate `bucket_limit + 1` keypairs that go in `enr` node's 256th bucket.
     let keys = {
@@ -796,7 +780,7 @@ async fn test_bucket_limits() {
         for _ in 0..bucket_limit + 1 {
             loop {
                 let key = CombinedKey::generate_secp256k1();
-                let enr_new = EnrBuilder::new("v4").build(&key).unwrap();
+                let enr_new = Enr::builder().build(&key).unwrap();
                 let node_key: Key<NodeId> = enr.node_id().into();
                 let distance = node_key.log2_distance(&enr_new.node_id().into()).unwrap();
                 if distance == 256 {
@@ -812,7 +796,7 @@ async fn test_bucket_limits() {
         .map(|i| {
             let kp = &keys[i - 1];
             let ip: Ipv4Addr = Ipv4Addr::new(192, 168, 1, i as u8);
-            EnrBuilder::new("v4")
+            Enr::builder()
                 .ip4(ip)
                 .udp4(9500 + i as u16)
                 .build(kp)

@@ -12,7 +12,7 @@ categories = ["network-programming", "asynchronous"]
 exclude = [".gitignore", ".github/*"]
 
 [dependencies]
-enr = { git = "https://github.com/armaganyildirak/enr", rev = "b2b35ba8cafe45ca90524862db71003c3d62815f", features = ["k256", "ed25519"] }
+enr = { git = "https://github.com/armaganyildirak/enr", rev = "9151474e67c97c355014c88c977c3f3c9c29e792", features = ["k256", "ed25519"] }
 tokio = { version = "1.15.0", features = ["net", "sync", "macros", "rt"] }
 libp2p-core = { version = "0.40.0", optional = true }
 libp2p-identity = { version = "0.2.1", features = ["ed25519", "secp256k1"], optional = true }

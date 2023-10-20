@@ -18,6 +18,7 @@
 use clap::Parser;
 use discv5::{
     enr,
+    enr::Enr,
     enr::{k256, CombinedKey},
     ConfigBuilder, Discv5, Event, ListenConfig,
 };
@@ -90,7 +91,7 @@ async fn main() {
     };
 
     let enr = {
-        let mut builder = enr::EnrBuilder::new("v4");
+        let mut builder = Enr::builder();
         if let Some(ip4) = args.enr_ip4 {
             // if the given address is the UNSPECIFIED address we want to advertise localhost
             if ip4.is_unspecified() {
