@@ -10,7 +10,11 @@
 //! $ cargo run --example simple_server -- <ENR-IP> <ENR-PORT> <BASE64ENR>
 //! ```
 
-use discv5::{enr, enr::CombinedKey, enr::Enr, ConfigBuilder, Discv5, Event, ListenConfig};
+use discv5::{
+    enr,
+    enr::{CombinedKey, Enr},
+    ConfigBuilder, Discv5, Event, ListenConfig,
+};
 use std::net::Ipv4Addr;
 
 #[tokio::main]

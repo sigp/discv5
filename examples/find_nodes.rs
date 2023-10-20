@@ -18,8 +18,7 @@
 use clap::Parser;
 use discv5::{
     enr,
-    enr::Enr,
-    enr::{k256, CombinedKey},
+    enr::{k256, CombinedKey, Enr},
     ConfigBuilder, Discv5, Event, ListenConfig,
 };
 use std::{
