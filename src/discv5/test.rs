@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{socket::ListenConfig, Discv5, *};
-use bytes::Bytes;
+use alloy_rlp::bytes::Bytes;
 use enr::{k256, CombinedKey, Enr, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{

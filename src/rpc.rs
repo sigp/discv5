@@ -1,5 +1,5 @@
+use alloy_rlp::bytes::{Buf, Bytes, BytesMut};
 use alloy_rlp::{Decodable, Encodable, Error as DecoderError, Header};
-use bytes::{Buf, Bytes, BytesMut};
 use enr::{CombinedKey, Enr};
 use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
