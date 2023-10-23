@@ -7,6 +7,7 @@ use lru::LruCache;
 use std::{
     collections::HashSet,
     net::{IpAddr, SocketAddr},
+    num::NonZeroUsize,
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -19,9 +20,16 @@ pub use config::FilterConfig;
 use rate_limiter::{LimitKind, RateLimiter};
 
 /// The maximum number of IPs to retain when calculating the number of nodes per IP.
-const KNOWN_ADDRS_SIZE: usize = 500;
+const KNOWN_ADDRS_SIZE: NonZeroUsize = match NonZeroUsize::new(500) {
+    Some(non_zero) => non_zero,
+    None => unreachable!(),
+};
 /// The number of IPs to retain at any given time that have banned nodes.
-const BANNED_NODES_SIZE: usize = 50;
+const BANNED_NODES_SIZE: NonZeroUsize = match NonZeroUsize::new(50) {
+    Some(non_zero) => non_zero,
+    None => unreachable!(),
+};
+
 /// The maximum number of packets to keep record of for metrics if the rate limiter is not
 /// specified.
 const DEFAULT_PACKETS_PER_SECOND: usize = 20;

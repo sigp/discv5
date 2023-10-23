@@ -36,7 +36,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 #[cfg(feature = "libp2p")]
-use libp2p_core::Multiaddr;
+use libp2p::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
 use crate::{
