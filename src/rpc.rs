@@ -3,7 +3,11 @@ use alloy_rlp::{
     Decodable, Encodable, Error as DecoderError, Header,
 };
 use enr::{CombinedKey, Enr};
-use std::net::{IpAddr, Ipv6Addr};
+use std::{
+    convert::TryInto,
+    net::{IpAddr, Ipv6Addr},
+    num::NonZeroU16,
+};
 use tracing::{debug, warn};
 
 /// Type to manage the request IDs.
@@ -92,7 +96,7 @@ pub enum ResponseBody {
         /// Our external IP address as observed by the responder.
         ip: IpAddr,
         /// Our external UDP port as observed by the responder.
-        port: u16,
+        port: NonZeroU16,
     },
     /// A NODES response.
     Nodes {
@@ -200,7 +204,7 @@ impl Response {
                     IpAddr::V4(addr) => addr.encode(&mut list),
                     IpAddr::V6(addr) => addr.encode(&mut list),
                 };
-                port.encode(&mut list);
+                port.get().encode(&mut list);
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -398,14 +402,19 @@ impl Message {
                         return Err(DecoderError::Custom("Incorrect List Length"));
                     }
                 };
-                let port = u16::decode(payload)?;
-                if !payload.is_empty() {
-                    return Err(DecoderError::Custom("Payload should be empty"));
+                let raw_port = u16::decode(payload)?;
+                if let Ok(port) = raw_port.try_into() {
+                    if !payload.is_empty() {
+                        return Err(DecoderError::Custom("Payload should be empty"));
+                    }
+                    Message::Response(Response {
+                        id,
+                        body: ResponseBody::Pong { enr_seq, ip, port },
+                    })
+                } else {
+                    debug!("The port number should be non zero: {raw_port}");
+                    return Err(DecoderError::Custom("PONG response port number invalid"));
                 }
-                Message::Response(Response {
-                    id,
-                    body: ResponseBody::Pong { enr_seq, ip, port },
-                })
             }
             3 => {
                 // FindNodeRequest
@@ -545,7 +554,11 @@ mod tests {
         let port = 5000;
         let message = Message::Response(Response {
             id,
-            body: ResponseBody::Pong { enr_seq, ip, port },
+            body: ResponseBody::Pong {
+                enr_seq,
+                ip,
+                port: port.try_into().unwrap(),
+            },
         });
 
         // expected hex output
@@ -662,7 +675,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: "127.0.0.1".parse().unwrap(),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -680,7 +693,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V6(Ipv4Addr::new(192, 0, 2, 1).to_ipv6_mapped()),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -691,7 +704,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -706,7 +719,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 

@@ -7,7 +7,10 @@ use crate::{
     rpc::{Request, Response},
     ConfigBuilder, IpMode,
 };
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::{
+    convert::TryInto,
+    net::{Ipv4Addr, Ipv6Addr},
+};
 
 use crate::{
     handler::{session::build_dummy_session, HandlerOut::RequestFailed},
@@ -258,7 +261,7 @@ async fn multiple_messages() {
         body: ResponseBody::Pong {
             enr_seq: 1,
             ip: ip.into(),
-            port: sender_port,
+            port: sender_port.try_into().unwrap(),
         },
     };
 
