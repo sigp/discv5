@@ -2,6 +2,7 @@ use crate::Executor;
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
+use socket2::{Domain, Protocol, Socket as Socket2, Type};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -45,21 +46,11 @@ impl Socket {
         socket_addr: SocketAddr,
     ) -> Result<std::net::UdpSocket, std::io::Error> {
         // set up the UDP socket
-        let socket = {
-            let domain = match socket_addr {
-                SocketAddr::V4(_) => socket2::Domain::ipv4(),
-
-                SocketAddr::V6(_) => socket2::Domain::ipv6(),
-            };
-            socket2::Socket::new(
-                domain,
-                socket2::Type::dgram(),
-                Some(socket2::Protocol::udp()),
-            )?
-        };
+        //
+        let socket = Socket2::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         socket.reuse_address()?;
         socket.bind(&socket_addr.into())?;
-        Ok(socket.into_udp_socket())
+        Ok(socket.into())
     }
 
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.

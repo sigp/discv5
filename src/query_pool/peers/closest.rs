@@ -393,7 +393,7 @@ struct QueryPeer<TNodeId> {
     key: Key<TNodeId>,
 
     /// The current rpc request iteration that has been made on this peer.
-    iteration: usize,
+    _iteration: usize,
 
     /// The number of peers that have been returned by this peer.
     peers_returned: usize,
@@ -406,7 +406,7 @@ impl<TNodeId> QueryPeer<TNodeId> {
     pub fn new(key: Key<TNodeId>, state: QueryPeerState) -> Self {
         QueryPeer {
             key,
-            iteration: 1,
+            _iteration: 1,
             peers_returned: 0,
             state,
         }

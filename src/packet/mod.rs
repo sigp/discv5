@@ -15,8 +15,10 @@ use enr::NodeId;
 use rand::Rng;
 use std::convert::TryInto;
 
-use aes_ctr::stream_cipher::{generic_array::GenericArray, NewStreamCipher, SyncStreamCipher};
-use aes_ctr::Aes128Ctr;
+use aes::{
+    cipher::{generic_array::GenericArray, NewCipher, StreamCipher},
+    Aes128Ctr,
+};
 use zeroize::Zeroize;
 
 /// The packet IV length (u128).
