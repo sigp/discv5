@@ -1017,8 +1017,8 @@ impl<P: ProtocolIdentity> Handler<P> {
                     if let ResponseBody::Nodes { mut nodes, .. } = response.body {
                         // Received the requested ENR
                         let Some(enr) = nodes.pop() else {
-                                return;
-                            };
+                            return;
+                        };
                         if self.verify_enr(&enr, &node_address) {
                             // Notify the application
                             // This can occur when we try to dial a node without an
