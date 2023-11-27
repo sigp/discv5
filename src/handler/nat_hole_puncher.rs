@@ -249,10 +249,7 @@ impl NatHolePunchUtils {
             (_, _, Some(ip6), port) => {
                 nat_hole_puncher.set_is_behind_nat(listen_port, Some(ip6.into()), port);
             }
-            (None, Some(port), _, _) => {
-                nat_hole_puncher.set_is_behind_nat(listen_port, None, Some(port));
-            }
-            (_, _, None, Some(port)) => {
+            (None, Some(port), _, _) | (_, _, None, Some(port)) => {
                 nat_hole_puncher.set_is_behind_nat(listen_port, None, Some(port));
             }
             (None, None, None, None) => {}
@@ -284,7 +281,15 @@ impl NatHolePunchUtils {
         let Some(ip) = observed_ip else {
             return;
         };
-        self.is_behind_nat = Some(is_behind_nat(ip, &self.unused_port_range));
+
+        self.is_behind_nat = Some(match is_behind_nat(ip, &self.unused_port_range) {
+            true => true,
+            false => {
+                // node assume it is behind NAT until now
+                self.hole_punch_tracker.clear();
+                false
+            }
+        });
     }
 }
 
