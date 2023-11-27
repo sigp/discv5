@@ -97,6 +97,14 @@ impl Message {
             }
         }
     }
+
+    pub fn msg_type(&self) -> String {
+        match self {
+            Self::Notification(n) => format!("notification type {}", n.msg_type()),
+            Self::Request(r) => format!("request type {}", r.msg_type()),
+            Self::Response(r) => format!("response type {}", r.msg_type()),
+        }
+    }
 }
 
 #[cfg(test)]

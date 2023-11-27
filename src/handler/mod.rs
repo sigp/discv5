@@ -1078,8 +1078,9 @@ impl<P: ProtocolIdentity> Handler<P> {
             },
             _ => {
                 warn!(
-                    "Peer sent message type that shouldn't be sent in packet type Message, {}",
-                    node_address
+                    "Peer sent message type {} that shouldn't be sent in packet type `Message`, {}",
+                    message.msg_type(),
+                    node_address,
                 );
             }
         }
