@@ -33,7 +33,7 @@ aes = { version = "0.7.5", features = ["ctr"] }
 aes-gcm = "0.9.4"
 tracing = { version = "0.1.29", features = ["log"] }
 tracing-subscriber = { version = "0.3.3", features = ["env-filter"] }
-lru = "0.7.1"
+lru = {version = "0.7.1", default-features = false }
 hashlink = "0.7.0"
 delay_map = "0.3.0"
 more-asserts = "0.2.2"

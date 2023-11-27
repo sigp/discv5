@@ -275,6 +275,7 @@ impl<P: ProtocolIdentity> Handler<P> {
             config.ip_mode,
             config.unused_port_range.clone(),
             config.ban_duration,
+            config.session_cache_capacity,
         );
 
         let sessions = Sessions::new(
@@ -475,8 +476,8 @@ impl<P: ProtocolIdentity> Handler<P> {
             trace!("Request timed out with {}", node_address);
             if let Some(relay) = self
                 .nat_hole_puncher
-                .new_peer_latest_relay
-                .remove(&node_address.node_id)
+                .new_peer_latest_relay_cache
+                .pop(&node_address.node_id)
             {
                 // The request might be timing out because the peer is behind a NAT. If we
                 // have a relay to the peer, attempt NAT hole punching.
@@ -864,8 +865,8 @@ impl<P: ProtocolIdentity> Handler<P> {
                         .await;
                         self.new_session(node_address.clone(), session);
                         self.nat_hole_puncher
-                            .new_peer_latest_relay
-                            .remove(&node_address.node_id);
+                            .new_peer_latest_relay_cache
+                            .pop(&node_address.node_id);
                         self.handle_message(
                             node_address.clone(),
                             message_nonce,
@@ -1210,8 +1211,8 @@ impl<P: ProtocolIdentity> Handler<P> {
                         };
                         if self.sessions.cache.peek(&new_peer_node_address).is_none() {
                             self.nat_hole_puncher
-                                .new_peer_latest_relay
-                                .insert(node_id, node_address.clone());
+                                .new_peer_latest_relay_cache
+                                .put(node_id, node_address.clone());
                         }
                     }
                 }
@@ -1317,8 +1318,8 @@ impl<P: ProtocolIdentity> Handler<P> {
         }
         let node_address = request_call.contact().node_address();
         self.nat_hole_puncher
-            .new_peer_latest_relay
-            .remove(&node_address.node_id);
+            .new_peer_latest_relay_cache
+            .pop(&node_address.node_id);
         self.fail_session(&node_address, error, remove_session)
             .await;
     }

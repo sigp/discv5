@@ -8,9 +8,9 @@ use crate::{
 use delay_map::HashSetDelay;
 use enr::NodeId;
 use futures::{Stream, StreamExt};
+use lru::LruCache;
 use rand::Rng;
 use std::{
-    collections::HashMap,
     fmt::Debug,
     net::{IpAddr, SocketAddr, UdpSocket},
     ops::RangeInclusive,
@@ -19,7 +19,7 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 
 /// The expected shortest lifetime in most NAT configurations of a punched hole in seconds.
 pub const DEFAULT_HOLE_PUNCH_LIFETIME: u64 = 20;
@@ -208,8 +208,11 @@ pub(crate) struct NatHolePunchUtils {
     pub is_behind_nat: Option<bool>,
     /// The last peer to send us a new peer in a NODES response is stored as the new peer's
     /// potential relay until the first request to the new peer after its discovery is either
-    /// responded or failed.
-    pub new_peer_latest_relay: HashMap<NodeId, NodeAddress>,
+    /// responded or failed. The cache will usually be emptied by successful or failed session
+    /// establishment, but for the edge case that a NODES response is returned for an ended query
+    /// and hence an attempt to establish a session with those nodes isn't initiated, a bound on
+    /// the relay cache is set equivalent to the Handler's `session_cache_capacity`.
+    pub new_peer_latest_relay_cache: LruCache<NodeId, NodeAddress>,
     /// Keeps track if this node needs to send a packet to a peer in order to keep a hole punched
     /// for it in its NAT.
     pub hole_punch_tracker: HashSetDelay<SocketAddr>,
@@ -226,11 +229,12 @@ impl NatHolePunchUtils {
         ip_mode: IpMode,
         unused_port_range: Option<RangeInclusive<u16>>,
         ban_duration: Option<Duration>,
+        session_cache_capacity: usize,
     ) -> Self {
         let mut nat_hole_puncher = NatHolePunchUtils {
             ip_mode,
             is_behind_nat: None,
-            new_peer_latest_relay: Default::default(),
+            new_peer_latest_relay_cache: LruCache::new(session_cache_capacity),
             hole_punch_tracker: HashSetDelay::new(Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME)),
             unused_port_range,
             ban_duration,
