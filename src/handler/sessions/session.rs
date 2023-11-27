@@ -199,7 +199,6 @@ impl Session {
     pub(crate) fn establish_from_challenge(
         local_key: Arc<RwLock<CombinedKey>>,
         local_id: &NodeId,
-        remote_id: &NodeId,
         challenge: Challenge,
         id_nonce_sig: &[u8],
         ephem_pubkey: &[u8],
@@ -223,7 +222,7 @@ impl Session {
             (None, None) => {
                 warn!(
                         "Peer did not respond with their ENR. Session could not be established. Node: {}",
-                        remote_id
+                        node_address.node_id
                     );
                 return Err(Discv5Error::SessionNotEstablished);
             }
@@ -255,7 +254,7 @@ impl Session {
         let (decryption_key, encryption_key) = crypto::derive_keys_from_pubkey(
             &local_key.read(),
             local_id,
-            remote_id,
+            &node_address.node_id,
             &challenge.data,
             ephem_pubkey,
         )?;

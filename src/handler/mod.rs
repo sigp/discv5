@@ -841,7 +841,6 @@ impl<P: ProtocolIdentity> Handler<P> {
             match Session::establish_from_challenge(
                 self.key.clone(),
                 &self.node_id,
-                &node_address.node_id,
                 challenge,
                 id_nonce_sig,
                 ephem_pubkey,
