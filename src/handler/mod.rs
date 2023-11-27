@@ -982,9 +982,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 // likely the node sending this message has dropped their session. Since
                 // this is a session message that assumes an established session, we do
                 // not reply with a WHOAREYOU to this random packet. This means we drop
-                // the current session and the packet.
-                self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
-                    .await;
+                // the packet.
                 warn!(
                     "Dropping message that should have been part of a session. Error: {}",
                     e
