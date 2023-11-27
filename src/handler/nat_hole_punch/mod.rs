@@ -13,7 +13,7 @@ pub use utils::NatHolePunchUtils;
 #[async_trait::async_trait]
 pub trait HolePunchNat {
     /// A request times out. Should trigger the initiation of a hole punch attempt, given a
-    /// transitive route to the target exists. Sends a RELAYINIT notification to the given 
+    /// transitive route to the target exists. Sends a RELAYINIT notification to the given
     /// relay.
     async fn on_request_time_out(
         &mut self,
