@@ -11,6 +11,7 @@ use std::{
     collections::HashSet,
     net::{Ipv4Addr, Ipv6Addr},
     ops::Add,
+    convert::TryInto,
 };
 
 use crate::{
@@ -262,7 +263,7 @@ async fn multiple_messages() {
         body: ResponseBody::Pong {
             enr_seq: 1,
             ip: ip.into(),
-            port: sender_port,
+            port: sender_port.try_into().unwrap(),
         },
     };
 

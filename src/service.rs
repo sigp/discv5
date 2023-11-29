@@ -40,6 +40,7 @@ use parking_lot::RwLock;
 use rpc::*;
 use std::{
     collections::HashMap,
+    convert::TryInto,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     task::Poll,
@@ -606,20 +607,24 @@ impl Service {
 
                 // build the PONG response
                 let src = node_address.socket_addr;
-                let response = Response {
-                    id,
-                    body: ResponseBody::Pong {
-                        enr_seq: self.local_enr.read().seq(),
-                        ip: src.ip(),
-                        port: src.port(),
-                    },
-                };
-                debug!("Sending PONG response to {}", node_address);
-                if let Err(e) = self
-                    .handler_send
-                    .send(HandlerIn::Response(node_address, Box::new(response)))
-                {
-                    warn!("Failed to send response {}", e)
+                if let Ok(port) = src.port().try_into() {
+                    let response = Response {
+                        id,
+                        body: ResponseBody::Pong {
+                            enr_seq: self.local_enr.read().seq(),
+                            ip: src.ip(),
+                            port,
+                        },
+                    };
+                    debug!("Sending PONG response to {}", node_address);
+                    if let Err(e) = self
+                        .handler_send
+                        .send(HandlerIn::Response(node_address, Box::new(response)))
+                    {
+                        warn!("Failed to send response {}", e);
+                    }
+                } else {
+                    warn!("The src port number should be non zero. {src}");
                 }
             }
             RequestBody::Talk { protocol, request } => {
@@ -776,12 +781,16 @@ impl Service {
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     // Send the response to the user, if they are who asked
                     if let Some(CallbackResponse::Pong(callback)) = active_request.callback {
-                        let response = Pong { enr_seq, ip, port };
+                        let response = Pong {
+                            enr_seq,
+                            ip,
+                            port: port.get(),
+                        };
                         if let Err(e) = callback.send(Ok(response)) {
                             warn!("Failed to send callback response {:?}", e)
                         };
                     } else {
-                        let socket = SocketAddr::new(ip, port);
+                        let socket = SocketAddr::new(ip, port.get());
                         // perform ENR majority-based update if required.
 
                         // Only count votes that from peers we have contacted.
