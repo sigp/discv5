@@ -451,8 +451,10 @@ impl Message {
                         if !node_header.list {
                             return Err(DecoderError::Custom("Invalid format of header"));
                         }
-                        if node_header.payload_length +2 > payload.len() {
-                            return Err(DecoderError::Custom("Payload size is smaller than payload_length"));
+                        if node_header.payload_length + 2 > payload.len() {
+                            return Err(DecoderError::Custom(
+                                "Payload size is smaller than payload_length",
+                            ));
                         }
                         let enr_rlp = Enr::<CombinedKey>::decode(
                             &mut &payload[..node_header.payload_length + 2],
