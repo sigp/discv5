@@ -23,7 +23,7 @@ use crate::{
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Config, DefaultProtocolId, Enr, IpMode,
 };
-use enr::{CombinedKey, EnrError, EnrKey, NodeId};
+use enr::{CombinedKey, EnrKey, Error as EnrError, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
