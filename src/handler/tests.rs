@@ -9,9 +9,9 @@ use crate::{
 };
 use std::{
     collections::HashSet,
+    convert::TryInto,
     net::{Ipv4Addr, Ipv6Addr},
     ops::Add,
-    convert::TryInto,
 };
 
 use crate::{
