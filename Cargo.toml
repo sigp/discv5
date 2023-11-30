@@ -12,7 +12,7 @@ categories = ["network-programming", "asynchronous"]
 exclude = [".gitignore", ".github/*"]
 
 [dependencies]
-enr = { version = "0.9", features = ["k256", "ed25519"] }
+enr = { version = "0.10", features = ["k256", "ed25519"] }
 tokio = { version = "1", features = ["net", "sync", "macros", "rt"] }
 libp2p = { version = "0.52", features = ["ed25519", "secp256k1"], optional = true }
 zeroize = { version = "1", features = ["zeroize_derive"] }

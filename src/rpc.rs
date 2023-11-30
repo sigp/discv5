@@ -493,7 +493,6 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use enr::EnrBuilder;
     use std::net::Ipv4Addr;
 
     #[test]
@@ -733,17 +732,17 @@ mod tests {
     #[test]
     fn encode_decode_nodes_response() {
         let key = CombinedKey::generate_secp256k1();
-        let enr1 = EnrBuilder::new("v4")
+        let enr1 = Enr::builder()
             .ip4("127.0.0.1".parse().unwrap())
             .udp4(500)
             .build(&key)
             .unwrap();
-        let enr2 = EnrBuilder::new("v4")
+        let enr2 = Enr::builder()
             .ip4("10.0.0.1".parse().unwrap())
             .tcp4(8080)
             .build(&key)
             .unwrap();
-        let enr3 = EnrBuilder::new("v4")
+        let enr3 = Enr::builder()
             .ip("10.4.5.6".parse().unwrap())
             .build(&key)
             .unwrap();

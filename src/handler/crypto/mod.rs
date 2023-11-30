@@ -223,7 +223,7 @@ mod tests {
     use crate::packet::DefaultProtocolId;
 
     use super::*;
-    use enr::{CombinedKey, EnrBuilder, EnrKey};
+    use enr::{CombinedKey, Enr, EnrKey};
     use std::convert::TryInto;
 
     fn hex_decode(x: &'static str) -> Vec<u8> {
@@ -341,12 +341,12 @@ mod tests {
         let node1_key = CombinedKey::generate_secp256k1();
         let node2_key = CombinedKey::generate_secp256k1();
 
-        let node1_enr = EnrBuilder::new("v4")
+        let node1_enr = Enr::builder()
             .ip("127.0.0.1".parse().unwrap())
             .udp4(9000)
             .build(&node1_key)
             .unwrap();
-        let node2_enr = EnrBuilder::new("v4")
+        let node2_enr = Enr::builder()
             .ip("127.0.0.1".parse().unwrap())
             .udp4(9000)
             .build(&node2_key)
