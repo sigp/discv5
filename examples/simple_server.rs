@@ -46,7 +46,7 @@ async fn main() {
 
     // construct a local ENR
     let enr = {
-        let mut builder = enr::EnrBuilder::new("v4");
+        let mut builder = enr::Enr::builder();
         // if an IP was specified, use it
         if let Some(external_address) = address {
             builder.ip4(external_address);

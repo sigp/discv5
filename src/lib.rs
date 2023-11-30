@@ -59,7 +59,7 @@
 //!
 //!    // construct a local ENR
 //!    let enr_key = CombinedKey::generate_secp256k1();
-//!    let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
+//!    let enr = enr::Enr::empty(&enr_key).unwrap();
 //!
 //!    // build the tokio executor
 //!    let mut runtime = tokio::runtime::Builder::new_multi_thread()
