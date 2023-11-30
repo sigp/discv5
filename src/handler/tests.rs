@@ -11,6 +11,7 @@ use std::{
     collections::HashSet,
     convert::TryInto,
     net::{Ipv4Addr, Ipv6Addr},
+    num::NonZeroU16,
     ops::Add,
 };
 
@@ -817,7 +818,7 @@ async fn test_replay_active_requests() {
                         body: ResponseBody::Pong {
                             enr_seq: 1,
                             ip: ip.into(),
-                            port: sender_port,
+                            port: NonZeroU16::new(sender_port).unwrap(),
                         },
                     };
                     receiver_send
@@ -1011,7 +1012,7 @@ async fn test_send_pending_request() {
                         body: ResponseBody::Pong {
                             enr_seq: 1,
                             ip: ip.into(),
-                            port: sender_port,
+                            port: NonZeroU16::new(sender_port).unwrap(),
                         },
                     };
                     receiver_send
