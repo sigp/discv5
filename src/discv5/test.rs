@@ -780,7 +780,7 @@ async fn test_bucket_limits() {
         for _ in 0..bucket_limit + 1 {
             loop {
                 let key = CombinedKey::generate_secp256k1();
-                let enr_new = Enr::builder().build(&key).unwrap();
+                let enr_new = Enr::empty(&key).unwrap();
                 let node_key: Key<NodeId> = enr.node_id().into();
                 let distance = node_key.log2_distance(&enr_new.node_id().into()).unwrap();
                 if distance == 256 {

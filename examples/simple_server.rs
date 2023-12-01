@@ -10,11 +10,7 @@
 //! $ cargo run --example simple_server -- <ENR-IP> <ENR-PORT> <BASE64ENR>
 //! ```
 
-use discv5::{
-    enr,
-    enr::{CombinedKey, Enr},
-    ConfigBuilder, Discv5, Event, ListenConfig,
-};
+use discv5::{enr, enr::CombinedKey, ConfigBuilder, Discv5, Event, ListenConfig};
 use std::net::Ipv4Addr;
 
 #[tokio::main]
@@ -50,7 +46,7 @@ async fn main() {
 
     // construct a local ENR
     let enr = {
-        let mut builder = Enr::builder();
+        let mut builder = enr::Enr::builder();
         // if an IP was specified, use it
         if let Some(external_address) = address {
             builder.ip4(external_address);

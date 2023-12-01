@@ -17,7 +17,6 @@ use crate::{
     RequestError::SelfRequest,
 };
 use active_requests::ActiveRequests;
-use enr::Enr;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -28,7 +27,7 @@ fn init() {
 }
 
 async fn build_handler<P: ProtocolIdentity>(
-    enr: Enr<CombinedKey>,
+    enr: Enr,
     key: CombinedKey,
     config: Config,
 ) -> (

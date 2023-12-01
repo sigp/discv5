@@ -17,7 +17,7 @@ use discv5::ConfigBuilder;
 #[cfg(feature = "libp2p")]
 use discv5::ListenConfig;
 #[cfg(feature = "libp2p")]
-use discv5::{enr::CombinedKey, enr::Enr, Discv5};
+use discv5::{enr::CombinedKey, Discv5};
 #[cfg(feature = "libp2p")]
 use std::net::Ipv4Addr;
 
@@ -43,7 +43,7 @@ async fn main() {
     // generate a new enr key
     let enr_key = CombinedKey::generate_secp256k1();
     // construct a local ENR
-    let enr = Enr::builder().build(&enr_key).unwrap();
+    let enr = enr::Enr::empty(&enr_key).unwrap();
 
     // default discv5 configuration
     let config = ConfigBuilder::new(listen_config).build();

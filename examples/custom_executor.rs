@@ -9,11 +9,7 @@
 //! $ cargo run --example custom_executor <BASE64ENR>
 //! ```
 
-use discv5::{
-    enr,
-    enr::{CombinedKey, Enr},
-    ConfigBuilder, Discv5, Event, ListenConfig,
-};
+use discv5::{enr, enr::CombinedKey, ConfigBuilder, Discv5, Event, ListenConfig};
 use std::net::Ipv4Addr;
 
 fn main() {
@@ -33,7 +29,7 @@ fn main() {
 
     let enr_key = CombinedKey::generate_secp256k1();
     // construct a local ENR
-    let enr = Enr::builder().build(&enr_key).unwrap();
+    let enr = enr::Enr::empty(&enr_key).unwrap();
 
     // build the tokio executor
     let runtime = tokio::runtime::Builder::new_multi_thread()

@@ -106,7 +106,11 @@ async fn test_updating_connection_on_ping() {
     init();
     let enr_key1 = CombinedKey::generate_secp256k1();
     let ip = "127.0.0.1".parse().unwrap();
-    let enr = Enr::builder().ip4(ip).udp4(10001).build(&enr_key1).unwrap();
+    let enr = Enr::builder()
+        .ip4(ip)
+        .udp4(DEFAULT_UDP_PORT)
+        .build(&enr_key1)
+        .unwrap();
     let ip2 = "127.0.0.1".parse().unwrap();
     let enr_key2 = CombinedKey::generate_secp256k1();
     let enr2 = Enr::builder()
@@ -170,7 +174,11 @@ async fn test_connection_direction_on_inject_session_established() {
 
     let enr_key1 = CombinedKey::generate_secp256k1();
     let ip = std::net::Ipv4Addr::LOCALHOST;
-    let enr = Enr::builder().ip4(ip).udp4(10001).build(&enr_key1).unwrap();
+    let enr = Enr::builder()
+        .ip4(ip)
+        .udp4(DEFAULT_UDP_PORT)
+        .build(&enr_key1)
+        .unwrap();
 
     let enr_key2 = CombinedKey::generate_secp256k1();
     let ip2 = std::net::Ipv4Addr::LOCALHOST;
