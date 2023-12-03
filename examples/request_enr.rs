@@ -43,7 +43,7 @@ async fn main() {
     // generate a new enr key
     let enr_key = CombinedKey::generate_secp256k1();
     // construct a local ENR
-    let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
+    let enr = enr::Enr::empty(&enr_key).unwrap();
 
     // default discv5 configuration
     let config = ConfigBuilder::new(listen_config).build();
