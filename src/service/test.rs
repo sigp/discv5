@@ -17,7 +17,7 @@ use crate::{
 };
 use enr::CombinedKey;
 use parking_lot::RwLock;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::Ipv4Addr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 /// Default UDP port number to use for tests requiring UDP exposure
@@ -234,7 +234,7 @@ async fn test_handling_concurrent_responses() {
     let mut service = {
         let enr_key = keypairs.pop().unwrap();
         let enr = Enr::builder()
-            .ip4("127.0.0.1".parse().unwrap())
+            .ip4(Ipv4Addr::LOCALHOST)
             .udp4(10005)
             .build(&enr_key)
             .unwrap();
@@ -247,7 +247,7 @@ async fn test_handling_concurrent_responses() {
     };
 
     let node_contact: NodeContact = Enr::builder()
-        .ip4("127.0.0.1".parse().unwrap())
+        .ip4(Ipv4Addr::LOCALHOST)
         .udp4(10006)
         .build(&keypairs.remove(0))
         .unwrap()
@@ -286,7 +286,7 @@ async fn test_handling_concurrent_responses() {
         .enumerate()
         .map(|(i, key)| {
             Enr::builder()
-                .ip4("127.0.0.1".parse().unwrap())
+                .ip4(Ipv4Addr::LOCALHOST)
                 .udp4(10007 + i as u16)
                 .build(key)
                 .unwrap()
