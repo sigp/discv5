@@ -984,14 +984,16 @@ impl Handler {
                     }
                 })
             {
-                let new_packet = session
-                    .encrypt_message::<P>(self.node_id, &request_call.encode())
-                    .expect(&format!(
-                        "Failed to encrypt message for request with id: {:?}",
+                if let Ok(new_packet) =
+                    session.encrypt_message::<P>(self.node_id, &request_call.encode())
+                {
+                    packets.push((*request_call.packet().message_nonce(), new_packet));
+                } else {
+                    error!(
+                        "Failed to re-encrypt packet while replaying active request with id: {:?}",
                         request_call.id()
-                    ));
-
-                packets.push((*request_call.packet().message_nonce(), new_packet));
+                    );
+                }
             }
 
             packets
