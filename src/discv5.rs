@@ -49,7 +49,7 @@ lazy_static! {
         RwLock::new(crate::PermitBanList::default());
 }
 
-mod test;
+pub(crate) mod test;
 
 /// Events that can be produced by the `Discv5` event stream.
 #[derive(Debug)]

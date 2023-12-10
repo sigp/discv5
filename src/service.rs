@@ -188,7 +188,7 @@ pub struct Service {
     active_requests: FnvHashMap<RequestId, ActiveRequest>,
 
     /// Keeps track of the number of responses received from a NODES response.
-    active_nodes_responses: HashMap<NodeId, NodesResponse>,
+    active_nodes_responses: HashMap<RequestId, NodesResponse>,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
     ip_votes: Option<IpVote>,
@@ -733,10 +733,8 @@ impl Service {
 
                     // handle the case that there is more than one response
                     if total > 1 {
-                        let mut current_response = self
-                            .active_nodes_responses
-                            .remove(&node_id)
-                            .unwrap_or_default();
+                        let mut current_response =
+                            self.active_nodes_responses.remove(&id).unwrap_or_default();
 
                         debug!(
                             "Nodes Response: {} of {} received",
@@ -754,7 +752,7 @@ impl Service {
 
                             current_response.received_nodes.append(&mut nodes);
                             self.active_nodes_responses
-                                .insert(node_id, current_response);
+                                .insert(id.clone(), current_response);
                             self.active_requests.insert(id, active_request);
                             return;
                         }
@@ -776,7 +774,7 @@ impl Service {
                     // in a later response sends a response with a total of 1, all previous nodes
                     // will be ignored.
                     // ensure any mapping is removed in this rare case
-                    self.active_nodes_responses.remove(&node_id);
+                    self.active_nodes_responses.remove(&id);
 
                     self.discovered(&node_id, nodes, active_request.query_id);
                 }
@@ -1452,7 +1450,7 @@ impl Service {
                 // if a failed FindNodes request, ensure we haven't partially received packets. If
                 // so, process the partially found nodes
                 RequestBody::FindNode { .. } => {
-                    if let Some(nodes_response) = self.active_nodes_responses.remove(&node_id) {
+                    if let Some(nodes_response) = self.active_nodes_responses.remove(&id) {
                         if !nodes_response.received_nodes.is_empty() {
                             warn!(
                                 "NODES Response failed, but was partially processed from: {}",

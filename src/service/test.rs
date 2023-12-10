@@ -3,6 +3,7 @@
 use super::*;
 
 use crate::{
+    discv5::test::generate_deterministic_keypair,
     handler::Handler,
     kbucket,
     kbucket::{BucketInsertResult, KBucketsTable, NodeStatus},
@@ -16,7 +17,7 @@ use crate::{
 };
 use enr::CombinedKey;
 use parking_lot::RwLock;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::Ipv4Addr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 /// Default UDP port number to use for tests requiring UDP exposure
@@ -220,4 +221,123 @@ async fn test_connection_direction_on_inject_session_established() {
     let status = service.kbuckets.read().iter_ref().next().unwrap().status;
     assert!(status.is_connected());
     assert_eq!(ConnectionDirection::Outgoing, status.direction);
+}
+
+#[tokio::test]
+async fn test_handling_concurrent_responses() {
+    init();
+
+    // Seed is chosen such that all nodes are in the 256th distance of the first node.
+    let seed = 1652;
+    let mut keypairs = generate_deterministic_keypair(5, seed);
+
+    let mut service = {
+        let enr_key = keypairs.pop().unwrap();
+        let enr = Enr::builder()
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(10005)
+            .build(&enr_key)
+            .unwrap();
+        build_service::<DefaultProtocolId>(
+            Arc::new(RwLock::new(enr)),
+            Arc::new(RwLock::new(enr_key)),
+            false,
+        )
+        .await
+    };
+
+    let node_contact: NodeContact = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(10006)
+        .build(&keypairs.remove(0))
+        .unwrap()
+        .into();
+    let node_address = node_contact.node_address();
+
+    // Add fake requests
+    // Request1
+    service.active_requests.insert(
+        RequestId(vec![1]),
+        ActiveRequest {
+            contact: node_contact.clone(),
+            request_body: RequestBody::FindNode {
+                distances: vec![254, 255, 256],
+            },
+            query_id: Some(QueryId(1)),
+            callback: None,
+        },
+    );
+    // Request2
+    service.active_requests.insert(
+        RequestId(vec![2]),
+        ActiveRequest {
+            contact: node_contact,
+            request_body: RequestBody::FindNode {
+                distances: vec![254, 255, 256],
+            },
+            query_id: Some(QueryId(2)),
+            callback: None,
+        },
+    );
+
+    assert_eq!(3, keypairs.len());
+    let mut enrs_for_response = keypairs
+        .iter()
+        .enumerate()
+        .map(|(i, key)| {
+            Enr::builder()
+                .ip4(Ipv4Addr::LOCALHOST)
+                .udp4(10007 + i as u16)
+                .build(key)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    // Response to `Request1` is sent as two separate messages in total. Handle the first one of the
+    // messages here.
+    service.handle_rpc_response(
+        node_address.clone(),
+        Response {
+            id: RequestId(vec![1]),
+            body: ResponseBody::Nodes {
+                total: 2,
+                nodes: vec![enrs_for_response.pop().unwrap()],
+            },
+        },
+    );
+    // Service has still two active requests since we are waiting for the second NODE response to
+    // `Request1`.
+    assert_eq!(2, service.active_requests.len());
+    // Service stores the first response to `Request1` into `active_nodes_responses`.
+    assert!(!service.active_nodes_responses.is_empty());
+
+    // Second, handle a response to *`Request2`* before the second response to `Request1`.
+    service.handle_rpc_response(
+        node_address.clone(),
+        Response {
+            id: RequestId(vec![2]),
+            body: ResponseBody::Nodes {
+                total: 1,
+                nodes: vec![enrs_for_response.pop().unwrap()],
+            },
+        },
+    );
+    // `Request2` is completed so now the number of active requests should be one.
+    assert_eq!(1, service.active_requests.len());
+    // Service still keeps the first response in `active_nodes_responses`.
+    assert!(!service.active_nodes_responses.is_empty());
+
+    // Finally, handle the second response to `Request1`.
+    service.handle_rpc_response(
+        node_address,
+        Response {
+            id: RequestId(vec![1]),
+            body: ResponseBody::Nodes {
+                total: 2,
+                nodes: vec![enrs_for_response.pop().unwrap()],
+            },
+        },
+    );
+    assert!(service.active_requests.is_empty());
+    assert!(service.active_nodes_responses.is_empty());
 }
