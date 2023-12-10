@@ -324,7 +324,7 @@ impl Service {
                     ip_mode,
                 };
 
-                info!("Discv5 Service started");
+                info!(mode = ?service.ip_mode, "Discv5 Service started");
                 service.start().await;
             }));
 
@@ -333,7 +333,6 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
-        info!("{:?}", self.ip_mode);
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -722,10 +721,9 @@ impl Service {
 
                         if nodes.len() < before_len {
                             // Peer sent invalid ENRs. Blacklist the Node
-                            warn!(
-                                "Peer sent invalid ENR. Blacklisting {}",
-                                active_request.contact
-                            );
+                            let node_id = active_request.contact.node_id();
+                            let addr = active_request.contact.socket_addr();
+                            warn!(%node_id, %addr, "ENRs received of unsolicited distances. Blacklisting");
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         }
@@ -1449,13 +1447,14 @@ impl Service {
             match active_request.request_body {
                 // if a failed FindNodes request, ensure we haven't partially received packets. If
                 // so, process the partially found nodes
-                RequestBody::FindNode { .. } => {
+                RequestBody::FindNode { ref distances } => {
                     if let Some(nodes_response) = self.active_nodes_responses.remove(&id) {
                         if !nodes_response.received_nodes.is_empty() {
-                            warn!(
-                                "NODES Response failed, but was partially processed from: {}",
-                                active_request.contact
-                            );
+                            let node_id = active_request.contact.node_id();
+                            let addr = active_request.contact.socket_addr();
+                            let received = nodes_response.received_nodes.len();
+                            let expected = distances.len();
+                            warn!(%node_id, %addr, %error, %received, %expected, "FINDNODE request failed with partial results");
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
