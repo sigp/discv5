@@ -1529,10 +1529,7 @@ impl Service {
                 let request_body = query.target().rpc_request(return_peer);
                 Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
             }
-            QueryPoolState::Timeout(query) => {
-                warn!("Query id: {:?} timed out", query.id());
-                Poll::Ready(QueryEvent::TimedOut(Box::new(query)))
-            }
+            QueryPoolState::Timeout(query) => Poll::Ready(QueryEvent::TimedOut(Box::new(query))),
             QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         })
         .await
