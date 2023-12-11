@@ -1529,11 +1529,7 @@ impl Service {
                 Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
             }
             
-            QueryPoolState::Timeout(query) => {
-                let query_id = query.id().0;
-                debug!(%query_id, "Query timed out");
-                Poll::Ready(QueryEvent::TimedOut(Box::new(query)))
-            },
+            QueryPoolState::Timeout(query) => Poll::Ready(QueryEvent::TimedOut(Box::new(query))),
             QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         })
         .await
