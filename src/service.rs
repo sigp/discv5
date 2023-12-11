@@ -188,7 +188,7 @@ pub struct Service {
     active_requests: FnvHashMap<RequestId, ActiveRequest>,
 
     /// Keeps track of the number of responses received from a NODES response.
-    active_nodes_responses: HashMap<NodeId, NodesResponse>,
+    active_nodes_responses: HashMap<RequestId, NodesResponse>,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
     ip_votes: Option<IpVote>,
@@ -324,7 +324,7 @@ impl Service {
                     ip_mode,
                 };
 
-                info!("Discv5 Service started");
+                info!(mode = ?service.ip_mode, "Discv5 Service started");
                 service.start().await;
             }));
 
@@ -333,7 +333,6 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
-        info!("{:?}", self.ip_mode);
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -722,10 +721,9 @@ impl Service {
 
                         if nodes.len() < before_len {
                             // Peer sent invalid ENRs. Blacklist the Node
-                            warn!(
-                                "Peer sent invalid ENR. Blacklisting {}",
-                                active_request.contact
-                            );
+                            let node_id = active_request.contact.node_id();
+                            let addr = active_request.contact.socket_addr();
+                            warn!(%node_id, %addr, "ENRs received of unsolicited distances. Blacklisting");
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         }
@@ -733,10 +731,8 @@ impl Service {
 
                     // handle the case that there is more than one response
                     if total > 1 {
-                        let mut current_response = self
-                            .active_nodes_responses
-                            .remove(&node_id)
-                            .unwrap_or_default();
+                        let mut current_response =
+                            self.active_nodes_responses.remove(&id).unwrap_or_default();
 
                         debug!(
                             "Nodes Response: {} of {} received",
@@ -754,7 +750,7 @@ impl Service {
 
                             current_response.received_nodes.append(&mut nodes);
                             self.active_nodes_responses
-                                .insert(node_id, current_response);
+                                .insert(id.clone(), current_response);
                             self.active_requests.insert(id, active_request);
                             return;
                         }
@@ -776,7 +772,7 @@ impl Service {
                     // in a later response sends a response with a total of 1, all previous nodes
                     // will be ignored.
                     // ensure any mapping is removed in this rare case
-                    self.active_nodes_responses.remove(&node_id);
+                    self.active_nodes_responses.remove(&id);
 
                     self.discovered(&node_id, nodes, active_request.query_id);
                 }
@@ -1451,13 +1447,14 @@ impl Service {
             match active_request.request_body {
                 // if a failed FindNodes request, ensure we haven't partially received packets. If
                 // so, process the partially found nodes
-                RequestBody::FindNode { .. } => {
-                    if let Some(nodes_response) = self.active_nodes_responses.remove(&node_id) {
+                RequestBody::FindNode { ref distances } => {
+                    if let Some(nodes_response) = self.active_nodes_responses.remove(&id) {
                         if !nodes_response.received_nodes.is_empty() {
-                            warn!(
-                                "NODES Response failed, but was partially processed from: {}",
-                                active_request.contact
-                            );
+                            let node_id = active_request.contact.node_id();
+                            let addr = active_request.contact.socket_addr();
+                            let received = nodes_response.received_nodes.len();
+                            let expected = distances.len();
+                            warn!(%node_id, %addr, %error, %received, %expected, "FINDNODE request failed with partial results");
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
@@ -1531,10 +1528,8 @@ impl Service {
                 let request_body = query.target().rpc_request(return_peer);
                 Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
             }
-            QueryPoolState::Timeout(query) => {
-                warn!("Query id: {:?} timed out", query.id());
-                Poll::Ready(QueryEvent::TimedOut(Box::new(query)))
-            }
+
+            QueryPoolState::Timeout(query) => Poll::Ready(QueryEvent::TimedOut(Box::new(query))),
             QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         })
         .await
