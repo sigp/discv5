@@ -908,8 +908,8 @@ impl Handler {
             }
         } else {
             warn!(
-                "Received an authenticated header without a matching WHOAREYOU request. {}",
-                node_address
+                node_id = %node_address.node_id, addr = %node_address.socket_addr,
+                "Received an authenticated header without a matching WHOAREYOU request",
             );
         }
     }
