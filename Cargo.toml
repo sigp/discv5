@@ -20,7 +20,7 @@ futures = "0.3"
 uint = { version = "0.9", default-features = false }
 alloy-rlp = { version = "0.3.3", default-features = true }
 # This version must be kept up to date do it uses the same dependencies as ENR
-hkdf = "0.12" 
+hkdf = "0.12"
 hex = "0.4"
 fnv = "1"
 arrayvec = "0.7"
@@ -32,20 +32,20 @@ lazy_static = "1"
 aes = { version = "0.7", features = ["ctr"] }
 aes-gcm = "0.9"
 tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 lru = "0.12"
 hashlink = "0.8"
 delay_map = "0.3"
 more-asserts = "0.3"
 
 [dev-dependencies]
-rand_07 = { package = "rand", version = "0.7" }
-quickcheck = "0.9"
-tokio = { version = "1", features = ["full"] }
-rand_xorshift = "0.3"
-rand_core = "0.6"
 clap = { version = "4", features = ["derive"] }
 if-addrs = "0.10"
+quickcheck = "0.9"
+rand_07 = { package = "rand", version = "0.7" }
+rand_core = "0.6"
+rand_xorshift = "0.3"
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 libp2p = ["dep:libp2p"]
