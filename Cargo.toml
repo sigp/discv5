@@ -14,7 +14,7 @@ exclude = [".gitignore", ".github/*"]
 [dependencies]
 enr = { version = "0.10", features = ["k256", "ed25519"] }
 tokio = { version = "1", features = ["net", "sync", "macros", "rt"] }
-libp2p = { git= "https://github.com/sigp/rust-libp2p", rev="a70bef04c0c3e1dc35b812a597bb66ca89788e36", features = ["ed25519", "secp256k1"], optional = true }
+libp2p = { git= "https://github.com/sigp/rust-libp2p", branch="lighthouse-gossipsub", features = ["ed25519", "secp256k1"], optional = true }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 futures = "0.3"
 uint = { version = "0.9", default-features = false }
@@ -32,13 +32,13 @@ lazy_static = "1"
 aes = { version = "0.7", features = ["ctr"] }
 aes-gcm = "0.9"
 tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 lru = "0.12"
 hashlink = "0.8"
 delay_map = "0.3"
 more-asserts = "0.3"
 
 [dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand_07 = { package = "rand", version = "0.7" }
 quickcheck = "0.9"
 tokio = { version = "1", features = ["full"] }
