@@ -20,7 +20,7 @@ pub trait HolePunchNat {
         relay: NodeAddress,
         local_enr: Enr, // initiator-enr
         timed_out_nonce: MessageNonce,
-        target_session_index: NodeAddress,
+        target_node_address: NodeAddress,
     ) -> Result<(), Error>;
 
     /// A RelayInit notification is received over discv5 indicating this node is the relay. Should

@@ -1424,15 +1424,15 @@ impl<P: ProtocolIdentity> HolePunchNat for Handler<P> {
         relay: NodeAddress,
         local_enr: Enr, // initiator-enr
         timed_out_nonce: MessageNonce,
-        target_session_index: NodeAddress,
+        target_node_address: NodeAddress,
     ) -> Result<(), NatHolePunchError> {
         // Another hole punch process with this target may have just completed.
-        if self.sessions.cache.get(&target_session_index).is_some() {
+        if self.sessions.cache.get(&target_node_address).is_some() {
             return Ok(());
         }
         if let Some(session) = self.sessions.cache.get_mut(&relay) {
             let relay_init_notif =
-                Notification::RelayInit(local_enr, target_session_index.node_id, timed_out_nonce);
+                Notification::RelayInit(local_enr, target_node_address.node_id, timed_out_nonce);
             trace!(
                 "Sending notif to relay {}. relay init: {}",
                 relay.node_id,

@@ -40,8 +40,9 @@ impl SessionLimiter {
             return Ok(());
         }
         // Empty buffer of expired sessions, and remove any which belong to unreachable ENRs.
-        while let Ok(Some(session_index)) = self.rx_expired_sessions.try_next() {
-            self.sessions_unreachable_enr_tracker.remove(&session_index);
+        while let Ok(Some(session_node_address)) = self.rx_expired_sessions.try_next() {
+            self.sessions_unreachable_enr_tracker
+                .remove(&session_node_address);
         }
         // Peer is unreachable
         if self.sessions_unreachable_enr_tracker.len() >= self.limit {
