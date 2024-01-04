@@ -367,7 +367,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                     // challenge. We process them here
                     self.send_next_request(node_address).await;
                 }
-                Some(Ok(peer_socket)) = self.nat_hole_puncher.next() => {
+                Some(peer_socket) = self.nat_hole_puncher.next() => {
                     if let Err(e) = self.on_hole_punch_expired(peer_socket).await {
                         warn!("Failed to keep hole punched for peer, error: {}", e);
                     }
@@ -1345,9 +1345,7 @@ impl<P: ProtocolIdentity> Handler<P> {
                 .active_sessions
                 .store(self.sessions.cache.len(), Ordering::Relaxed);
             // stop keeping hole punched for peer
-            self.nat_hole_puncher
-                .hole_punch_tracker
-                .remove(&node_address.socket_addr);
+            self.nat_hole_puncher.untrack(&node_address.socket_addr);
         }
         if let Some(to_remove) = self.pending_requests.remove(node_address) {
             for PendingRequest { request_id, .. } in to_remove {

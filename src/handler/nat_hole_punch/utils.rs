@@ -6,13 +6,13 @@ use std::{
     time::Duration,
 };
 
-use delay_map::HashSetDelay;
+use derive_more::{Deref, DerefMut};
 use enr::NodeId;
-use futures::{Stream, StreamExt};
+use futures::{channel::mpsc, Stream, StreamExt};
 use lru::LruCache;
 use rand::Rng;
 
-use crate::{node_info::NodeAddress, Enr, IpMode};
+use crate::{lru_time_cache::LruTimeCache, node_info::NodeAddress, Enr, IpMode};
 
 /// The expected shortest lifetime in most NAT configurations of a punched hole in seconds.
 pub const DEFAULT_HOLE_PUNCH_LIFETIME: u64 = 20;
@@ -36,7 +36,7 @@ pub struct NatHolePunchUtils {
     pub new_peer_latest_relay_cache: LruCache<NodeId, NodeAddress>,
     /// Keeps track if this node needs to send a packet to a peer in order to keep a hole punched
     /// for it in its NAT.
-    pub hole_punch_tracker: HashSetDelay<SocketAddr>,
+    pub hole_punch_tracker: NatHolePunchTracker,
     /// Ports to trie to bind to check if this node is behind NAT.
     pub unused_port_range: Option<RangeInclusive<u16>>,
     /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
@@ -56,7 +56,7 @@ impl NatHolePunchUtils {
             ip_mode,
             is_behind_nat: None,
             new_peer_latest_relay_cache: LruCache::new(session_cache_capacity),
-            hole_punch_tracker: HashSetDelay::new(Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME)),
+            hole_punch_tracker: NatHolePunchTracker::new(session_cache_capacity),
             unused_port_range,
             ban_duration,
         };
@@ -86,7 +86,11 @@ impl NatHolePunchUtils {
         if self.is_behind_nat == Some(false) {
             return;
         }
-        self.hole_punch_tracker.insert(peer_socket);
+        self.hole_punch_tracker.insert(peer_socket, ());
+    }
+
+    pub fn untrack(&mut self, peer_socket: &SocketAddr) {
+        _ = self.hole_punch_tracker.remove(peer_socket)
     }
 
     /// Called when a new observed address is reported at start up or after a
@@ -119,15 +123,37 @@ impl NatHolePunchUtils {
 }
 
 impl Stream for NatHolePunchUtils {
-    type Item = Result<SocketAddr, String>;
+    type Item = SocketAddr;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Until ip voting is done and an observed public address is finalised, all nodes act as
         // if they are behind a NAT.
-        if self.is_behind_nat == Some(false) || self.hole_punch_tracker.is_empty() {
+        if self.is_behind_nat == Some(false) || self.hole_punch_tracker.len() == 0 {
             return Poll::Pending;
         }
-        self.hole_punch_tracker.poll_next_unpin(cx)
+        self.hole_punch_tracker.expired_entries.poll_next_unpin(cx)
+    }
+}
+
+#[derive(Deref, DerefMut)]
+struct NatHolePunchTracker {
+    #[deref]
+    #[deref_mut]
+    cache: LruTimeCache<SocketAddr, ()>,
+    expired_entries: mpsc::Receiver<SocketAddr>,
+}
+
+impl NatHolePunchTracker {
+    fn new(session_cache_capacity: usize) -> Self {
+        let (tx, rx) = futures::channel::mpsc::channel::<SocketAddr>(session_cache_capacity);
+        Self {
+            cache: LruTimeCache::new(
+                Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME),
+                Some(session_cache_capacity),
+                Some(tx),
+            ),
+            expired_entries: rx,
+        }
     }
 }
 
