@@ -6,7 +6,7 @@ use crate::{
         ChallengeData, MessageNonce, Packet, PacketHeader, PacketKind, ProtocolIdentity,
         MESSAGE_NONCE_LENGTH,
     },
-    rpc::RequestId,
+    rpc::{Message, RequestId},
     Discv5Error, Enr,
 };
 
@@ -72,56 +72,30 @@ impl Session {
         self.awaiting_enr = new_session.awaiting_enr;
     }
 
-    /// Uses the current `Session` to encrypt a message. Encrypt packets with the current session
-    /// key if we are awaiting a response from AuthMessage.
+    /// Uses the current `Session` to encrypt a `SessionMessage`.
+    pub(crate) fn encrypt_session_message<P: ProtocolIdentity>(
+        &mut self,
+        src_id: NodeId,
+        message: &[u8],
+    ) -> Result<Packet, Discv5Error> {
+        self.encrypt::<P>(message, PacketKind::SessionMessage { src_id })
+    }
+
+    /// Uses the current `Session` to encrypt a `Message`.
     pub(crate) fn encrypt_message<P: ProtocolIdentity>(
         &mut self,
         src_id: NodeId,
         message: &[u8],
     ) -> Result<Packet, Discv5Error> {
-        self.counter += 1;
-
-        // If the message nonce length is ever set below 4 bytes this will explode. The packet
-        // size constants shouldn't be modified.
-        const _: () = assert!(MESSAGE_NONCE_LENGTH > 4);
-
-        let random_nonce: [u8; MESSAGE_NONCE_LENGTH - 4] = rand::random();
-        let mut message_nonce: MessageNonce = [0u8; MESSAGE_NONCE_LENGTH];
-        message_nonce[..4].copy_from_slice(&self.counter.to_be_bytes());
-        message_nonce[4..].copy_from_slice(&random_nonce);
-
-        // the authenticated data is the IV concatenated with the packet header
-        let iv: u128 = rand::random();
-        let header = PacketHeader {
-            message_nonce,
-            kind: PacketKind::Message { src_id },
-        };
-
-        let mut authenticated_data = iv.to_be_bytes().to_vec();
-        authenticated_data.extend_from_slice(&header.encode::<P>());
-
-        let cipher = crypto::encrypt_message(
-            &self.keys.encryption_key,
-            message_nonce,
-            message,
-            &authenticated_data,
-        )?;
-
-        // construct a packet from the header and the cipher text
-        Ok(Packet {
-            iv,
-            header,
-            message: cipher,
-        })
+        self.encrypt::<P>(message, PacketKind::Message { src_id })
     }
 
-    /// Uses the current `Session` to encrypt a notification. Encrypt packets with the current
-    /// session key if we are awaiting a response from AuthMessage. Same as `encrypt_message`
-    /// apart form the the [`PacketHeader`].
-    pub(crate) fn encrypt_notification<P: ProtocolIdentity>(
+    /// Encrypts packets with the current session key if we are awaiting a response from
+    /// AuthMessage.
+    fn encrypt<P: ProtocolIdentity>(
         &mut self,
-        src_id: NodeId,
         message: &[u8],
+        packet_kind: PacketKind,
     ) -> Result<Packet, Discv5Error> {
         self.counter += 1;
 
@@ -138,7 +112,7 @@ impl Session {
         let iv: u128 = rand::random();
         let header = PacketHeader {
             message_nonce,
-            kind: PacketKind::SessionMessage { src_id },
+            kind: packet_kind,
         };
 
         let mut authenticated_data = iv.to_be_bytes().to_vec();

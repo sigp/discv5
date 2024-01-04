@@ -594,13 +594,14 @@ impl<P: ProtocolIdentity> Handler<P> {
         // Check for an established session
         if let Some(session) = self.sessions.cache.get_mut(&node_address) {
             // Encrypt the message and send
-            let packet = match session.encrypt_notification::<P>(self.node_id, &response.encode()) {
-                Ok(packet) => packet,
-                Err(e) => {
-                    warn!("Could not encrypt response: {:?}", e);
-                    return;
-                }
-            };
+            let packet =
+                match session.encrypt_session_message::<P>(self.node_id, &response.encode()) {
+                    Ok(packet) => packet,
+                    Err(e) => {
+                        warn!("Could not encrypt response: {:?}", e);
+                        return;
+                    }
+                };
             self.send(node_address, packet).await;
         } else {
             // Either the session is being established or has expired. We simply drop the
@@ -1438,13 +1439,14 @@ impl<P: ProtocolIdentity> HolePunchNat for Handler<P> {
                 relay_init_notif,
             );
             // Encrypt the message and send
-            let packet =
-                match session.encrypt_notification::<P>(self.node_id, &relay_init_notif.encode()) {
-                    Ok(packet) => packet,
-                    Err(e) => {
-                        return Err(NatHolePunchError::Initiator(e));
-                    }
-                };
+            let packet = match session
+                .encrypt_session_message::<P>(self.node_id, &relay_init_notif.encode())
+            {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(NatHolePunchError::Initiator(e));
+                }
+            };
             self.send(relay, packet).await;
         } else {
             // Drop hole punch attempt with this relay, to ensure hole punch round-trip time stays
@@ -1540,13 +1542,14 @@ impl<P: ProtocolIdentity> HolePunchNat for Handler<P> {
                 relay_msg_notif,
             );
             // Encrypt the notification and send
-            let packet =
-                match session.encrypt_notification::<P>(self.node_id, &relay_msg_notif.encode()) {
-                    Ok(packet) => packet,
-                    Err(e) => {
-                        return Err(NatHolePunchError::Relay(e));
-                    }
-                };
+            let packet = match session
+                .encrypt_session_message::<P>(self.node_id, &relay_msg_notif.encode())
+            {
+                Ok(packet) => packet,
+                Err(e) => {
+                    return Err(NatHolePunchError::Relay(e));
+                }
+            };
             self.send(tgt_node_address, packet).await;
             Ok(())
         } else {
