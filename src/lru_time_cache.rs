@@ -17,10 +17,24 @@ pub struct LruTimeCache<K, V> {
 }
 
 impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
-    pub fn new(
+    pub fn new(ttl: Duration, capacity: Option<usize>) -> LruTimeCache<K, V> {
+        let capacity = if let Some(cap) = capacity {
+            cap
+        } else {
+            usize::MAX
+        };
+        LruTimeCache {
+            map: LinkedHashMap::new(),
+            ttl,
+            capacity,
+            tx: None,
+        }
+    }
+
+    pub fn new_with_expiry_feedback(
         ttl: Duration,
         capacity: Option<usize>,
-        tx: Option<mpsc::Sender<K>>,
+        tx: mpsc::Sender<K>,
     ) -> LruTimeCache<K, V> {
         let capacity = if let Some(cap) = capacity {
             cap
@@ -31,7 +45,7 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
             map: LinkedHashMap::new(),
             ttl,
             capacity,
-            tx,
+            tx: Some(tx),
         }
     }
 
@@ -131,7 +145,7 @@ mod tests {
 
     #[test]
     fn insert() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), None, None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
 
         cache.insert(1, 10);
         cache.insert(2, 20);
@@ -144,7 +158,7 @@ mod tests {
 
     #[test]
     fn capacity() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2), None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2));
 
         cache.insert(1, 10);
         cache.insert(2, 20);
@@ -158,7 +172,7 @@ mod tests {
 
     #[test]
     fn get() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2), None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2));
 
         cache.insert(1, 10);
         cache.insert(2, 20);
@@ -173,7 +187,7 @@ mod tests {
 
     #[test]
     fn get_mut() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), None, None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
 
         cache.insert(1, 10);
         let v = cache.get_mut(&1).expect("should have value");
@@ -184,7 +198,7 @@ mod tests {
 
     #[test]
     fn peek() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2), None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2));
 
         cache.insert(1, 10);
         cache.insert(2, 20);
@@ -198,7 +212,7 @@ mod tests {
 
     #[test]
     fn len() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), None, None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
 
         assert_eq!(0, cache.len());
 
@@ -210,7 +224,7 @@ mod tests {
 
     #[test]
     fn remove() {
-        let mut cache = LruTimeCache::new(Duration::from_secs(10), None, None);
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
 
         cache.insert(1, 10);
         assert_eq!(Some(10), cache.remove(&1));
@@ -226,7 +240,7 @@ mod tests {
 
         #[test]
         fn get() {
-            let mut cache = LruTimeCache::new(TTL, None, None);
+            let mut cache = LruTimeCache::new(TTL, None);
             cache.insert(1, 10);
             assert_eq!(Some(&10), cache.get(&1));
 
@@ -236,7 +250,7 @@ mod tests {
 
         #[test]
         fn peek() {
-            let mut cache = LruTimeCache::new(TTL, None, None);
+            let mut cache = LruTimeCache::new(TTL, None);
             cache.insert(1, 10);
             assert_eq!(Some(&10), cache.peek(&1));
 
@@ -246,7 +260,7 @@ mod tests {
 
         #[test]
         fn len() {
-            let mut cache = LruTimeCache::new(TTL, None, None);
+            let mut cache = LruTimeCache::new(TTL, None);
             cache.insert(1, 10);
             assert_eq!(1, cache.len());
 
@@ -256,7 +270,7 @@ mod tests {
 
         #[test]
         fn ttl() {
-            let mut cache = LruTimeCache::new(TTL, None, None);
+            let mut cache = LruTimeCache::new(TTL, None);
             cache.insert(1, 10);
             sleep(TTL / 4);
             cache.insert(2, 20);

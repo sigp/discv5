@@ -20,19 +20,21 @@ impl Sessions {
         entry_ttl: Duration,
         unreachable_enr_limit: Option<usize>,
     ) -> Self {
-        let (tx, limiter) = match unreachable_enr_limit {
+        let (cache, limiter) = match unreachable_enr_limit {
             Some(limit) => {
                 let (tx, rx) = futures::channel::mpsc::channel::<NodeAddress>(cache_capacity);
                 let limiter = SessionLimiter::new(rx, limit);
-                (Some(tx), Some(limiter))
+                let cache =
+                    LruTimeCache::new_with_expiry_feedback(entry_ttl, Some(cache_capacity), tx);
+                (cache, Some(limiter))
             }
-            None => (None, None),
+            None => {
+                let cache = LruTimeCache::new(entry_ttl, Some(cache_capacity));
+                (cache, None)
+            }
         };
-        let sessions = LruTimeCache::new(entry_ttl, Some(cache_capacity), tx);
-        Sessions {
-            cache: sessions,
-            limiter,
-        }
+
+        Sessions { cache, limiter }
     }
 
     pub fn insert(key: NodeAddress, value: Session) {

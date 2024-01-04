@@ -147,10 +147,10 @@ impl NatHolePunchTracker {
     fn new(session_cache_capacity: usize) -> Self {
         let (tx, rx) = futures::channel::mpsc::channel::<SocketAddr>(session_cache_capacity);
         Self {
-            cache: LruTimeCache::new(
+            cache: LruTimeCache::new_with_expiry_feedback(
                 Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME),
                 Some(session_cache_capacity),
-                Some(tx),
+                tx,
             ),
             expired_entries: rx,
         }
