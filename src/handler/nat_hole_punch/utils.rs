@@ -36,7 +36,7 @@ pub struct NatHolePunchUtils {
     pub new_peer_latest_relay_cache: LruCache<NodeId, NodeAddress>,
     /// Keeps track if this node needs to send a packet to a peer in order to keep a hole punched
     /// for it in its NAT.
-    pub hole_punch_tracker: NatHolePunchTracker,
+    hole_punch_tracker: NatHolePunchTracker,
     /// Ports to trie to bind to check if this node is behind NAT.
     pub unused_port_range: Option<RangeInclusive<u16>>,
     /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
@@ -44,7 +44,7 @@ pub struct NatHolePunchUtils {
 }
 
 impl NatHolePunchUtils {
-    pub(crate) fn new(
+    pub fn new(
         listen_port: u16,
         local_enr: &Enr,
         ip_mode: IpMode,
@@ -82,7 +82,7 @@ impl NatHolePunchUtils {
         nat_hole_puncher
     }
 
-    pub(crate) fn track(&mut self, peer_socket: SocketAddr) {
+    pub fn track(&mut self, peer_socket: SocketAddr) {
         if self.is_behind_nat == Some(false) {
             return;
         }
@@ -95,7 +95,7 @@ impl NatHolePunchUtils {
 
     /// Called when a new observed address is reported at start up or after a
     /// [`crate::Discv5Event::SocketUpdated`].
-    pub(crate) fn set_is_behind_nat(
+    pub fn set_is_behind_nat(
         &mut self,
         listen_port: u16,
         observed_ip: Option<IpAddr>,
