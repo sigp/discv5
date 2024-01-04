@@ -34,6 +34,10 @@ impl Sessions {
             limiter,
         }
     }
+
+    pub fn insert(key: NodeAddress, value: Session) {
+        todo!()
+    }
 }
 
 #[cfg(test)]
