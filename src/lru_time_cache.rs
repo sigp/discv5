@@ -92,13 +92,7 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
     /// Removes a key-value pair from the cache, returning the value at the key if the key
     /// was previously in the map.
     pub fn remove(&mut self, key: &K) -> Option<V> {
-        let v = self.map.remove(key).map(|v| v.0);
-        if let Some(ref mut tx) = self.tx {
-            if let Err(e) = tx.try_send(key.clone()) {
-                warn!("failed to notify of remove, {}", e);
-            }
-        }
-        v
+        self.map.remove(key).map(|v| v.0)
     }
 
     /// Removes expired items from the cache.
