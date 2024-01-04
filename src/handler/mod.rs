@@ -1384,9 +1384,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         if let Err(e) = self.socket.send.send(packet).await {
             warn!("Failed to send outbound packet {}", e)
         }
-        if Some(false) != self.nat_hole_puncher.is_behind_nat {
-            self.nat_hole_puncher.track(dst);
-        }
+        self.nat_hole_puncher.track(dst);
     }
 
     /// Check if any banned nodes have served their time and unban them.
