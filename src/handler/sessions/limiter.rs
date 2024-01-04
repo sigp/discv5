@@ -30,7 +30,7 @@ impl SessionLimiter {
         }
     }
 
-    /// Checks if a session with this peer should be allowed at this given time. Called after 
+    /// Checks if a session with this peer should be allowed at this given time. Called after
     /// connection establishment.
     pub fn track_sessions_unreachable_enr(
         &mut self,
