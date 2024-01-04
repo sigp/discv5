@@ -1003,43 +1003,7 @@ impl<P: ProtocolIdentity> Handler<P> {
         };
 
         match message {
-            Message::Response(response) => {
-                // Sessions could be awaiting an ENR response. Check if this response matches
-                // these
-                let Some(request_id) = session.awaiting_enr.as_ref() else {
-                    // Handle standard responses
-                    self.handle_response(node_address, response).await;
-                    return;
-                };
-                if &response.id == request_id {
-                    session.awaiting_enr = None;
-                    if let ResponseBody::Nodes { mut nodes, .. } = response.body {
-                        // Received the requested ENR
-                        let Some(enr) = nodes.pop() else {
-                            return;
-                        };
-                        if self.verify_enr(&enr, &node_address) {
-                            // Notify the application
-                            // This can occur when we try to dial a node without an
-                            // ENR. In this case we have attempted to establish the
-                            // connection, so this is an outgoing connection.
-                            self.new_connection(
-                                enr,
-                                node_address.socket_addr,
-                                ConnectionDirection::Outgoing,
-                            )
-                            .await;
-                            return;
-                        }
-                    }
-                    debug!("Session failed invalid ENR response");
-                    self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
-                        .await;
-                    return;
-                }
-                // Handle standard responses
-                self.handle_response(node_address, response).await;
-            }
+            Message::Response(response) => self.handle_response(node_address, response).await,
             Message::Notification(notif) => match notif {
                 Notification::RelayInit(initr, tgt, timed_out_nonce) => {
                     let initr_node_id = initr.node_id();
@@ -1073,9 +1037,9 @@ impl<P: ProtocolIdentity> Handler<P> {
                     }
                 }
             },
-            _ => {
+            Message::Request(_) => {
                 warn!(
-                    "Peer sent message type {} that shouldn't be sent in packet type `Message`, {}",
+                    "Peer sent message type {} that shouldn't be sent in packet type `Session Message`, {}",
                     message.msg_type(),
                     node_address,
                 );
@@ -1146,9 +1110,15 @@ impl<P: ProtocolIdentity> Handler<P> {
                         warn!("Failed to report request to application {}", e)
                     }
                 }
-                _ => {
+                Message::Response(response) => {
+                    // Accept response in Message packet for backwards compatibility
+                    warn!("Received a response in a `Message` packet, should be sent in a `SessionMessage`");
+                    self.handle_response(node_address, response).await
+                }
+                Message::Notification(_) => {
                     warn!(
-                        "Peer sent message type that shouldn't be sent in packet type Message, {}",
+                        "Peer sent message type {} that shouldn't be sent in packet type `Message`, {}",
+                        message.msg_type(),
                         node_address
                     );
                 }
@@ -1175,6 +1145,49 @@ impl<P: ProtocolIdentity> Handler<P> {
     /// Handles a response to a request. Re-inserts the request call if the response is a multiple
     /// Nodes response.
     async fn handle_response(&mut self, node_address: NodeAddress, response: Response) {
+        // Sessions could be awaiting an ENR response. Check if this response matches
+        // this
+        // check if we have an available session
+        let Some(session) = self.sessions.cache.get_mut(&node_address) else {
+            warn!(
+                "Dropping response. Error: {}, {}",
+                Discv5Error::SessionNotEstablished,
+                node_address
+            );
+            return;
+        };
+
+        if let Some(request_id) = session.awaiting_enr.as_ref() {
+            if &response.id == request_id {
+                session.awaiting_enr = None;
+                if let ResponseBody::Nodes { mut nodes, .. } = response.body {
+                    // Received the requested ENR
+                    let Some(enr) = nodes.pop() else {
+                        return;
+                    };
+                    if self.verify_enr(&enr, &node_address) {
+                        // Notify the application
+                        // This can occur when we try to dial a node without an
+                        // ENR. In this case we have attempted to establish the
+                        // connection, so this is an outgoing connection.
+                        self.new_connection(
+                            enr,
+                            node_address.socket_addr,
+                            ConnectionDirection::Outgoing,
+                        )
+                        .await;
+                        return;
+                    }
+                }
+                debug!("Session failed invalid ENR response");
+                self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
+                    .await;
+                return;
+            }
+        }
+
+        // Handle standard responses
+
         // Find a matching request, if any
         if let Some(mut request_call) = self.active_requests.remove(&node_address) {
             let id = match request_call.id() {
