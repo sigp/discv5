@@ -1,4 +1,4 @@
-pub use crate::node_info::{NodeAddress, NodeContact};
+pub use crate::node_info::NodeContact;
 use crate::{
     packet::Packet,
     rpc::{Payload, Request, RequestBody},

@@ -539,7 +539,7 @@ impl<P: ProtocolIdentity> Handler<P> {
             trace!("Request queued for node: {}", node_address);
             self.pending_requests
                 .entry(node_address)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(PendingRequest {
                     contact,
                     request_id,

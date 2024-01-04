@@ -37,7 +37,7 @@ impl Sessions {
         Sessions { cache, limiter }
     }
 
-    pub fn insert(key: NodeAddress, value: Session) {
+    pub fn _insert(_key: NodeAddress, _value: Session) {
         todo!()
     }
 }

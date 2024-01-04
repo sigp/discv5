@@ -6,7 +6,7 @@ use crate::{
         ChallengeData, MessageNonce, Packet, PacketHeader, PacketKind, ProtocolIdentity,
         MESSAGE_NONCE_LENGTH,
     },
-    rpc::{Message, RequestId},
+    rpc::RequestId,
     Discv5Error, Enr,
 };
 
@@ -228,7 +228,7 @@ impl Session {
         ) {
             let challenge = Challenge {
                 data,
-                remote_enr: session_enr.to_challenge_enr(),
+                remote_enr: session_enr.into_challenge_enr(),
             };
             return Err(Discv5Error::InvalidChallengeSignature(challenge));
         }
@@ -250,7 +250,7 @@ impl Session {
             decryption_key,
         };
 
-        let session_enr = session_enr.to_most_recent_enr();
+        let session_enr = session_enr.into_most_recent_enr();
         Ok((Session::new(keys), session_enr))
     }
 
@@ -326,13 +326,13 @@ impl MostRecentEnr {
         }
     }
 
-    fn to_most_recent_enr(self) -> Enr {
+    fn into_most_recent_enr(self) -> Enr {
         match self {
             MostRecentEnr::Challenge { enr } => enr,
             MostRecentEnr::Handshake { enr, .. } => enr,
         }
     }
-    fn to_challenge_enr(self) -> Option<Enr> {
+    fn into_challenge_enr(self) -> Option<Enr> {
         match self {
             MostRecentEnr::Challenge { enr } => Some(enr),
             MostRecentEnr::Handshake {
