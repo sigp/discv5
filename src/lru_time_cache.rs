@@ -127,7 +127,7 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
         if let Some(ref mut tx) = self.tx {
             for k in expired_keys {
                 if let Err(e) = tx.try_send(k) {
-                    warn!("remove expired failed, {}", e);
+                    warn!("Failed removing expired key, {}", e);
                 }
             }
         }
