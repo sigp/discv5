@@ -21,7 +21,7 @@ pub const PORT_BIND_TRIES: usize = 4;
 /// Port range that is not impossible to bind to.
 pub const USER_AND_DYNAMIC_PORTS: RangeInclusive<u16> = 1025..=u16::MAX;
 
-/// Aggregates types necessary to implement nat hole punching for [`Handler`].
+/// Aggregates types necessary to implement nat hole punching for [`crate::handler::Handler`].
 pub struct NatHolePunchUtils {
     /// Ip mode as set in config.
     pub ip_mode: IpMode,
