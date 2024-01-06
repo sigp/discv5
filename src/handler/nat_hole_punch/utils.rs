@@ -44,8 +44,8 @@ pub struct NatHolePunchUtils {
 }
 
 impl NatHolePunchUtils {
-    pub fn new(
-        listen_port: u16,
+    pub fn new<'a>(
+        listen_sockets: impl Iterator<Item = &'a SocketAddr>,
         local_enr: &Enr,
         ip_mode: IpMode,
         unused_port_range: Option<RangeInclusive<u16>>,
@@ -69,13 +69,13 @@ impl NatHolePunchUtils {
             local_enr.udp6(),
         ) {
             (Some(ip), port, _, _) => {
-                nat_hole_puncher.set_is_behind_nat(listen_port, Some(ip.into()), port);
+                nat_hole_puncher.set_is_behind_nat(listen_sockets, Some(ip.into()), port);
             }
             (_, _, Some(ip6), port) => {
-                nat_hole_puncher.set_is_behind_nat(listen_port, Some(ip6.into()), port);
+                nat_hole_puncher.set_is_behind_nat(listen_sockets, Some(ip6.into()), port);
             }
             (None, Some(port), _, _) | (_, _, None, Some(port)) => {
-                nat_hole_puncher.set_is_behind_nat(listen_port, None, Some(port));
+                nat_hole_puncher.set_is_behind_nat(listen_sockets, None, Some(port));
             }
             (None, None, None, None) => {}
         }
@@ -95,16 +95,17 @@ impl NatHolePunchUtils {
 
     /// Called when a new observed address is reported at start up or after a
     /// [`crate::Discv5Event::SocketUpdated`].
-    pub fn set_is_behind_nat(
+    pub fn set_is_behind_nat<'a>(
         &mut self,
-        listen_port: u16,
+        mut listen_sockets: impl Iterator<Item = &'a SocketAddr>,
         observed_ip: Option<IpAddr>,
         observed_port: Option<u16>,
     ) {
-        if Some(listen_port) != observed_port {
+        if !listen_sockets.any(|listen_socket| Some(listen_socket.port()) == observed_port) {
             self.is_behind_nat = Some(true);
             return;
         }
+
         // Without and observed IP it is too early to conclude if the local node is behind a NAT,
         // return.
         let Some(ip) = observed_ip else {

@@ -3,11 +3,11 @@ use std::time::Duration;
 
 mod crypto;
 mod limiter;
-mod session;
+pub(crate) mod session;
 
 use limiter::SessionLimiter;
 pub use limiter::MIN_SESSIONS_UNREACHABLE_ENR;
-pub use session::Session;
+pub(crate) use session::Session;
 
 pub struct Sessions {
     pub cache: LruTimeCache<NodeAddress, Session>,

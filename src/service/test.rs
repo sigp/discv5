@@ -11,11 +11,12 @@ use crate::{
     query_pool::{QueryId, QueryPool},
     rpc::RequestId,
     service::{ActiveRequest, Service},
+    socket::ListenConfig,
     Discv5ConfigBuilder, Enr,
 };
 use enr::{CombinedKey, EnrBuilder};
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 
 fn _connected_state() -> NodeStatus {
@@ -41,21 +42,20 @@ fn init() {
 async fn build_service<P: ProtocolIdentity>(
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
-    listen_socket: SocketAddr,
     filters: bool,
 ) -> Service {
-    let config = Discv5ConfigBuilder::new()
+    let listen_config = ListenConfig::Ipv4 {
+        ip: local_enr.read().ip4().unwrap(),
+        port: local_enr.read().udp4().unwrap(),
+    };
+    let config = Discv5ConfigBuilder::new(listen_config)
         .executor(Box::<crate::executor::TokioExecutor>::default())
         .build();
     // build the session service
-    let (_handler_exit, handler_send, handler_recv) = Handler::<P>::spawn(
-        local_enr.clone(),
-        enr_key.clone(),
-        listen_socket,
-        config.clone(),
-    )
-    .await
-    .unwrap();
+    let (_handler_exit, handler_send, handler_recv) =
+        Handler::spawn::<P>(local_enr.clone(), enr_key.clone(), config.clone())
+            .await
+            .unwrap();
 
     let (table_filter, bucket_filter) = if filters {
         (
@@ -94,6 +94,7 @@ async fn build_service<P: ProtocolIdentity>(
         event_stream: None,
         exit,
         config,
+        ip_mode: Default::default(),
     }
 }
 
@@ -115,12 +116,9 @@ async fn test_updating_connection_on_ping() {
         .build(&enr_key2)
         .unwrap();
 
-    let socket_addr = enr.udp4_socket().unwrap();
-
     let mut service = build_service::<DefaultProtocolId>(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
-        socket_addr.into(),
         false,
     )
     .await;
@@ -165,4 +163,58 @@ async fn test_updating_connection_on_ping() {
     let buckets = service.kbuckets.read();
     let node = buckets.iter_ref().next().unwrap();
     assert!(node.status.is_connected())
+}
+
+#[tokio::test]
+async fn test_connection_direction_on_inject_session_established() {
+    init();
+
+    let enr_key1 = CombinedKey::generate_secp256k1();
+    let ip = std::net::Ipv4Addr::LOCALHOST;
+    let enr = EnrBuilder::new("v4")
+        .ip4(ip)
+        .udp4(10001)
+        .build(&enr_key1)
+        .unwrap();
+
+    let enr_key2 = CombinedKey::generate_secp256k1();
+    let ip2 = std::net::Ipv4Addr::LOCALHOST;
+    let enr2 = EnrBuilder::new("v4")
+        .ip4(ip2)
+        .udp4(10002)
+        .build(&enr_key2)
+        .unwrap();
+
+    let mut service = build_service::<DefaultProtocolId>(
+        Arc::new(RwLock::new(enr)),
+        Arc::new(RwLock::new(enr_key1)),
+        false,
+    )
+    .await;
+
+    let key = &kbucket::Key::from(enr2.node_id());
+
+    // Test that the existing connection direction is not updated.
+    // Incoming
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Incoming);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Outgoing);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Incoming, status.direction);
+
+    // (disconnected) Outgoing
+    let result = service.kbuckets.write().update_node_status(
+        key,
+        ConnectionState::Disconnected,
+        Some(ConnectionDirection::Outgoing),
+    );
+    assert!(matches!(result, UpdateResult::Updated));
+    service.inject_session_established(enr2.clone(), ConnectionDirection::Incoming);
+    let status = service.kbuckets.read().iter_ref().next().unwrap().status;
+    assert!(status.is_connected());
+    assert_eq!(ConnectionDirection::Outgoing, status.direction);
 }

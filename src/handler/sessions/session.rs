@@ -21,7 +21,7 @@ use tracing::warn;
 use zeroize::Zeroize;
 
 #[derive(Zeroize, PartialEq)]
-pub struct Keys {
+pub(crate) struct Keys {
     /// The encryption key.
     encryption_key: [u8; 16],
     /// The decryption key.
@@ -39,7 +39,7 @@ impl From<([u8; 16], [u8; 16])> for Keys {
 
 /// A Session containing the encryption/decryption keys. These are kept individually for a given
 /// node.
-pub struct Session {
+pub(crate) struct Session {
     /// The current keys used to encrypt/decrypt messages.
     keys: Keys,
     /// If a new handshake is being established, the older keys are maintained as race
@@ -341,4 +341,12 @@ impl MostRecentEnr {
             } => challenge_enr,
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn build_dummy_session() -> Session {
+    Session::new(Keys {
+        encryption_key: [0; 16],
+        decryption_key: [0; 16],
+    })
 }

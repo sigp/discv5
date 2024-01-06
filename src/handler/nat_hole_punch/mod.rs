@@ -2,7 +2,9 @@ use std::net::SocketAddr;
 
 use enr::NodeId;
 
-use crate::{node_info::NodeAddress, packet::MessageNonce, rpc::Notification, Enr};
+use crate::{
+    node_info::NodeAddress, packet::MessageNonce, rpc::Notification, Enr, ProtocolIdentity,
+};
 
 mod error;
 mod utils;
@@ -15,7 +17,7 @@ pub trait HolePunchNat {
     /// A request times out. Should trigger the initiation of a hole punch attempt, given a
     /// transitive route to the target exists. Sends a RELAYINIT notification to the given
     /// relay.
-    async fn on_request_time_out(
+    async fn on_request_time_out<P: ProtocolIdentity>(
         &mut self,
         relay: NodeAddress,
         local_enr: Enr, // initiator-enr
@@ -41,7 +43,7 @@ pub trait HolePunchNat {
     ) -> Result<(), Error>;
 
     /// Send a RELAYMSG notification.
-    async fn send_relay_msg_notif(
+    async fn send_relay_msg_notif<P: ProtocolIdentity>(
         &mut self,
         tgt_enr: Enr,
         relay_msg_notif: Notification,

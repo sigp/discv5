@@ -1,7 +1,7 @@
 //! A set of configuration parameters to tune the discovery protocol.
 use crate::{
-    handler::MIN_SESSIONS_UNREACHABLE_ENR, ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr,
-    Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
+    handler::MIN_SESSIONS_UNREACHABLE_ENR, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor,
+    ListenConfig, PermitBanList, RateLimiter, RateLimiterBuilder,
 };
 
 use std::{ops::RangeInclusive, time::Duration};
@@ -65,10 +65,6 @@ pub struct Discv5Config {
     /// seconds.
     pub ping_interval: Duration,
 
-    /// Configures the type of socket to bind to. This also affects the selection of address to use
-    /// to contact an ENR.
-    pub ip_mode: IpMode,
-
     /// Reports all discovered ENR's when traversing the DHT to the event stream. Default true.
     pub report_discovered_peers: bool,
 
@@ -110,10 +106,17 @@ pub struct Discv5Config {
     /// The unused port range to try and bind to when testing if this node is behind NAT based on
     /// observed address reported at runtime by peers.
     pub unused_port_range: Option<RangeInclusive<u16>>,
+    /// Configuration for the sockets to listen on.
+    pub listen_config: ListenConfig,
 }
 
-impl Default for Discv5Config {
-    fn default() -> Self {
+#[derive(Debug)]
+pub struct Discv5ConfigBuilder {
+    config: Discv5Config,
+}
+
+impl Discv5ConfigBuilder {
+    pub fn new(listen_config: ListenConfig) -> Self {
         // This is only applicable if enable_packet_filter is set.
         let filter_rate_limiter = Some(
             RateLimiterBuilder::new()
@@ -124,7 +127,8 @@ impl Default for Discv5Config {
                 .expect("The total rate limit has been specified"),
         );
 
-        Self {
+        // set default values
+        let config = Discv5Config {
             enable_packet_filter: false,
             request_timeout: Duration::from_secs(1),
             vote_duration: Duration::from_secs(30),
@@ -147,23 +151,13 @@ impl Default for Discv5Config {
             filter_max_bans_per_ip: Some(5),
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
-            ip_mode: IpMode::default(),
             executor: None,
             unreachable_enr_limit: None,
             unused_port_range: None,
-        }
-    }
-}
+            listen_config,
+        };
 
-#[derive(Debug, Default)]
-pub struct Discv5ConfigBuilder {
-    config: Discv5Config,
-}
-
-impl Discv5ConfigBuilder {
-    // set default values
-    pub fn new() -> Self {
-        Discv5ConfigBuilder::default()
+        Discv5ConfigBuilder { config }
     }
 
     /// Whether to enable the incoming packet filter.
@@ -320,13 +314,6 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    /// Configures the type of socket to bind to. This also affects the selection of address to use
-    /// to contact an ENR.
-    pub fn ip_mode(&mut self, ip_mode: IpMode) -> &mut Self {
-        self.config.ip_mode = ip_mode;
-        self
-    }
-
     /// Sets the maximum number of sessions with peers with unreachable ENRs to allow. Minimum is 1
     /// peer. Default is no limit.
     pub fn unreachable_enr_limit(&mut self, peer_limit: Option<usize>) -> &mut Self {
@@ -380,6 +367,7 @@ impl std::fmt::Debug for Discv5Config {
             .field("incoming_bucket_limit", &self.incoming_bucket_limit)
             .field("ping_interval", &self.ping_interval)
             .field("ban_duration", &self.ban_duration)
+            .field("listen_config", &self.listen_config)
             .finish()
     }
 }

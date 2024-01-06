@@ -59,10 +59,8 @@
 //!
 //! ```rust
 //!    use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, Discv5ConfigBuilder};
-//!    use std::net::SocketAddr;
-//!
-//!    // listening address and port
-//!    let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
+//!    use discv5::socket::ListenConfig;
+//!    use std::net::{Ipv4Addr, SocketAddr};
 //!
 //!    // construct a local ENR
 //!    let enr_key = CombinedKey::generate_secp256k1();
@@ -75,8 +73,14 @@
 //!        .build()
 //!        .unwrap();
 //!
+//!    // configuration for the sockets to listen on
+//!    let listen_config = ListenConfig::Ipv4 {
+//!        ip: Ipv4Addr::UNSPECIFIED,
+//!        port: 9000,
+//!    };
+//!
 //!    // default configuration
-//!    let config = Discv5ConfigBuilder::new().build();
+//!    let config = Discv5ConfigBuilder::new(listen_config).build();
 //!
 //!    // construct the discv5 server
 //!    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
@@ -86,7 +90,7 @@
 //!    // discv5.add_enr(<ENR>)
 //!
 //!    // start the discv5 server
-//!    runtime.block_on(discv5.start(listen_addr));
+//!    runtime.block_on(discv5.start());
 //!
 //!    // run a find_node query
 //!    runtime.block_on(async {
@@ -134,6 +138,6 @@ pub use kbucket::{ConnectionDirection, ConnectionState, Key};
 pub use packet::{DefaultProtocolId, ProtocolIdentity};
 pub use permit_ban::PermitBanList;
 pub use service::TalkRequest;
-pub use socket::{RateLimiter, RateLimiterBuilder};
+pub use socket::{ListenConfig, RateLimiter, RateLimiterBuilder};
 // re-export the ENR crate
 pub use enr;
