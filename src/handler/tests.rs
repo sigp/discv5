@@ -3,7 +3,7 @@
 use super::*;
 use crate::{
     handler::sessions::session::build_dummy_session,
-    packet::DefaultProtocolId,
+    packet::{DefaultProtocolId, PacketHeader, MAX_PACKET_SIZE},
     return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
     Discv5ConfigBuilder, IpMode,
@@ -14,7 +14,7 @@ use crate::{handler::HandlerOut::RequestFailed, RequestError::SelfRequest};
 use active_requests::ActiveRequests;
 use enr::EnrBuilder;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::{net::UdpSocket, time::sleep};
 
 fn init() {
     let _ = tracing_subscriber::fmt()
@@ -22,7 +22,13 @@ fn init() {
         .try_init();
 }
 
-async fn build_handler<P: ProtocolIdentity>() -> Handler {
+struct MockService {
+    tx: mpsc::UnboundedSender<HandlerIn>,
+    rx: mpsc::Receiver<HandlerOut>,
+    exit_tx: oneshot::Sender<()>,
+}
+
+async fn build_handler<P: ProtocolIdentity>() -> (Handler, MockService) {
     let config = Discv5ConfigBuilder::new(ListenConfig::default()).build();
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4")
@@ -56,9 +62,9 @@ async fn build_handler<P: ProtocolIdentity>() -> Handler {
 
         Socket::new::<P>(socket_config).await.unwrap()
     };
-    let (_, service_recv) = mpsc::unbounded_channel();
-    let (service_send, _) = mpsc::channel(50);
-    let (_, exit) = oneshot::channel();
+    let (handler_sender, service_recv) = mpsc::unbounded_channel();
+    let (service_send, handler_recv) = mpsc::channel(50);
+    let (exit_tx, exit) = oneshot::channel();
 
     let nat_hole_puncher = NatHolePunchUtils::new(
         listen_sockets.iter(),
@@ -69,27 +75,34 @@ async fn build_handler<P: ProtocolIdentity>() -> Handler {
         config.session_cache_capacity,
     );
 
-    Handler {
-        request_retries: config.request_retries,
-        node_id,
-        enr: Arc::new(RwLock::new(enr)),
-        key: Arc::new(RwLock::new(key)),
-        active_requests: ActiveRequests::new(config.request_timeout),
-        pending_requests: HashMap::new(),
-        filter_expected_responses,
-        sessions: Sessions::new(config.session_cache_capacity, config.session_timeout, None),
-        one_time_sessions: LruTimeCache::new(
-            Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
-            Some(ONE_TIME_SESSION_CACHE_CAPACITY),
-        ),
-        active_challenges: HashMapDelay::new(config.request_timeout),
-        service_recv,
-        service_send,
-        listen_sockets,
-        socket,
-        nat_hole_puncher,
-        exit,
-    }
+    (
+        Handler {
+            request_retries: config.request_retries,
+            node_id,
+            enr: Arc::new(RwLock::new(enr)),
+            key: Arc::new(RwLock::new(key)),
+            active_requests: ActiveRequests::new(config.request_timeout),
+            pending_requests: HashMap::new(),
+            filter_expected_responses,
+            sessions: Sessions::new(config.session_cache_capacity, config.session_timeout, None),
+            one_time_sessions: LruTimeCache::new(
+                Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
+                Some(ONE_TIME_SESSION_CACHE_CAPACITY),
+            ),
+            active_challenges: HashMapDelay::new(config.request_timeout),
+            service_recv,
+            service_send,
+            listen_sockets,
+            socket,
+            nat_hole_puncher,
+            exit,
+        },
+        MockService {
+            tx: handler_sender,
+            rx: handler_recv,
+            exit_tx,
+        },
+    )
 }
 
 macro_rules! arc_rw {
@@ -427,7 +440,7 @@ async fn test_self_request_ipv6() {
 
 #[tokio::test]
 async fn remove_one_time_session() {
-    let mut handler = build_handler::<DefaultProtocolId>().await;
+    let (mut handler, _) = build_handler::<DefaultProtocolId>().await;
 
     let enr = {
         let key = CombinedKey::generate_secp256k1();
@@ -460,4 +473,147 @@ async fn remove_one_time_session() {
         .remove_one_time_session(&node_address, &request_id)
         .is_some());
     assert_eq!(0, handler.one_time_sessions.len());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn relay() {
+    init();
+
+    // Relay
+    let (mut handler, mock_service) = build_handler::<DefaultProtocolId>().await;
+    let relay_addr = handler.enr.read().udp4_socket().unwrap().into();
+    let relay_node_id = handler.enr.read().node_id();
+    let mut dummy_session = build_dummy_session();
+
+    // Initiator
+    let initr_enr = {
+        let key = CombinedKey::generate_secp256k1();
+        EnrBuilder::new("v4")
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(9011)
+            .build(&key)
+            .unwrap()
+    };
+    let initr_addr = initr_enr.udp4_socket().unwrap().into();
+    let initr_node_id = initr_enr.node_id();
+
+    let initr_node_address = NodeAddress::new(initr_addr, initr_enr.node_id());
+    handler
+        .sessions
+        .cache
+        .insert(initr_node_address, dummy_session.clone());
+
+    let initr_socket = UdpSocket::bind(initr_addr)
+        .await
+        .expect("should bind to initiator socket");
+
+    // Target
+    let tgt_enr = {
+        let key = CombinedKey::generate_secp256k1();
+        EnrBuilder::new("v4")
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(9012)
+            .build(&key)
+            .unwrap()
+    };
+    let tgt_addr = tgt_enr.udp4_socket().unwrap().into();
+    let tgt_node_id = tgt_enr.node_id();
+
+    let tgt_node_address = NodeAddress::new(tgt_addr, tgt_enr.node_id());
+    handler
+        .sessions
+        .cache
+        .insert(tgt_node_address, dummy_session.clone());
+
+    let tgt_socket = UdpSocket::bind(tgt_addr)
+        .await
+        .expect("should bind to target socket");
+
+    // Relay handle
+    let relay_handle = tokio::spawn(async move { handler.start::<DefaultProtocolId>().await });
+
+    // Relay mock service
+    let tgt_enr_clone = tgt_enr.clone();
+    let tx = mock_service.tx;
+    let mut rx = mock_service.rx;
+    let mock_service_handle = tokio::spawn(async move {
+        let service_msg = rx.recv().await.expect("should receive service message");
+        match service_msg {
+            HandlerOut::FindHolePunchEnr(_tgt_node_id, relay_msg_notif) => tx
+                .send(HandlerIn::HolePunchEnr(tgt_enr_clone, relay_msg_notif))
+                .expect("should send message to handler"),
+            _ => panic!("service message should be 'find hole punch enr'"),
+        }
+    });
+
+    // Initiator handle
+    let relay_init_notif =
+        Notification::RelayInit(initr_enr.clone(), tgt_node_id, MessageNonce::default());
+
+    let initr_handle = tokio::spawn(async move {
+        let mut session = build_dummy_session();
+        let packet = session
+            .encrypt_session_message::<DefaultProtocolId>(initr_node_id, &relay_init_notif.encode())
+            .expect("should encrypt notification");
+        let encoded_packet = packet.encode::<DefaultProtocolId>(&relay_node_id);
+
+        initr_socket
+            .send_to(&encoded_packet, relay_addr)
+            .await
+            .expect("should relay init notification to relay")
+    });
+
+    // Target handle
+    let relay_exit = mock_service.exit_tx;
+    let tgt_handle = tokio::spawn(async move {
+        let mut buffer = [0; MAX_PACKET_SIZE];
+        let res = tgt_socket
+            .recv_from(&mut buffer)
+            .await
+            .expect("should read bytes from socket");
+
+        drop(relay_exit);
+
+        (res, buffer)
+    });
+
+    // Join all handles
+    let (initr_res, relay_res, tgt_res, mock_service_res) =
+        tokio::join!(initr_handle, relay_handle, tgt_handle, mock_service_handle);
+
+    initr_res.unwrap();
+    relay_res.unwrap();
+    mock_service_res.unwrap();
+
+    let ((length, src), buffer) = tgt_res.unwrap();
+
+    assert_eq!(src, relay_addr);
+
+    let (packet, aad) = Packet::decode::<DefaultProtocolId>(&tgt_enr.node_id(), &buffer[..length])
+        .expect("should decode packet");
+    let Packet {
+        header, message, ..
+    } = packet;
+    let PacketHeader {
+        kind,
+        message_nonce,
+        ..
+    } = header;
+
+    assert_eq!(
+        PacketKind::SessionMessage {
+            src_id: relay_node_id
+        },
+        kind
+    );
+
+    let decrypted_message = dummy_session
+        .decrypt_message(message_nonce, &message, &aad)
+        .expect("should decrypt message");
+    match Message::decode(&decrypted_message).expect("should decode message") {
+        Message::Notification(Notification::RelayMsg(enr, _nonce)) => {
+            assert_eq!(initr_enr, enr)
+        }
+        _ => panic!("message should decode to a relay msg notification"),
+    }
 }

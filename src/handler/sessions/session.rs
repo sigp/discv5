@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tracing::warn;
 use zeroize::Zeroize;
 
-#[derive(Zeroize, PartialEq)]
+#[derive(Zeroize, PartialEq, Clone, Copy)]
 pub(crate) struct Keys {
     /// The encryption key.
     encryption_key: [u8; 16],
@@ -39,6 +39,7 @@ impl From<([u8; 16], [u8; 16])> for Keys {
 
 /// A Session containing the encryption/decryption keys. These are kept individually for a given
 /// node.
+#[derive(Clone)]
 pub(crate) struct Session {
     /// The current keys used to encrypt/decrypt messages.
     keys: Keys,
