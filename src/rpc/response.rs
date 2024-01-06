@@ -101,8 +101,12 @@ impl Payload for Response {
                         let mut ip = [0u8; 16];
                         ip.copy_from_slice(&ip_bytes);
                         let ipv6 = Ipv6Addr::from(ip);
-                        // If the ipv6 is ipv4 compatible/mapped, simply return the ipv4.
-                        if let Some(ipv4) = ipv6.to_ipv4() {
+                        if ipv6.is_loopback() {
+                            // Checking if loopback address since IPv6Addr::to_ipv4 returns
+                            // IPv4 address for IPv6 loopback address.
+                            IpAddr::V6(ipv6)
+                        } else if let Some(ipv4) = ipv6.to_ipv4() {
+                            // If the ipv6 is ipv4 compatible/mapped, simply return the ipv4.
                             IpAddr::V4(ipv4)
                         } else {
                             IpAddr::V6(ipv6)
