@@ -47,6 +47,42 @@ pub enum ListenConfig {
     },
 }
 
+impl ListenConfig {
+    pub fn ipv4(&self) -> Option<Ipv4Addr> {
+        match self {
+            ListenConfig::Ipv4 { ip, .. } | ListenConfig::DualStack { ipv4: ip, .. } => Some(*ip),
+            _ => None,
+        }
+    }
+
+    pub fn ipv6(&self) -> Option<Ipv6Addr> {
+        match self {
+            ListenConfig::Ipv6 { ip, .. } | ListenConfig::DualStack { ipv6: ip, .. } => Some(*ip),
+            _ => None,
+        }
+    }
+
+    pub fn ipv4_port(&self) -> Option<u16> {
+        match self {
+            ListenConfig::Ipv4 { port, .. }
+            | ListenConfig::DualStack {
+                ipv4_port: port, ..
+            } => Some(*port),
+            _ => None,
+        }
+    }
+
+    pub fn ipv6_port(&self) -> Option<u16> {
+        match self {
+            ListenConfig::Ipv6 { port, .. }
+            | ListenConfig::DualStack {
+                ipv6_port: port, ..
+            } => Some(*port),
+            _ => None,
+        }
+    }
+}
+
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig {
     /// The executor to spawn the tasks.

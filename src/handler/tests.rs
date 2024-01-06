@@ -29,15 +29,24 @@ struct MockService {
 }
 
 async fn build_handler<P: ProtocolIdentity>() -> (Handler, MockService) {
-    let config = Discv5ConfigBuilder::new(ListenConfig::default()).build();
+    build_handler_with_listen_config::<P>(ListenConfig::default()).await
+}
+
+async fn build_handler_with_listen_config<P: ProtocolIdentity>(
+    listen_config: ListenConfig,
+) -> (Handler, MockService) {
+    let listen_port = listen_config
+        .ipv4_port()
+        .expect("listen config should default to ipv4");
+    let config = Discv5ConfigBuilder::new(listen_config).build();
     let key = CombinedKey::generate_secp256k1();
     let enr = EnrBuilder::new("v4")
         .ip4(Ipv4Addr::LOCALHOST)
-        .udp4(9000)
+        .udp4(listen_port)
         .build(&key)
         .unwrap();
     let mut listen_sockets = SmallVec::default();
-    listen_sockets.push((Ipv4Addr::LOCALHOST, 9000).into());
+    listen_sockets.push((Ipv4Addr::LOCALHOST, listen_port).into());
     let node_id = enr.node_id();
     let filter_expected_responses = Arc::new(RwLock::new(HashMap::new()));
 
@@ -480,7 +489,9 @@ async fn relay() {
     init();
 
     // Relay
-    let (mut handler, mock_service) = build_handler::<DefaultProtocolId>().await;
+    let listen_config = ListenConfig::default().with_ipv4(Ipv4Addr::LOCALHOST, 9901);
+    let (mut handler, mock_service) =
+        build_handler_with_listen_config::<DefaultProtocolId>(listen_config).await;
     let relay_addr = handler.enr.read().udp4_socket().unwrap().into();
     let relay_node_id = handler.enr.read().node_id();
     let mut dummy_session = build_dummy_session();
