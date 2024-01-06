@@ -64,6 +64,6 @@ impl SessionLimiter {
 
     /// Untracks the given session if it has an unreachable ENR.
     pub fn untrack_session(&mut self, node_address: &NodeAddress) {
-        self.sessions_unreachable_enr_tracker.remove(&node_address);
+        self.sessions_unreachable_enr_tracker.remove(node_address);
     }
 }

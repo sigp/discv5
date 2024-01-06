@@ -1453,10 +1453,9 @@ impl Handler {
             // stop keeping hole punched for peer
             self.nat_hole_puncher.untrack(&node_address.socket_addr);
             // update unreachable enr session limiter
-            self.sessions
-                .limiter
-                .as_mut()
-                .map(|limiter| limiter.untrack_session(node_address));
+            if let Some(ref mut limiter) = self.sessions.limiter {
+                limiter.untrack_session(node_address)
+            }
         }
         if let Some(to_remove) = self.pending_requests.remove(node_address) {
             for PendingRequest { request_id, .. } in to_remove {
