@@ -173,7 +173,7 @@ async fn test_connection_direction_on_inject_session_established() {
     let ip = std::net::Ipv4Addr::LOCALHOST;
     let enr = EnrBuilder::new("v4")
         .ip4(ip)
-        .udp4(10001)
+        .udp4(10003)
         .build(&enr_key1)
         .unwrap();
 
@@ -181,7 +181,7 @@ async fn test_connection_direction_on_inject_session_established() {
     let ip2 = std::net::Ipv4Addr::LOCALHOST;
     let enr2 = EnrBuilder::new("v4")
         .ip4(ip2)
-        .udp4(10002)
+        .udp4(10004)
         .build(&enr_key2)
         .unwrap();
 
