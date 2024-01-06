@@ -253,16 +253,33 @@ impl Handler {
         // The local node id
         let node_id = enr.read().node_id();
 
+        let Discv5Config {
+            enable_packet_filter,
+            filter_rate_limiter,
+            filter_max_nodes_per_ip,
+            filter_max_bans_per_ip,
+            listen_config,
+            executor,
+            ban_duration,
+            session_cache_capacity,
+            session_timeout,
+            unreachable_enr_limit,
+            unused_port_range,
+            request_retries,
+            request_timeout,
+            ..
+        } = config;
+
         // enable the packet filter if required
         let filter_config = FilterConfig {
-            enabled: config.enable_packet_filter,
-            rate_limiter: config.filter_rate_limiter.clone(),
-            max_nodes_per_ip: config.filter_max_nodes_per_ip,
-            max_bans_per_ip: config.filter_max_bans_per_ip,
+            enabled: enable_packet_filter,
+            rate_limiter: filter_rate_limiter,
+            max_nodes_per_ip: filter_max_nodes_per_ip,
+            max_bans_per_ip: filter_max_bans_per_ip,
         };
 
         let mut listen_sockets = SmallVec::default();
-        match config.listen_config {
+        match listen_config {
             ListenConfig::Ipv4 { ip, port } => listen_sockets.push((ip, port).into()),
             ListenConfig::Ipv6 { ip, port } => listen_sockets.push((ip, port).into()),
             ListenConfig::DualStack {
@@ -276,46 +293,44 @@ impl Handler {
             }
         };
 
-        let ip_mode = config.listen_config.ip_mode();
+        let ip_mode = listen_config.ip_mode();
 
         let socket_config = socket::SocketConfig {
-            executor: config.executor.clone().expect("Executor must exist"),
+            executor: executor.clone().expect("Executor must exist"),
             filter_config,
-            listen_config: config.listen_config.clone(),
+            listen_config,
             local_node_id: node_id,
             expected_responses: filter_expected_responses.clone(),
-            ban_duration: config.ban_duration,
+            ban_duration,
         };
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
         let socket = Socket::new::<P>(socket_config).await?;
 
         let sessions = Sessions::new(
-            config.session_cache_capacity,
-            config.session_timeout,
-            config.unreachable_enr_limit,
+            session_cache_capacity,
+            session_timeout,
+            unreachable_enr_limit,
         );
 
         let nat_hole_puncher = NatHolePunchUtils::new(
             listen_sockets.iter(),
             &enr.read(),
             ip_mode,
-            config.unused_port_range.clone(),
-            config.ban_duration,
-            config.session_cache_capacity,
+            unused_port_range,
+            ban_duration,
+            session_cache_capacity,
         );
 
-        config
-            .executor
-            .clone()
+        executor
             .expect("Executor must be present")
             .spawn(Box::pin(async move {
                 let mut handler = Handler {
-                    request_retries: config.request_retries,
+                    request_retries,
                     node_id,
                     enr,
                     key,
-                    active_requests: ActiveRequests::new(config.request_timeout),
+                    active_requests: ActiveRequests::new(request_timeout),
                     pending_requests: HashMap::new(),
                     filter_expected_responses,
                     sessions,
@@ -323,7 +338,7 @@ impl Handler {
                         Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
                         Some(ONE_TIME_SESSION_CACHE_CAPACITY),
                     ),
-                    active_challenges: HashMapDelay::new(config.request_timeout),
+                    active_challenges: HashMapDelay::new(request_timeout),
                     service_recv,
                     service_send,
                     listen_sockets,
