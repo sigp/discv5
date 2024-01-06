@@ -83,6 +83,7 @@ impl Message {
             return Err(DecoderError::RlpIsTooShort);
         }
         let msg_type = data[0];
+
         let rlp = rlp::Rlp::new(&data[1..]);
 
         match msg_type.try_into()? {
@@ -413,8 +414,6 @@ mod tests {
         nonce[MESSAGE_NONCE_LENGTH - nonce_bytes.len()..].copy_from_slice(&nonce_bytes);
 
         let notif = Message::Notification(Notification::RelayInit(inr_enr, tgt_node_id, nonce));
-
-        println!("{notif}");
 
         let encoded_notif = notif.clone().encode();
         let decoded_notif = Message::decode(&encoded_notif).expect("Should decode");
