@@ -444,7 +444,7 @@ impl Packet {
     ///
     /// This also returns the authenticated data for further decryption in the handler.
     pub fn decode<P: ProtocolIdentity>(
-        src_id: &NodeId,
+        dst_id: &NodeId,
         data: &[u8],
     ) -> Result<(Self, Vec<u8>), PacketError> {
         if data.len() > MAX_PACKET_SIZE {
@@ -462,7 +462,7 @@ impl Packet {
          * This was split into its own library, but brought back to allow re-use of the cipher when
          * performing the decryption
          */
-        let key = GenericArray::clone_from_slice(&src_id.raw()[..16]);
+        let key = GenericArray::clone_from_slice(&dst_id.raw()[..16]);
         let nonce = GenericArray::clone_from_slice(&iv);
         let mut cipher = Aes128Ctr::new(&key, &nonce);
 
