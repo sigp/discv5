@@ -179,6 +179,8 @@ fn is_behind_nat(observed_ip: IpAddr, unused_port_range: &Option<RangeInclusive<
 
 #[cfg(test)]
 mod test {
+    use crate::return_if_ipv6_is_not_supported;
+
     use super::*;
 
     #[test]
@@ -194,6 +196,8 @@ mod test {
     // ipv6 tests don't run in github ci https://github.com/actions/runner-images/issues/668
     #[test]
     fn test_is_not_behind_nat_ipv6() {
+        return_if_ipv6_is_not_supported!();
+
         assert!(!is_behind_nat(
             IpAddr::from([0u16, 0u16, 0u16, 0u16, 0u16, 0u16, 0u16, 1u16]),
             &None,
