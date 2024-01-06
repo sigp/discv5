@@ -1,8 +1,9 @@
+//! A set of configuration parameters to tune the discovery protocol.
 use crate::{
     handler::MIN_SESSIONS_UNREACHABLE_ENR, ipmode::IpMode, kbucket::MAX_NODES_PER_BUCKET, Enr,
     Executor, PermitBanList, RateLimiter, RateLimiterBuilder,
 };
-///! A set of configuration parameters to tune the discovery protocol.
+
 use std::{ops::RangeInclusive, time::Duration};
 
 /// Configuration parameters that define the performance of the discovery network.

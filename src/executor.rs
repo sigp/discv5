@@ -1,4 +1,4 @@
-///! A simple trait to allow generic executors or wrappers for spawning the discv5 tasks.
+//! A simple trait to allow generic executors or wrappers for spawning the discv5 tasks.
 use std::future::Future;
 use std::pin::Pin;
 
