@@ -39,7 +39,7 @@ jobs:
       - name: Get latest version of stable rust
         run: rustup update stable
       - name: Run tests in release
-        run: cargo test --all --release --all-features -- --skip ipv6 #  ipv6 tests don't run in github ci https://github.com/actions/runner-images/issues/668  
+        run: cargo test --all --release --all-features
   check-rustdoc-links:
     name: Check rustdoc intra-doc links
     runs-on: ubuntu-latest
