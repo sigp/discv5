@@ -178,7 +178,7 @@ impl Session {
         ephem_pubkey: &[u8],
         enr_record: Option<Enr>,
         node_address: &NodeAddress,
-        sessions: &mut Sessions,
+        session_limiter: impl FnOnce(&NodeAddress, &Enr) -> Option<Result<(), Discv5Error>>,
     ) -> Result<(Session, Enr), Discv5Error> {
         // check and verify a potential ENR update
 
@@ -211,10 +211,8 @@ impl Session {
         };
 
         // Avoid unnecessary key derivation computation, first verify session candidate against
-        // current sessions state
-        if let Some(ref mut limiter) = sessions.limiter {
-            limiter.track_sessions_unreachable_enr(node_address, session_enr.enr())?;
-        }
+        // current sessions state.
+        session_limiter(node_address, session_enr.enr()).transpose()?;
 
         let remote_public_key = session_enr.enr().public_key();
 

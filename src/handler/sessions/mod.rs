@@ -10,8 +10,11 @@ pub use limiter::MIN_SESSIONS_UNREACHABLE_ENR;
 pub(crate) use session::Session;
 
 pub struct Sessions {
+    /// Stores established sessions.
     pub cache: LruTimeCache<NodeAddress, Session>,
-    limiter: Option<SessionLimiter>,
+    /// Limits the number of sessions to peers with unreachable ENRs. Limiter is queried upon
+    /// session establishment.
+    pub limiter: Option<SessionLimiter>,
 }
 
 impl Sessions {
@@ -35,10 +38,6 @@ impl Sessions {
         };
 
         Sessions { cache, limiter }
-    }
-
-    pub fn _insert(_key: NodeAddress, _value: Session) {
-        todo!()
     }
 }
 

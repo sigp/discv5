@@ -31,6 +31,7 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
         }
     }
 
+    /// Queues expired entries on buffer. If enabled, ensure that buffer is emptied regularly.
     pub fn new_with_expiry_feedback(
         ttl: Duration,
         capacity: Option<usize>,

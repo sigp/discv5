@@ -871,6 +871,8 @@ impl Handler {
         );
 
         if let Some(challenge) = self.active_challenges.remove(&node_address) {
+            let session_limiter = self.sessions.limiter.as_mut();
+
             match Session::establish_from_challenge(
                 self.key.clone(),
                 &self.node_id,
@@ -879,7 +881,10 @@ impl Handler {
                 ephem_pubkey,
                 enr_record,
                 &node_address,
-                &mut self.sessions,
+                |node_address, enr| {
+                    session_limiter
+                        .map(|limiter| limiter.track_sessions_unreachable_enr(node_address, enr))
+                },
             ) {
                 Ok((mut session, enr)) => {
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
@@ -1432,6 +1437,11 @@ impl Handler {
                 .store(self.sessions.cache.len(), Ordering::Relaxed);
             // stop keeping hole punched for peer
             self.nat_hole_puncher.untrack(&node_address.socket_addr);
+            // update unreachable enr session limiter
+            self.sessions
+                .limiter
+                .as_mut()
+                .map(|limiter| limiter.untrack_session(node_address));
         }
         if let Some(to_remove) = self.pending_requests.remove(node_address) {
             for PendingRequest { request_id, .. } in to_remove {
