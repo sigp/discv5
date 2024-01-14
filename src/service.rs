@@ -409,19 +409,28 @@ impl Service {
                             }
                             self.rpc_failure(request_id, error);
                         }
-                        HandlerOut::FindHolePunchEnr(tgt_node_id, relay_msg_notif) => {
-                            // check if we know this node id in our routing table, otherwise drop
-                            // notification.
-                            // todo(emhane): ban peers that ask us to relay to a peer we very
-                            // unlikely could have sent to them in a NODES response.
-                            let key = kbucket::Key::from(tgt_node_id);
-                            if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&key) {
-                                let enr = entry.value().clone();
-                                if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(enr, relay_msg_notif)) {
-                                    warn!("Failed to send target enr to relay proccess, error: {}", e);
+                        HandlerOut::FindHolePunchEnr(relay_init) => {
+                            // check if we know the target node id in our routing table, otherwise
+                            // drop relay attempt.
+                            let tgt_node_id = relay_init.target_node_id();
+                            let tgt_key = kbucket::Key::from(tgt_node_id);
+                            if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&tgt_key) {
+                                let tgt_enr = entry.value().clone();
+                                if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(tgt_enr, relay_init)) {
+                                    warn!(
+                                        "Failed to send target enr to relay process, error: {e}"
+                                    );
                                 }
                             } else {
-                                warn!("Peer {tgt_node_id} requested relaying to a peer not in k-buckets, {relay_msg_notif}");
+                                // todo(emhane): ban peers that ask us to relay to a peer we very
+                                // unlikely could have sent to them in a NODES response.
+                                let inr_node_id = relay_init.initiator_enr().node_id();
+
+                                warn!(
+                                    inr_node_id=%inr_node_id,
+                                    tgt_node_id=%tgt_node_id,
+                                    "Peer requested relaying to a peer not in k-buckets"
+                                );
                             }
                         }
                     }
@@ -596,8 +605,8 @@ impl Service {
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            let enr = entry.value().clone();
+                        if entry.value_mut().seq() < enr_seq {
+                            let enr = entry.value_mut().clone();
                             to_request_enr = Some(enr);
                         }
                     }
@@ -855,9 +864,11 @@ impl Service {
                                                     new_ip6,
                                                 ));
                                                 // Notify Handler of socket update
-                                                if let Err(e) = self
-                                                    .handler_send
-                                                    .send(HandlerIn::SocketUpdate(new_ip6))
+                                                if let Err(e) =
+                                                    self.handler_send.send(HandlerIn::SocketUpdate(
+                                                        local_ip6_socket.map(SocketAddr::V6),
+                                                        new_ip6,
+                                                    ))
                                                 {
                                                     warn!("Failed to send socket update to handler: {}", e);
                                                 };
@@ -881,9 +892,11 @@ impl Service {
                                                     new_ip4,
                                                 ));
                                                 // Notify Handler of socket update
-                                                if let Err(e) = self
-                                                    .handler_send
-                                                    .send(HandlerIn::SocketUpdate(new_ip4))
+                                                if let Err(e) =
+                                                    self.handler_send.send(HandlerIn::SocketUpdate(
+                                                        local_ip4_socket.map(SocketAddr::V4),
+                                                        new_ip4,
+                                                    ))
                                                 {
                                                     warn!("Failed to send socket update {}", e);
                                                 };
@@ -1234,7 +1247,7 @@ impl Service {
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
                     kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
-                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                    kbucket::Entry::Pending(mut entry, _) => entry.value_mut().seq() < enr.seq(),
                     _ => false,
                 };
 

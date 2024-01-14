@@ -550,8 +550,8 @@ async fn nat_hole_punch_relay() {
     let mock_service_handle = tokio::spawn(async move {
         let service_msg = rx.recv().await.expect("should receive service message");
         match service_msg {
-            HandlerOut::FindHolePunchEnr(_tgt_node_id, relay_msg_notif) => tx
-                .send(HandlerIn::HolePunchEnr(tgt_enr_clone, relay_msg_notif))
+            HandlerOut::FindHolePunchEnr(relay_init) => tx
+                .send(HandlerIn::HolePunchEnr(tgt_enr_clone, relay_init))
                 .expect("should send message to handler"),
             _ => panic!("service message should be 'find hole punch enr'"),
         }
@@ -559,7 +559,7 @@ async fn nat_hole_punch_relay() {
 
     // Initiator handle
     let relay_init_notif =
-        Notification::RelayInit(initr_enr.clone(), tgt_node_id, MessageNonce::default());
+        RelayInitNotification::new(initr_enr.clone(), tgt_node_id, MessageNonce::default());
 
     let initr_handle = tokio::spawn(async move {
         let mut session = build_dummy_session();
@@ -622,7 +622,8 @@ async fn nat_hole_punch_relay() {
         .decrypt_message(message_nonce, &message, &aad)
         .expect("should decrypt message");
     match Message::decode(&decrypted_message).expect("should decode message") {
-        Message::Notification(Notification::RelayMsg(enr, _nonce)) => {
+        Message::RelayMsgNotification(relay_msg) => {
+            let (enr, _) = relay_msg.into();
             assert_eq!(initr_enr, enr)
         }
         _ => panic!("message should decode to a relay msg notification"),
@@ -685,7 +686,7 @@ async fn nat_hole_punch_target() {
     let tgt_handle = tokio::spawn(async move { handler.start::<DefaultProtocolId>().await });
 
     // Relay handle
-    let relay_msg_notif = Notification::RelayMsg(initr_enr.clone(), initr_nonce);
+    let relay_msg_notif = RelayMsgNotification::new(initr_enr.clone(), initr_nonce);
 
     let relay_handle = tokio::spawn(async move {
         let mut session = build_dummy_session();
