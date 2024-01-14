@@ -410,6 +410,24 @@ impl Service {
                             self.rpc_failure(request_id, error);
                         }
                         HandlerOut::FindHolePunchEnr(relay_init) => {
+                            // update initiator's enr if it's in kbuckets
+                            let inr_enr = relay_init.initiator_enr();
+                            let inr_key = kbucket::Key::from(inr_enr.node_id());
+                            match self.kbuckets.write().entry(&inr_key) {
+                                kbucket::Entry::Present(ref mut entry, _) => {
+                                    let enr = entry.value_mut();
+                                    if enr.seq() < inr_enr.seq() {
+                                        *enr = inr_enr.clone();
+                                    }
+                                }
+                                kbucket::Entry::Pending(ref mut entry, _) => {
+                                    let enr = entry.value_mut();
+                                    if enr.seq() < inr_enr.seq() {
+                                        *enr = inr_enr.clone();
+                                    }
+                                }
+                                _ => ()
+                            }
                             // check if we know the target node id in our routing table, otherwise
                             // drop relay attempt.
                             let tgt_node_id = relay_init.target_node_id();
