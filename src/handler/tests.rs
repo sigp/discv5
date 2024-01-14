@@ -3,7 +3,7 @@
 use super::*;
 use crate::{
     handler::sessions::session::build_dummy_session,
-    packet::{DefaultProtocolId, PacketHeader, MAX_PACKET_SIZE},
+    packet::{DefaultProtocolId, PacketHeader, MAX_PACKET_SIZE, MESSAGE_NONCE_LENGTH},
     return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
     Discv5ConfigBuilder, IpMode,
@@ -485,7 +485,7 @@ async fn remove_one_time_session() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn relay() {
+async fn nat_hole_punch_relay() {
     init();
 
     // Relay
@@ -627,4 +627,112 @@ async fn relay() {
         }
         _ => panic!("message should decode to a relay msg notification"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nat_hole_punch_target() {
+    init();
+
+    // Target
+    let listen_config = ListenConfig::default().with_ipv4(Ipv4Addr::LOCALHOST, 9902);
+    let (mut handler, mock_service) =
+        build_handler_with_listen_config::<DefaultProtocolId>(listen_config).await;
+    let tgt_addr = handler.enr.read().udp4_socket().unwrap().into();
+    let tgt_node_id = handler.enr.read().node_id();
+    let dummy_session = build_dummy_session();
+    handler.nat_hole_puncher.is_behind_nat = Some(true);
+
+    // Relay
+    let relay_enr = {
+        let key = CombinedKey::generate_secp256k1();
+        EnrBuilder::new("v4")
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(9022)
+            .build(&key)
+            .unwrap()
+    };
+    let relay_addr = relay_enr.udp4_socket().unwrap().into();
+    let relay_node_id = relay_enr.node_id();
+
+    let relay_node_address = NodeAddress::new(relay_addr, relay_node_id);
+    handler
+        .sessions
+        .cache
+        .insert(relay_node_address, dummy_session.clone());
+
+    let relay_socket = UdpSocket::bind(relay_addr)
+        .await
+        .expect("should bind to target socket");
+
+    // Initiator
+    let initr_enr = {
+        let key = CombinedKey::generate_secp256k1();
+        EnrBuilder::new("v4")
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(9021)
+            .build(&key)
+            .unwrap()
+    };
+    let initr_addr = initr_enr.udp4_socket().unwrap();
+    let initr_node_id = initr_enr.node_id();
+    let initr_nonce: MessageNonce = [1; MESSAGE_NONCE_LENGTH];
+
+    let initr_socket = UdpSocket::bind(initr_addr)
+        .await
+        .expect("should bind to initiator socket");
+
+    // Target handle
+    let tgt_handle = tokio::spawn(async move { handler.start::<DefaultProtocolId>().await });
+
+    // Relay handle
+    let relay_msg_notif = Notification::RelayMsg(initr_enr.clone(), initr_nonce);
+
+    let relay_handle = tokio::spawn(async move {
+        let mut session = build_dummy_session();
+        let packet = session
+            .encrypt_session_message::<DefaultProtocolId>(relay_node_id, &relay_msg_notif.encode())
+            .expect("should encrypt notification");
+        let encoded_packet = packet.encode::<DefaultProtocolId>(&tgt_node_id);
+
+        relay_socket
+            .send_to(&encoded_packet, tgt_addr)
+            .await
+            .expect("should relay init notification to relay")
+    });
+
+    // Initiator handle
+    let target_exit = mock_service.exit_tx;
+    let initr_handle = tokio::spawn(async move {
+        let mut buffer = [0; MAX_PACKET_SIZE];
+        let res = initr_socket
+            .recv_from(&mut buffer)
+            .await
+            .expect("should read bytes from socket");
+
+        drop(target_exit);
+
+        (res, buffer)
+    });
+
+    // Join all handles
+    let (tgt_res, relay_res, initr_res) = tokio::join!(tgt_handle, relay_handle, initr_handle);
+
+    tgt_res.unwrap();
+    relay_res.unwrap();
+
+    let ((length, src), buffer) = initr_res.unwrap();
+
+    assert_eq!(src, tgt_addr);
+
+    let (packet, _aad) = Packet::decode::<DefaultProtocolId>(&initr_node_id, &buffer[..length])
+        .expect("should decode packet");
+    let Packet { header, .. } = packet;
+    let PacketHeader {
+        kind,
+        message_nonce,
+        ..
+    } = header;
+
+    assert!(kind.is_whoareyou());
+    assert_eq!(message_nonce, initr_nonce)
 }
