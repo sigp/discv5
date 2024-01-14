@@ -375,8 +375,8 @@ impl Handler {
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge::<P>(wru_ref, enr).await,
                         HandlerIn::HolePunchEnr(tgt_enr, relay_init) => {
                             // Assemble the notification for the target
-                            let (initr_enr, _tgt, timed_out_nonce) = relay_init.into();
-                            let relay_msg_notif = RelayMsgNotification::new(initr_enr, timed_out_nonce);
+                            let (inr_enr, _tgt, timed_out_nonce) = relay_init.into();
+                            let relay_msg_notif = RelayMsgNotification::new(inr_enr, timed_out_nonce);
                             if let Err(e) = self.send_relay_msg_notif::<P>(tgt_enr, relay_msg_notif).await {
                                 warn!("Failed to relay. Error: {}", e);
                             }
@@ -1094,9 +1094,9 @@ impl Handler {
         match message {
             Message::Response(response) => self.handle_response::<P>(node_address, response).await,
             Message::RelayInitNotification(notif) => {
-                let initr_node_id = notif.initiator_enr().node_id();
-                if initr_node_id != node_address.node_id {
-                    warn!("peer {node_address} tried to initiate hole punch attempt for another node {initr_node_id}, banning peer {node_address}");
+                let inr_node_id = notif.initiator_enr().node_id();
+                if inr_node_id != node_address.node_id {
+                    warn!("peer {node_address} tried to initiate hole punch attempt for another node {inr_node_id}, banning peer {node_address}");
                     self.fail_session(&node_address, RequestError::MaliciousRelayInit, true)
                         .await;
                     let ban_timeout = self
@@ -1111,7 +1111,7 @@ impl Handler {
             Message::RelayMsgNotification(notif) => {
                 match self.nat_hole_puncher.is_behind_nat {
                     Some(false) => {
-                        // initr may not be malicious and initiated a hole punch attempt when
+                        // inr may not be malicious and initiated a hole punch attempt when
                         // a request to this node timed out for another reason
                         debug!("peer {node_address} relayed a hole punch notification but we are not behind nat");
                     }
@@ -1590,9 +1590,9 @@ impl HolePunchNat for Handler {
         &mut self,
         relay_msg: RelayMsgNotification,
     ) -> Result<(), NatHolePunchError> {
-        let (initr_enr, timed_out_msg_nonce) = relay_msg.into();
+        let (inr_enr, timed_out_msg_nonce) = relay_msg.into();
         let initiator_node_address =
-            match NodeContact::try_from_enr(initr_enr, self.nat_hole_puncher.ip_mode) {
+            match NodeContact::try_from_enr(inr_enr, self.nat_hole_puncher.ip_mode) {
                 Ok(contact) => contact.node_address(),
                 Err(e) => return Err(NatHolePunchError::Target(e.into())),
             };

@@ -497,7 +497,7 @@ async fn nat_hole_punch_relay() {
     let mut dummy_session = build_dummy_session();
 
     // Initiator
-    let initr_enr = {
+    let inr_enr = {
         let key = CombinedKey::generate_secp256k1();
         EnrBuilder::new("v4")
             .ip4(Ipv4Addr::LOCALHOST)
@@ -505,16 +505,16 @@ async fn nat_hole_punch_relay() {
             .build(&key)
             .unwrap()
     };
-    let initr_addr = initr_enr.udp4_socket().unwrap().into();
-    let initr_node_id = initr_enr.node_id();
+    let inr_addr = inr_enr.udp4_socket().unwrap().into();
+    let inr_node_id = inr_enr.node_id();
 
-    let initr_node_address = NodeAddress::new(initr_addr, initr_enr.node_id());
+    let inr_node_address = NodeAddress::new(inr_addr, inr_enr.node_id());
     handler
         .sessions
         .cache
-        .insert(initr_node_address, dummy_session.clone());
+        .insert(inr_node_address, dummy_session.clone());
 
-    let initr_socket = UdpSocket::bind(initr_addr)
+    let inr_socket = UdpSocket::bind(inr_addr)
         .await
         .expect("should bind to initiator socket");
 
@@ -559,16 +559,16 @@ async fn nat_hole_punch_relay() {
 
     // Initiator handle
     let relay_init_notif =
-        RelayInitNotification::new(initr_enr.clone(), tgt_node_id, MessageNonce::default());
+        RelayInitNotification::new(inr_enr.clone(), tgt_node_id, MessageNonce::default());
 
-    let initr_handle = tokio::spawn(async move {
+    let inr_handle = tokio::spawn(async move {
         let mut session = build_dummy_session();
         let packet = session
-            .encrypt_session_message::<DefaultProtocolId>(initr_node_id, &relay_init_notif.encode())
+            .encrypt_session_message::<DefaultProtocolId>(inr_node_id, &relay_init_notif.encode())
             .expect("should encrypt notification");
         let encoded_packet = packet.encode::<DefaultProtocolId>(&relay_node_id);
 
-        initr_socket
+        inr_socket
             .send_to(&encoded_packet, relay_addr)
             .await
             .expect("should relay init notification to relay")
@@ -589,10 +589,10 @@ async fn nat_hole_punch_relay() {
     });
 
     // Join all handles
-    let (initr_res, relay_res, tgt_res, mock_service_res) =
-        tokio::join!(initr_handle, relay_handle, tgt_handle, mock_service_handle);
+    let (inr_res, relay_res, tgt_res, mock_service_res) =
+        tokio::join!(inr_handle, relay_handle, tgt_handle, mock_service_handle);
 
-    initr_res.unwrap();
+    inr_res.unwrap();
     relay_res.unwrap();
     mock_service_res.unwrap();
 
@@ -624,7 +624,7 @@ async fn nat_hole_punch_relay() {
     match Message::decode(&decrypted_message).expect("should decode message") {
         Message::RelayMsgNotification(relay_msg) => {
             let (enr, _) = relay_msg.into();
-            assert_eq!(initr_enr, enr)
+            assert_eq!(inr_enr, enr)
         }
         _ => panic!("message should decode to a relay msg notification"),
     }
@@ -666,7 +666,7 @@ async fn nat_hole_punch_target() {
         .expect("should bind to target socket");
 
     // Initiator
-    let initr_enr = {
+    let inr_enr = {
         let key = CombinedKey::generate_secp256k1();
         EnrBuilder::new("v4")
             .ip4(Ipv4Addr::LOCALHOST)
@@ -674,11 +674,11 @@ async fn nat_hole_punch_target() {
             .build(&key)
             .unwrap()
     };
-    let initr_addr = initr_enr.udp4_socket().unwrap();
-    let initr_node_id = initr_enr.node_id();
-    let initr_nonce: MessageNonce = [1; MESSAGE_NONCE_LENGTH];
+    let inr_addr = inr_enr.udp4_socket().unwrap();
+    let inr_node_id = inr_enr.node_id();
+    let inr_nonce: MessageNonce = [1; MESSAGE_NONCE_LENGTH];
 
-    let initr_socket = UdpSocket::bind(initr_addr)
+    let inr_socket = UdpSocket::bind(inr_addr)
         .await
         .expect("should bind to initiator socket");
 
@@ -686,7 +686,7 @@ async fn nat_hole_punch_target() {
     let tgt_handle = tokio::spawn(async move { handler.start::<DefaultProtocolId>().await });
 
     // Relay handle
-    let relay_msg_notif = RelayMsgNotification::new(initr_enr.clone(), initr_nonce);
+    let relay_msg_notif = RelayMsgNotification::new(inr_enr.clone(), inr_nonce);
 
     let relay_handle = tokio::spawn(async move {
         let mut session = build_dummy_session();
@@ -703,9 +703,9 @@ async fn nat_hole_punch_target() {
 
     // Initiator handle
     let target_exit = mock_service.exit_tx;
-    let initr_handle = tokio::spawn(async move {
+    let inr_handle = tokio::spawn(async move {
         let mut buffer = [0; MAX_PACKET_SIZE];
-        let res = initr_socket
+        let res = inr_socket
             .recv_from(&mut buffer)
             .await
             .expect("should read bytes from socket");
@@ -716,16 +716,16 @@ async fn nat_hole_punch_target() {
     });
 
     // Join all handles
-    let (tgt_res, relay_res, initr_res) = tokio::join!(tgt_handle, relay_handle, initr_handle);
+    let (tgt_res, relay_res, inr_res) = tokio::join!(tgt_handle, relay_handle, inr_handle);
 
     tgt_res.unwrap();
     relay_res.unwrap();
 
-    let ((length, src), buffer) = initr_res.unwrap();
+    let ((length, src), buffer) = inr_res.unwrap();
 
     assert_eq!(src, tgt_addr);
 
-    let (packet, _aad) = Packet::decode::<DefaultProtocolId>(&initr_node_id, &buffer[..length])
+    let (packet, _aad) = Packet::decode::<DefaultProtocolId>(&inr_node_id, &buffer[..length])
         .expect("should decode packet");
     let Packet { header, .. } = packet;
     let PacketHeader {
@@ -735,5 +735,5 @@ async fn nat_hole_punch_target() {
     } = header;
 
     assert!(kind.is_whoareyou());
-    assert_eq!(message_nonce, initr_nonce)
+    assert_eq!(message_nonce, inr_nonce)
 }
