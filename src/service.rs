@@ -855,11 +855,9 @@ impl Service {
                                                     new_ip6,
                                                 ));
                                                 // Notify Handler of socket update
-                                                if let Err(e) =
-                                                    self.handler_send.send(HandlerIn::SocketUpdate(
-                                                        local_ip6_socket.map(SocketAddr::V6),
-                                                        new_ip6,
-                                                    ))
+                                                if let Err(e) = self
+                                                    .handler_send
+                                                    .send(HandlerIn::SocketUpdate(new_ip6))
                                                 {
                                                     warn!("Failed to send socket update to handler: {}", e);
                                                 };
@@ -883,11 +881,9 @@ impl Service {
                                                     new_ip4,
                                                 ));
                                                 // Notify Handler of socket update
-                                                if let Err(e) =
-                                                    self.handler_send.send(HandlerIn::SocketUpdate(
-                                                        local_ip4_socket.map(SocketAddr::V4),
-                                                        new_ip4,
-                                                    ))
+                                                if let Err(e) = self
+                                                    .handler_send
+                                                    .send(HandlerIn::SocketUpdate(new_ip4))
                                                 {
                                                     warn!("Failed to send socket update {}", e);
                                                 };
