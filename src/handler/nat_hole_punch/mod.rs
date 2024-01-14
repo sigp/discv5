@@ -36,7 +36,7 @@ pub trait HolePunchNat {
 
     /// A RelayMsg notification is received over discv5 indicating this node is the target. Should
     /// trigger a WHOAREYOU to be sent to the initiator using the `nonce` in the RelayMsg.
-    async fn on_relay_msg(
+    async fn on_relay_msg<P: ProtocolIdentity>(
         &mut self,
         initr: Enr,
         timed_out_nonce: MessageNonce,

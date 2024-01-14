@@ -1112,7 +1112,7 @@ impl Handler {
                             debug!("peer {node_address} relayed a hole punch notification but we are not behind nat");
                         }
                         _ => {
-                            if let Err(e) = self.on_relay_msg(initr, timed_out_nonce).await {
+                            if let Err(e) = self.on_relay_msg::<P>(initr, timed_out_nonce).await {
                                 warn!(
                                     "failed handling notification relayed from {node_address}, {e}"
                                 );
@@ -1590,7 +1590,7 @@ impl HolePunchNat for Handler {
         Ok(())
     }
 
-    async fn on_relay_msg(
+    async fn on_relay_msg<P: ProtocolIdentity>(
         &mut self,
         initr: Enr,
         timed_out_nonce: MessageNonce,
@@ -1603,10 +1603,7 @@ impl HolePunchNat for Handler {
 
         // A session may already have been established.
         if self.sessions.cache.get(&initiator_node_address).is_some() {
-            trace!(
-                "Session already established with initiator: {}",
-                initiator_node_address
-            );
+            trace!("Session already established with initiator: {initiator_node_address}");
             return Ok(());
         }
         // Possibly, an attempt to punch this hole, using another relay, is in progress.
@@ -1615,22 +1612,15 @@ impl HolePunchNat for Handler {
             .get(&initiator_node_address)
             .is_some()
         {
-            trace!(
-                "WHOAREYOU packet already sent to initiator: {}",
-                initiator_node_address
-            );
+            trace!("WHOAREYOU packet already sent to initiator: {initiator_node_address}");
             return Ok(());
         }
+
         // If not hole punch attempts are in progress, spawn a WHOAREYOU event to punch a hole in
         // our NAT for initiator.
         let whoareyou_ref = WhoAreYouRef(initiator_node_address, timed_out_nonce);
-        if let Err(e) = self
-            .service_send
-            .send(HandlerOut::WhoAreYou(whoareyou_ref))
-            .await
-        {
-            return Err(NatHolePunchError::Target(e.into()));
-        }
+        self.send_challenge::<P>(whoareyou_ref, None).await;
+
         Ok(())
     }
 
