@@ -117,8 +117,8 @@ pub enum HandlerIn {
     /// [`Notification::RelayMsg`] we intend to relay to that peer.
     HolePunchEnr(Enr, Notification),
 
-    /// Observed socket has been update, contains the current socket.
-    SocketUpdate(SocketAddr),
+    /// Observed socket has been update. The old socket and the current socket.
+    SocketUpdate(Option<SocketAddr>, SocketAddr),
 }
 
 /// Messages sent between a node on the network and `Handler`.
@@ -377,15 +377,20 @@ impl Handler {
                                 warn!("Failed to relay. Error: {}", e);
                             }
                         }
-                        HandlerIn::SocketUpdate(socket) => {
+                        HandlerIn::SocketUpdate(old_socket, socket) => {
                             let ip = socket.ip();
                             let port = socket.port();
-                            // This node goes from being unreachable to being reachable.
-                            // Reasonably assuming all its peers are indexing sessions based on
-                            // `node_id`, like this implementation, the first message sent in each
-                            // session from here on will trigger a WHOAREYOU message from the peer
-                            // (since the peer won't be able to find the decryption key for the
-                            // session with the new node id as message's src id).
+                            if old_socket.is_none() {
+                                // This node goes from being unreachable to being reachable, but
+                                // keeps the same enr key (hence same node id). Remove its
+                                // sessions to trigger a WHOAREYOU from peers on next sent
+                                // message. If the peer is running this implementation of
+                                // discovery, this makes it possible for the local node to be
+                                // inserted into its peers' kbuckets before the session they
+                                // already had expires. Session duration, in this impl defaults to
+                                // 24 hours.
+                                self.sessions.cache.clear()
+                            }
                             self.nat_hole_puncher.set_is_behind_nat(self.listen_sockets.iter(), Some(ip), Some(port));
                         }
                     }
