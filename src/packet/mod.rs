@@ -29,16 +29,25 @@ pub const MESSAGE_NONCE_LENGTH: usize = 12;
 /// The Id nonce length (in bytes).
 pub const ID_NONCE_LENGTH: usize = 16;
 
+pub struct Nat;
+
+impl ProtocolIdentity<3> for Nat {
+    const PROTOCOL_ID_BYTES: [u8; 6] = *b"discv5";
+    const PROTOCOL_VERSION_BYTES: [u8; 2] = 0x0001_u16.to_be_bytes();
+    const IMPLEMENTATION_FEATURES: [u8; 3] = *b"nat";
+}
 pub struct DefaultProtocolId {}
 
 impl ProtocolIdentity for DefaultProtocolId {
     const PROTOCOL_ID_BYTES: [u8; 6] = *b"discv5";
     const PROTOCOL_VERSION_BYTES: [u8; 2] = 0x0001_u16.to_be_bytes();
+    const IMPLEMENTATION_FEATURES: [u8; 0] = *b"";
 }
 
-pub trait ProtocolIdentity {
+pub trait ProtocolIdentity<const N: usize = 0>: Sync + Send {
     const PROTOCOL_ID_BYTES: [u8; 6];
     const PROTOCOL_VERSION_BYTES: [u8; 2];
+    const IMPLEMENTATION_FEATURES: [u8; N];
 }
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
