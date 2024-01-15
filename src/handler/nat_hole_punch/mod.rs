@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
 
-use enr::NodeId;
-
 use crate::{
-    node_info::NodeAddress, packet::MessageNonce, rpc::Notification, Enr, ProtocolIdentity,
+    node_info::NodeAddress,
+    packet::MessageNonce,
+    rpc::{RelayInitNotification, RelayMsgNotification},
+    Enr, ProtocolIdentity,
 };
 
 mod error;
@@ -27,26 +28,20 @@ pub trait HolePunchNat {
 
     /// A RelayInit notification is received over discv5 indicating this node is the relay. Should
     /// trigger sending a RelayMsg to the target.
-    async fn on_relay_init(
-        &mut self,
-        initr: Enr,
-        tgt: NodeId,
-        timed_out_nonce: MessageNonce,
-    ) -> Result<(), Error>;
+    async fn on_relay_init(&mut self, relay_init: RelayInitNotification) -> Result<(), Error>;
 
     /// A RelayMsg notification is received over discv5 indicating this node is the target. Should
     /// trigger a WHOAREYOU to be sent to the initiator using the `nonce` in the RelayMsg.
-    async fn on_relay_msg(
+    async fn on_relay_msg<P: ProtocolIdentity>(
         &mut self,
-        initr: Enr,
-        timed_out_nonce: MessageNonce,
+        relay_msg: RelayMsgNotification,
     ) -> Result<(), Error>;
 
     /// Send a RELAYMSG notification.
     async fn send_relay_msg_notif<P: ProtocolIdentity>(
         &mut self,
         tgt_enr: Enr,
-        relay_msg_notif: Notification,
+        relay_msg_notif: RelayMsgNotification,
     ) -> Result<(), Error>;
 
     /// A hole punched for a peer closes. Should trigger an empty packet to be sent to the

@@ -6,7 +6,7 @@ mod notification;
 mod request;
 mod response;
 
-pub use notification::Notification;
+pub use notification::{RelayInitNotification, RelayMsgNotification};
 pub use request::{Request, RequestBody, RequestId};
 pub use response::{Response, ResponseBody};
 
@@ -60,12 +60,19 @@ pub enum Message {
     /// A request, which contains its [`RequestId`].
     #[display(fmt = "{_0}")]
     Request(Request),
+
     /// A Response, which contains the [`RequestId`] of its associated request.
     #[display(fmt = "{_0}")]
     Response(Response),
-    /// A unicast notification.
+
+    /// Unicast notifications.
+    ///
+    /// A [`RelayInitNotification`].
     #[display(fmt = "{_0}")]
-    Notification(Notification),
+    RelayInitNotification(RelayInitNotification),
+    /// A [`RelayMsgNotification`].
+    #[display(fmt = "{_0}")]
+    RelayMsgNotification(RelayMsgNotification),
 }
 
 #[allow(dead_code)]
@@ -74,7 +81,8 @@ impl Message {
         match self {
             Self::Request(request) => request.encode(),
             Self::Response(response) => response.encode(),
-            Self::Notification(notif) => notif.encode(),
+            Self::RelayInitNotification(notif) => notif.encode(),
+            Self::RelayMsgNotification(notif) => notif.encode(),
         }
     }
 
@@ -93,17 +101,17 @@ impl Message {
             MessageType::Pong | MessageType::Nodes | MessageType::TalkResp => {
                 Ok(Response::decode(msg_type, &rlp)?.into())
             }
-            MessageType::RelayInit | MessageType::RelayMsg => {
-                Ok(Notification::decode(msg_type, &rlp)?.into())
-            }
+            MessageType::RelayInit => Ok(RelayInitNotification::decode(msg_type, &rlp)?.into()),
+            MessageType::RelayMsg => Ok(RelayMsgNotification::decode(msg_type, &rlp)?.into()),
         }
     }
 
     pub fn msg_type(&self) -> String {
         match self {
-            Self::Notification(n) => format!("notification type {}", n.msg_type()),
             Self::Request(r) => format!("request type {}", r.msg_type()),
             Self::Response(r) => format!("response type {}", r.msg_type()),
+            Self::RelayInitNotification(n) => format!("notification type {}", n.msg_type()),
+            Self::RelayMsgNotification(n) => format!("notification type {}", n.msg_type()),
         }
     }
 }
@@ -413,12 +421,13 @@ mod tests {
         let mut nonce = [0u8; MESSAGE_NONCE_LENGTH];
         nonce[MESSAGE_NONCE_LENGTH - nonce_bytes.len()..].copy_from_slice(&nonce_bytes);
 
-        let notif = Message::Notification(Notification::RelayInit(inr_enr, tgt_node_id, nonce));
+        let notif = RelayInitNotification::new(inr_enr, tgt_node_id, nonce);
+        let msg = Message::RelayInitNotification(notif);
 
-        let encoded_notif = notif.clone().encode();
-        let decoded_notif = Message::decode(&encoded_notif).expect("Should decode");
+        let encoded_msg = msg.clone().encode();
+        let decoded_msg = Message::decode(&encoded_msg).expect("Should decode");
 
-        assert_eq!(notif, decoded_notif);
+        assert_eq!(msg, decoded_msg);
     }
 
     #[test]
@@ -432,11 +441,12 @@ mod tests {
         let mut nonce = [0u8; MESSAGE_NONCE_LENGTH];
         nonce[MESSAGE_NONCE_LENGTH - nonce_bytes.len()..].copy_from_slice(&nonce_bytes);
 
-        let notif = Message::Notification(Notification::RelayMsg(inr_enr, nonce));
+        let notif = RelayMsgNotification::new(inr_enr, nonce);
+        let msg = Message::RelayMsgNotification(notif);
 
-        let encoded_notif = notif.clone().encode();
-        let decoded_notif = Message::decode(&encoded_notif).expect("Should decode");
+        let encoded_msg = msg.clone().encode();
+        let decoded_msg = Message::decode(&encoded_msg).expect("Should decode");
 
-        assert_eq!(notif, decoded_notif);
+        assert_eq!(msg, decoded_msg);
     }
 }

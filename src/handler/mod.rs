@@ -32,7 +32,8 @@ use crate::{
     error::{Discv5Error, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
     rpc::{
-        Message, Notification, Payload, Request, RequestBody, RequestId, Response, ResponseBody,
+        Message, Payload, RelayInitNotification, RelayMsgNotification, Request, RequestBody,
+        RequestId, Response, ResponseBody,
     },
     socket,
     socket::{FilterConfig, Outbound, Socket},
@@ -57,10 +58,10 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
 
 mod active_requests;
+mod crypto;
 mod nat_hole_punch;
 mod request_call;
 mod session;
-mod crypto;
 mod tests;
 
 use crate::metrics::METRICS;
@@ -114,8 +115,8 @@ pub enum HandlerIn {
     WhoAreYou(WhoAreYouRef, Option<Enr>),
 
     /// A response to a [`HandlerOut::FindHolePunchEnr`]. Returns the ENR and the
-    /// [`Notification::RelayMsg`] we intend to relay to that peer.
-    HolePunchEnr(Enr, Notification),
+    /// [`RelayInitNotification`] from [`HandlerOut::FindHolePunchEnr`].
+    HolePunchEnr(Enr, RelayInitNotification),
 
     /// Observed socket has been update. The old socket and the current socket.
     SocketUpdate(Option<SocketAddr>, SocketAddr),
@@ -147,8 +148,17 @@ pub enum HandlerOut {
     RequestFailed(RequestId, RequestError),
 
     /// Look-up an ENR in k-buckets. Passes the node id of the peer to look up and the
-    /// [`Notification::RelayMsg`] we intend to send to it.
-    FindHolePunchEnr(NodeId, Notification),
+    /// [`RelayMsgNotification`] we intend to send to it.
+    FindHolePunchEnr(RelayInitNotification),
+
+    /// Triggers a ping to all peers, outside of the regular ping interval. Needed to trigger
+    /// renewed session establishment after updating the local ENR from unreachable to reachable
+    /// and clearing all sessions. Only this way does the local node have a chance to make it into
+    /// its peers kbuckets before the session expires (defaults to 24 hours). This is the case
+    /// since its peers, running this implementation, will only respond to PINGs from nodes in its
+    /// kbucktes and unreachable ENRs don't make it into kbuckets upon [`HandlerOut::Established`]
+    /// event.
+    PingAllPeers,
 }
 
 /// How we connected to the node.
@@ -307,10 +317,7 @@ impl Handler {
         // Attempt to bind to the socket before spinning up the send/recv tasks.
         let socket = Socket::new::<P>(socket_config).await?;
 
-        let sessions = LruTimeCache::new(
-            session_timeout,
-            Some(session_cache_capacity),
-        );
+        let sessions = LruTimeCache::new(session_timeout, Some(session_cache_capacity));
 
         let nat_utils = NatUtils::new(
             listen_sockets.iter(),
@@ -372,7 +379,10 @@ impl Handler {
                         }
                         HandlerIn::Response(dst, response) => self.send_response::<P>(dst, *response).await,
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge::<P>(wru_ref, enr).await,
-                        HandlerIn::HolePunchEnr(tgt_enr, relay_msg_notif) => {
+                        HandlerIn::HolePunchEnr(tgt_enr, relay_init) => {
+                            // Assemble the notification for the target
+                            let (inr_enr, _tgt, timed_out_nonce) = relay_init.into();
+                            let relay_msg_notif = RelayMsgNotification::new(inr_enr, timed_out_nonce);
                             if let Err(e) = self.send_relay_msg_notif::<P>(tgt_enr, relay_msg_notif).await {
                                 warn!("Failed to relay. Error: {}", e);
                             }
@@ -381,14 +391,22 @@ impl Handler {
                             let ip = socket.ip();
                             let port = socket.port();
                             if old_socket.is_none() {
-                                // This node goes from being unreachable to being reachable. Remove
-                                // its sessions to trigger a WHOAREYOU from peers on next sent
+                                // This node goes from being unreachable to being reachable, but
+                                // keeps the same enr key (hence same node id). Remove its
+                                // sessions to trigger a WHOAREYOU from peers on next sent
                                 // message. If the peer is running this implementation of
                                 // discovery, this makes it possible for the local node to be
                                 // inserted into its peers' kbuckets before the session they
                                 // already had expires. Session duration, in this impl defaults to
                                 // 24 hours.
-                                self.sessions.clear()
+                                self.sessions.clear();
+                                if let Err(e) = self
+                                    .service_send
+                                    .send(HandlerOut::PingAllPeers)
+                                    .await
+                                {
+                                    warn!("Failed to inform that request failed {}", e);
+                                }
                             }
                             self.nat_utils.set_is_behind_nat(self.listen_sockets.iter(), Some(ip), Some(port));
                         }
@@ -897,25 +915,25 @@ impl Handler {
         );
 
         if let Some(challenge) = self.active_challenges.remove(&node_address) {
-
             // Find the most recent ENR, a known ENR or one they sent in their challenge.
             let Challenge { data, remote_enr } = challenge;
-            let Ok(most_recent_enr) = most_recent_enr(enr_record, remote_enr)  else {
+            let Ok(most_recent_enr) = most_recent_enr(enr_record, remote_enr) else {
                 warn!(
                         "Peer did not respond with their ENR. Session could not be established. Node: {}",node_address
                     );
-                    self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
-                        .await;
-                    return;
+                self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
+                    .await;
+                return;
             };
 
             // Keep count of the unreachable Sessions we are tracking
             // Peer is reachable
             let enr_not_reachable = !NatUtils::is_enr_reachable(&most_recent_enr);
-            
 
             // Decide whether to establish this connection based on our apettiite for unreachable
-            if enr_not_reachable && Some(self.sessions.tagged()) > self.nat_utils.unreachable_enr_limit {
+            if enr_not_reachable
+                && Some(self.sessions.tagged()) > self.nat_utils.unreachable_enr_limit
+            {
                 debug!("Reached limit of unreachable ENR sessions. Avoiding a new connection. Limit: {}", self.sessions.tagged());
                 return;
             }
@@ -1113,39 +1131,32 @@ impl Handler {
 
         match message {
             Message::Response(response) => self.handle_response::<P>(node_address, response).await,
-            Message::Notification(notification) => match notification {
-                Notification::RelayInit(initiator, target, timed_out_nonce) => {
-                    let initiator_node_id = initiator.node_id();
-                    if initiator_node_id != node_address.node_id {
-                        warn!("peer {node_address} tried to initiate hole punch attempt for another node {initiator_node_id}, banning peer {node_address}");
-                        self.fail_session(&node_address, RequestError::MaliciousRelayInit, true)
-                            .await;
-                        let ban_timeout = self
-                            .nat_utils
-                            .ban_duration
-                            .map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                    } else if let Err(e) = self.on_relay_init(initiator, target, timed_out_nonce).await {
-                        warn!("failed handling notification to relay for {node_address}, {e}");
-                    }
+            Message::RelayInitNotification(notification) => {
+                let initiator_node_id = notification.initiator_enr().node_id();
+                if initiator_node_id != node_address.node_id {
+                    warn!("peer {node_address} tried to initiate hole punch attempt for another node {initiator_node_id}, banning peer {node_address}");
+                    self.fail_session(&node_address, RequestError::MaliciousRelayInit, true)
+                        .await;
+                    let ban_timeout = self.nat_utils.ban_duration.map(|v| Instant::now() + v);
+                    PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                } else if let Err(e) = self.on_relay_init(notification).await {
+                    warn!("failed handling notification to relay for {node_address}, {e}");
                 }
-                Notification::RelayMsg(initiator, timed_out_nonce) => {
-                    match self.nat_utils.is_behind_nat {
-                        Some(false) => {
-                            // The iniator may not be malicious and initiated a hole punch attempt when
-                            // a request to this node timed out for another reason
-                            debug!("peer {node_address} relayed a hole punch notification but we are not behind Nat");
-                        }
-                        _ => {
-                            if let Err(e) = self.on_relay_msg(initiator, timed_out_nonce).await {
-                                warn!(
-                                    "failed handling notification relayed from {node_address}, {e}"
-                                );
-                            }
+            }
+            Message::RelayMsgNotification(notification) => {
+                match self.nat_utils.is_behind_nat {
+                    Some(false) => {
+                        // inr may not be malicious and initiated a hole punch attempt when
+                        // a request to this node timed out for another reason
+                        debug!("peer {node_address} relayed a hole punch notification but we are not behind nat");
+                    }
+                    _ => {
+                        if let Err(e) = self.on_relay_msg::<P>(notification).await {
+                            warn!("failed handling notification relayed from {node_address}, {e}");
                         }
                     }
                 }
-            },
+            }
             Message::Request(_) => {
                 warn!(
                     "Peer sent message type {} that shouldn't be sent in packet type `Session Message`, {}",
@@ -1224,7 +1235,7 @@ impl Handler {
                     warn!("Received a response in a `Message` packet, should be sent in a `SessionMessage`");
                     self.handle_response::<P>(node_address, response).await
                 }
-                Message::Notification(_) => {
+                Message::RelayInitNotification(_) | Message::RelayMsgNotification(_) => {
                     warn!(
                         "Peer sent message type {} that shouldn't be sent in packet type `Message`, {}",
                         message.msg_type(),
@@ -1322,9 +1333,7 @@ impl Handler {
             // extra responses
             if let ResponseBody::Nodes { total, ref nodes } = response.body {
                 for node in nodes {
-                    if let Some(socket_addr) =
-                        self.nat_utils.ip_mode.get_contactable_addr(node)
-                    {
+                    if let Some(socket_addr) = self.nat_utils.ip_mode.get_contactable_addr(node) {
                         let node_id = node.node_id();
                         let new_peer_node_address = NodeAddress {
                             socket_addr,
@@ -1404,11 +1413,17 @@ impl Handler {
     }
 
     /// Updates the session cache for a new session.
-    fn new_session(&mut self, node_address: NodeAddress, session: Session, enr_not_reachable: bool) {
+    fn new_session(
+        &mut self,
+        node_address: NodeAddress,
+        session: Session,
+        enr_not_reachable: bool,
+    ) {
         if let Some(current_session) = self.sessions.get_mut(&node_address) {
             current_session.update(session);
         } else {
-            self.sessions.insert_raw(node_address, session, enr_not_reachable);
+            self.sessions
+                .insert_raw(node_address, session, enr_not_reachable);
             METRICS
                 .active_sessions
                 .store(self.sessions.len(), Ordering::Relaxed);
@@ -1548,7 +1563,6 @@ impl Handler {
     }
 }
 
-
 /// Given two optional ENRs, find the most recent one based on the sequence number.
 /// This function will error if both inputs are None.
 fn most_recent_enr(first: Option<Enr>, second: Option<Enr>) -> Result<Enr, ()> {
@@ -1566,7 +1580,6 @@ fn most_recent_enr(first: Option<Enr>, second: Option<Enr>) -> Result<Enr, ()> {
     }
 }
 
-
 #[async_trait::async_trait]
 impl HolePunchNat for Handler {
     async fn on_request_time_out<P: ProtocolIdentity>(
@@ -1582,7 +1595,7 @@ impl HolePunchNat for Handler {
         }
         if let Some(session) = self.sessions.get_mut(&relay) {
             let relay_init_notif =
-                Notification::RelayInit(local_enr, target_node_address.node_id, timed_out_nonce);
+                RelayInitNotification::new(local_enr, target_node_address.node_id, timed_out_nonce);
             trace!(
                 "Sending notif to relay {}. relay init: {}",
                 relay.node_id,
@@ -1611,19 +1624,11 @@ impl HolePunchNat for Handler {
         Ok(())
     }
 
-    async fn on_relay_init(
-        &mut self,
-        initr: Enr,
-        tgt: NodeId,
-        timed_out_nonce: MessageNonce,
-    ) -> Result<(), NatError> {
-        // Assemble the notification for the target
-        let relay_msg_notif = Notification::RelayMsg(initr, timed_out_nonce);
-
+    async fn on_relay_init(&mut self, relay_init: RelayInitNotification) -> Result<(), NatError> {
         // Check for target peer in our kbuckets otherwise drop notification.
         if let Err(e) = self
             .service_send
-            .send(HandlerOut::FindHolePunchEnr(tgt, relay_msg_notif))
+            .send(HandlerOut::FindHolePunchEnr(relay_init))
             .await
         {
             return Err(NatError::Relay(e.into()));
@@ -1631,23 +1636,20 @@ impl HolePunchNat for Handler {
         Ok(())
     }
 
-    async fn on_relay_msg(
+    async fn on_relay_msg<P: ProtocolIdentity>(
         &mut self,
-        initr: Enr,
-        timed_out_nonce: MessageNonce,
+        relay_msg: RelayMsgNotification,
     ) -> Result<(), NatError> {
+        let (inr_enr, timed_out_msg_nonce) = relay_msg.into();
         let initiator_node_address =
-            match NodeContact::try_from_enr(initr, self.nat_utils.ip_mode) {
+            match NodeContact::try_from_enr(inr_enr, self.nat_utils.ip_mode) {
                 Ok(contact) => contact.node_address(),
                 Err(e) => return Err(NatError::Target(e.into())),
             };
 
         // A session may already have been established.
         if self.sessions.get(&initiator_node_address).is_some() {
-            trace!(
-                "Session already established with initiator: {}",
-                initiator_node_address
-            );
+            trace!("Session already established with initiator: {initiator_node_address}");
             return Ok(());
         }
         // Possibly, an attempt to punch this hole, using another relay, is in progress.
@@ -1656,35 +1658,27 @@ impl HolePunchNat for Handler {
             .get(&initiator_node_address)
             .is_some()
         {
-            trace!(
-                "WHOAREYOU packet already sent to initiator: {}",
-                initiator_node_address
-            );
+            trace!("WHOAREYOU packet already sent to initiator: {initiator_node_address}");
             return Ok(());
         }
+
         // If not hole punch attempts are in progress, spawn a WHOAREYOU event to punch a hole in
         // our NAT for initiator.
-        let whoareyou_ref = WhoAreYouRef(initiator_node_address, timed_out_nonce);
-        if let Err(e) = self
-            .service_send
-            .send(HandlerOut::WhoAreYou(whoareyou_ref))
-            .await
-        {
-            return Err(NatError::Target(e.into()));
-        }
+        let whoareyou_ref = WhoAreYouRef(initiator_node_address, timed_out_msg_nonce);
+        self.send_challenge::<P>(whoareyou_ref, None).await;
+
         Ok(())
     }
 
     async fn send_relay_msg_notif<P: ProtocolIdentity>(
         &mut self,
         tgt_enr: Enr,
-        relay_msg_notif: Notification,
+        relay_msg_notif: RelayMsgNotification,
     ) -> Result<(), NatError> {
-        let tgt_node_address =
-            match NodeContact::try_from_enr(tgt_enr, self.nat_utils.ip_mode) {
-                Ok(contact) => contact.node_address(),
-                Err(e) => return Err(NatError::Relay(e.into())),
-            };
+        let tgt_node_address = match NodeContact::try_from_enr(tgt_enr, self.nat_utils.ip_mode) {
+            Ok(contact) => contact.node_address(),
+            Err(e) => return Err(NatError::Relay(e.into())),
+        };
         if let Some(session) = self.sessions.get_mut(&tgt_node_address) {
             trace!(
                 "Sending notif to target {}. relay msg: {}",

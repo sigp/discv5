@@ -3,7 +3,7 @@
 use super::*;
 use crate::{
     handler::session::build_dummy_session,
-    packet::{DefaultProtocolId, PacketHeader, MAX_PACKET_SIZE},
+    packet::{DefaultProtocolId, PacketHeader, MAX_PACKET_SIZE, MESSAGE_NONCE_LENGTH},
     return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
     Discv5ConfigBuilder, IpMode,
@@ -94,7 +94,10 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
             active_requests: ActiveRequests::new(config.request_timeout),
             pending_requests: HashMap::new(),
             filter_expected_responses,
-            sessions: LruTimeCache::new(config.session_timeout,Some(config.session_cache_capacity)),
+            sessions: LruTimeCache::new(
+                config.session_timeout,
+                Some(config.session_cache_capacity),
+            ),
             one_time_sessions: LruTimeCache::new(
                 Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
                 Some(ONE_TIME_SESSION_CACHE_CAPACITY),
@@ -486,7 +489,7 @@ async fn remove_one_time_session() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn relay() {
+async fn nat_hole_punch_relay() {
     init();
 
     // Relay
@@ -497,7 +500,7 @@ async fn relay() {
     let relay_node_id = handler.enr.read().node_id();
 
     // Initiator
-    let initr_enr = {
+    let inr_enr = {
         let key = CombinedKey::generate_secp256k1();
         EnrBuilder::new("v4")
             .ip4(Ipv4Addr::LOCALHOST)
@@ -505,15 +508,15 @@ async fn relay() {
             .build(&key)
             .unwrap()
     };
-    let initr_addr = initr_enr.udp4_socket().unwrap().into();
-    let initr_node_id = initr_enr.node_id();
+    let inr_addr = inr_enr.udp4_socket().unwrap().into();
+    let inr_node_id = inr_enr.node_id();
 
-    let initr_node_address = NodeAddress::new(initr_addr, initr_enr.node_id());
+    let initr_node_address = NodeAddress::new(inr_addr, inr_enr.node_id());
     handler
         .sessions
         .insert(initr_node_address, build_dummy_session());
 
-    let initr_socket = UdpSocket::bind(initr_addr)
+    let inr_socket = UdpSocket::bind(inr_addr)
         .await
         .expect("should bind to initiator socket");
 
@@ -548,8 +551,8 @@ async fn relay() {
     let mock_service_handle = tokio::spawn(async move {
         let service_msg = rx.recv().await.expect("should receive service message");
         match service_msg {
-            HandlerOut::FindHolePunchEnr(_tgt_node_id, relay_msg_notif) => tx
-                .send(HandlerIn::HolePunchEnr(tgt_enr_clone, relay_msg_notif))
+            HandlerOut::FindHolePunchEnr(relay_init) => tx
+                .send(HandlerIn::HolePunchEnr(tgt_enr_clone, relay_init))
                 .expect("should send message to handler"),
             _ => panic!("service message should be 'find hole punch enr'"),
         }
@@ -557,16 +560,16 @@ async fn relay() {
 
     // Initiator handle
     let relay_init_notif =
-        Notification::RelayInit(initr_enr.clone(), tgt_node_id, MessageNonce::default());
+        RelayInitNotification::new(inr_enr.clone(), tgt_node_id, MessageNonce::default());
 
-    let initr_handle = tokio::spawn(async move {
+    let inr_handle = tokio::spawn(async move {
         let mut session = build_dummy_session();
         let packet = session
-            .encrypt_session_message::<DefaultProtocolId>(initr_node_id, &relay_init_notif.encode())
+            .encrypt_session_message::<DefaultProtocolId>(inr_node_id, &relay_init_notif.encode())
             .expect("should encrypt notification");
         let encoded_packet = packet.encode::<DefaultProtocolId>(&relay_node_id);
 
-        initr_socket
+        inr_socket
             .send_to(&encoded_packet, relay_addr)
             .await
             .expect("should relay init notification to relay")
@@ -587,10 +590,10 @@ async fn relay() {
     });
 
     // Join all handles
-    let (initr_res, relay_res, tgt_res, mock_service_res) =
-        tokio::join!(initr_handle, relay_handle, tgt_handle, mock_service_handle);
+    let (inr_res, relay_res, tgt_res, mock_service_res) =
+        tokio::join!(inr_handle, relay_handle, tgt_handle, mock_service_handle);
 
-    initr_res.unwrap();
+    inr_res.unwrap();
     relay_res.unwrap();
     mock_service_res.unwrap();
 
@@ -620,9 +623,116 @@ async fn relay() {
         .decrypt_message(message_nonce, &message, &aad)
         .expect("should decrypt message");
     match Message::decode(&decrypted_message).expect("should decode message") {
-        Message::Notification(Notification::RelayMsg(enr, _nonce)) => {
-            assert_eq!(initr_enr, enr)
+        Message::RelayMsgNotification(relay_msg) => {
+            let (enr, _) = relay_msg.into();
+            assert_eq!(inr_enr, enr)
         }
         _ => panic!("message should decode to a relay msg notification"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nat_hole_punch_target() {
+    init();
+
+    // Target
+    let listen_config = ListenConfig::default().with_ipv4(Ipv4Addr::LOCALHOST, 9902);
+    let (mut handler, mock_service) =
+        build_handler_with_listen_config::<DefaultProtocolId>(listen_config).await;
+    let tgt_addr = handler.enr.read().udp4_socket().unwrap().into();
+    let tgt_node_id = handler.enr.read().node_id();
+    handler.nat_utils.is_behind_nat = Some(true);
+
+    // Relay
+    let relay_enr = {
+        let key = CombinedKey::generate_secp256k1();
+        EnrBuilder::new("v4")
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(9022)
+            .build(&key)
+            .unwrap()
+    };
+    let relay_addr = relay_enr.udp4_socket().unwrap().into();
+    let relay_node_id = relay_enr.node_id();
+
+    let relay_node_address = NodeAddress::new(relay_addr, relay_node_id);
+    handler
+        .sessions
+        .insert(relay_node_address, build_dummy_session());
+
+    let relay_socket = UdpSocket::bind(relay_addr)
+        .await
+        .expect("should bind to target socket");
+
+    // Initiator
+    let inr_enr = {
+        let key = CombinedKey::generate_secp256k1();
+        EnrBuilder::new("v4")
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(9021)
+            .build(&key)
+            .unwrap()
+    };
+    let inr_addr = inr_enr.udp4_socket().unwrap();
+    let inr_node_id = inr_enr.node_id();
+    let inr_nonce: MessageNonce = [1; MESSAGE_NONCE_LENGTH];
+
+    let inr_socket = UdpSocket::bind(inr_addr)
+        .await
+        .expect("should bind to initiator socket");
+
+    // Target handle
+    let tgt_handle = tokio::spawn(async move { handler.start::<DefaultProtocolId>().await });
+
+    // Relay handle
+    let relay_msg_notif = RelayMsgNotification::new(inr_enr.clone(), inr_nonce);
+
+    let relay_handle = tokio::spawn(async move {
+        let mut session = build_dummy_session();
+        let packet = session
+            .encrypt_session_message::<DefaultProtocolId>(relay_node_id, &relay_msg_notif.encode())
+            .expect("should encrypt notification");
+        let encoded_packet = packet.encode::<DefaultProtocolId>(&tgt_node_id);
+
+        relay_socket
+            .send_to(&encoded_packet, tgt_addr)
+            .await
+            .expect("should relay init notification to relay")
+    });
+
+    // Initiator handle
+    let target_exit = mock_service.exit_tx;
+    let inr_handle = tokio::spawn(async move {
+        let mut buffer = [0; MAX_PACKET_SIZE];
+        let res = inr_socket
+            .recv_from(&mut buffer)
+            .await
+            .expect("should read bytes from socket");
+
+        drop(target_exit);
+
+        (res, buffer)
+    });
+
+    // Join all handles
+    let (tgt_res, relay_res, inr_res) = tokio::join!(tgt_handle, relay_handle, inr_handle);
+
+    tgt_res.unwrap();
+    relay_res.unwrap();
+
+    let ((length, src), buffer) = inr_res.unwrap();
+
+    assert_eq!(src, tgt_addr);
+
+    let (packet, _aad) = Packet::decode::<DefaultProtocolId>(&inr_node_id, &buffer[..length])
+        .expect("should decode packet");
+    let Packet { header, .. } = packet;
+    let PacketHeader {
+        kind,
+        message_nonce,
+        ..
+    } = header;
+
+    assert!(kind.is_whoareyou());
+    assert_eq!(message_nonce, inr_nonce)
 }
