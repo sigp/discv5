@@ -451,6 +451,7 @@ impl Service {
                                 );
                             }
                         }
+                        HandlerOut::PingAllPeers => self.ping_connected_peers()
                     }
                 }
                 event = Service::bucket_maintenance_poll(&self.kbuckets) => {

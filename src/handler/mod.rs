@@ -150,6 +150,15 @@ pub enum HandlerOut {
     /// Look-up an ENR in k-buckets. Passes the node id of the peer to look up and the
     /// [`RelayMsgNotification`] we intend to send to it.
     FindHolePunchEnr(RelayInitNotification),
+
+    /// Triggers a ping to all peers, outside of the regular ping interval. Needed to trigger
+    /// renewed session establishment after updating the local ENR from unreachable to reachable
+    /// and clearing all sessions. Only this way does the local node have a chance to make it into
+    /// its peers kbuckets before the session expires (defaults to 24 hours). This is the case
+    /// since its peers, running this implementation, will only respond to PINGs from nodes in its
+    /// kbucktes and unreachable ENRs don't make it into kbuckets upon [`HandlerOut::Established`]
+    /// event.
+    PingAllPeers,
 }
 
 /// How we connected to the node.
@@ -393,7 +402,14 @@ impl Handler {
                                 // inserted into its peers' kbuckets before the session they
                                 // already had expires. Session duration, in this impl defaults to
                                 // 24 hours.
-                                self.sessions.cache.clear()
+                                self.sessions.cache.clear();
+                                if let Err(e) = self
+                                    .service_send
+                                    .send(HandlerOut::PingAllPeers)
+                                    .await
+                                {
+                                    warn!("Failed to inform that request failed {}", e);
+                                }
                             }
                             self.nat_hole_puncher.set_is_behind_nat(self.listen_sockets.iter(), Some(ip), Some(port));
                         }
