@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{
-    handler::sessions::session::build_dummy_session,
+    handler::session::build_dummy_session,
     packet::{DefaultProtocolId, PacketHeader, MAX_PACKET_SIZE},
     return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
@@ -75,13 +75,14 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
     let (service_send, handler_recv) = mpsc::channel(50);
     let (exit_tx, exit) = oneshot::channel();
 
-    let nat_hole_puncher = NatHolePunchUtils::new(
+    let nat_utils = NatUtils::new(
         listen_sockets.iter(),
         &enr,
         config.listen_config.ip_mode(),
         None,
         None,
         config.session_cache_capacity,
+        None,
     );
 
     (
@@ -93,7 +94,7 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
             active_requests: ActiveRequests::new(config.request_timeout),
             pending_requests: HashMap::new(),
             filter_expected_responses,
-            sessions: Sessions::new(config.session_cache_capacity, config.session_timeout, None),
+            sessions: LruTimeCache::new(config.session_timeout,Some(config.session_cache_capacity)),
             one_time_sessions: LruTimeCache::new(
                 Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
                 Some(ONE_TIME_SESSION_CACHE_CAPACITY),
@@ -103,7 +104,7 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
             service_send,
             listen_sockets,
             socket,
-            nat_hole_puncher,
+            nat_utils,
             exit,
         },
         MockService {
@@ -494,7 +495,6 @@ async fn relay() {
         build_handler_with_listen_config::<DefaultProtocolId>(listen_config).await;
     let relay_addr = handler.enr.read().udp4_socket().unwrap().into();
     let relay_node_id = handler.enr.read().node_id();
-    let mut dummy_session = build_dummy_session();
 
     // Initiator
     let initr_enr = {
@@ -511,8 +511,7 @@ async fn relay() {
     let initr_node_address = NodeAddress::new(initr_addr, initr_enr.node_id());
     handler
         .sessions
-        .cache
-        .insert(initr_node_address, dummy_session.clone());
+        .insert(initr_node_address, build_dummy_session());
 
     let initr_socket = UdpSocket::bind(initr_addr)
         .await
@@ -533,8 +532,7 @@ async fn relay() {
     let tgt_node_address = NodeAddress::new(tgt_addr, tgt_enr.node_id());
     handler
         .sessions
-        .cache
-        .insert(tgt_node_address, dummy_session.clone());
+        .insert(tgt_node_address, build_dummy_session());
 
     let tgt_socket = UdpSocket::bind(tgt_addr)
         .await
@@ -618,7 +616,7 @@ async fn relay() {
         kind
     );
 
-    let decrypted_message = dummy_session
+    let decrypted_message = build_dummy_session()
         .decrypt_message(message_nonce, &message, &aad)
         .expect("should decrypt message");
     match Message::decode(&decrypted_message).expect("should decode message") {

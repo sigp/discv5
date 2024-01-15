@@ -1,19 +1,20 @@
-use futures::channel::mpsc;
 use hashlink::LinkedHashMap;
 use std::{
     hash::Hash,
     time::{Duration, Instant},
 };
-use tracing::warn;
 
 pub struct LruTimeCache<K, V> {
-    map: LinkedHashMap<K, (V, Instant)>,
+    /// The main map storing the internal values. It stores the time the value was inserted and an
+    /// optional tag to keep track of individual values.
+    map: LinkedHashMap<K, (V, Instant, bool)>,
     /// The time elements remain in the cache.
     ttl: Duration,
     /// The max size of the cache.
     capacity: usize,
-    /// Channel to send expiry notifications on.
-    tx: Option<mpsc::Sender<K>>,
+    /// Optional count of specific tagged elements. This is used in discv5 for tracking
+    /// the number of unreachable sessions currently held.
+    tagged_count: usize,
 }
 
 impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
@@ -27,36 +28,49 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
             map: LinkedHashMap::new(),
             ttl,
             capacity,
-            tx: None,
+            tagged_count: 0,
         }
     }
 
-    /// Queues expired entries on buffer. If enabled, ensure that buffer is emptied regularly.
-    pub fn new_with_expiry_feedback(
-        ttl: Duration,
-        capacity: Option<usize>,
-        tx: mpsc::Sender<K>,
-    ) -> LruTimeCache<K, V> {
-        let capacity = if let Some(cap) = capacity {
-            cap
-        } else {
-            usize::MAX
-        };
-        LruTimeCache {
-            map: LinkedHashMap::new(),
-            ttl,
-            capacity,
-            tx: Some(tx),
-        }
+    /// Returns the number of elements that are currently tagged in the cache.
+    pub fn tagged(&self) -> usize {
+        self.tagged_count
+    }
+
+    // Insert an untagged key-value pair into the cache.
+    pub fn insert(&mut self, key: K, value: V) {
+        self.insert_raw(key, value, false);
+    }
+
+    // Insert a tagged key-value pair into the cache.
+    #[allow(dead_code)]
+    pub fn insert_tagged(&mut self, key: K, value: V) {
+        self.insert_raw(key, value, true);
     }
 
     /// Inserts a key-value pair into the cache.
-    pub fn insert(&mut self, key: K, value: V) {
+    pub fn insert_raw(&mut self, key: K, value: V, tagged: bool) {
         let now = Instant::now();
-        self.map.insert(key, (value, now));
+        if let Some(old_value) = self.map.insert(key, (value, now, tagged)) {
+            // If the old value was tagged but the new one isn't, we reduce our count
+            if !tagged && old_value.2 {
+                self.tagged_count = self.tagged_count.saturating_sub(1);
+            } else if tagged && !old_value.2 {
+                // Else if the new value is tagged and the old wasn't tagged increment the count
+                self.tagged_count += 1;
+            }
+        } else if tagged {
+            // No previous value, increment the tagged count
+            self.tagged_count += 1;
+        }
 
         if self.map.len() > self.capacity {
-            self.map.pop_front();
+            if let Some((_, value)) = self.map.pop_front() {
+                if value.2 {
+                    // We have removed a tagged element
+                    self.tagged_count = self.tagged_count.saturating_sub(1);
+                }
+            }
         }
     }
 
@@ -87,14 +101,13 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
     /// updating the timestamp.
     #[allow(dead_code)]
     pub fn peek(&self, key: &K) -> Option<&V> {
-        if let Some((value, time)) = self.map.get(key) {
+        if let Some((value, time, _)) = self.map.get(key) {
             return if *time + self.ttl >= Instant::now() {
                 Some(value)
             } else {
                 None
             };
         }
-
         None
     }
 
@@ -107,28 +120,31 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
     /// Removes a key-value pair from the cache, returning the value at the key if the key
     /// was previously in the map.
     pub fn remove(&mut self, key: &K) -> Option<V> {
-        self.map.remove(key).map(|v| v.0)
+        let value = self.map.remove(key)?;
+
+        // This element was tagged, reduce the count
+        if value.2 {
+            self.tagged_count = self.tagged_count.saturating_sub(1);
+        }
+        Some(value.0)
     }
 
     /// Removes expired items from the cache.
     fn remove_expired_values(&mut self, now: Instant) {
         let mut expired_keys = vec![];
 
-        for (key, (_, time)) in self.map.iter_mut() {
+        for (key, (_, time, _)) in self.map.iter_mut() {
             if *time + self.ttl >= now {
                 break;
             }
             expired_keys.push(key.clone());
         }
 
-        for k in expired_keys.iter() {
-            self.map.remove(k);
-        }
-
-        if let Some(ref mut tx) = self.tx {
-            for k in expired_keys {
-                if let Err(e) = tx.try_send(k) {
-                    warn!("Failed removing expired key, {}", e);
+        for k in expired_keys {
+            if let Some(v) = self.map.remove(&k) {
+                // This key was tagged, reduce the count
+                if v.2 {
+                    self.tagged_count = self.tagged_count.saturating_sub(1);
                 }
             }
         }
@@ -169,6 +185,30 @@ mod tests {
         assert_eq!(2, cache.len());
         assert_eq!(Some(&20), cache.get(&2));
         assert_eq!(Some(&30), cache.get(&3));
+    }
+
+    #[test]
+    fn tagging() {
+        let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(2));
+
+        cache.insert_tagged(1, 10);
+        cache.insert(2, 20);
+        assert_eq!(2, cache.len());
+        assert_eq!(1, cache.tagged());
+
+        cache.insert_tagged(3, 30);
+        assert_eq!(2, cache.len());
+        assert_eq!(1, cache.tagged());
+        assert_eq!(Some(&20), cache.get(&2));
+        assert_eq!(Some(&30), cache.get(&3));
+
+        cache.insert_tagged(2, 30);
+        assert_eq!(2, cache.tagged());
+
+        cache.insert(4, 30);
+        assert_eq!(1, cache.tagged());
+        cache.insert(5, 30);
+        assert_eq!(0, cache.tagged());
     }
 
     #[test]

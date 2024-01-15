@@ -1,8 +1,12 @@
 //! A set of configuration parameters to tune the discovery protocol.
 use crate::{
-    handler::MIN_SESSIONS_UNREACHABLE_ENR, kbucket::MAX_NODES_PER_BUCKET, Enr, Executor,
-    ListenConfig, PermitBanList, RateLimiter, RateLimiterBuilder,
+    kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, ListenConfig, PermitBanList, RateLimiter,
+    RateLimiterBuilder,
 };
+
+/// The minimum number of unreachable Sessions a node must allow. This enables the network to
+/// boostrap.
+const MIN_SESSIONS_UNREACHABLE_ENR: usize = 10;
 
 use std::{ops::RangeInclusive, time::Duration};
 
@@ -100,7 +104,7 @@ pub struct Discv5Config {
     /// The max limit for peers with unreachable ENRs. Benevolent examples of such peers are peers
     /// that are discovering their externally reachable socket, nodes must assist at least one
     /// such peer in discovering their reachable socket via ip voting, and peers behind symmetric
-    /// NAT. Default is no limit. Minimum is 1.
+    /// NAT. Default is no limit. Minimum is 10.
     pub unreachable_enr_limit: Option<usize>,
 
     /// The unused port range to try and bind to when testing if this node is behind NAT based on

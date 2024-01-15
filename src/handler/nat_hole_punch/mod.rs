@@ -10,7 +10,7 @@ mod error;
 mod utils;
 
 pub use error::Error;
-pub use utils::NatHolePunchUtils;
+pub use utils::NatUtils;
 
 #[async_trait::async_trait]
 pub trait HolePunchNat {

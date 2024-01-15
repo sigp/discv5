@@ -1,18 +1,15 @@
 use std::{
     net::{IpAddr, SocketAddr, UdpSocket},
     ops::RangeInclusive,
-    pin::Pin,
-    task::{Context, Poll},
     time::Duration,
 };
 
-use derive_more::{Deref, DerefMut};
+use delay_map::HashSetDelay;
 use enr::NodeId;
-use futures::{channel::mpsc, Stream, StreamExt};
 use lru::LruCache;
 use rand::Rng;
 
-use crate::{lru_time_cache::LruTimeCache, node_info::NodeAddress, Enr, IpMode};
+use crate::{node_info::NodeAddress, Enr, IpMode};
 
 /// The expected shortest lifetime in most NAT configurations of a punched hole in seconds.
 pub const DEFAULT_HOLE_PUNCH_LIFETIME: u64 = 20;
@@ -22,7 +19,7 @@ pub const PORT_BIND_TRIES: usize = 4;
 pub const USER_AND_DYNAMIC_PORTS: RangeInclusive<u16> = 1025..=u16::MAX;
 
 /// Aggregates types necessary to implement nat hole punching for [`crate::handler::Handler`].
-pub struct NatHolePunchUtils {
+pub struct NatUtils {
     /// Ip mode as set in config.
     pub ip_mode: IpMode,
     /// This node has been observed to be behind a NAT.
@@ -36,14 +33,16 @@ pub struct NatHolePunchUtils {
     pub new_peer_latest_relay_cache: LruCache<NodeId, NodeAddress>,
     /// Keeps track if this node needs to send a packet to a peer in order to keep a hole punched
     /// for it in its NAT.
-    hole_punch_tracker: NatHolePunchTracker,
+    pub hole_punch_tracker: HashSetDelay<SocketAddr>,
     /// Ports to trie to bind to check if this node is behind NAT.
     pub unused_port_range: Option<RangeInclusive<u16>>,
     /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
     pub ban_duration: Option<Duration>,
+    /// The number of unreachable ENRs we store at most in our session cache.
+    pub unreachable_enr_limit: Option<usize>,
 }
 
-impl NatHolePunchUtils {
+impl NatUtils {
     pub fn new<'a>(
         listen_sockets: impl Iterator<Item = &'a SocketAddr>,
         local_enr: &Enr,
@@ -51,14 +50,16 @@ impl NatHolePunchUtils {
         unused_port_range: Option<RangeInclusive<u16>>,
         ban_duration: Option<Duration>,
         session_cache_capacity: usize,
+        unreachable_enr_limit: Option<usize>,
     ) -> Self {
-        let mut nat_hole_puncher = NatHolePunchUtils {
+        let mut nat_hole_puncher = NatUtils {
             ip_mode,
             is_behind_nat: None,
             new_peer_latest_relay_cache: LruCache::new(session_cache_capacity),
-            hole_punch_tracker: NatHolePunchTracker::new(session_cache_capacity),
+            hole_punch_tracker: HashSetDelay::new(Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME)),
             unused_port_range,
             ban_duration,
+            unreachable_enr_limit,
         };
         // Optimistically only test one advertised socket, ipv4 has precedence. If it is
         // reachable, assumption is made that also the other ip version socket is reachable.
@@ -86,7 +87,7 @@ impl NatHolePunchUtils {
         if self.is_behind_nat == Some(false) {
             return;
         }
-        self.hole_punch_tracker.insert(peer_socket, ());
+        self.hole_punch_tracker.insert(peer_socket);
     }
 
     pub fn untrack(&mut self, peer_socket: &SocketAddr) {
@@ -121,40 +122,10 @@ impl NatHolePunchUtils {
             }
         });
     }
-}
 
-impl Stream for NatHolePunchUtils {
-    type Item = SocketAddr;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Until ip voting is done and an observed public address is finalised, all nodes act as
-        // if they are behind a NAT.
-        if self.is_behind_nat == Some(false) || self.hole_punch_tracker.len() == 0 {
-            return Poll::Pending;
-        }
-        self.hole_punch_tracker.expired_entries.poll_next_unpin(cx)
-    }
-}
-
-#[derive(Deref, DerefMut)]
-struct NatHolePunchTracker {
-    #[deref]
-    #[deref_mut]
-    cache: LruTimeCache<SocketAddr, ()>,
-    expired_entries: mpsc::Receiver<SocketAddr>,
-}
-
-impl NatHolePunchTracker {
-    fn new(session_cache_capacity: usize) -> Self {
-        let (tx, rx) = futures::channel::mpsc::channel::<SocketAddr>(session_cache_capacity);
-        Self {
-            cache: LruTimeCache::new_with_expiry_feedback(
-                Duration::from_secs(DEFAULT_HOLE_PUNCH_LIFETIME),
-                Some(session_cache_capacity),
-                tx,
-            ),
-            expired_entries: rx,
-        }
+    /// Determines if an ENR is reachable or not based on its assigned keys.
+    pub fn is_enr_reachable(enr: &Enr) -> bool {
+        enr.udp4_socket().is_some() || enr.udp6_socket().is_some()
     }
 }
 
