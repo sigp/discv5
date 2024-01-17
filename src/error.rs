@@ -1,4 +1,7 @@
-use crate::{handler::Challenge, node_info::NonContactable};
+use crate::{
+    handler::Challenge,
+    node_info::{NodeAddress, NonContactable},
+};
 use derive_more::From;
 use rlp::DecoderError;
 use std::fmt;
@@ -33,6 +36,8 @@ pub enum Discv5Error {
     ServiceAlreadyStarted,
     /// A session could not be established with the remote.
     SessionNotEstablished,
+    /// A session to the given peer is already established.
+    SessionAlreadyEstablished(NodeAddress),
     /// An RLP decoding error occurred.
     RLPError(DecoderError),
     /// Failed to encrypt a message.

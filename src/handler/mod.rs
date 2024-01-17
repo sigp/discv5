@@ -553,6 +553,11 @@ impl Handler {
                     .on_request_time_out::<P>(relay, local_enr, nonce, target)
                     .await
                 {
+                    Err(NatError::Initiator(Discv5Error::SessionAlreadyEstablished(
+                        node_address,
+                    ))) => {
+                        debug!("Session to peer already established, aborting hole punch attempt. Peer: {node_address}");
+                    }
                     Err(e) => {
                         warn!("Failed to start hole punching. Error: {:?}", e);
                     }
@@ -1591,7 +1596,9 @@ impl HolePunchNat for Handler {
     ) -> Result<(), NatError> {
         // Another hole punch process with this target may have just completed.
         if self.sessions.get(&target_node_address).is_some() {
-            return Ok(());
+            return Err(NatError::Initiator(Discv5Error::SessionAlreadyEstablished(
+                target_node_address,
+            )));
         }
         if let Some(session) = self.sessions.get_mut(&relay) {
             let relay_init_notif =
