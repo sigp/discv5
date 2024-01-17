@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     error::{RequestError, ResponseError},
-    handler::{Handler, HandlerIn, HandlerOut},
+    handler::{Handler, HandlerIn, HandlerOut, EnrRequestData},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
@@ -387,20 +387,60 @@ impl Service {
                         HandlerOut::Response(node_address, response) => {
                                 self.handle_rpc_response(node_address, *response);
                             }
-                        HandlerOut::WhoAreYou(whoareyou_ref) => {
+                        HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(whoareyou_ref)) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
+                                if let Err(e) = self.handler_send.send(HandlerIn::EnrResponse(Some(known_enr), EnrRequestData::WhoAreYou(whoareyou_ref))) {
                                     warn!("Failed to send whoareyou {}", e);
                                 };
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
+                                if let Err(e) = self.handler_send.send(HandlerIn::EnrResponse(None, EnrRequestData::WhoAreYou(whoareyou_ref))) {
                                     warn!("Failed to send who are you to unknown enr peer {}", e);
                                 }
                             }
                         }
+                        HandlerOut::RequestEnr(EnrRequestData::Nat(relay_initiator)) => {
+                            // Update initiator's Enr if it's in kbuckets
+                            let initiator_enr = relay_initiator.initiator_enr();
+                            let initiator_key = kbucket::Key::from(initiator_enr.node_id());
+                            match self.kbuckets.write().entry(&initiator_key) {
+                                kbucket::Entry::Present(ref mut entry, _) => {
+                                    let enr = entry.value_mut();
+                                    if enr.seq() < initiator_enr.seq() {
+                                        *enr = initiator_enr.clone();
+                                    }
+                                }
+                                kbucket::Entry::Pending(ref mut entry, _) => {
+                                    let enr = entry.value_mut();
+                                    if enr.seq() < initiator_enr.seq() {
+                                        *enr = initiator_enr.clone();
+                                    }
+                                }
+                                _ => ()
+                            }
+                            // check if we know the target node id in our routing table, otherwise
+                            // drop relay attempt.
+                            let target_node_id = relay_initiator.target_node_id();
+                            let target_key = kbucket::Key::from(target_node_id);
+                            if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&target_key) {
+                                let target_enr = entry.value().clone();
+                                if let Err(e) = self.handler_send.send(HandlerIn::EnrResponse(Some(target_enr), EnrRequestData::Nat(relay_initiator))) {
+                                    warn!(
+                                        "Failed to send target enr to relay process, error: {e}"
+                                    );
+                                }
+                            } else {
+                                let initiator_node_id = relay_initiator.initiator_enr().node_id();
+                                warn!(
+                                    initiator_node_id=%initiator_node_id,
+                                    target_node_id=%target_node_id,
+                                    "Peer requested relaying to a peer not in k-buckets"
+                                );
+                            }
+                        },
+                        HandlerOut::PingAllPeers => self.ping_connected_peers(),
                         HandlerOut::RequestFailed(request_id, error) => {
                             if let RequestError::Timeout = error {
                                 debug!("RPC Request timed out. id: {}", request_id);
@@ -409,49 +449,6 @@ impl Service {
                             }
                             self.rpc_failure(request_id, error);
                         }
-                        HandlerOut::FindHolePunchEnr(relay_init) => {
-                            // update initiator's enr if it's in kbuckets
-                            let inr_enr = relay_init.initiator_enr();
-                            let inr_key = kbucket::Key::from(inr_enr.node_id());
-                            match self.kbuckets.write().entry(&inr_key) {
-                                kbucket::Entry::Present(ref mut entry, _) => {
-                                    let enr = entry.value_mut();
-                                    if enr.seq() < inr_enr.seq() {
-                                        *enr = inr_enr.clone();
-                                    }
-                                }
-                                kbucket::Entry::Pending(ref mut entry, _) => {
-                                    let enr = entry.value_mut();
-                                    if enr.seq() < inr_enr.seq() {
-                                        *enr = inr_enr.clone();
-                                    }
-                                }
-                                _ => ()
-                            }
-                            // check if we know the target node id in our routing table, otherwise
-                            // drop relay attempt.
-                            let tgt_node_id = relay_init.target_node_id();
-                            let tgt_key = kbucket::Key::from(tgt_node_id);
-                            if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&tgt_key) {
-                                let tgt_enr = entry.value().clone();
-                                if let Err(e) = self.handler_send.send(HandlerIn::HolePunchEnr(tgt_enr, relay_init)) {
-                                    warn!(
-                                        "Failed to send target enr to relay process, error: {e}"
-                                    );
-                                }
-                            } else {
-                                // todo(emhane): ban peers that ask us to relay to a peer we very
-                                // unlikely could have sent to them in a NODES response.
-                                let inr_node_id = relay_init.initiator_enr().node_id();
-
-                                warn!(
-                                    inr_node_id=%inr_node_id,
-                                    tgt_node_id=%tgt_node_id,
-                                    "Peer requested relaying to a peer not in k-buckets"
-                                );
-                            }
-                        }
-                        HandlerOut::PingAllPeers => self.ping_connected_peers()
                     }
                 }
                 event = Service::bucket_maintenance_poll(&self.kbuckets) => {

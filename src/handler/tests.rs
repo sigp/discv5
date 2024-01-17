@@ -75,7 +75,7 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
     let (service_send, handler_recv) = mpsc::channel(50);
     let (exit_tx, exit) = oneshot::channel();
 
-    let nat_utils = NatUtils::new(
+    let nat = Nat::new(
         &listen_sockets,
         &enr,
         config.listen_config.ip_mode(),
@@ -107,7 +107,7 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
             service_send,
             listen_sockets,
             socket,
-            nat_utils,
+            nat,
             exit,
         },
         MockService {
@@ -191,9 +191,9 @@ async fn simple_session_message() {
         loop {
             if let Some(message) = receiver_recv.recv().await {
                 match message {
-                    HandlerOut::WhoAreYou(wru_ref) => {
+                    HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(wru_ref)) => {
                         let _ =
-                            recv_send.send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())));
+                            recv_send.send(HandlerIn::EnrResponse(Some(sender_enr.clone()), EnrRequestData::WhoAreYou(wru_ref)));
                     }
                     HandlerOut::Request(_, request) => {
                         assert_eq!(request, send_message);
@@ -307,8 +307,8 @@ async fn multiple_messages() {
     let receiver = async move {
         loop {
             match receiver_handler.recv().await {
-                Some(HandlerOut::WhoAreYou(wru_ref)) => {
-                    let _ = recv_send.send(HandlerIn::WhoAreYou(wru_ref, Some(sender_enr.clone())));
+                Some(HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(wru_ref))) => {
+                    let _ = recv_send.send(HandlerIn::EnrResponse(Some(sender_enr.clone()), EnrRequestData::WhoAreYou(wru_ref)));
                 }
                 Some(HandlerOut::Request(addr, request)) => {
                     assert_eq!(request, recv_send_message);
@@ -551,8 +551,8 @@ async fn nat_hole_punch_relay() {
     let mock_service_handle = tokio::spawn(async move {
         let service_msg = rx.recv().await.expect("should receive service message");
         match service_msg {
-            HandlerOut::FindHolePunchEnr(relay_init) => tx
-                .send(HandlerIn::HolePunchEnr(tgt_enr_clone, relay_init))
+            HandlerOut::RequestEnr(EnrRequestData::Nat(relay_init)) => tx
+                .send(HandlerIn::EnrResponse(Some(tgt_enr_clone), EnrRequestData::Nat(relay_init)))
                 .expect("should send message to handler"),
             _ => panic!("service message should be 'find hole punch enr'"),
         }
@@ -641,7 +641,7 @@ async fn nat_hole_punch_target() {
         build_handler_with_listen_config::<DefaultProtocolId>(listen_config).await;
     let tgt_addr = handler.enr.read().udp4_socket().unwrap().into();
     let tgt_node_id = handler.enr.read().node_id();
-    handler.nat_utils.is_behind_nat = Some(true);
+    handler.nat.is_behind_nat = Some(true);
 
     // Relay
     let relay_enr = {

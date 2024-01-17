@@ -38,9 +38,7 @@ lru = {version = "0.7.1", default-features = false }
 hashlink = "0.7.0"
 delay_map = "0.3.0"
 more-asserts = "0.2.2"
-thiserror = "1.0.40"
 derive_more = { version = "0.99.17", default-features = false, features = ["from", "display", "deref", "deref_mut"] }
-async-trait = "0.1.74"
 
 [dev-dependencies]
 rand_07 = { package = "rand", version = "0.7" }
