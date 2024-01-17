@@ -29,7 +29,7 @@
 use crate::{
     config::Discv5Config,
     discv5::PERMIT_BAN_LIST,
-    error::{Discv5Error, RequestError, NatError},
+    error::{Discv5Error, NatError, RequestError},
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind, ProtocolIdentity},
     rpc::{
         Message, Payload, RelayInitNotification, RelayMsgNotification, Request, RequestBody,
@@ -937,9 +937,7 @@ impl Handler {
             let enr_not_reachable = !Nat::is_enr_reachable(&most_recent_enr);
 
             // Decide whether to establish this connection based on our appetite for unreachable
-            if enr_not_reachable
-                && Some(self.sessions.tagged()) >= self.nat.unreachable_enr_limit
-            {
+            if enr_not_reachable && Some(self.sessions.tagged()) >= self.nat.unreachable_enr_limit {
                 debug!("Reached limit of unreachable ENR sessions. Avoiding a new connection. Limit: {}", self.sessions.tagged());
                 return;
             }
@@ -1146,7 +1144,10 @@ impl Handler {
                     let ban_timeout = self.nat.ban_duration.map(|v| Instant::now() + v);
                     PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                 } else if let Err(e) = self.on_relay_initiator(notification).await {
-                    warn!("failed handling notification to relay for {node_address}, {:?}", e);
+                    warn!(
+                        "failed handling notification to relay for {node_address}, {:?}",
+                        e
+                    );
                 }
             }
             Message::RelayMsgNotification(notification) => {
@@ -1158,7 +1159,10 @@ impl Handler {
                     }
                     _ => {
                         if let Err(e) = self.on_relay_msg::<P>(notification).await {
-                            warn!("failed handling notification relayed from {node_address}, {:?}", e);
+                            warn!(
+                                "failed handling notification relayed from {node_address}, {:?}",
+                                e
+                            );
                         }
                     }
                 }
@@ -1211,7 +1215,9 @@ impl Handler {
                         let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
                         if let Err(e) = self
                             .service_send
-                            .send(HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(whoareyou_ref)))
+                            .send(HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(
+                                whoareyou_ref,
+                            )))
                             .await
                         {
                             warn!("Failed to send WhoAreYou to the service {}", e)
@@ -1257,7 +1263,9 @@ impl Handler {
             let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
             if let Err(e) = self
                 .service_send
-                .send(HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(whoareyou_ref)))
+                .send(HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(
+                    whoareyou_ref,
+                )))
                 .await
             {
                 warn!(
@@ -1586,7 +1594,6 @@ fn most_recent_enr(first: Option<Enr>, second: Option<Enr>) -> Result<Enr, ()> {
     }
 }
 
-
 // NAT-related functions
 impl Handler {
     /// A request times out. Should trigger the initiation of a hole punch attempt, given a
@@ -1636,7 +1643,10 @@ impl Handler {
 
     /// A RelayInit notification is received over discv5 indicating this node is the relay. Should
     /// trigger sending a RelayMsg to the target.
-    async fn on_relay_initiator(&mut self, relay_initiator: RelayInitNotification) -> Result<(), NatError> {
+    async fn on_relay_initiator(
+        &mut self,
+        relay_initiator: RelayInitNotification,
+    ) -> Result<(), NatError> {
         // Check for target peer in our kbuckets otherwise drop notification.
         if let Err(e) = self
             .service_send
@@ -1655,11 +1665,10 @@ impl Handler {
         relay_msg: RelayMsgNotification,
     ) -> Result<(), NatError> {
         let (inr_enr, timed_out_msg_nonce) = relay_msg.into();
-        let initiator_node_address =
-            match NodeContact::try_from_enr(inr_enr, self.nat.ip_mode) {
-                Ok(contact) => contact.node_address(),
-                Err(e) => return Err(NatError::Target(e.into())),
-            };
+        let initiator_node_address = match NodeContact::try_from_enr(inr_enr, self.nat.ip_mode) {
+            Ok(contact) => contact.node_address(),
+            Err(e) => return Err(NatError::Target(e.into())),
+        };
 
         // A session may already have been established.
         if self.sessions.get(&initiator_node_address).is_some() {

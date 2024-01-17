@@ -192,8 +192,10 @@ async fn simple_session_message() {
             if let Some(message) = receiver_recv.recv().await {
                 match message {
                     HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(wru_ref)) => {
-                        let _ =
-                            recv_send.send(HandlerIn::EnrResponse(Some(sender_enr.clone()), EnrRequestData::WhoAreYou(wru_ref)));
+                        let _ = recv_send.send(HandlerIn::EnrResponse(
+                            Some(sender_enr.clone()),
+                            EnrRequestData::WhoAreYou(wru_ref),
+                        ));
                     }
                     HandlerOut::Request(_, request) => {
                         assert_eq!(request, send_message);
@@ -308,7 +310,10 @@ async fn multiple_messages() {
         loop {
             match receiver_handler.recv().await {
                 Some(HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(wru_ref))) => {
-                    let _ = recv_send.send(HandlerIn::EnrResponse(Some(sender_enr.clone()), EnrRequestData::WhoAreYou(wru_ref)));
+                    let _ = recv_send.send(HandlerIn::EnrResponse(
+                        Some(sender_enr.clone()),
+                        EnrRequestData::WhoAreYou(wru_ref),
+                    ));
                 }
                 Some(HandlerOut::Request(addr, request)) => {
                     assert_eq!(request, recv_send_message);
@@ -552,7 +557,10 @@ async fn nat_hole_punch_relay() {
         let service_msg = rx.recv().await.expect("should receive service message");
         match service_msg {
             HandlerOut::RequestEnr(EnrRequestData::Nat(relay_init)) => tx
-                .send(HandlerIn::EnrResponse(Some(tgt_enr_clone), EnrRequestData::Nat(relay_init)))
+                .send(HandlerIn::EnrResponse(
+                    Some(tgt_enr_clone),
+                    EnrRequestData::Nat(relay_init),
+                ))
                 .expect("should send message to handler"),
             _ => panic!("service message should be 'find hole punch enr'"),
         }

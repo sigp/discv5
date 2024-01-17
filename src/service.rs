@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     error::{RequestError, ResponseError},
-    handler::{Handler, HandlerIn, HandlerOut, EnrRequestData},
+    handler::{EnrRequestData, Handler, HandlerIn, HandlerOut},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
