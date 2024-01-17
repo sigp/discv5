@@ -76,7 +76,7 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
     let (exit_tx, exit) = oneshot::channel();
 
     let nat_utils = NatUtils::new(
-        listen_sockets.iter(),
+        &listen_sockets,
         &enr,
         config.listen_config.ip_mode(),
         None,

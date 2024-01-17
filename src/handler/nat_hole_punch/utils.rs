@@ -43,8 +43,8 @@ pub struct NatUtils {
 }
 
 impl NatUtils {
-    pub fn new<'a>(
-        listen_sockets: impl Iterator<Item = &'a SocketAddr>,
+    pub fn new(
+        listen_sockets: &[SocketAddr],
         local_enr: &Enr,
         ip_mode: IpMode,
         unused_port_range: Option<RangeInclusive<u16>>,
@@ -96,13 +96,16 @@ impl NatUtils {
 
     /// Called when a new observed address is reported at start up or after a
     /// [`crate::Discv5Event::SocketUpdated`].
-    pub fn set_is_behind_nat<'a>(
+    pub fn set_is_behind_nat(
         &mut self,
-        mut listen_sockets: impl Iterator<Item = &'a SocketAddr>,
+        listen_sockets: &[SocketAddr],
         observed_ip: Option<IpAddr>,
         observed_port: Option<u16>,
     ) {
-        if !listen_sockets.any(|listen_socket| Some(listen_socket.port()) == observed_port) {
+        if !listen_sockets
+            .iter()
+            .any(|listen_socket| Some(listen_socket.port()) == observed_port)
+        {
             self.is_behind_nat = Some(true);
             return;
         }

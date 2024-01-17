@@ -320,7 +320,7 @@ impl Handler {
         let sessions = LruTimeCache::new(session_timeout, Some(session_cache_capacity));
 
         let nat_utils = NatUtils::new(
-            listen_sockets.iter(),
+            &listen_sockets,
             &enr.read(),
             ip_mode,
             unused_port_range,
@@ -408,7 +408,7 @@ impl Handler {
                                     warn!("Failed to inform that request failed {}", e);
                                 }
                             }
-                            self.nat_utils.set_is_behind_nat(self.listen_sockets.iter(), Some(ip), Some(port));
+                            self.nat_utils.set_is_behind_nat(&self.listen_sockets, Some(ip), Some(port));
                         }
                     }
                 }
@@ -930,9 +930,9 @@ impl Handler {
             // Peer is reachable
             let enr_not_reachable = !NatUtils::is_enr_reachable(&most_recent_enr);
 
-            // Decide whether to establish this connection based on our apettiite for unreachable
+            // Decide whether to establish this connection based on our appetite for unreachable
             if enr_not_reachable
-                && Some(self.sessions.tagged()) > self.nat_utils.unreachable_enr_limit
+                && Some(self.sessions.tagged()) >= self.nat_utils.unreachable_enr_limit
             {
                 debug!("Reached limit of unreachable ENR sessions. Avoiding a new connection. Limit: {}", self.sessions.tagged());
                 return;

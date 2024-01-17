@@ -196,7 +196,7 @@ impl Session {
         let (decryption_key, encryption_key) = crypto::derive_keys_from_pubkey(
             &local_key.read(),
             local_id,
-            &remote_id,
+            remote_id,
             &challenge_data,
             ephem_pubkey,
         )?;
