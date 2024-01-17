@@ -24,7 +24,7 @@ pub const IV_LENGTH: usize = 16;
 /// The length of the static header. (6 byte protocol id, 2 bytes version, 1 byte kind, 12 byte
 /// message nonce and a 2 byte authdata-size).
 pub const STATIC_HEADER_LENGTH: usize = 23;
-/// The message nonce length (in bytes).
+/// The message nonce length (in bytes). This must be at least 4 bytes.
 pub const MESSAGE_NONCE_LENGTH: usize = 12;
 /// The Id nonce length (in bytes).
 pub const ID_NONCE_LENGTH: usize = 16;

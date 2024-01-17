@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{
-    handler::sessions::session::build_dummy_session,
+    handler::session::build_dummy_session,
     packet::{DefaultProtocolId, PacketHeader, MAX_PACKET_SIZE, MESSAGE_NONCE_LENGTH},
     return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
@@ -75,13 +75,14 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
     let (service_send, handler_recv) = mpsc::channel(50);
     let (exit_tx, exit) = oneshot::channel();
 
-    let nat_hole_puncher = NatHolePunchUtils::new(
-        listen_sockets.iter(),
+    let nat_utils = NatUtils::new(
+        &listen_sockets,
         &enr,
         config.listen_config.ip_mode(),
         None,
         None,
         config.session_cache_capacity,
+        None,
     );
 
     (
@@ -93,7 +94,10 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
             active_requests: ActiveRequests::new(config.request_timeout),
             pending_requests: HashMap::new(),
             filter_expected_responses,
-            sessions: Sessions::new(config.session_cache_capacity, config.session_timeout, None),
+            sessions: LruTimeCache::new(
+                config.session_timeout,
+                Some(config.session_cache_capacity),
+            ),
             one_time_sessions: LruTimeCache::new(
                 Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
                 Some(ONE_TIME_SESSION_CACHE_CAPACITY),
@@ -103,7 +107,7 @@ async fn build_handler_with_listen_config<P: ProtocolIdentity>(
             service_send,
             listen_sockets,
             socket,
-            nat_hole_puncher,
+            nat_utils,
             exit,
         },
         MockService {
@@ -494,7 +498,6 @@ async fn nat_hole_punch_relay() {
         build_handler_with_listen_config::<DefaultProtocolId>(listen_config).await;
     let relay_addr = handler.enr.read().udp4_socket().unwrap().into();
     let relay_node_id = handler.enr.read().node_id();
-    let mut dummy_session = build_dummy_session();
 
     // Initiator
     let inr_enr = {
@@ -508,11 +511,10 @@ async fn nat_hole_punch_relay() {
     let inr_addr = inr_enr.udp4_socket().unwrap().into();
     let inr_node_id = inr_enr.node_id();
 
-    let inr_node_address = NodeAddress::new(inr_addr, inr_enr.node_id());
+    let initr_node_address = NodeAddress::new(inr_addr, inr_enr.node_id());
     handler
         .sessions
-        .cache
-        .insert(inr_node_address, dummy_session.clone());
+        .insert(initr_node_address, build_dummy_session());
 
     let inr_socket = UdpSocket::bind(inr_addr)
         .await
@@ -533,8 +535,7 @@ async fn nat_hole_punch_relay() {
     let tgt_node_address = NodeAddress::new(tgt_addr, tgt_enr.node_id());
     handler
         .sessions
-        .cache
-        .insert(tgt_node_address, dummy_session.clone());
+        .insert(tgt_node_address, build_dummy_session());
 
     let tgt_socket = UdpSocket::bind(tgt_addr)
         .await
@@ -618,7 +619,7 @@ async fn nat_hole_punch_relay() {
         kind
     );
 
-    let decrypted_message = dummy_session
+    let decrypted_message = build_dummy_session()
         .decrypt_message(message_nonce, &message, &aad)
         .expect("should decrypt message");
     match Message::decode(&decrypted_message).expect("should decode message") {
@@ -640,8 +641,7 @@ async fn nat_hole_punch_target() {
         build_handler_with_listen_config::<DefaultProtocolId>(listen_config).await;
     let tgt_addr = handler.enr.read().udp4_socket().unwrap().into();
     let tgt_node_id = handler.enr.read().node_id();
-    let dummy_session = build_dummy_session();
-    handler.nat_hole_puncher.is_behind_nat = Some(true);
+    handler.nat_utils.is_behind_nat = Some(true);
 
     // Relay
     let relay_enr = {
@@ -658,8 +658,7 @@ async fn nat_hole_punch_target() {
     let relay_node_address = NodeAddress::new(relay_addr, relay_node_id);
     handler
         .sessions
-        .cache
-        .insert(relay_node_address, dummy_session.clone());
+        .insert(relay_node_address, build_dummy_session());
 
     let relay_socket = UdpSocket::bind(relay_addr)
         .await

@@ -10,17 +10,12 @@ use crate::{
     Discv5Error, Enr,
 };
 
-// If the message nonce length is ever set below 4 bytes this will explode. The packet
-// size constants shouldn't be modified.
-const _: () = assert!(MESSAGE_NONCE_LENGTH > 4);
-
 use enr::{CombinedKey, NodeId};
 use parking_lot::RwLock;
 use std::sync::Arc;
-use tracing::warn;
 use zeroize::Zeroize;
 
-#[derive(Zeroize, PartialEq, Clone, Copy)]
+#[derive(Zeroize, PartialEq)]
 pub(crate) struct Keys {
     /// The encryption key.
     encryption_key: [u8; 16],
@@ -39,7 +34,6 @@ impl From<([u8; 16], [u8; 16])> for Keys {
 
 /// A Session containing the encryption/decryption keys. These are kept individually for a given
 /// node.
-#[derive(Clone)]
 pub(crate) struct Session {
     /// The current keys used to encrypt/decrypt messages.
     keys: Keys,
@@ -174,60 +168,23 @@ impl Session {
     pub(crate) fn establish_from_challenge(
         local_key: Arc<RwLock<CombinedKey>>,
         local_id: &NodeId,
-        challenge: Challenge,
+        remote_id: &NodeId,
+        challenge_data: ChallengeData,
         id_nonce_sig: &[u8],
         ephem_pubkey: &[u8],
-        enr_record: Option<Enr>,
-        node_address: &NodeAddress,
-        session_limiter: impl FnOnce(&NodeAddress, &Enr) -> Option<Result<(), Discv5Error>>,
+        session_enr: Enr,
     ) -> Result<(Session, Enr), Discv5Error> {
-        // check and verify a potential ENR update
-
-        let Challenge { data, remote_enr } = challenge;
-
-        // Avoid cloning an ENR
-        let session_enr = match (enr_record, remote_enr) {
-            (Some(new_enr), Some(known_enr)) => {
-                if new_enr.seq() > known_enr.seq() {
-                    MostRecentEnr::Handshake {
-                        enr: new_enr,
-                        challenge_enr: Some(known_enr),
-                    }
-                } else {
-                    MostRecentEnr::Challenge { enr: known_enr }
-                }
-            }
-            (Some(new_enr), None) => MostRecentEnr::Handshake {
-                enr: new_enr,
-                challenge_enr: None,
-            },
-            (None, Some(known_enr)) => MostRecentEnr::Challenge { enr: known_enr },
-            (None, None) => {
-                warn!(
-                        "Peer did not respond with their ENR. Session could not be established. Node: {}",
-                        node_address.node_id
-                    );
-                return Err(Discv5Error::SessionNotEstablished);
-            }
-        };
-
-        // Avoid unnecessary key derivation computation, first verify session candidate against
-        // current sessions state.
-        session_limiter(node_address, session_enr.enr()).transpose()?;
-
-        let remote_public_key = session_enr.enr().public_key();
-
         // verify the auth header nonce
         if !crypto::verify_authentication_nonce(
-            &remote_public_key,
+            &session_enr.public_key(),
             ephem_pubkey,
-            &data,
+            &challenge_data,
             local_id,
             id_nonce_sig,
         ) {
             let challenge = Challenge {
-                data,
-                remote_enr: session_enr.into_challenge_enr(),
+                data: challenge_data,
+                remote_enr: Some(session_enr),
             };
             return Err(Discv5Error::InvalidChallengeSignature(challenge));
         }
@@ -239,8 +196,8 @@ impl Session {
         let (decryption_key, encryption_key) = crypto::derive_keys_from_pubkey(
             &local_key.read(),
             local_id,
-            &node_address.node_id,
-            &data,
+            remote_id,
+            &challenge_data,
             ephem_pubkey,
         )?;
 
@@ -249,7 +206,6 @@ impl Session {
             decryption_key,
         };
 
-        let session_enr = session_enr.into_most_recent_enr();
         Ok((Session::new(keys), session_enr))
     }
 
@@ -304,41 +260,6 @@ impl Session {
         let session = Session::new(keys);
 
         Ok((packet, session))
-    }
-}
-
-enum MostRecentEnr {
-    Challenge {
-        enr: Enr,
-    },
-    Handshake {
-        enr: Enr,
-        challenge_enr: Option<Enr>,
-    },
-}
-
-impl MostRecentEnr {
-    fn enr(&self) -> &Enr {
-        match self {
-            Self::Challenge { enr } => enr,
-            Self::Handshake { enr, .. } => enr,
-        }
-    }
-
-    fn into_most_recent_enr(self) -> Enr {
-        match self {
-            MostRecentEnr::Challenge { enr } => enr,
-            MostRecentEnr::Handshake { enr, .. } => enr,
-        }
-    }
-    fn into_challenge_enr(self) -> Option<Enr> {
-        match self {
-            MostRecentEnr::Challenge { enr } => Some(enr),
-            MostRecentEnr::Handshake {
-                enr: _,
-                challenge_enr,
-            } => challenge_enr,
-        }
     }
 }
 
