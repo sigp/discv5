@@ -381,7 +381,7 @@ impl Handler {
                         }
                         HandlerIn::Response(dst, response) => self.send_response::<P>(dst, *response).await,
                         HandlerIn::EnrResponse(enr, EnrRequestData::WhoAreYou(wru_ref)) => self.send_challenge::<P>(wru_ref, enr).await,
-                        HandlerIn::EnrResponse(Some(target_enr), EnrRequestData::Nat(relay_initiator)) => {
+                        HandlerIn::EnrResponse(Some(target_enr), EnrRequestData::Nat(relay_initiation)) => {
                             // Assemble the notification for the target
                             let (initiator_enr, _target, timed_out_nonce) = relay_initiator.into();
                             let relay_msg_notification = RelayMsgNotification::new(initiator_enr, timed_out_nonce);
