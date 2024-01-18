@@ -1650,7 +1650,7 @@ impl Handler {
 
     /// A RelayInit notification is received over discv5 indicating this node is the relay. Should
     /// trigger sending a RelayMsg to the target.
-    async fn on_relay_initiator(
+    async fn on_relay_initiation(
         &mut self,
         relay_initiator: RelayInitNotification,
     ) -> Result<(), NatError> {
