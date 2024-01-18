@@ -56,6 +56,17 @@ pub enum Discv5Error {
     Io(std::io::Error),
 }
 
+/// An error occurred whilst attempting to hole punch NAT.
+#[derive(Debug)]
+pub enum NatError {
+    /// Initiator error.
+    Initiator(Discv5Error),
+    /// Relayer error.
+    Relay(Discv5Error),
+    /// Target error.
+    Target(Discv5Error),
+}
+
 macro_rules! impl_from_variant {
     ($(<$($generic: ident,)+>)*, $from_type: ty, $to_type: ty, $variant: path) => {
         impl$(<$($generic,)+>)* From<$from_type> for $to_type {

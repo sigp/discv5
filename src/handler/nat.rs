@@ -19,7 +19,7 @@ pub const PORT_BIND_TRIES: usize = 4;
 pub const USER_AND_DYNAMIC_PORTS: RangeInclusive<u16> = 1025..=u16::MAX;
 
 /// Aggregates types necessary to implement nat hole punching for [`crate::handler::Handler`].
-pub struct NatUtils {
+pub struct Nat {
     /// Ip mode as set in config.
     pub ip_mode: IpMode,
     /// This node has been observed to be behind a NAT.
@@ -42,7 +42,7 @@ pub struct NatUtils {
     pub unreachable_enr_limit: Option<usize>,
 }
 
-impl NatUtils {
+impl Nat {
     pub fn new(
         listen_sockets: &[SocketAddr],
         local_enr: &Enr,
@@ -52,7 +52,7 @@ impl NatUtils {
         session_cache_capacity: usize,
         unreachable_enr_limit: Option<usize>,
     ) -> Self {
-        let mut nat_hole_puncher = NatUtils {
+        let mut nat = Nat {
             ip_mode,
             is_behind_nat: None,
             new_peer_latest_relay_cache: LruCache::new(session_cache_capacity),
@@ -70,17 +70,17 @@ impl NatUtils {
             local_enr.udp6(),
         ) {
             (Some(ip), port, _, _) => {
-                nat_hole_puncher.set_is_behind_nat(listen_sockets, Some(ip.into()), port);
+                nat.set_is_behind_nat(listen_sockets, Some(ip.into()), port);
             }
             (_, _, Some(ip6), port) => {
-                nat_hole_puncher.set_is_behind_nat(listen_sockets, Some(ip6.into()), port);
+                nat.set_is_behind_nat(listen_sockets, Some(ip6.into()), port);
             }
             (None, Some(port), _, _) | (_, _, None, Some(port)) => {
-                nat_hole_puncher.set_is_behind_nat(listen_sockets, None, Some(port));
+                nat.set_is_behind_nat(listen_sockets, None, Some(port));
             }
             (None, None, None, None) => {}
         }
-        nat_hole_puncher
+        nat
     }
 
     pub fn track(&mut self, peer_socket: SocketAddr) {
