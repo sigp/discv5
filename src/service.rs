@@ -401,7 +401,7 @@ impl Service {
                                 }
                             }
                         }
-                        HandlerOut::RequestEnr(EnrRequestData::Nat(relay_initiator)) => {
+                        HandlerOut::RequestEnr(EnrRequestData::Nat(relay_initiation)) => {
                             // Update initiator's Enr if it's in kbuckets
                             let initiator_enr = relay_initiator.initiator_enr();
                             let initiator_key = kbucket::Key::from(initiator_enr.node_id());
