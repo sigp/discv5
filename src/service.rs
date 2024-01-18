@@ -403,7 +403,7 @@ impl Service {
                         }
                         HandlerOut::RequestEnr(EnrRequestData::Nat(relay_initiation)) => {
                             // Update initiator's Enr if it's in kbuckets
-                            let initiator_enr = relay_initiator.initiator_enr();
+                            let initiator_enr = relay_initiation.initiator_enr();
                             let initiator_key = kbucket::Key::from(initiator_enr.node_id());
                             match self.kbuckets.write().entry(&initiator_key) {
                                 kbucket::Entry::Present(ref mut entry, _) => {
@@ -422,17 +422,17 @@ impl Service {
                             }
                             // check if we know the target node id in our routing table, otherwise
                             // drop relay attempt.
-                            let target_node_id = relay_initiator.target_node_id();
+                            let target_node_id = relay_initiation.target_node_id();
                             let target_key = kbucket::Key::from(target_node_id);
                             if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&target_key) {
                                 let target_enr = entry.value().clone();
-                                if let Err(e) = self.handler_send.send(HandlerIn::EnrResponse(Some(target_enr), EnrRequestData::Nat(relay_initiator))) {
+                                if let Err(e) = self.handler_send.send(HandlerIn::EnrResponse(Some(target_enr), EnrRequestData::Nat(relay_initiation))) {
                                     warn!(
                                         "Failed to send target enr to relay process, error: {e}"
                                     );
                                 }
                             } else {
-                                let initiator_node_id = relay_initiator.initiator_enr().node_id();
+                                let initiator_node_id = relay_initiation.initiator_enr().node_id();
                                 warn!(
                                     initiator_node_id=%initiator_node_id,
                                     target_node_id=%target_node_id,

@@ -383,7 +383,7 @@ impl Handler {
                         HandlerIn::EnrResponse(enr, EnrRequestData::WhoAreYou(wru_ref)) => self.send_challenge::<P>(wru_ref, enr).await,
                         HandlerIn::EnrResponse(Some(target_enr), EnrRequestData::Nat(relay_initiation)) => {
                             // Assemble the notification for the target
-                            let (initiator_enr, _target, timed_out_nonce) = relay_initiator.into();
+                            let (initiator_enr, _target, timed_out_nonce) = relay_initiation.into();
                             let relay_msg_notification = RelayMsgNotification::new(initiator_enr, timed_out_nonce);
                             if let Err(e) = self.send_relay_msg_notification::<P>(target_enr, relay_msg_notification).await {
                                 warn!("Failed to relay. Error: {:?}", e);
@@ -1148,7 +1148,7 @@ impl Handler {
                         .await;
                     let ban_timeout = self.nat.ban_duration.map(|v| Instant::now() + v);
                     PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                } else if let Err(e) = self.on_relay_initiator(notification).await {
+                } else if let Err(e) = self.on_relay_initiation(notification).await {
                     warn!(
                         "failed handling notification to relay for {node_address}, {:?}",
                         e
@@ -1652,12 +1652,12 @@ impl Handler {
     /// trigger sending a RelayMsg to the target.
     async fn on_relay_initiation(
         &mut self,
-        relay_initiator: RelayInitNotification,
+        relay_initiation: RelayInitNotification,
     ) -> Result<(), NatError> {
         // Check for target peer in our kbuckets otherwise drop notification.
         if let Err(e) = self
             .service_send
-            .send(HandlerOut::RequestEnr(EnrRequestData::Nat(relay_initiator)))
+            .send(HandlerOut::RequestEnr(EnrRequestData::Nat(relay_initiation)))
             .await
         {
             return Err(NatError::Relay(e.into()));
