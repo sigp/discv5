@@ -1657,7 +1657,9 @@ impl Handler {
         // Check for target peer in our kbuckets otherwise drop notification.
         if let Err(e) = self
             .service_send
-            .send(HandlerOut::RequestEnr(EnrRequestData::Nat(relay_initiation)))
+            .send(HandlerOut::RequestEnr(EnrRequestData::Nat(
+                relay_initiation,
+            )))
             .await
         {
             return Err(NatError::Relay(e.into()));
