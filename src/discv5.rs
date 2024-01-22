@@ -453,6 +453,17 @@ impl<P: ProtocolIdentity> Discv5<P> {
             .collect()
     }
 
+    /// Takes only a read lock on the kbuckets. This means pending entries aren't added. Otherwise
+    /// same as [`Self::table_entries_id`]. Returns an iterator over all ENR node IDs of nodes
+    /// currently contained in the routing table.
+    pub fn table_entries_id_rlock(&self) -> Vec<NodeId> {
+        self.kbuckets
+            .read()
+            .iter_ref()
+            .map(|entry| *entry.node.key.preimage())
+            .collect()
+    }
+
     /// Returns an iterator over all the ENR's of nodes currently contained in the routing table.
     pub fn table_entries_enr(&self) -> Vec<Enr> {
         self.kbuckets
@@ -467,6 +478,23 @@ impl<P: ProtocolIdentity> Discv5<P> {
         self.kbuckets
             .write()
             .iter()
+            .map(|entry| {
+                (
+                    *entry.node.key.preimage(),
+                    entry.node.value.clone(),
+                    entry.status,
+                )
+            })
+            .collect()
+    }
+
+    /// Takes only a read lock on the kbuckets. This means pending entries aren't added. Otherwise
+    /// same as [`Self::table_entries`]. Returns an iterator over all ENR node IDs of nodes
+    /// currently contained in the routing table.
+    pub fn table_entries_rlock(&self) -> Vec<(NodeId, Enr, NodeStatus)> {
+        self.kbuckets
+            .read()
+            .iter_ref()
             .map(|entry| {
                 (
                     *entry.node.key.preimage(),
