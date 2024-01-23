@@ -646,7 +646,7 @@ impl Service {
         let id = response.id.clone();
 
         if let Some(mut active_request) = self.active_requests.remove(&id) {
-            debug!(
+            trace!(
                 "Received RPC response: {} to request: {} from: {}",
                 response.body, active_request.request_body, active_request.contact
             );
@@ -734,7 +734,7 @@ impl Service {
                         let mut current_response =
                             self.active_nodes_responses.remove(&id).unwrap_or_default();
 
-                        debug!(
+                        trace!(
                             "Nodes Response: {} of {} received",
                             current_response.count, total
                         );
@@ -1161,7 +1161,7 @@ impl Service {
         };
         let contact = active_request.contact.clone();
 
-        debug!("Sending RPC {} to node: {}", request, contact);
+        trace!("Sending RPC {} to node: {}", request, contact);
         if self
             .handler_send
             .send(HandlerIn::Request(contact, Box::new(request)))
@@ -1304,7 +1304,7 @@ impl Service {
                     } => {
                         // The node was updated
                         if promoted_to_connected {
-                            debug!("Node promoted to connected: {}", node_id);
+                            trace!("Node promoted to connected: {}", node_id);
                             self.peers_to_ping.insert(node_id);
                         }
                     }
@@ -1329,7 +1329,7 @@ impl Service {
                         );
                     }
                     update => {
-                        debug!("Updated {:?}", update)
+                        trace!("Updated {:?}", update)
                     } // Updated ENR successfully.
                 }
             }

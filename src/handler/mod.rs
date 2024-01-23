@@ -310,7 +310,6 @@ impl Handler {
                     socket,
                     exit,
                 };
-                debug!("Handler Starting");
                 handler.start::<P>().await;
             }));
 
