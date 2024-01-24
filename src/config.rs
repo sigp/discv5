@@ -1,9 +1,14 @@
 //! A set of configuration parameters to tune the discovery protocol.
 use crate::{
-    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, PermitBanList, RateLimiter,
+    kbucket::MAX_NODES_PER_BUCKET, Enr, Executor, ListenConfig, PermitBanList, RateLimiter,
     RateLimiterBuilder,
 };
-use std::time::Duration;
+
+/// The minimum number of unreachable Sessions a node must allow. This enables the network to
+/// boostrap.
+const MIN_SESSIONS_UNREACHABLE_ENR: usize = 10;
+
+use std::{ops::RangeInclusive, time::Duration};
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
@@ -96,6 +101,15 @@ pub struct Discv5Config {
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
 
+    /// The max limit for peers with unreachable ENRs. Benevolent examples of such peers are peers
+    /// that are discovering their externally reachable socket, nodes must assist at least one
+    /// such peer in discovering their reachable socket via ip voting, and peers behind symmetric
+    /// NAT. Default is no limit. Minimum is 10.
+    pub unreachable_enr_limit: Option<usize>,
+
+    /// The unused port range to try and bind to when testing if this node is behind NAT based on
+    /// observed address reported at runtime by peers.
+    pub unused_port_range: Option<RangeInclusive<u16>>,
     /// Configuration for the sockets to listen on.
     pub listen_config: ListenConfig,
 }
@@ -142,6 +156,8 @@ impl Discv5ConfigBuilder {
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             executor: None,
+            unreachable_enr_limit: None,
+            unused_port_range: None,
             listen_config,
         };
 
@@ -302,6 +318,23 @@ impl Discv5ConfigBuilder {
         self
     }
 
+    /// Sets the maximum number of sessions with peers with unreachable ENRs to allow. Minimum is 1
+    /// peer. Default is no limit.
+    pub fn unreachable_enr_limit(&mut self, peer_limit: Option<usize>) -> &mut Self {
+        self.config.unreachable_enr_limit = peer_limit;
+        self
+    }
+
+    /// Sets the unused port range for testing if node is behind a NAT. Default is the range
+    /// covering user and dynamic ports.
+    pub fn unused_port_range(
+        &mut self,
+        unused_port_range: Option<RangeInclusive<u16>>,
+    ) -> &mut Self {
+        self.config.unused_port_range = unused_port_range;
+        self
+    }
+
     pub fn build(&mut self) -> Discv5Config {
         // If an executor is not provided, assume a current tokio runtime is running.
         if self.config.executor.is_none() {
@@ -309,6 +342,9 @@ impl Discv5ConfigBuilder {
         };
 
         assert!(self.config.incoming_bucket_limit <= MAX_NODES_PER_BUCKET);
+        if let Some(limit) = self.config.unreachable_enr_limit {
+            assert!(limit >= MIN_SESSIONS_UNREACHABLE_ENR);
+        }
 
         self.config.clone()
     }

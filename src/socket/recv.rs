@@ -185,7 +185,20 @@ impl RecvHandler {
             match Packet::decode::<P>(&self.node_id, &recv_buffer[..length]) {
                 Ok(p) => p,
                 Err(e) => {
-                    debug!("Packet decoding failed: {:?}", e); // could not decode the packet, drop it
+                    // This could be a packet to keep a NAT hole punched for this node in the
+                    // sender's NAT, hence only serves purpose for the sender.
+                    if length == 0 {
+                        debug!(
+                            "Empty packet, possibly to keep a hole punched, dropping. src: {}",
+                            src_address
+                        );
+                    } else {
+                        // Could not decode the packet, drop it.
+                        debug!(
+                            "Packet decoding failed, src: {}, error: {:?}",
+                            src_address, e
+                        );
+                    }
                     return;
                 }
             };

@@ -1,303 +1,88 @@
-use enr::{CombinedKey, Enr};
-use rlp::{DecoderError, RlpStream};
-use std::net::{IpAddr, Ipv6Addr};
-use tracing::{debug, warn};
+use derive_more::{Display, From};
+use rlp::{DecoderError, Rlp};
+use std::convert::{TryFrom, TryInto};
 
-/// Type to manage the request IDs.
-#[derive(Debug, Clone, PartialEq, Hash, Eq)]
-pub struct RequestId(pub Vec<u8>);
+mod notification;
+mod request;
+mod response;
 
-impl From<RequestId> for Vec<u8> {
-    fn from(id: RequestId) -> Self {
-        id.0
-    }
+pub use notification::{RelayInitNotification, RelayMsgNotification};
+pub use request::{Request, RequestBody, RequestId};
+pub use response::{Response, ResponseBody};
+
+/// Message type IDs.
+#[derive(Debug)]
+#[repr(u8)]
+pub enum MessageType {
+    Ping = 1,
+    Pong = 2,
+    FindNode = 3,
+    Nodes = 4,
+    TalkReq = 5,
+    TalkResp = 6,
+    RelayInit = 7,
+    RelayMsg = 8,
 }
 
-impl RequestId {
-    /// Decodes the ID from a raw bytes.
-    pub fn decode(data: Vec<u8>) -> Result<Self, DecoderError> {
-        if data.len() > 8 {
-            return Err(DecoderError::Custom("Invalid ID length"));
+impl TryFrom<u8> for MessageType {
+    type Error = DecoderError;
+    fn try_from(byte: u8) -> Result<Self, Self::Error> {
+        match byte {
+            1 => Ok(MessageType::Ping),
+            2 => Ok(MessageType::Pong),
+            3 => Ok(MessageType::FindNode),
+            4 => Ok(MessageType::Nodes),
+            5 => Ok(MessageType::TalkReq),
+            6 => Ok(MessageType::TalkResp),
+            7 => Ok(MessageType::RelayInit),
+            8 => Ok(MessageType::RelayMsg),
+            _ => Err(DecoderError::Custom("Unknown RPC message type")),
         }
-        Ok(RequestId(data))
-    }
-
-    pub fn random() -> Self {
-        let rand: u64 = rand::random();
-        RequestId(rand.to_be_bytes().to_vec())
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// A combined type representing requests and responses.
+/// The payload of message containers SessionMessage, Message or Handshake type.
+pub trait Payload
+where
+    Self: Sized,
+{
+    /// Matches a payload type to its message type id.
+    fn msg_type(&self) -> u8;
+    /// Encodes a message to RLP-encoded bytes.
+    fn encode(self) -> Vec<u8>;
+    /// Decodes RLP-encoded bytes into a message.
+    fn decode(msg_type: u8, rlp: &Rlp<'_>) -> Result<Self, DecoderError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Display, From)]
+/// A combined type representing the messages which are the payloads of packets.
 pub enum Message {
     /// A request, which contains its [`RequestId`].
+    #[display(fmt = "{_0}")]
     Request(Request),
+
     /// A Response, which contains the [`RequestId`] of its associated request.
+    #[display(fmt = "{_0}")]
     Response(Response),
+
+    /// Unicast notifications.
+    ///
+    /// A [`RelayInitNotification`].
+    #[display(fmt = "{_0}")]
+    RelayInitNotification(RelayInitNotification),
+    /// A [`RelayMsgNotification`].
+    #[display(fmt = "{_0}")]
+    RelayMsgNotification(RelayMsgNotification),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// A request sent between nodes.
-pub struct Request {
-    /// The [`RequestId`] of the request.
-    pub id: RequestId,
-    /// The body of the request.
-    pub body: RequestBody,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// A response sent in response to a [`Request`]
-pub struct Response {
-    /// The [`RequestId`] of the request that triggered this response.
-    pub id: RequestId,
-    /// The body of this response.
-    pub body: ResponseBody,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RequestBody {
-    /// A PING request.
-    Ping {
-        /// Our current ENR sequence number.
-        enr_seq: u64,
-    },
-    /// A FINDNODE request.
-    FindNode {
-        /// The distance(s) of peers we expect to be returned in the response.
-        distances: Vec<u64>,
-    },
-    /// A Talk request.
-    Talk {
-        /// The protocol requesting.
-        protocol: Vec<u8>,
-        /// The request.
-        request: Vec<u8>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResponseBody {
-    /// A PONG response.
-    Pong {
-        /// The current ENR sequence number of the responder.
-        enr_seq: u64,
-        /// Our external IP address as observed by the responder.
-        ip: IpAddr,
-        /// Our external UDP port as observed by the responder.
-        port: u16,
-    },
-    /// A NODES response.
-    Nodes {
-        /// The total number of responses that make up this response.
-        total: u64,
-        /// A list of ENR's returned by the responder.
-        nodes: Vec<Enr<CombinedKey>>,
-    },
-    /// The TALK response.
-    Talk {
-        /// The response for the talk.
-        response: Vec<u8>,
-    },
-}
-
-impl Request {
-    pub fn msg_type(&self) -> u8 {
-        match self.body {
-            RequestBody::Ping { .. } => 1,
-            RequestBody::FindNode { .. } => 3,
-            RequestBody::Talk { .. } => 5,
-        }
-    }
-
-    /// Encodes a Message to RLP-encoded bytes.
-    pub fn encode(self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(10);
-        let msg_type = self.msg_type();
-        buf.push(msg_type);
-        let id = &self.id;
-        match self.body {
-            RequestBody::Ping { enr_seq } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
-                s.append(&enr_seq);
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-            RequestBody::FindNode { distances } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
-                s.begin_list(distances.len());
-                for distance in distances {
-                    s.append(&distance);
-                }
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-            RequestBody::Talk { protocol, request } => {
-                let mut s = RlpStream::new();
-                s.begin_list(3);
-                s.append(&id.as_bytes());
-                s.append(&protocol);
-                s.append(&request);
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-        }
-    }
-}
-
-impl Response {
-    pub fn msg_type(&self) -> u8 {
-        match &self.body {
-            ResponseBody::Pong { .. } => 2,
-            ResponseBody::Nodes { .. } => 4,
-            ResponseBody::Talk { .. } => 6,
-        }
-    }
-
-    /// Determines if the response is a valid response to the given request.
-    pub fn match_request(&self, req: &RequestBody) -> bool {
-        match self.body {
-            ResponseBody::Pong { .. } => matches!(req, RequestBody::Ping { .. }),
-            ResponseBody::Nodes { .. } => {
-                matches!(req, RequestBody::FindNode { .. })
-            }
-            ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),
-        }
-    }
-
-    /// Encodes a Message to RLP-encoded bytes.
-    pub fn encode(self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(10);
-        let msg_type = self.msg_type();
-        buf.push(msg_type);
-        let id = &self.id;
-        match self.body {
-            ResponseBody::Pong { enr_seq, ip, port } => {
-                let mut s = RlpStream::new();
-                s.begin_list(4);
-                s.append(&id.as_bytes());
-                s.append(&enr_seq);
-                match ip {
-                    IpAddr::V4(addr) => s.append(&(&addr.octets() as &[u8])),
-                    IpAddr::V6(addr) => s.append(&(&addr.octets() as &[u8])),
-                };
-                s.append(&port);
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-            ResponseBody::Nodes { total, nodes } => {
-                let mut s = RlpStream::new();
-                s.begin_list(3);
-                s.append(&id.as_bytes());
-                s.append(&total);
-
-                if nodes.is_empty() {
-                    s.begin_list(0);
-                } else {
-                    s.begin_list(nodes.len());
-                    for node in nodes {
-                        s.append(&node);
-                    }
-                }
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-            ResponseBody::Talk { response } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
-                s.append(&response);
-                buf.extend_from_slice(&s.out());
-                buf
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for RequestId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(&self.0))
-    }
-}
-
-impl std::fmt::Display for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Message::Request(request) => write!(f, "{request}"),
-            Message::Response(response) => write!(f, "{response}"),
-        }
-    }
-}
-
-impl std::fmt::Display for Response {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Response: id: {}: {}", self.id, self.body)
-    }
-}
-
-impl std::fmt::Display for ResponseBody {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ResponseBody::Pong { enr_seq, ip, port } => {
-                write!(f, "PONG: Enr-seq: {enr_seq}, Ip: {ip:?},  Port: {port}")
-            }
-            ResponseBody::Nodes { total, nodes } => {
-                write!(f, "NODES: total: {total}, Nodes: [")?;
-                let mut first = true;
-                for id in nodes {
-                    if !first {
-                        write!(f, ", {id}")?;
-                    } else {
-                        write!(f, "{id}")?;
-                    }
-                    first = false;
-                }
-
-                write!(f, "]")
-            }
-            ResponseBody::Talk { response } => {
-                write!(f, "Response: Response {}", hex::encode(response))
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for Request {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Request: id: {}: {}", self.id, self.body)
-    }
-}
-
-impl std::fmt::Display for RequestBody {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RequestBody::Ping { enr_seq } => write!(f, "PING: enr_seq: {enr_seq}"),
-            RequestBody::FindNode { distances } => {
-                write!(f, "FINDNODE Request: distance: {distances:?}")
-            }
-            RequestBody::Talk { protocol, request } => write!(
-                f,
-                "TALK: protocol: {}, request: {}",
-                hex::encode(protocol),
-                hex::encode(request)
-            ),
-        }
-    }
-}
 #[allow(dead_code)]
 impl Message {
     pub fn encode(self) -> Vec<u8> {
         match self {
             Self::Request(request) => request.encode(),
             Self::Response(response) => response.encode(),
+            Self::RelayInitNotification(notif) => notif.encode(),
+            Self::RelayMsgNotification(notif) => notif.encode(),
         }
     }
 
@@ -305,183 +90,38 @@ impl Message {
         if data.len() < 3 {
             return Err(DecoderError::RlpIsTooShort);
         }
-
         let msg_type = data[0];
 
         let rlp = rlp::Rlp::new(&data[1..]);
 
-        let list_len = rlp.item_count().and_then(|size| {
-            if size < 2 {
-                Err(DecoderError::RlpIncorrectListLen)
-            } else {
-                Ok(size)
+        match msg_type.try_into()? {
+            MessageType::Ping | MessageType::FindNode | MessageType::TalkReq => {
+                Ok(Request::decode(msg_type, &rlp)?.into())
             }
-        })?;
+            MessageType::Pong | MessageType::Nodes | MessageType::TalkResp => {
+                Ok(Response::decode(msg_type, &rlp)?.into())
+            }
+            MessageType::RelayInit => Ok(RelayInitNotification::decode(msg_type, &rlp)?.into()),
+            MessageType::RelayMsg => Ok(RelayMsgNotification::decode(msg_type, &rlp)?.into()),
+        }
+    }
 
-        let id = RequestId::decode(rlp.val_at::<Vec<u8>>(0)?)?;
-
-        let message = match msg_type {
-            1 => {
-                // PingRequest
-                if list_len != 2 {
-                    debug!(
-                        "Ping Request has an invalid RLP list length. Expected 2, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-                Message::Request(Request {
-                    id,
-                    body: RequestBody::Ping {
-                        enr_seq: rlp.val_at::<u64>(1)?,
-                    },
-                })
-            }
-            2 => {
-                // PingResponse
-                if list_len != 4 {
-                    debug!(
-                        "Ping Response has an invalid RLP list length. Expected 4, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-                let ip_bytes = rlp.val_at::<Vec<u8>>(2)?;
-                let ip = match ip_bytes.len() {
-                    4 => {
-                        let mut ip = [0u8; 4];
-                        ip.copy_from_slice(&ip_bytes);
-                        IpAddr::from(ip)
-                    }
-                    16 => {
-                        let mut ip = [0u8; 16];
-                        ip.copy_from_slice(&ip_bytes);
-                        let ipv6 = Ipv6Addr::from(ip);
-
-                        if ipv6.is_loopback() {
-                            // Checking if loopback address since IPv6Addr::to_ipv4 returns
-                            // IPv4 address for IPv6 loopback address.
-                            IpAddr::V6(ipv6)
-                        } else if let Some(ipv4) = ipv6.to_ipv4() {
-                            // If the ipv6 is ipv4 compatible/mapped, simply return the ipv4.
-                            IpAddr::V4(ipv4)
-                        } else {
-                            IpAddr::V6(ipv6)
-                        }
-                    }
-                    _ => {
-                        debug!("Ping Response has incorrect byte length for IP");
-                        return Err(DecoderError::RlpIncorrectListLen);
-                    }
-                };
-                let port = rlp.val_at::<u16>(3)?;
-                Message::Response(Response {
-                    id,
-                    body: ResponseBody::Pong {
-                        enr_seq: rlp.val_at::<u64>(1)?,
-                        ip,
-                        port,
-                    },
-                })
-            }
-            3 => {
-                // FindNodeRequest
-                if list_len != 2 {
-                    debug!(
-                        "FindNode Request has an invalid RLP list length. Expected 2, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-                let distances = rlp.list_at::<u64>(1)?;
-
-                for distance in distances.iter() {
-                    if distance > &256u64 {
-                        warn!(
-                            "Rejected FindNode request asking for unknown distance {}, maximum 256",
-                            distance
-                        );
-                        return Err(DecoderError::Custom("FINDNODE request distance invalid"));
-                    }
-                }
-
-                Message::Request(Request {
-                    id,
-                    body: RequestBody::FindNode { distances },
-                })
-            }
-            4 => {
-                // NodesResponse
-                if list_len != 3 {
-                    debug!(
-                        "Nodes Response has an invalid RLP list length. Expected 3, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-
-                let nodes = {
-                    let enr_list_rlp = rlp.at(2)?;
-                    if enr_list_rlp.is_empty() {
-                        // no records
-                        vec![]
-                    } else {
-                        enr_list_rlp.as_list::<Enr<CombinedKey>>()?
-                    }
-                };
-                Message::Response(Response {
-                    id,
-                    body: ResponseBody::Nodes {
-                        total: rlp.val_at::<u64>(1)?,
-                        nodes,
-                    },
-                })
-            }
-            5 => {
-                // Talk Request
-                if list_len != 3 {
-                    debug!(
-                        "Talk Request has an invalid RLP list length. Expected 3, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-                let protocol = rlp.val_at::<Vec<u8>>(1)?;
-                let request = rlp.val_at::<Vec<u8>>(2)?;
-                Message::Request(Request {
-                    id,
-                    body: RequestBody::Talk { protocol, request },
-                })
-            }
-            6 => {
-                // Talk Response
-                if list_len != 2 {
-                    debug!(
-                        "Talk Response has an invalid RLP list length. Expected 2, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-                let response = rlp.val_at::<Vec<u8>>(1)?;
-                Message::Response(Response {
-                    id,
-                    body: ResponseBody::Talk { response },
-                })
-            }
-            _ => {
-                return Err(DecoderError::Custom("Unknown RPC message type"));
-            }
-        };
-
-        Ok(message)
+    pub fn msg_type(&self) -> String {
+        match self {
+            Self::Request(r) => format!("request type {}", r.msg_type()),
+            Self::Response(r) => format!("response type {}", r.msg_type()),
+            Self::RelayInitNotification(n) => format!("notification type {}", n.msg_type()),
+            Self::RelayMsgNotification(n) => format!("notification type {}", n.msg_type()),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use enr::EnrBuilder;
-    use std::net::Ipv4Addr;
+    use crate::packet::MESSAGE_NONCE_LENGTH;
+    use enr::{CombinedKey, Enr, EnrBuilder};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn ref_test_encode_request_ping() {
@@ -745,5 +385,68 @@ mod tests {
         let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn encode_decode_talk_request() {
+        let id = RequestId(vec![1]);
+        let request = Message::Request(Request {
+            id,
+            body: RequestBody::TalkReq {
+                protocol: vec![17u8; 32],
+                request: vec![1, 2, 3],
+            },
+        });
+
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(&encoded).unwrap();
+
+        assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn test_encode_decode_relay_init() {
+        // generate a new enr key for the initiator
+        let enr_key = CombinedKey::generate_secp256k1();
+        // construct the initiator's ENR
+        let inr_enr = EnrBuilder::new("v4").build(&enr_key).unwrap();
+
+        // generate a new enr key for the target
+        let enr_key_tgt = CombinedKey::generate_secp256k1();
+        // construct the target's ENR
+        let tgt_enr = EnrBuilder::new("v4").build(&enr_key_tgt).unwrap();
+        let tgt_node_id = tgt_enr.node_id();
+
+        let nonce_bytes = hex::decode("47644922f5d6e951051051ac").unwrap();
+        let mut nonce = [0u8; MESSAGE_NONCE_LENGTH];
+        nonce[MESSAGE_NONCE_LENGTH - nonce_bytes.len()..].copy_from_slice(&nonce_bytes);
+
+        let notif = RelayInitNotification::new(inr_enr, tgt_node_id, nonce);
+        let msg = Message::RelayInitNotification(notif);
+
+        let encoded_msg = msg.clone().encode();
+        let decoded_msg = Message::decode(&encoded_msg).expect("Should decode");
+
+        assert_eq!(msg, decoded_msg);
+    }
+
+    #[test]
+    fn test_enocde_decode_relay_msg() {
+        // generate a new enr key for the initiator
+        let enr_key = CombinedKey::generate_secp256k1();
+        // construct the initiator's ENR
+        let inr_enr = EnrBuilder::new("v4").build(&enr_key).unwrap();
+
+        let nonce_bytes = hex::decode("9951051051aceb").unwrap();
+        let mut nonce = [0u8; MESSAGE_NONCE_LENGTH];
+        nonce[MESSAGE_NONCE_LENGTH - nonce_bytes.len()..].copy_from_slice(&nonce_bytes);
+
+        let notif = RelayMsgNotification::new(inr_enr, nonce);
+        let msg = Message::RelayMsgNotification(notif);
+
+        let encoded_msg = msg.clone().encode();
+        let decoded_msg = Message::decode(&encoded_msg).expect("Should decode");
+
+        assert_eq!(msg, decoded_msg);
     }
 }

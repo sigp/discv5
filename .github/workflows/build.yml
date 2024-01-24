@@ -19,7 +19,7 @@ jobs:
       - name: Get latest version of stable rust
         run: rustup update stable
       - name: Lint code for quality and style with Clippy
-        run: cargo clippy --workspace --tests --all-features -- -D warnings
+        run: cargo clippy --workspace --tests --all-features -- -D warnings -A clippy::assertions_on_constants 
   release-tests-ubuntu:
     runs-on: ubuntu-latest
     needs: cargo-fmt
@@ -50,7 +50,7 @@ jobs:
       - name: Get latest version of stable rust
         run: rustup update stable
       - name: Check rustdoc links
-        run: RUSTDOCFLAGS="--deny broken_intra_doc_links" cargo doc --verbose --workspace --no-deps --document-private-items
+        run: RUSTDOCFLAGS="--deny rustdoc::broken_intra_doc_links" cargo doc --verbose --workspace --no-deps --document-private-items
   cargo-udeps:
     name: cargo-udeps
     runs-on: ubuntu-latest

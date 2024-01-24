@@ -25,9 +25,7 @@
 //! representing the nodes participating in the Kademlia DHT.
 
 pub use super::{
-    bucket::{
-        AppliedPending, ConnectionState, InsertResult, Node, NodeStatus, MAX_NODES_PER_BUCKET,
-    },
+    bucket::{AppliedPending, ConnectionState, InsertResult, Node, NodeStatus},
     key::*,
     ConnectionDirection,
 };
@@ -176,8 +174,8 @@ where
         PendingEntry(EntryRef { bucket, key })
     }
 
-    /// Returns the value associated with the key.
-    pub fn value(&mut self) -> &mut TVal {
+    /// Returns mutable access value associated with the key.
+    pub fn value_mut(&mut self) -> &mut TVal {
         self.0
             .bucket
             .pending_mut()

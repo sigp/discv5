@@ -19,7 +19,7 @@ use self::{
 };
 use crate::{
     error::{RequestError, ResponseError},
-    handler::{Handler, HandlerIn, HandlerOut},
+    handler::{EnrRequestData, Handler, HandlerIn, HandlerOut},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
@@ -85,7 +85,7 @@ impl Drop for TalkRequest {
 
         let response = Response {
             id: self.id.clone(),
-            body: ResponseBody::Talk { response: vec![] },
+            body: ResponseBody::TalkResp { response: vec![] },
         };
 
         debug!("Sending empty TALK response to {}", self.node_address);
@@ -120,7 +120,7 @@ impl TalkRequest {
 
         let response = Response {
             id: self.id.clone(),
-            body: ResponseBody::Talk { response },
+            body: ResponseBody::TalkResp { response },
         };
 
         self.sender
@@ -387,20 +387,60 @@ impl Service {
                         HandlerOut::Response(node_address, response) => {
                                 self.handle_rpc_response(node_address, *response);
                             }
-                        HandlerOut::WhoAreYou(whoareyou_ref) => {
+                        HandlerOut::RequestEnr(EnrRequestData::WhoAreYou(whoareyou_ref)) => {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
-                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
+                                if let Err(e) = self.handler_send.send(HandlerIn::EnrResponse(Some(known_enr), EnrRequestData::WhoAreYou(whoareyou_ref))) {
                                     warn!("Failed to send whoareyou {}", e);
                                 };
                             } else {
                                 // do not know of this peer
                                 debug!("NodeId unknown, requesting ENR. {}", whoareyou_ref.0);
-                                if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
+                                if let Err(e) = self.handler_send.send(HandlerIn::EnrResponse(None, EnrRequestData::WhoAreYou(whoareyou_ref))) {
                                     warn!("Failed to send who are you to unknown enr peer {}", e);
                                 }
                             }
                         }
+                        HandlerOut::RequestEnr(EnrRequestData::Nat(relay_initiation)) => {
+                            // Update initiator's Enr if it's in kbuckets
+                            let initiator_enr = relay_initiation.initiator_enr();
+                            let initiator_key = kbucket::Key::from(initiator_enr.node_id());
+                            match self.kbuckets.write().entry(&initiator_key) {
+                                kbucket::Entry::Present(ref mut entry, _) => {
+                                    let enr = entry.value_mut();
+                                    if enr.seq() < initiator_enr.seq() {
+                                        *enr = initiator_enr.clone();
+                                    }
+                                }
+                                kbucket::Entry::Pending(ref mut entry, _) => {
+                                    let enr = entry.value_mut();
+                                    if enr.seq() < initiator_enr.seq() {
+                                        *enr = initiator_enr.clone();
+                                    }
+                                }
+                                _ => ()
+                            }
+                            // check if we know the target node id in our routing table, otherwise
+                            // drop relay attempt.
+                            let target_node_id = relay_initiation.target_node_id();
+                            let target_key = kbucket::Key::from(target_node_id);
+                            if let kbucket::Entry::Present(entry, _) = self.kbuckets.write().entry(&target_key) {
+                                let target_enr = entry.value().clone();
+                                if let Err(e) = self.handler_send.send(HandlerIn::EnrResponse(Some(target_enr), EnrRequestData::Nat(relay_initiation))) {
+                                    warn!(
+                                        "Failed to send target enr to relay process, error: {e}"
+                                    );
+                                }
+                            } else {
+                                let initiator_node_id = relay_initiation.initiator_enr().node_id();
+                                warn!(
+                                    initiator_node_id=%initiator_node_id,
+                                    target_node_id=%target_node_id,
+                                    "Peer requested relaying to a peer not in k-buckets"
+                                );
+                            }
+                        },
+                        HandlerOut::PingAllPeers => self.ping_connected_peers(),
                         HandlerOut::RequestFailed(request_id, error) => {
                             if let RequestError::Timeout = error {
                                 debug!("RPC Request timed out. id: {}", request_id);
@@ -581,8 +621,8 @@ impl Service {
                         }
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            let enr = entry.value().clone();
+                        if entry.value_mut().seq() < enr_seq {
+                            let enr = entry.value_mut().clone();
                             to_request_enr = Some(enr);
                         }
                     }
@@ -622,7 +662,7 @@ impl Service {
                     warn!("Failed to send response {}", e)
                 }
             }
-            RequestBody::Talk { protocol, request } => {
+            RequestBody::TalkReq { protocol, request } => {
                 let req = TalkRequest {
                     id,
                     node_address,
@@ -834,11 +874,20 @@ impl Service {
                                                 updated = true;
                                                 info!(
                                                     "Local UDP ip6 socket updated to: {}",
-                                                    new_ip6,
+                                                    new_ip6
                                                 );
                                                 self.send_event(Discv5Event::SocketUpdated(
                                                     new_ip6,
                                                 ));
+                                                // Notify Handler of socket update
+                                                if let Err(e) =
+                                                    self.handler_send.send(HandlerIn::SocketUpdate(
+                                                        local_ip6_socket.map(SocketAddr::V6),
+                                                        new_ip6,
+                                                    ))
+                                                {
+                                                    warn!("Failed to send socket update to handler: {}", e);
+                                                };
                                             }
                                             Err(e) => {
                                                 warn!("Failed to update local UDP ip6 socket. ip6: {}, error: {:?}", new_ip6, e);
@@ -858,6 +907,15 @@ impl Service {
                                                 self.send_event(Discv5Event::SocketUpdated(
                                                     new_ip4,
                                                 ));
+                                                // Notify Handler of socket update
+                                                if let Err(e) =
+                                                    self.handler_send.send(HandlerIn::SocketUpdate(
+                                                        local_ip4_socket.map(SocketAddr::V4),
+                                                        new_ip4,
+                                                    ))
+                                                {
+                                                    warn!("Failed to send socket update {}", e);
+                                                };
                                             }
                                             Err(e) => {
                                                 warn!("Failed to update local UDP socket. ip: {}, error: {:?}", new_ip4, e);
@@ -889,7 +947,7 @@ impl Service {
                         }
                     }
                 }
-                ResponseBody::Talk { response } => {
+                ResponseBody::TalkResp { response } => {
                     // Send the response to the user
                     match active_request.callback {
                         Some(CallbackResponse::Talk(callback)) => {
@@ -981,7 +1039,7 @@ impl Service {
         request: Vec<u8>,
         callback: oneshot::Sender<Result<Vec<u8>, RequestError>>,
     ) {
-        let request_body = RequestBody::Talk { protocol, request };
+        let request_body = RequestBody::TalkReq { protocol, request };
 
         let active_request = ActiveRequest {
             contact,
@@ -1056,13 +1114,16 @@ impl Service {
             for enr in nodes_to_send.into_iter() {
                 let entry_size = rlp::encode(&enr).len();
                 // Responses assume that a session is established. Thus, on top of the encoded
-                // ENR's the packet should be a regular message. A regular message has an IV (16
-                // bytes), and a header of 55 bytes. The find-nodes RPC requires 16 bytes for the ID and the
-                // `total` field. Also there is a 16 byte HMAC for encryption and an extra byte for
-                // RLP encoding.
+                // ENR's the packet should be a session message, which is the same data
+                // structure as a regular message.
+                // A session message has an IV (16 bytes), and a header of 55 bytes. The
+                // find-nodes RPC requires 16 bytes for the ID and the `total` field. Also there
+                // is a 16 byte HMAC for encryption and an extra byte for RLP encoding.
                 //
-                // We could also be responding via an authheader which can take up to 282 bytes in its
-                // header.
+                // We could also be responding via an authheader (this message could be in
+                // contained in a handshake message) which can take up to 282 bytes in
+                // the header, leaving even less space for the NODES response.
+                //
                 // As most messages will be normal messages we will try and pack as many ENR's we
                 // can in and drop the response packet if a user requests an auth message of a very
                 // packed response.
@@ -1202,7 +1263,7 @@ impl Service {
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
                     kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
-                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                    kbucket::Entry::Pending(mut entry, _) => entry.value_mut().seq() < enr.seq(),
                     _ => false,
                 };
 

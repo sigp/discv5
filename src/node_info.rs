@@ -1,5 +1,6 @@
 use super::*;
 use crate::Enr;
+use derive_more::Display;
 use enr::{CombinedPublicKey, NodeId};
 use std::net::SocketAddr;
 
@@ -10,7 +11,7 @@ use libp2p_identity::{KeyType, PublicKey};
 
 /// This type relaxes the requirement of having an ENR to connect to a node, to allow for unsigned
 /// connection types, such as multiaddrs.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeContact {
     /// Key to use for communications with this node.
     public_key: CombinedPublicKey,
@@ -148,7 +149,8 @@ impl std::fmt::Display for NodeContact {
 }
 
 /// A representation of an unsigned contactable node.
-#[derive(PartialEq, Hash, Eq, Clone, Debug)]
+#[derive(PartialEq, Hash, Eq, Clone, Debug, Display)]
+#[display(fmt = "Node: {node_id}, addr: {socket_addr}")]
 pub struct NodeAddress {
     /// The destination socket address.
     pub socket_addr: SocketAddr,
@@ -182,11 +184,5 @@ impl NodeAddress {
             socket_addr,
             node_id,
         }
-    }
-}
-
-impl std::fmt::Display for NodeAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Node: {}, addr: {:?}", self.node_id, self.socket_addr)
     }
 }

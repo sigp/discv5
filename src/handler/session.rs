@@ -1,11 +1,18 @@
 use super::*;
 use crate::{
+    handler::Challenge,
     node_info::NodeContact,
     packet::{
-        ChallengeData, Packet, PacketHeader, PacketKind, ProtocolIdentity, MESSAGE_NONCE_LENGTH,
+        ChallengeData, MessageNonce, Packet, PacketHeader, PacketKind, ProtocolIdentity,
+        MESSAGE_NONCE_LENGTH,
     },
+    rpc::RequestId,
+    Discv5Error, Enr,
 };
+
 use enr::{CombinedKey, NodeId};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use zeroize::Zeroize;
 
 #[derive(Zeroize, PartialEq)]
@@ -14,6 +21,15 @@ pub(crate) struct Keys {
     encryption_key: [u8; 16],
     /// The decryption key.
     decryption_key: [u8; 16],
+}
+
+impl From<([u8; 16], [u8; 16])> for Keys {
+    fn from((encryption_key, decryption_key): ([u8; 16], [u8; 16])) -> Self {
+        Keys {
+            encryption_key,
+            decryption_key,
+        }
+    }
 }
 
 /// A Session containing the encryption/decryption keys. These are kept individually for a given
@@ -55,17 +71,33 @@ impl Session {
         self.awaiting_enr = new_session.awaiting_enr;
     }
 
-    /// Uses the current `Session` to encrypt a message. Encrypt packets with the current session
-    /// key if we are awaiting a response from AuthMessage.
+    /// Uses the current `Session` to encrypt a `SessionMessage`.
+    pub(crate) fn encrypt_session_message<P: ProtocolIdentity>(
+        &mut self,
+        src_id: NodeId,
+        message: &[u8],
+    ) -> Result<Packet, Discv5Error> {
+        self.encrypt::<P>(message, PacketKind::SessionMessage { src_id })
+    }
+
+    /// Uses the current `Session` to encrypt a `Message`.
     pub(crate) fn encrypt_message<P: ProtocolIdentity>(
         &mut self,
         src_id: NodeId,
         message: &[u8],
     ) -> Result<Packet, Discv5Error> {
+        self.encrypt::<P>(message, PacketKind::Message { src_id })
+    }
+
+    /// Encrypts packets with the current session key if we are awaiting a response from
+    /// AuthMessage.
+    fn encrypt<P: ProtocolIdentity>(
+        &mut self,
+        message: &[u8],
+        packet_kind: PacketKind,
+    ) -> Result<Packet, Discv5Error> {
         self.counter += 1;
 
-        // If the message nonce length is ever set below 4 bytes this will explode. The packet
-        // size constants shouldn't be modified.
         let random_nonce: [u8; MESSAGE_NONCE_LENGTH - 4] = rand::random();
         let mut message_nonce: MessageNonce = [0u8; MESSAGE_NONCE_LENGTH];
         message_nonce[..4].copy_from_slice(&self.counter.to_be_bytes());
@@ -75,7 +107,7 @@ impl Session {
         let iv: u128 = rand::random();
         let header = PacketHeader {
             message_nonce,
-            kind: PacketKind::Message { src_id },
+            kind: packet_kind,
         };
 
         let mut authenticated_data = iv.to_be_bytes().to_vec();
@@ -132,48 +164,28 @@ impl Session {
     /// Generates session keys from an authentication header. If the IP of the ENR does not match the
     /// source IP address, we consider this session untrusted. The output returns a boolean which
     /// specifies if the Session is trusted or not.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn establish_from_challenge(
         local_key: Arc<RwLock<CombinedKey>>,
         local_id: &NodeId,
         remote_id: &NodeId,
-        challenge: Challenge,
+        challenge_data: ChallengeData,
         id_nonce_sig: &[u8],
         ephem_pubkey: &[u8],
-        enr_record: Option<Enr>,
+        session_enr: Enr,
     ) -> Result<(Session, Enr), Discv5Error> {
-        // check and verify a potential ENR update
-
-        // Duplicate code here to avoid cloning an ENR
-        let remote_public_key = {
-            let enr = match (enr_record.as_ref(), challenge.remote_enr.as_ref()) {
-                (Some(new_enr), Some(known_enr)) => {
-                    if new_enr.seq() > known_enr.seq() {
-                        new_enr
-                    } else {
-                        known_enr
-                    }
-                }
-                (Some(new_enr), None) => new_enr,
-                (None, Some(known_enr)) => known_enr,
-                (None, None) => {
-                    warn!(
-                "Peer did not respond with their ENR. Session could not be established. Node: {}",
-                remote_id
-            );
-                    return Err(Discv5Error::SessionNotEstablished);
-                }
-            };
-            enr.public_key()
-        };
-
         // verify the auth header nonce
         if !crypto::verify_authentication_nonce(
-            &remote_public_key,
+            &session_enr.public_key(),
             ephem_pubkey,
-            &challenge.data,
+            &challenge_data,
             local_id,
             id_nonce_sig,
         ) {
+            let challenge = Challenge {
+                data: challenge_data,
+                remote_enr: Some(session_enr),
+            };
             return Err(Discv5Error::InvalidChallengeSignature(challenge));
         }
 
@@ -185,28 +197,13 @@ impl Session {
             &local_key.read(),
             local_id,
             remote_id,
-            &challenge.data,
+            &challenge_data,
             ephem_pubkey,
         )?;
 
         let keys = Keys {
             encryption_key,
             decryption_key,
-        };
-
-        // Takes ownership of the provided ENRs - Slightly annoying code duplication, but avoids
-        // cloning ENRs
-        let session_enr = match (enr_record, challenge.remote_enr) {
-            (Some(new_enr), Some(known_enr)) => {
-                if new_enr.seq() > known_enr.seq() {
-                    new_enr
-                } else {
-                    known_enr
-                }
-            }
-            (Some(new_enr), None) => new_enr,
-            (None, Some(known_enr)) => known_enr,
-            (None, None) => unreachable!("Checked in the first match above"),
         };
 
         Ok((Session::new(keys), session_enr))

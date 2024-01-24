@@ -1,15 +1,24 @@
-use crate::{handler::Challenge, node_info::NonContactable};
+use crate::{
+    handler::Challenge,
+    node_info::{NodeAddress, NonContactable},
+};
+use derive_more::From;
 use rlp::DecoderError;
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, From)]
 /// A general error that is used throughout the Discv5 library.
 pub enum Discv5Error {
+    /// An invalid message type was received.
+    InvalidMessage,
     /// An invalid ENR was received.
     InvalidEnr,
+    /// The limit for sessions with peers that have an unreachable ENR is reached.
+    LimitSessionsUnreachableEnr,
     /// The public key type is known.
     UnknownPublicKey,
     /// The ENR key used is not supported.
+    #[from(ignore)]
     KeyTypeNotSupported(&'static str),
     /// Failed to derive an ephemeral public key.
     KeyDerivationFailed,
@@ -27,25 +36,48 @@ pub enum Discv5Error {
     ServiceAlreadyStarted,
     /// A session could not be established with the remote.
     SessionNotEstablished,
+    /// A session to the given peer is already established.
+    SessionAlreadyEstablished(NodeAddress),
     /// An RLP decoding error occurred.
     RLPError(DecoderError),
     /// Failed to encrypt a message.
+    #[from(ignore)]
     EncryptionFail(String),
     /// Failed to decrypt a message.
+    #[from(ignore)]
     DecryptionFailed(String),
     /// The custom error has occurred.
+    #[from(ignore)]
     Custom(&'static str),
     /// A generic dynamic error occurred.
+    #[from(ignore)]
     Error(String),
     /// An IO error occurred.
     Io(std::io::Error),
 }
 
-impl From<std::io::Error> for Discv5Error {
-    fn from(err: std::io::Error) -> Discv5Error {
-        Discv5Error::Io(err)
-    }
+/// An error occurred whilst attempting to hole punch NAT.
+#[derive(Debug)]
+pub enum NatError {
+    /// Initiator error.
+    Initiator(Discv5Error),
+    /// Relayer error.
+    Relay(Discv5Error),
+    /// Target error.
+    Target(Discv5Error),
 }
+
+macro_rules! impl_from_variant {
+    ($(<$($generic: ident,)+>)*, $from_type: ty, $to_type: ty, $variant: path) => {
+        impl$(<$($generic,)+>)* From<$from_type> for $to_type {
+            fn from(_e: $from_type) -> Self {
+                $variant
+            }
+        }
+    };
+}
+impl_from_variant!(<T,>, tokio::sync::mpsc::error::SendError<T>, Discv5Error, Self::ServiceChannelClosed);
+impl_from_variant!(, NonContactable, Discv5Error, Self::InvalidEnr);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Types of packet errors.
@@ -111,6 +143,9 @@ pub enum RequestError {
     InvalidMultiaddr(&'static str),
     /// Failure generating random numbers during request.
     EntropyFailure(&'static str),
+    /// Malicious peer tried to initiate nat hole punching for another peer. todo(emhane): this is
+    /// notification error.
+    MaliciousRelayInit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-use crate::{packet::ProtocolIdentity, Executor};
+use crate::{packet::ProtocolIdentity, Executor, IpMode};
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
@@ -24,7 +24,7 @@ pub use filter::{
     FilterConfig,
 };
 pub use recv::InboundPacket;
-pub use send::OutboundPacket;
+pub use send::{Outbound, OutboundPacket};
 
 /// Configuration for the sockets to listen on.
 ///
@@ -47,6 +47,42 @@ pub enum ListenConfig {
     },
 }
 
+impl ListenConfig {
+    pub fn ipv4(&self) -> Option<Ipv4Addr> {
+        match self {
+            ListenConfig::Ipv4 { ip, .. } | ListenConfig::DualStack { ipv4: ip, .. } => Some(*ip),
+            _ => None,
+        }
+    }
+
+    pub fn ipv6(&self) -> Option<Ipv6Addr> {
+        match self {
+            ListenConfig::Ipv6 { ip, .. } | ListenConfig::DualStack { ipv6: ip, .. } => Some(*ip),
+            _ => None,
+        }
+    }
+
+    pub fn ipv4_port(&self) -> Option<u16> {
+        match self {
+            ListenConfig::Ipv4 { port, .. }
+            | ListenConfig::DualStack {
+                ipv4_port: port, ..
+            } => Some(*port),
+            _ => None,
+        }
+    }
+
+    pub fn ipv6_port(&self) -> Option<u16> {
+        match self {
+            ListenConfig::Ipv6 { port, .. }
+            | ListenConfig::DualStack {
+                ipv6_port: port, ..
+            } => Some(*port),
+            _ => None,
+        }
+    }
+}
+
 /// Convenience objects for setting up the recv handler.
 pub struct SocketConfig {
     /// The executor to spawn the tasks.
@@ -65,7 +101,7 @@ pub struct SocketConfig {
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
 pub struct Socket {
-    pub send: mpsc::Sender<OutboundPacket>,
+    pub send: mpsc::Sender<Outbound>,
     pub recv: mpsc::Receiver<InboundPacket>,
     sender_exit: Option<oneshot::Sender<()>>,
     recv_exit: Option<oneshot::Sender<()>>,
@@ -241,6 +277,14 @@ impl ListenConfig {
                 ipv6: ip,
                 ipv6_port: port,
             },
+        }
+    }
+
+    pub fn ip_mode(&self) -> IpMode {
+        match self {
+            ListenConfig::Ipv4 { .. } => IpMode::Ip4,
+            ListenConfig::Ipv6 { .. } => IpMode::Ip6,
+            ListenConfig::DualStack { .. } => IpMode::DualStack,
         }
     }
 }

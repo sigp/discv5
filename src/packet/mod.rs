@@ -24,7 +24,7 @@ pub const IV_LENGTH: usize = 16;
 /// The length of the static header. (6 byte protocol id, 2 bytes version, 1 byte kind, 12 byte
 /// message nonce and a 2 byte authdata-size).
 pub const STATIC_HEADER_LENGTH: usize = 23;
-/// The message nonce length (in bytes).
+/// The message nonce length (in bytes). This must be at least 4 bytes.
 pub const MESSAGE_NONCE_LENGTH: usize = 12;
 /// The Id nonce length (in bytes).
 pub const ID_NONCE_LENGTH: usize = 16;
@@ -36,7 +36,7 @@ impl ProtocolIdentity for DefaultProtocolId {
     const PROTOCOL_VERSION_BYTES: [u8; 2] = 0x0001_u16.to_be_bytes();
 }
 
-pub trait ProtocolIdentity {
+pub trait ProtocolIdentity: Sync + Send {
     const PROTOCOL_ID_BYTES: [u8; 6];
     const PROTOCOL_VERSION_BYTES: [u8; 2];
 }
@@ -141,6 +141,14 @@ pub enum PacketKind {
         /// The ENR record of the node if the WHOAREYOU request is out-dated.
         enr_record: Option<Enr>,
     },
+    /// A session message is a notification, hence it differs from the [`PacketKind::Message`] in
+    /// the way it handles sessions since notifications don't trigger responses, a session
+    /// message packet doesn't trigger a WHOAREYOU response. If a session doesn't exist to
+    /// decrypt or encrypt a notification, it is dropped.
+    SessionMessage {
+        /// The sending NodeId.
+        src_id: NodeId,
+    },
 }
 
 impl From<&PacketKind> for u8 {
@@ -149,6 +157,7 @@ impl From<&PacketKind> for u8 {
             PacketKind::Message { .. } => 0,
             PacketKind::WhoAreYou { .. } => 1,
             PacketKind::Handshake { .. } => 2,
+            PacketKind::SessionMessage { .. } => 3,
         }
     }
 }
@@ -157,7 +166,9 @@ impl PacketKind {
     /// Encodes the packet type into its corresponding auth_data.
     pub fn encode(&self) -> Vec<u8> {
         match self {
-            PacketKind::Message { src_id } => src_id.raw().to_vec(),
+            PacketKind::Message { src_id } | PacketKind::SessionMessage { src_id } => {
+                src_id.raw().to_vec()
+            }
             PacketKind::WhoAreYou { id_nonce, enr_seq } => {
                 let mut auth_data = Vec::with_capacity(24);
                 auth_data.extend_from_slice(id_nonce);
@@ -273,6 +284,16 @@ impl PacketKind {
                     enr_record,
                 })
             }
+            3 => {
+                // Decoding a SessionMessage packet
+                // This should only contain a 32 byte NodeId.
+                if auth_data.len() != 32 {
+                    return Err(PacketError::InvalidAuthDataSize);
+                }
+
+                let src_id = NodeId::parse(auth_data).map_err(|_| PacketError::InvalidNodeId)?;
+                Ok(PacketKind::SessionMessage { src_id })
+            }
             _ => Err(PacketError::UnknownPacket),
         }
     }
@@ -362,7 +383,9 @@ impl Packet {
     pub fn is_whoareyou(&self) -> bool {
         match &self.header.kind {
             PacketKind::WhoAreYou { .. } => true,
-            PacketKind::Message { .. } | PacketKind::Handshake { .. } => false,
+            PacketKind::Message { .. }
+            | PacketKind::Handshake { .. }
+            | PacketKind::SessionMessage { .. } => false,
         }
     }
 
@@ -370,7 +393,7 @@ impl Packet {
     /// src_id in this case.
     pub fn src_id(&self) -> Option<NodeId> {
         match self.header.kind {
-            PacketKind::Message { src_id } => Some(src_id),
+            PacketKind::Message { src_id } | PacketKind::SessionMessage { src_id } => Some(src_id),
             PacketKind::WhoAreYou { .. } => None,
             PacketKind::Handshake { src_id, .. } => Some(src_id),
         }
@@ -421,7 +444,7 @@ impl Packet {
     ///
     /// This also returns the authenticated data for further decryption in the handler.
     pub fn decode<P: ProtocolIdentity>(
-        src_id: &NodeId,
+        dst_id: &NodeId,
         data: &[u8],
     ) -> Result<(Self, Vec<u8>), PacketError> {
         if data.len() > MAX_PACKET_SIZE {
@@ -439,7 +462,7 @@ impl Packet {
          * This was split into its own library, but brought back to allow re-use of the cipher when
          * performing the decryption
          */
-        let key = GenericArray::clone_from_slice(&src_id.raw()[..16]);
+        let key = GenericArray::clone_from_slice(&dst_id.raw()[..16]);
         let nonce = GenericArray::clone_from_slice(&iv);
         let mut cipher = Aes128Ctr::new(&key, &nonce);
 
@@ -565,6 +588,9 @@ impl std::fmt::Display for PacketKind {
                 hex::encode(ephem_pubkey),
                 enr_record
             ),
+            PacketKind::SessionMessage { src_id } => {
+                write!(f, "SessionMessage {{ src_id: {src_id} }}")
+            }
         }
     }
 }
