@@ -157,7 +157,173 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
 mod tests {
     use crate::lru_time_cache::LruTimeCache;
     use std::time::Duration;
+    use proptest::prelude::*;
+    use rand::Rng;
 
+    //Generates strategy for vector of keys and vector of values to use in tests
+    //Range hardcoded as 1 to 1000, length passed from main test function
+    prop_compose! {
+    fn vec_gen(vec_length: usize)(gen_keys in prop::collection::vec(1..1000i32, vec_length))
+                (gen_values in prop::collection::vec(1..1000i32,vec_length), gen_keys in Just(gen_keys)) -> (Vec<i32>, Vec<i32>) {
+                    (gen_keys, gen_values)
+                }
+            }
+
+    //Generates strategy for calling functions and composes a vector of integers between 1 and 4
+    //Will shrink towards selecting cases that produce errors
+    prop_compose! {
+    fn select_gen(vec_length: usize)(gen_cases in prop::collection::vec(1..5i32, vec_length))(gen_cases in Just(gen_cases))
+                ->Vec<i32>{
+                    gen_cases
+                }
+            }
+
+    //Main test function
+    //Generates a strategy for number of operations to carry out - will shrink to minimum failing value
+    //Generates large vectors of keys and values to use as dummy data
+    //Selects operation to carry out based on vector of case_select integers - will shrink towards operations that cause failure
+    //Maintains dummy cache in vectors to test against real cache performance
+    proptest! {
+        #[test]
+        fn call_functions(cache_calls in 1..50u32, (test_keys, test_values) in vec_gen(100),
+            case_select in select_gen(100)
+            ){
+            let mut cache = LruTimeCache::new(Duration::from_secs(10), Some(1000));
+            //Initialising vectors to use as storage -- these are used to compare tests to real cache
+            let mut test_cache_k: Vec<i32> = Vec::new();
+            let mut test_cache_v: Vec<i32> = Vec::new();
+            let mut test_cache_bool: Vec<bool> = Vec::new();
+            //Counter for function calls loop
+            let mut counter: u32 = 0;
+
+            //Loops through case_select vector until counter reaches number of cache calls
+            for (i, case) in case_select.iter().enumerate()  {
+                println!("{i} , {case}");
+                match case {
+                    //Case one checks if the current test key is in the cache
+                    //If it is, it will update value to current iteration value and tagged to true
+                    //If it is not, it will add a new tagged key value pair to cache
+                    1 => {
+                        if test_cache_k.iter().any(|&find| find==test_keys[i]) {
+                            let existing_index = test_cache_k.iter().position(|&find| find==test_keys[i]).unwrap();
+                            cache.insert_tagged(test_keys[i], test_values[i]);
+                            test_cache_v[existing_index] = test_values[i];
+                            test_cache_bool[existing_index] = true;
+                            println!("Key {} is in cache -- value now {} , tagged now true", test_keys[i], test_values[i]);
+                        } else {
+                        println!("Insert tagged - k {} , v {}", test_keys[i], test_values[i]);
+                        cache.insert_tagged(test_keys[i], test_values[i]);
+                        test_cache_k.push(test_keys[i]);
+                        test_cache_v.push(test_values[i]);
+                        test_cache_bool.push(true);
+                        }
+                    }
+                    //Case two checks if the current test key is in the cache
+                    //If it is, it will update value to current iteration value and tagged to false
+                    //If it is not, it will add a new untagged key value pair to cache
+                    2 => {
+                        if test_cache_k.iter().any(|&find| find==test_keys[i]) {
+                            let existing_index = test_cache_k.iter().position(|&find| find==test_keys[i]).unwrap();
+                            cache.insert(test_keys[i], test_values[i]);
+                            test_cache_v[existing_index] = test_values[i];
+                            test_cache_bool[existing_index] = false;
+                            println!("Key {} is in cache -- value now {} , tagged now true", test_keys[i], test_values[i]);
+                        } else {
+                        println!("Insert untagged - k {} , v {}", test_keys[i], test_values[i]);
+                        cache.insert(test_keys[i], test_values[i]);
+                        test_cache_k.push(test_keys[i]);
+                        test_cache_v.push(test_values[i]);
+                        test_cache_bool.push(false);
+                        }
+                    }
+                    //Case three checks if there is nothing in cache
+                    //If cache is empty, adds a tagged key value pair
+                    //If cache has single element, removes that element
+                    //If cache has multiple elements, selects one at random to remove
+                    3 => {
+                        if test_cache_k.len() == 0 {
+                            println!("Cache empty - Insert tagged - k {} , v {}", test_keys[i], test_values[i]);
+                            cache.insert_tagged(test_keys[i], test_values[i]);
+                            test_cache_k.push(test_keys[i]);
+                            test_cache_v.push(test_values[i]);
+                            test_cache_bool.push(true);
+
+                        } if test_cache_k.len() == 1 {
+                            let rand_key: i32 = test_cache_k[0];
+                            let rand_val: i32 = test_cache_v[0];
+                            let rand_bool: bool = test_cache_bool[0];
+                            let ret_value = cache.remove(&rand_key).unwrap();
+                            test_cache_k.remove(0);
+                            test_cache_v.remove(0);
+                            test_cache_bool.remove(0);
+                            println!("Remove - k {} , v {}, tagged {}", rand_key, rand_val, rand_bool);
+
+                        } else {
+                            let test_cache_length = test_cache_k.len();
+                            let mut rand_index = rand::thread_rng().gen_range(1..test_cache_length);
+                            rand_index = rand_index - 1;
+                            let rand_key: i32 = test_cache_k[rand_index];
+                            let rand_val: i32 = test_cache_v[rand_index];
+                            let rand_bool: bool = test_cache_bool[rand_index];
+                            let rem_value = cache.remove(&rand_key).unwrap();
+                            test_cache_k.remove(rand_index);
+                            test_cache_v.remove(rand_index);
+                            test_cache_bool.remove(rand_index);
+                            println!("Remove - k {} , v {} -- from cache val {}, tagged {}", rand_key, rand_val, rem_value, rand_bool);
+                        }
+                    }
+                    //Case four checks if there is nothing in cache
+                    //If cache is empty, attempts get_mut on test_key to return none
+                    //If cache has single element, performs get_mut on that element
+                    //If cache has multiple elements, selects one at random to get_mut
+                    4 => {
+                        if test_cache_k.len() == 0 {
+                            println!("Cache empty - Attempt get with k {}", test_keys[i]);
+                            let ret_value = cache.get_mut(&test_keys[i]);
+                            if ret_value.is_none() {
+                                    return Ok(());
+                                }
+                            let ret_value = ret_value.unwrap();
+                            println!("Cache returned {}", ret_value);
+
+                        } if test_cache_k.len() == 1 {
+                            let ret_value = cache.get_mut(&test_cache_k[0]).unwrap();
+                            println!("Attempt get with k {} Cache returned {} expected {}", test_cache_k[0], ret_value, test_cache_v[0]);
+
+                        } else {
+                            let test_cache_length = test_cache_k.len();
+                            let mut rand_index = rand::thread_rng().gen_range(1..test_cache_length);
+                            rand_index = rand_index - 1;
+                            let rand_key: i32 = test_cache_k[rand_index];
+                            let rand_val: i32 = test_cache_v[rand_index];
+                            let ret_value = cache.get_mut(&rand_key).unwrap();
+                            println!("Attempt get with k {} Cache returned {} expected {}", rand_key, ret_value, rand_val);
+                        }
+                    }
+
+                    _ => {println!("Case select error");}
+                }
+                //Breaks loop when reaches number of cache calls specified in strategy
+                counter += 1;
+                if counter==cache_calls{
+                    println!{"cache calls - {cache_calls}"}
+                    println!{"{:?}", test_cache_k}
+                    println!{"bool vec - {:?}", test_cache_bool}
+                    let tagged_test_count = test_cache_bool.into_iter().filter(|b| *b).count();
+                    println!{"total expected true: {} ; cache tagged true: {}", tagged_test_count, cache.tagged()}
+                    //Checks that cache.tagged returns same count as true tags in test_cache_bool vector
+                    assert!(tagged_test_count == cache.tagged());
+                    //Checks cache.len() returns the same number of items in the cache as the test_cache vectors
+                    assert!(test_cache_k.len() == cache.len());
+
+                    break;
+                }
+            }
+
+        }
+
+    }
+    
     #[test]
     fn insert() {
         let mut cache = LruTimeCache::new(Duration::from_secs(10), None);
