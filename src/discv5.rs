@@ -453,17 +453,6 @@ impl<P: ProtocolIdentity> Discv5<P> {
             .collect()
     }
 
-    /// Takes only a read lock on the kbuckets. This means pending entries aren't added. Otherwise
-    /// same as [`Self::table_entries_id`]. Returns an iterator over all ENR node IDs of nodes
-    /// currently contained in the routing table.
-    pub fn table_entries_id_rlock(&self) -> Vec<NodeId> {
-        self.kbuckets
-            .read()
-            .iter_ref()
-            .map(|entry| *entry.node.key.preimage())
-            .collect()
-    }
-
     /// Returns an iterator over all the ENR's of nodes currently contained in the routing table.
     pub fn table_entries_enr(&self) -> Vec<Enr> {
         self.kbuckets
@@ -488,21 +477,13 @@ impl<P: ProtocolIdentity> Discv5<P> {
             .collect()
     }
 
-    /// Takes only a read lock on the kbuckets. This means pending entries aren't added. Otherwise
-    /// same as [`Self::table_entries`]. Returns an iterator over all ENR node IDs of nodes
-    /// currently contained in the routing table.
-    pub fn table_entries_rlock(&self) -> Vec<(NodeId, Enr, NodeStatus)> {
-        self.kbuckets
-            .read()
-            .iter_ref()
-            .map(|entry| {
-                (
-                    *entry.node.key.preimage(),
-                    entry.node.value.clone(),
-                    entry.status,
-                )
-            })
-            .collect()
+    /// Takes a closure parameterized by type `Arc<RwLock<KBucketsTable<NodeId, Enr>>>` as
+    /// parameter. Caution: caller is responsible of dropping a lock taken on the kbuckets.
+    pub fn with_kbuckets<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce(&Arc<RwLock<KBucketsTable<NodeId, Enr>>>) -> T,
+    {
+        f(&self.kbuckets)
     }
 
     /// Requests the ENR of a node corresponding to multiaddr or multi-addr string.
