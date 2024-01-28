@@ -478,9 +478,10 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 
     /// Takes a closure parameterized by type `Arc<RwLock<KBucketsTable<NodeId, Enr>>>` as
-    /// parameter. Caution: caller is responsible of dropping a lock taken on the kbuckets. We can
-    /// then for example take a read lock only to optimistically view the current keys in the
-    /// kbuckets (optimistic since it doesn't apply pending entries, which requires a write lock).
+    /// parameter. Caution: caller is responsible of dropping a lock taken on the kbuckets. For
+    /// example, a read lock can be taken on the kbuckets to optimistically view the current keys
+    /// in the kbuckets (optimistic since it doesn't apply pending entries, which requires a write
+    /// lock).
     /// ```
     /// use std::str::FromStr;
     /// use discv5::{ConfigBuilder, Discv5, ListenConfig, Enr, enr::CombinedKey};
