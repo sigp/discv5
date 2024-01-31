@@ -48,6 +48,7 @@ rand_xorshift = "0.3.0"
 rand_core = "0.6.3"
 clap = { version = "3.1", features = ["derive"] }
 if-addrs = "0.10.1"
+proptest = "1.1.0"
 
 [features]
 libp2p = ["libp2p-core", "libp2p-identity"]
