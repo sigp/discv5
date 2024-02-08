@@ -10,8 +10,6 @@ pub use notification::{RelayInitNotification, RelayMsgNotification};
 pub use request::{Request, RequestBody, RequestId};
 pub use response::{Response, ResponseBody};
 
-/// Message type IDs.
-#[derive(Debug)]
 #[repr(u8)]
 pub enum MessageType {
     Ping = 1,
@@ -91,8 +89,9 @@ impl Message {
             return Err(DecoderError::RlpIsTooShort);
         }
         let msg_type = data[0];
+        let data = &data[1..];
 
-        let rlp = rlp::Rlp::new(&data[1..]);
+        let rlp = rlp::Rlp::new(data);
 
         match msg_type.try_into()? {
             MessageType::Ping | MessageType::FindNode | MessageType::TalkReq => {
@@ -120,7 +119,7 @@ impl Message {
 mod tests {
     use super::*;
     use crate::packet::MESSAGE_NONCE_LENGTH;
-    use enr::{CombinedKey, Enr, EnrBuilder};
+    use enr::{CombinedKey, Enr};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -166,7 +165,11 @@ mod tests {
         let port = 5000;
         let message = Message::Response(Response {
             id,
-            body: ResponseBody::Pong { enr_seq, ip, port },
+            body: ResponseBody::Pong {
+                enr_seq,
+                ip,
+                port: port.try_into().unwrap(),
+            },
         });
 
         // expected hex output
@@ -283,7 +286,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: "127.0.0.1".parse().unwrap(),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -301,7 +304,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V6(Ipv4Addr::new(192, 0, 2, 1).to_ipv6_mapped()),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -312,7 +315,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -327,7 +330,7 @@ mod tests {
             body: ResponseBody::Pong {
                 enr_seq: 15,
                 ip: IpAddr::V6(Ipv6Addr::LOCALHOST),
-                port: 80,
+                port: 80.try_into().unwrap(),
             },
         });
 
@@ -356,17 +359,17 @@ mod tests {
     #[test]
     fn encode_decode_nodes_response() {
         let key = CombinedKey::generate_secp256k1();
-        let enr1 = EnrBuilder::new("v4")
+        let enr1 = Enr::builder()
             .ip4("127.0.0.1".parse().unwrap())
             .udp4(500)
             .build(&key)
             .unwrap();
-        let enr2 = EnrBuilder::new("v4")
+        let enr2 = Enr::builder()
             .ip4("10.0.0.1".parse().unwrap())
             .tcp4(8080)
             .build(&key)
             .unwrap();
-        let enr3 = EnrBuilder::new("v4")
+        let enr3 = Enr::builder()
             .ip("10.4.5.6".parse().unwrap())
             .build(&key)
             .unwrap();
@@ -385,6 +388,25 @@ mod tests {
         let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
+    }
+
+    #[test]
+    fn reject_extra_data() {
+        let data = [6, 194, 0, 75];
+        let msg = Message::decode(&data).unwrap();
+        assert_eq!(
+            msg,
+            Message::Response(Response {
+                id: RequestId(vec![0]),
+                body: ResponseBody::TalkResp { response: vec![75] }
+            })
+        );
+
+        let data2 = [6, 193, 0, 75, 252];
+        Message::decode(&data2).expect_err("should reject extra data");
+
+        let data3 = [6, 194, 0, 75, 252];
+        Message::decode(&data3).expect_err("should reject extra data");
     }
 
     #[test]
@@ -409,12 +431,12 @@ mod tests {
         // generate a new enr key for the initiator
         let enr_key = CombinedKey::generate_secp256k1();
         // construct the initiator's ENR
-        let inr_enr = EnrBuilder::new("v4").build(&enr_key).unwrap();
+        let inr_enr = Enr::builder().build(&enr_key).unwrap();
 
         // generate a new enr key for the target
         let enr_key_tgt = CombinedKey::generate_secp256k1();
         // construct the target's ENR
-        let tgt_enr = EnrBuilder::new("v4").build(&enr_key_tgt).unwrap();
+        let tgt_enr = Enr::builder().build(&enr_key_tgt).unwrap();
         let tgt_node_id = tgt_enr.node_id();
 
         let nonce_bytes = hex::decode("47644922f5d6e951051051ac").unwrap();
@@ -435,7 +457,7 @@ mod tests {
         // generate a new enr key for the initiator
         let enr_key = CombinedKey::generate_secp256k1();
         // construct the initiator's ENR
-        let inr_enr = EnrBuilder::new("v4").build(&enr_key).unwrap();
+        let inr_enr = Enr::builder().build(&enr_key).unwrap();
 
         let nonce_bytes = hex::decode("9951051051aceb").unwrap();
         let mut nonce = [0u8; MESSAGE_NONCE_LENGTH];

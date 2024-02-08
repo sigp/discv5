@@ -2,6 +2,7 @@ use super::{MessageType, Payload, RequestBody, RequestId};
 use crate::Enr;
 use derive_more::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
+use std::num::NonZeroU16;
 use std::{
     convert::TryInto,
     net::{IpAddr, Ipv6Addr},
@@ -44,7 +45,7 @@ impl Payload for Response {
                     IpAddr::V4(addr) => s.append(&(&addr.octets() as &[u8])),
                     IpAddr::V6(addr) => s.append(&(&addr.octets() as &[u8])),
                 };
-                s.append(&port);
+                s.append(&port.get());
                 buf.extend_from_slice(&s.out());
                 buf
             }
@@ -117,14 +118,19 @@ impl Payload for Response {
                         return Err(DecoderError::RlpIncorrectListLen);
                     }
                 };
-                let port = rlp.val_at::<u16>(3)?;
-                Self {
-                    id,
-                    body: ResponseBody::Pong {
-                        enr_seq: rlp.val_at::<u64>(1)?,
-                        ip,
-                        port,
-                    },
+                let raw_port = rlp.val_at::<u16>(3)?;
+                if let Ok(port) = raw_port.try_into() {
+                    Self {
+                        id,
+                        body: ResponseBody::Pong {
+                            enr_seq: rlp.val_at::<u64>(1)?,
+                            ip,
+                            port,
+                        },
+                    }
+                } else {
+                    debug!("The port number should be non zero: {raw_port}");
+                    return Err(DecoderError::Custom("PONG response port number invalid"));
                 }
             }
             MessageType::Nodes => {
@@ -197,7 +203,7 @@ pub enum ResponseBody {
         /// Our external IP address as observed by the responder.
         ip: IpAddr,
         /// Our external UDP port as observed by the responder.
-        port: u16,
+        port: NonZeroU16,
     },
     /// A NODES response.
     Nodes {

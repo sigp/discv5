@@ -136,7 +136,7 @@ mod tests {
 
         fn test(&self) {
             let test_enr = {
-                let builder = &mut enr::EnrBuilder::new("v4");
+                let builder = &mut enr::Enr::builder();
                 if let Some(ip4) = self.enr_ip4 {
                     builder.ip4(ip4).udp4(IP4_TEST_PORT);
                 }

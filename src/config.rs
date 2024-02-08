@@ -12,7 +12,7 @@ use std::{ops::RangeInclusive, time::Duration};
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
-pub struct Discv5Config {
+pub struct Config {
     /// Whether to enable the incoming packet filter. Default: false.
     pub enable_packet_filter: bool,
 
@@ -115,11 +115,11 @@ pub struct Discv5Config {
 }
 
 #[derive(Debug)]
-pub struct Discv5ConfigBuilder {
-    config: Discv5Config,
+pub struct ConfigBuilder {
+    config: Config,
 }
 
-impl Discv5ConfigBuilder {
+impl ConfigBuilder {
     pub fn new(listen_config: ListenConfig) -> Self {
         // This is only applicable if enable_packet_filter is set.
         let filter_rate_limiter = Some(
@@ -132,7 +132,7 @@ impl Discv5ConfigBuilder {
         );
 
         // set default values
-        let config = Discv5Config {
+        let config = Config {
             enable_packet_filter: false,
             request_timeout: Duration::from_secs(1),
             vote_duration: Duration::from_secs(30),
@@ -161,7 +161,7 @@ impl Discv5ConfigBuilder {
             listen_config,
         };
 
-        Discv5ConfigBuilder { config }
+        ConfigBuilder { config }
     }
 
     /// Whether to enable the incoming packet filter.
@@ -335,7 +335,7 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Discv5Config {
+    pub fn build(&mut self) -> Config {
         // If an executor is not provided, assume a current tokio runtime is running.
         if self.config.executor.is_none() {
             self.config.executor = Some(Box::<crate::executor::TokioExecutor>::default());
@@ -350,9 +350,9 @@ impl Discv5ConfigBuilder {
     }
 }
 
-impl std::fmt::Debug for Discv5Config {
+impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Discv5Config")
+        f.debug_struct("Config")
             .field("filter_enabled", &self.enable_packet_filter)
             .field("request_timeout", &self.request_timeout)
             .field("vote_duration", &self.vote_duration)

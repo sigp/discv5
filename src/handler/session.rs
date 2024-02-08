@@ -7,7 +7,7 @@ use crate::{
         MESSAGE_NONCE_LENGTH,
     },
     rpc::RequestId,
-    Discv5Error, Enr,
+    Enr, Error,
 };
 
 use enr::{CombinedKey, NodeId};
@@ -76,7 +76,7 @@ impl Session {
         &mut self,
         src_id: NodeId,
         message: &[u8],
-    ) -> Result<Packet, Discv5Error> {
+    ) -> Result<Packet, Error> {
         self.encrypt::<P>(message, PacketKind::SessionMessage { src_id })
     }
 
@@ -85,7 +85,7 @@ impl Session {
         &mut self,
         src_id: NodeId,
         message: &[u8],
-    ) -> Result<Packet, Discv5Error> {
+    ) -> Result<Packet, Error> {
         self.encrypt::<P>(message, PacketKind::Message { src_id })
     }
 
@@ -95,7 +95,7 @@ impl Session {
         &mut self,
         message: &[u8],
         packet_kind: PacketKind,
-    ) -> Result<Packet, Discv5Error> {
+    ) -> Result<Packet, Error> {
         self.counter += 1;
 
         let random_nonce: [u8; MESSAGE_NONCE_LENGTH - 4] = rand::random();
@@ -136,7 +136,7 @@ impl Session {
         message_nonce: MessageNonce,
         message: &[u8],
         aad: &[u8],
-    ) -> Result<Vec<u8>, Discv5Error> {
+    ) -> Result<Vec<u8>, Error> {
         // First try with the canonical keys.
         let result_canon =
             crypto::decrypt_message(&self.keys.decryption_key, message_nonce, message, aad);
@@ -173,7 +173,7 @@ impl Session {
         id_nonce_sig: &[u8],
         ephem_pubkey: &[u8],
         session_enr: Enr,
-    ) -> Result<(Session, Enr), Discv5Error> {
+    ) -> Result<(Session, Enr), Error> {
         // verify the auth header nonce
         if !crypto::verify_authentication_nonce(
             &session_enr.public_key(),
@@ -186,7 +186,7 @@ impl Session {
                 data: challenge_data,
                 remote_enr: Some(session_enr),
             };
-            return Err(Discv5Error::InvalidChallengeSignature(challenge));
+            return Err(Error::InvalidChallengeSignature(challenge));
         }
 
         // The keys are derived after the message has been verified to prevent potential extra work
@@ -217,7 +217,7 @@ impl Session {
         local_node_id: &NodeId,
         challenge_data: &ChallengeData,
         message: &[u8],
-    ) -> Result<(Packet, Session), Discv5Error> {
+    ) -> Result<(Packet, Session), Error> {
         // generate the session keys
         let (encryption_key, decryption_key, ephem_pubkey) =
             crypto::generate_session_keys(local_node_id, remote_contact, challenge_data)?;
@@ -234,7 +234,7 @@ impl Session {
             &ephem_pubkey,
             &remote_contact.node_id(),
         )
-        .map_err(|_| Discv5Error::Custom("Could not sign WHOAREYOU nonce"))?;
+        .map_err(|_| Error::Custom("Could not sign WHOAREYOU nonce"))?;
 
         // build an authentication packet
         let message_nonce: MessageNonce = rand::random();
