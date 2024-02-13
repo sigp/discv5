@@ -1,3 +1,4 @@
+use std::num::NonZeroUsize;
 use std::{
     net::{IpAddr, SocketAddr, UdpSocket},
     ops::RangeInclusive,
@@ -49,7 +50,7 @@ impl Nat {
         ip_mode: IpMode,
         unused_port_range: Option<RangeInclusive<u16>>,
         ban_duration: Option<Duration>,
-        session_cache_capacity: usize,
+        session_cache_capacity: NonZeroUsize,
         unreachable_enr_limit: Option<usize>,
     ) -> Self {
         let mut nat = Nat {

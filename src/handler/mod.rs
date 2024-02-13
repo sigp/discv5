@@ -329,7 +329,7 @@ impl Handler {
         // Attempt to bind to the socket before spinning up the send/recv tasks.
         let socket = Socket::new::<P>(socket_config).await?;
 
-        let sessions = LruTimeCache::new(session_timeout, Some(session_cache_capacity));
+        let sessions = LruTimeCache::new(session_timeout, Some(session_cache_capacity.get()));
 
         let nat = Nat::new(
             &listen_sockets,

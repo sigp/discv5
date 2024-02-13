@@ -85,7 +85,10 @@ async fn build_handler<P: ProtocolIdentity>(
         active_requests: ActiveRequests::new(config.request_timeout),
         pending_requests: HashMap::new(),
         filter_expected_responses,
-        sessions: LruTimeCache::new(config.session_timeout, Some(config.session_cache_capacity)),
+        sessions: LruTimeCache::new(
+            config.session_timeout,
+            Some(config.session_cache_capacity.get()),
+        ),
         one_time_sessions: LruTimeCache::new(
             Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
             Some(ONE_TIME_SESSION_CACHE_CAPACITY),

@@ -8,6 +8,7 @@ use crate::{
 /// boostrap.
 const MIN_SESSIONS_UNREACHABLE_ENR: usize = 10;
 
+use std::num::NonZeroUsize;
 use std::{ops::RangeInclusive, time::Duration};
 
 /// Configuration parameters that define the performance of the discovery network.
@@ -38,7 +39,7 @@ pub struct Config {
     pub session_timeout: Duration,
 
     /// The maximum number of established sessions to maintain. Default: 1000.
-    pub session_cache_capacity: usize,
+    pub session_cache_capacity: NonZeroUsize,
 
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
     pub enr_update: bool,
@@ -140,7 +141,7 @@ impl ConfigBuilder {
             query_timeout: Duration::from_secs(60),
             request_retries: 1,
             session_timeout: Duration::from_secs(86400),
-            session_cache_capacity: 1000,
+            session_cache_capacity: NonZeroUsize::new(1000).expect("infallible"),
             enr_update: true,
             max_nodes_response: 16,
             enr_peer_update_min: 10,
@@ -211,7 +212,8 @@ impl ConfigBuilder {
 
     /// The maximum number of established sessions to maintain.
     pub fn session_cache_capacity(&mut self, capacity: usize) -> &mut Self {
-        self.config.session_cache_capacity = capacity;
+        self.config.session_cache_capacity =
+            NonZeroUsize::new(capacity).expect("session_cache_capacity must be greater than 0");
         self
     }
 
@@ -360,7 +362,7 @@ impl std::fmt::Debug for Config {
             .field("query_peer_timeout", &self.query_peer_timeout)
             .field("request_retries", &self.request_retries)
             .field("session_timeout", &self.session_timeout)
-            .field("session_cache_capacity", &self.session_cache_capacity)
+            .field("session_cache_capacity", &self.session_cache_capacity.get())
             .field("enr_update", &self.enr_update)
             .field("query_parallelism", &self.query_parallelism)
             .field("report_discovered_peers", &self.report_discovered_peers)
