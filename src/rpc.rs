@@ -93,6 +93,15 @@ impl Message {
 
         let rlp = rlp::Rlp::new(data);
 
+        if rlp.item_count()? < 2 {
+            return Err(DecoderError::RlpIncorrectListLen);
+        }
+
+        let payload_info = rlp.payload_info()?;
+        if data.len() != payload_info.header_len + payload_info.value_len {
+            return Err(DecoderError::RlpInconsistentLengthAndData);
+        }
+
         match msg_type.try_into()? {
             MessageType::Ping | MessageType::FindNode | MessageType::TalkReq => {
                 Ok(Request::decode(msg_type, &rlp)?.into())
