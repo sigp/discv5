@@ -2,10 +2,10 @@ use super::{MessageType, Payload, RequestBody, RequestId};
 use crate::Enr;
 use derive_more::Display;
 use rlp::{DecoderError, Rlp, RlpStream};
-use std::num::NonZeroU16;
 use std::{
     convert::TryInto,
     net::{IpAddr, Ipv6Addr},
+    num::NonZeroU16,
 };
 use tracing::debug;
 

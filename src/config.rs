@@ -8,8 +8,7 @@ use crate::{
 /// boostrap.
 const MIN_SESSIONS_UNREACHABLE_ENR: usize = 10;
 
-use std::num::NonZeroUsize;
-use std::{ops::RangeInclusive, time::Duration};
+use std::{num::NonZeroUsize, ops::RangeInclusive, time::Duration};
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]

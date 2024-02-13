@@ -1,6 +1,6 @@
-use std::num::NonZeroUsize;
 use std::{
     net::{IpAddr, SocketAddr, UdpSocket},
+    num::NonZeroUsize,
     ops::RangeInclusive,
     time::Duration,
 };
