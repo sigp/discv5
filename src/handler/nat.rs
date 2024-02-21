@@ -1,5 +1,6 @@
 use std::{
     net::{IpAddr, SocketAddr, UdpSocket},
+    num::NonZeroUsize,
     ops::RangeInclusive,
     time::Duration,
 };
@@ -49,7 +50,7 @@ impl Nat {
         ip_mode: IpMode,
         unused_port_range: Option<RangeInclusive<u16>>,
         ban_duration: Option<Duration>,
-        session_cache_capacity: usize,
+        session_cache_capacity: NonZeroUsize,
         unreachable_enr_limit: Option<usize>,
     ) -> Self {
         let mut nat = Nat {
@@ -95,7 +96,7 @@ impl Nat {
     }
 
     /// Called when a new observed address is reported at start up or after a
-    /// [`crate::Discv5Event::SocketUpdated`].
+    /// [`crate::Event::SocketUpdated`].
     pub fn set_is_behind_nat(
         &mut self,
         listen_sockets: &[SocketAddr],

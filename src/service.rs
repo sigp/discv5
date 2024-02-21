@@ -29,7 +29,7 @@ use crate::{
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Discv5Config, Discv5Event, Enr, IpMode,
+    rpc, Config, Enr, Event, IpMode,
 };
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
@@ -40,6 +40,7 @@ use parking_lot::RwLock;
 use rpc::*;
 use std::{
     collections::HashMap,
+    convert::TryInto,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     task::Poll,
@@ -161,14 +162,14 @@ pub enum ServiceRequest {
     Ping(Enr, Option<oneshot::Sender<Result<Pong, RequestError>>>),
     /// Sets up an event stream where the discv5 server will return various events such as
     /// discovered nodes as it traverses the DHT.
-    RequestEventStream(oneshot::Sender<mpsc::Receiver<Discv5Event>>),
+    RequestEventStream(oneshot::Sender<mpsc::Receiver<Event>>),
 }
 
 use crate::discv5::PERMIT_BAN_LIST;
 
 pub struct Service {
     /// Configuration parameters.
-    config: Discv5Config,
+    config: Config,
 
     /// The local ENR of the server.
     local_enr: Arc<RwLock<Enr>>,
@@ -187,7 +188,7 @@ pub struct Service {
     active_requests: FnvHashMap<RequestId, ActiveRequest>,
 
     /// Keeps track of the number of responses received from a NODES response.
-    active_nodes_responses: HashMap<NodeId, NodesResponse>,
+    active_nodes_responses: HashMap<RequestId, NodesResponse>,
 
     /// A map of votes nodes have made about our external IP address. We accept the majority.
     ip_votes: Option<IpVote>,
@@ -211,7 +212,7 @@ pub struct Service {
     peers_to_ping: HashSetDelay<NodeId>,
 
     /// A channel that the service emits events on.
-    event_stream: Option<mpsc::Sender<Discv5Event>>,
+    event_stream: Option<mpsc::Sender<Event>>,
 
     // Type of socket we are using
     ip_mode: IpMode,
@@ -277,7 +278,7 @@ impl Service {
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
-        config: Discv5Config,
+        config: Config,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
         // process behaviour-level configuration parameters
         let ip_votes = if config.enr_update {
@@ -323,7 +324,7 @@ impl Service {
                     ip_mode,
                 };
 
-                info!("Discv5 Service started");
+                info!(mode = ?service.ip_mode, "Discv5 Service started");
                 service.start().await;
             }));
 
@@ -332,7 +333,6 @@ impl Service {
 
     /// The main execution loop of the discv5 serviced.
     async fn start(&mut self) {
-        info!("{:?}", self.ip_mode);
         loop {
             tokio::select! {
                 _ = &mut self.exit => {
@@ -378,7 +378,7 @@ impl Service {
                 Some(event) = self.handler_recv.recv() => {
                     match event {
                         HandlerOut::Established(enr, socket_addr, direction) => {
-                            self.send_event(Discv5Event::SessionEstablished(enr.clone(), socket_addr));
+                            self.send_event(Event::SessionEstablished(enr.clone(), socket_addr));
                             self.inject_session_established(enr, direction);
                         }
                         HandlerOut::Request(node_address, request) => {
@@ -646,20 +646,24 @@ impl Service {
 
                 // build the PONG response
                 let src = node_address.socket_addr;
-                let response = Response {
-                    id,
-                    body: ResponseBody::Pong {
-                        enr_seq: self.local_enr.read().seq(),
-                        ip: src.ip(),
-                        port: src.port(),
-                    },
-                };
-                debug!("Sending PONG response to {}", node_address);
-                if let Err(e) = self
-                    .handler_send
-                    .send(HandlerIn::Response(node_address, Box::new(response)))
-                {
-                    warn!("Failed to send response {}", e)
+                if let Ok(port) = src.port().try_into() {
+                    let response = Response {
+                        id,
+                        body: ResponseBody::Pong {
+                            enr_seq: self.local_enr.read().seq(),
+                            ip: src.ip(),
+                            port,
+                        },
+                    };
+                    debug!("Sending PONG response to {}", node_address);
+                    if let Err(e) = self
+                        .handler_send
+                        .send(HandlerIn::Response(node_address, Box::new(response)))
+                    {
+                        warn!("Failed to send response {}", e);
+                    }
+                } else {
+                    warn!("The src port number should be non zero. {src}");
                 }
             }
             RequestBody::TalkReq { protocol, request } => {
@@ -671,7 +675,7 @@ impl Service {
                     sender: Some(self.handler_send.clone()),
                 };
 
-                self.send_event(Discv5Event::TalkRequest(req));
+                self.send_event(Event::TalkRequest(req));
             }
         }
     }
@@ -757,10 +761,9 @@ impl Service {
 
                         if nodes.len() < before_len {
                             // Peer sent invalid ENRs. Blacklist the Node
-                            warn!(
-                                "Peer sent invalid ENR. Blacklisting {}",
-                                active_request.contact
-                            );
+                            let node_id = active_request.contact.node_id();
+                            let addr = active_request.contact.socket_addr();
+                            warn!(%node_id, %addr, "ENRs received of unsolicited distances. Blacklisting");
                             let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
                             PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
                         }
@@ -768,10 +771,8 @@ impl Service {
 
                     // handle the case that there is more than one response
                     if total > 1 {
-                        let mut current_response = self
-                            .active_nodes_responses
-                            .remove(&node_id)
-                            .unwrap_or_default();
+                        let mut current_response =
+                            self.active_nodes_responses.remove(&id).unwrap_or_default();
 
                         debug!(
                             "Nodes Response: {} of {} received",
@@ -789,7 +790,7 @@ impl Service {
 
                             current_response.received_nodes.append(&mut nodes);
                             self.active_nodes_responses
-                                .insert(node_id, current_response);
+                                .insert(id.clone(), current_response);
                             self.active_requests.insert(id, active_request);
                             return;
                         }
@@ -811,19 +812,23 @@ impl Service {
                     // in a later response sends a response with a total of 1, all previous nodes
                     // will be ignored.
                     // ensure any mapping is removed in this rare case
-                    self.active_nodes_responses.remove(&node_id);
+                    self.active_nodes_responses.remove(&id);
 
                     self.discovered(&node_id, nodes, active_request.query_id);
                 }
                 ResponseBody::Pong { enr_seq, ip, port } => {
                     // Send the response to the user, if they are who asked
                     if let Some(CallbackResponse::Pong(callback)) = active_request.callback {
-                        let response = Pong { enr_seq, ip, port };
+                        let response = Pong {
+                            enr_seq,
+                            ip,
+                            port: port.get(),
+                        };
                         if let Err(e) = callback.send(Ok(response)) {
                             warn!("Failed to send callback response {:?}", e)
                         };
                     } else {
-                        let socket = SocketAddr::new(ip, port);
+                        let socket = SocketAddr::new(ip, port.get());
                         // perform ENR majority-based update if required.
 
                         // Only count votes that from peers we have contacted.
@@ -874,11 +879,9 @@ impl Service {
                                                 updated = true;
                                                 info!(
                                                     "Local UDP ip6 socket updated to: {}",
-                                                    new_ip6
-                                                );
-                                                self.send_event(Discv5Event::SocketUpdated(
                                                     new_ip6,
-                                                ));
+                                                );
+                                                self.send_event(Event::SocketUpdated(new_ip6));
                                                 // Notify Handler of socket update
                                                 if let Err(e) =
                                                     self.handler_send.send(HandlerIn::SocketUpdate(
@@ -904,9 +907,7 @@ impl Service {
                                             Ok(_) => {
                                                 updated = true;
                                                 info!("Local UDP socket updated to: {}", new_ip4);
-                                                self.send_event(Discv5Event::SocketUpdated(
-                                                    new_ip4,
-                                                ));
+                                                self.send_event(Event::SocketUpdated(new_ip4));
                                                 // Notify Handler of socket update
                                                 if let Err(e) =
                                                     self.handler_send.send(HandlerIn::SocketUpdate(
@@ -1231,7 +1232,7 @@ impl Service {
         }
     }
 
-    fn send_event(&mut self, event: Discv5Event) {
+    fn send_event(&mut self, event: Event) {
         if let Some(stream) = self.event_stream.as_mut() {
             if let Err(mpsc::error::TrySendError::Closed(_)) = stream.try_send(event) {
                 // If the stream has been dropped prevent future attempts to send events
@@ -1251,7 +1252,7 @@ impl Service {
             // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
             if self.config.report_discovered_peers {
-                self.send_event(Discv5Event::Discovered(enr.clone()));
+                self.send_event(Event::Discovered(enr.clone()));
             }
 
             // ignore peers that don't pass the table filter
@@ -1347,7 +1348,7 @@ impl Service {
                             self.send_ping(enr, None);
                         }
 
-                        let event = Discv5Event::NodeInserted {
+                        let event = Event::NodeInserted {
                             node_id,
                             replaced: None,
                         };
@@ -1507,13 +1508,14 @@ impl Service {
             match active_request.request_body {
                 // if a failed FindNodes request, ensure we haven't partially received packets. If
                 // so, process the partially found nodes
-                RequestBody::FindNode { .. } => {
-                    if let Some(nodes_response) = self.active_nodes_responses.remove(&node_id) {
+                RequestBody::FindNode { ref distances } => {
+                    if let Some(nodes_response) = self.active_nodes_responses.remove(&id) {
                         if !nodes_response.received_nodes.is_empty() {
-                            warn!(
-                                "NODES Response failed, but was partially processed from: {}",
-                                active_request.contact
-                            );
+                            let node_id = active_request.contact.node_id();
+                            let addr = active_request.contact.socket_addr();
+                            let received = nodes_response.received_nodes.len();
+                            let expected = distances.len();
+                            warn!(%node_id, %addr, %error, %received, %expected, "FINDNODE request failed with partial results");
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
@@ -1561,14 +1563,12 @@ impl Service {
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
-    /// `Discv5Event::NodeInserted` variant if a new node has been inserted into the routing table.
-    async fn bucket_maintenance_poll(
-        kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
-    ) -> Discv5Event {
+    /// [`Event::NodeInserted`] variant if a new node has been inserted into the routing table.
+    async fn bucket_maintenance_poll(kbuckets: &Arc<RwLock<KBucketsTable<NodeId, Enr>>>) -> Event {
         future::poll_fn(move |_cx| {
             // Drain applied pending entries from the routing table.
             if let Some(entry) = kbuckets.write().take_applied_pending() {
-                let event = Discv5Event::NodeInserted {
+                let event = Event::NodeInserted {
                     node_id: entry.inserted.into_preimage(),
                     replaced: entry.evicted.map(|n| n.key.into_preimage()),
                 };
@@ -1589,10 +1589,8 @@ impl Service {
                 let request_body = query.target().rpc_request(return_peer);
                 Poll::Ready(QueryEvent::Waiting(query.id(), node_id, request_body))
             }
-            QueryPoolState::Timeout(query) => {
-                warn!("Query id: {:?} timed out", query.id());
-                Poll::Ready(QueryEvent::TimedOut(Box::new(query)))
-            }
+
+            QueryPoolState::Timeout(query) => Poll::Ready(QueryEvent::TimedOut(Box::new(query))),
             QueryPoolState::Waiting(None) | QueryPoolState::Idle => Poll::Pending,
         })
         .await

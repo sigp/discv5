@@ -8,11 +8,11 @@ use crate::{
 /// boostrap.
 const MIN_SESSIONS_UNREACHABLE_ENR: usize = 10;
 
-use std::{ops::RangeInclusive, time::Duration};
+use std::{num::NonZeroUsize, ops::RangeInclusive, time::Duration};
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
-pub struct Discv5Config {
+pub struct Config {
     /// Whether to enable the incoming packet filter. Default: false.
     pub enable_packet_filter: bool,
 
@@ -38,7 +38,7 @@ pub struct Discv5Config {
     pub session_timeout: Duration,
 
     /// The maximum number of established sessions to maintain. Default: 1000.
-    pub session_cache_capacity: usize,
+    pub session_cache_capacity: NonZeroUsize,
 
     /// Updates the local ENR IP and port based on PONG responses from peers. Default: true.
     pub enr_update: bool,
@@ -115,11 +115,11 @@ pub struct Discv5Config {
 }
 
 #[derive(Debug)]
-pub struct Discv5ConfigBuilder {
-    config: Discv5Config,
+pub struct ConfigBuilder {
+    config: Config,
 }
 
-impl Discv5ConfigBuilder {
+impl ConfigBuilder {
     pub fn new(listen_config: ListenConfig) -> Self {
         // This is only applicable if enable_packet_filter is set.
         let filter_rate_limiter = Some(
@@ -132,7 +132,7 @@ impl Discv5ConfigBuilder {
         );
 
         // set default values
-        let config = Discv5Config {
+        let config = Config {
             enable_packet_filter: false,
             request_timeout: Duration::from_secs(1),
             vote_duration: Duration::from_secs(30),
@@ -140,7 +140,7 @@ impl Discv5ConfigBuilder {
             query_timeout: Duration::from_secs(60),
             request_retries: 1,
             session_timeout: Duration::from_secs(86400),
-            session_cache_capacity: 1000,
+            session_cache_capacity: NonZeroUsize::new(1000).expect("infallible"),
             enr_update: true,
             max_nodes_response: 16,
             enr_peer_update_min: 10,
@@ -161,7 +161,7 @@ impl Discv5ConfigBuilder {
             listen_config,
         };
 
-        Discv5ConfigBuilder { config }
+        ConfigBuilder { config }
     }
 
     /// Whether to enable the incoming packet filter.
@@ -211,7 +211,8 @@ impl Discv5ConfigBuilder {
 
     /// The maximum number of established sessions to maintain.
     pub fn session_cache_capacity(&mut self, capacity: usize) -> &mut Self {
-        self.config.session_cache_capacity = capacity;
+        self.config.session_cache_capacity =
+            NonZeroUsize::new(capacity).expect("session_cache_capacity must be greater than 0");
         self
     }
 
@@ -335,7 +336,7 @@ impl Discv5ConfigBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Discv5Config {
+    pub fn build(&mut self) -> Config {
         // If an executor is not provided, assume a current tokio runtime is running.
         if self.config.executor.is_none() {
             self.config.executor = Some(Box::<crate::executor::TokioExecutor>::default());
@@ -350,9 +351,9 @@ impl Discv5ConfigBuilder {
     }
 }
 
-impl std::fmt::Debug for Discv5Config {
+impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Discv5Config")
+        f.debug_struct("Config")
             .field("filter_enabled", &self.enable_packet_filter)
             .field("request_timeout", &self.request_timeout)
             .field("vote_duration", &self.vote_duration)
@@ -360,7 +361,7 @@ impl std::fmt::Debug for Discv5Config {
             .field("query_peer_timeout", &self.query_peer_timeout)
             .field("request_retries", &self.request_retries)
             .field("session_timeout", &self.session_timeout)
-            .field("session_cache_capacity", &self.session_cache_capacity)
+            .field("session_cache_capacity", &self.session_cache_capacity.get())
             .field("enr_update", &self.enr_update)
             .field("query_parallelism", &self.query_parallelism)
             .field("report_discovered_peers", &self.report_discovered_peers)

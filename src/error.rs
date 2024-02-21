@@ -8,7 +8,7 @@ use std::fmt;
 
 #[derive(Debug, From)]
 /// A general error that is used throughout the Discv5 library.
-pub enum Discv5Error {
+pub enum Error {
     /// An invalid message type was received.
     InvalidMessage,
     /// An invalid ENR was received.
@@ -60,11 +60,11 @@ pub enum Discv5Error {
 #[derive(Debug)]
 pub enum NatError {
     /// Initiator error.
-    Initiator(Discv5Error),
+    Initiator(Error),
     /// Relayer error.
-    Relay(Discv5Error),
+    Relay(Error),
     /// Target error.
-    Target(Discv5Error),
+    Target(Error),
 }
 
 macro_rules! impl_from_variant {
@@ -76,8 +76,8 @@ macro_rules! impl_from_variant {
         }
     };
 }
-impl_from_variant!(<T,>, tokio::sync::mpsc::error::SendError<T>, Discv5Error, Self::ServiceChannelClosed);
-impl_from_variant!(, NonContactable, Discv5Error, Self::InvalidEnr);
+impl_from_variant!(<T,>, tokio::sync::mpsc::error::SendError<T>, Error, Self::ServiceChannelClosed);
+impl_from_variant!(, NonContactable, Error, Self::InvalidEnr);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Types of packet errors.
@@ -162,7 +162,7 @@ pub enum QueryError {
     InvalidMultiaddr(String),
 }
 
-impl fmt::Display for Discv5Error {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
     }
