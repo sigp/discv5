@@ -19,18 +19,17 @@ use clap::Parser;
 use discv5::{
     enr,
     enr::{k256, CombinedKey},
-    Discv5, Discv5ConfigBuilder, Discv5Event,
+    ConfigBuilder, Discv5, Event, ListenConfig,
 };
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     time::Duration,
 };
 use tracing::{info, warn};
 
 #[derive(Parser)]
 struct FindNodesArgs {
-    /// Type of socket to bind ['ds', 'ip4', 'ip6']. The dual stack option will enable mapped
-    /// addresses over an IpV6 socket.
+    /// Type of socket to bind ['ds', 'ip4', 'ip6'].
     #[clap(long, default_value_t = SocketKind::Ds)]
     socket_kind: SocketKind,
     /// IpV4 to advertise in the ENR. This is needed so that other IpV4 nodes can connect to us.
@@ -43,6 +42,10 @@ struct FindNodesArgs {
     /// randomly.
     #[clap(long)]
     port: Option<u16>,
+    /// Port to bind for ipv6. If none is provided, a random one in the 9000 - 9999 range will be picked
+    /// randomly.
+    #[clap(long)]
+    port6: Option<u16>,
     /// Use a default test key.
     #[clap(long)]
     use_test_key: bool,
@@ -67,13 +70,19 @@ async fn main() {
     let port = args
         .port
         .unwrap_or_else(|| (rand::random::<u16>() % 1000) + 9000);
+    let port6 = args.port.unwrap_or_else(|| loop {
+        let port6 = (rand::random::<u16>() % 1000) + 9000;
+        if port6 != port {
+            return port6;
+        }
+    });
 
     let enr_key = if args.use_test_key {
         // A fixed key for testing
         let raw_key =
             hex::decode("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
                 .unwrap();
-        let secret_key = k256::ecdsa::SigningKey::from_bytes(&raw_key).unwrap();
+        let secret_key = k256::ecdsa::SigningKey::from_slice(&raw_key).unwrap();
         CombinedKey::from(secret_key)
     } else {
         // use a new key if specified
@@ -81,7 +90,7 @@ async fn main() {
     };
 
     let enr = {
-        let mut builder = enr::EnrBuilder::new("v4");
+        let mut builder = enr::Enr::builder();
         if let Some(ip4) = args.enr_ip4 {
             // if the given address is the UNSPECIFIED address we want to advertise localhost
             if ip4.is_unspecified() {
@@ -93,29 +102,28 @@ async fn main() {
         if let Some(ip6) = args.enr_ip6 {
             // if the given address is the UNSPECIFIED address we want to advertise localhost
             if ip6.is_unspecified() {
-                builder.ip6(Ipv6Addr::LOCALHOST).udp6(port);
+                builder.ip6(Ipv6Addr::LOCALHOST).udp6(port6);
             } else {
-                builder.ip6(ip6).udp6(port);
+                builder.ip6(ip6).udp6(port6);
             }
         }
         builder.build(&enr_key).unwrap()
     };
 
+    // the address to listen on.
+    let listen_config = match args.socket_kind {
+        SocketKind::Ip4 => ListenConfig::from_ip(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+        SocketKind::Ip6 => ListenConfig::from_ip(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port6),
+        SocketKind::Ds => ListenConfig::default()
+            .with_ipv4(Ipv4Addr::UNSPECIFIED, port)
+            .with_ipv6(Ipv6Addr::UNSPECIFIED, port6),
+    };
+
     // default configuration with packet filtering
-    // let config = Discv5ConfigBuilder::new().enable_packet_filter().build();
+    // let config = ConfigBuilder::new(listen_config).enable_packet_filter().build();
 
     // default configuration without packet filtering
-    let config = Discv5ConfigBuilder::new()
-        .ip_mode(match args.socket_kind {
-            SocketKind::Ip4 => discv5::IpMode::Ip4,
-            SocketKind::Ip6 => discv5::IpMode::Ip6 {
-                enable_mapped_addresses: false,
-            },
-            SocketKind::Ds => discv5::IpMode::Ip6 {
-                enable_mapped_addresses: true,
-            },
-        })
-        .build();
+    let config = ConfigBuilder::new(listen_config).build();
 
     info!("Node Id: {}", enr.node_id());
     if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
@@ -127,15 +135,9 @@ async fn main() {
             enr.udp4_socket()
         );
     }
-    // the address to listen on.
-    let bind_addr = match args.socket_kind {
-        SocketKind::Ip4 => Ipv4Addr::UNSPECIFIED.into(),
-        SocketKind::Ip6 | SocketKind::Ds => Ipv6Addr::UNSPECIFIED.into(),
-    };
-    let socket_addr = SocketAddr::new(bind_addr, port);
 
     // construct the discv5 server
-    let mut discv5 = Discv5::new(enr, enr_key, config).unwrap();
+    let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
 
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {
@@ -154,7 +156,7 @@ async fn main() {
     }
 
     // start the discv5 service
-    discv5.start(socket_addr).await.unwrap();
+    discv5.start().await.unwrap();
     let mut event_stream = discv5.event_stream().await.unwrap();
     let check_evs = args.events;
 
@@ -190,18 +192,19 @@ async fn main() {
                     continue;
                 }
                 match discv5_ev {
-                    Discv5Event::Discovered(enr) => info!("Enr discovered {}", enr),
-                    Discv5Event::EnrAdded { enr, replaced: _ } => info!("Enr added {}", enr),
-                    Discv5Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
-                    Discv5Event::SessionEstablished(enr, _) => info!("Session established {}", enr),
-                    Discv5Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
-                    Discv5Event::TalkRequest(_) => info!("Talk request received"),
+                    Event::Discovered(enr) => info!("Enr discovered {}", enr),
+                    Event::EnrAdded { enr, replaced: _ } => info!("Enr added {}", enr),
+                    Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
+                    Event::SessionEstablished(enr, _) => info!("Session established {}", enr),
+                    Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
+                    Event::TalkRequest(_) => info!("Talk request received"),
                 };
             }
         }
     }
 }
 
+#[derive(Clone)]
 pub enum SocketKind {
     Ip4,
     Ip6,

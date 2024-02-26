@@ -29,10 +29,17 @@ pub const MESSAGE_NONCE_LENGTH: usize = 12;
 /// The Id nonce length (in bytes).
 pub const ID_NONCE_LENGTH: usize = 16;
 
-/// Protocol ID sent with each message.
-const PROTOCOL_ID: &str = "discv5";
-/// The version sent with each handshake.
-const VERSION: u16 = 0x0001;
+pub struct DefaultProtocolId {}
+
+impl ProtocolIdentity for DefaultProtocolId {
+    const PROTOCOL_ID_BYTES: [u8; 6] = *b"discv5";
+    const PROTOCOL_VERSION_BYTES: [u8; 2] = 0x0001_u16.to_be_bytes();
+}
+
+pub trait ProtocolIdentity {
+    const PROTOCOL_ID_BYTES: [u8; 6];
+    const PROTOCOL_VERSION_BYTES: [u8; 2];
+}
 
 pub(crate) const MAX_PACKET_SIZE: usize = 1280;
 // The smallest packet must be at least this large
@@ -92,11 +99,14 @@ pub struct PacketHeader {
 
 impl PacketHeader {
     // Encodes the header to bytes to be included into the `masked-header` of the Packet Encoding.
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode<P>(&self) -> Vec<u8>
+    where
+        P: ProtocolIdentity,
+    {
         let auth_data = self.kind.encode();
         let mut buf = Vec::with_capacity(auth_data.len() + STATIC_HEADER_LENGTH);
-        buf.extend_from_slice(PROTOCOL_ID.as_bytes());
-        buf.extend_from_slice(&VERSION.to_be_bytes());
+        buf.extend_from_slice(&P::PROTOCOL_ID_BYTES);
+        buf.extend_from_slice(&P::PROTOCOL_VERSION_BYTES);
         let kind: u8 = (&self.kind).into();
         buf.extend_from_slice(&kind.to_be_bytes());
         buf.extend_from_slice(&self.message_nonce);
@@ -372,15 +382,15 @@ impl Packet {
     }
 
     /// Generates the authenticated data for this packet.
-    pub fn authenticated_data(&self) -> Vec<u8> {
+    pub fn authenticated_data<P: ProtocolIdentity>(&self) -> Vec<u8> {
         let mut authenticated_data = self.iv.to_be_bytes().to_vec();
-        authenticated_data.extend_from_slice(&self.header.encode());
+        authenticated_data.extend_from_slice(&self.header.encode::<P>());
         authenticated_data
     }
 
     /// Encodes a packet to bytes and performs the AES-CTR encryption.
-    pub fn encode(self, dst_id: &NodeId) -> Vec<u8> {
-        let header = self.encrypt_header(dst_id);
+    pub fn encode<P: ProtocolIdentity>(self, dst_id: &NodeId) -> Vec<u8> {
+        let header = self.encrypt_header::<P>(dst_id);
         let mut buf = Vec::with_capacity(IV_LENGTH + header.len() + self.message.len());
         buf.extend_from_slice(&self.iv.to_be_bytes());
         buf.extend_from_slice(&header);
@@ -389,8 +399,8 @@ impl Packet {
     }
 
     /// Creates the masked header of a packet performing the required AES-CTR encryption.
-    fn encrypt_header(&self, dst_id: &NodeId) -> Vec<u8> {
-        let mut header_bytes = self.header.encode();
+    fn encrypt_header<P: ProtocolIdentity>(&self, dst_id: &NodeId) -> Vec<u8> {
+        let mut header_bytes = self.header.encode::<P>();
 
         /* Encryption is done inline
          *
@@ -410,7 +420,10 @@ impl Packet {
     /// Decodes a packet (data) given our local source id (src_key).
     ///
     /// This also returns the authenticated data for further decryption in the handler.
-    pub fn decode(src_id: &NodeId, data: &[u8]) -> Result<(Self, Vec<u8>), PacketError> {
+    pub fn decode<P: ProtocolIdentity>(
+        src_id: &NodeId,
+        data: &[u8],
+    ) -> Result<(Self, Vec<u8>), PacketError> {
         if data.len() > MAX_PACKET_SIZE {
             return Err(PacketError::TooLarge);
         }
@@ -440,17 +453,15 @@ impl Packet {
         }
 
         // Check the protocol id
-        if &static_header[..6] != PROTOCOL_ID.as_bytes() {
+        if static_header[..6] != P::PROTOCOL_ID_BYTES {
             return Err(PacketError::HeaderDecryptionFailed);
         }
 
+        let version_bytes = &static_header[6..8];
         // Check the version matches
-        let version = u16::from_be_bytes(
-            static_header[6..8]
-                .try_into()
-                .expect("Must be correct size"),
-        );
-        if version != VERSION {
+        if version_bytes != P::PROTOCOL_VERSION_BYTES {
+            let version =
+                u16::from_be_bytes(version_bytes.try_into().expect("Must be correct size"));
             return Err(PacketError::InvalidVersion(version));
         }
 
@@ -607,7 +618,7 @@ mod tests {
             message,
         };
 
-        let encoded = packet.encode(&node_id_b);
+        let encoded = packet.encode::<DefaultProtocolId>(&node_id_b);
         dbg!(hex::encode(&encoded));
         assert_eq!(expected_result, encoded);
     }
@@ -640,7 +651,7 @@ mod tests {
             message: Vec::new(),
         };
 
-        assert_eq!(packet.encode(&dst_id), expected_output);
+        assert_eq!(packet.encode::<DefaultProtocolId>(&dst_id), expected_output);
     }
 
     #[test]
@@ -672,7 +683,7 @@ mod tests {
             header,
             message: Vec::new(),
         };
-        let encoded = packet.encode(&dst_id);
+        let encoded = packet.encode::<DefaultProtocolId>(&dst_id);
         assert_eq!(encoded, expected_output);
     }
 
@@ -705,7 +716,7 @@ mod tests {
             header,
             message: Vec::new(),
         };
-        let encoded = packet.encode(&dst_id);
+        let encoded = packet.encode::<DefaultProtocolId>(&dst_id);
         assert_eq!(encoded, expected_output);
     }
 
@@ -730,7 +741,7 @@ mod tests {
             header,
             message: ciphertext,
         };
-        let encoded = packet.encode(&dst_id);
+        let encoded = packet.encode::<DefaultProtocolId>(&dst_id);
         assert_eq!(encoded, expected_output);
     }
 
@@ -742,9 +753,9 @@ mod tests {
 
         let packet = Packet::new_random(&src_id).unwrap();
 
-        let encoded_packet = packet.clone().encode(&dst_id);
+        let encoded_packet = packet.clone().encode::<DefaultProtocolId>(&dst_id);
         let (decoded_packet, _authenticated_data) =
-            Packet::decode(&dst_id, &encoded_packet).unwrap();
+            Packet::decode::<DefaultProtocolId>(&dst_id, &encoded_packet).unwrap();
 
         assert_eq!(decoded_packet, packet);
     }
@@ -759,9 +770,9 @@ mod tests {
 
         let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
 
-        let encoded_packet = packet.clone().encode(&dst_id);
+        let encoded_packet = packet.clone().encode::<DefaultProtocolId>(&dst_id);
         let (decoded_packet, _authenticated_data) =
-            Packet::decode(&dst_id, &encoded_packet).unwrap();
+            Packet::decode::<DefaultProtocolId>(&dst_id, &encoded_packet).unwrap();
 
         assert_eq!(decoded_packet, packet);
     }
@@ -779,9 +790,9 @@ mod tests {
         let packet =
             Packet::new_authheader(src_id, message_nonce, id_nonce_sig, pubkey, enr_record);
 
-        let encoded_packet = packet.clone().encode(&dst_id);
+        let encoded_packet = packet.clone().encode::<DefaultProtocolId>(&dst_id);
         let (decoded_packet, _authenticated_data) =
-            Packet::decode(&dst_id, &encoded_packet).unwrap();
+            Packet::decode::<DefaultProtocolId>(&dst_id, &encoded_packet).unwrap();
 
         assert_eq!(decoded_packet, packet);
     }
@@ -808,7 +819,8 @@ mod tests {
 
         let encoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342774649325f313964a39e55ea96c005ad52be8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08dab84102ed931f66d1492acb308fa1c6715b9d139b81acbdcc").unwrap();
 
-        let (packet, _auth_data) = Packet::decode(&dst_id, &encoded_ref_packet).unwrap();
+        let (packet, _auth_data) =
+            Packet::decode::<DefaultProtocolId>(&dst_id, &encoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
 
@@ -844,7 +856,8 @@ mod tests {
 
         let decoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad521d8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb252012b2cba3f4f374a90a75cff91f142fa9be3e0a5f3ef268ccb9065aeecfd67a999e7fdc137e062b2ec4a0eb92947f0d9a74bfbf44dfba776b21301f8b65efd5796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524f1eadf5f0f4126b79336671cbcf7a885b1f8bd2a5d839cf8").unwrap();
 
-        let (packet, _auth_data) = Packet::decode(&dst_id, &decoded_ref_packet).unwrap();
+        let (packet, _auth_data) =
+            Packet::decode::<DefaultProtocolId>(&dst_id, &decoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
 
@@ -880,7 +893,8 @@ mod tests {
 
         let encoded_ref_packet = hex::decode("00000000000000000000000000000000088b3d4342774649305f313964a39e55ea96c005ad539c8c7560413a7008f16c9e6d2f43bbea8814a546b7409ce783d34c4f53245d08da4bb23698868350aaad22e3ab8dd034f548a1c43cd246be98562fafa0a1fa86d8e7a3b95ae78cc2b988ded6a5b59eb83ad58097252188b902b21481e30e5e285f19735796706adff216ab862a9186875f9494150c4ae06fa4d1f0396c93f215fa4ef524e0ed04c3c21e39b1868e1ca8105e585ec17315e755e6cfc4dd6cb7fd8e1a1f55e49b4b5eb024221482105346f3c82b15fdaae36a3bb12a494683b4a3c7f2ae41306252fed84785e2bbff3b022812d0882f06978df84a80d443972213342d04b9048fc3b1d5fcb1df0f822152eced6da4d3f6df27e70e4539717307a0208cd208d65093ccab5aa596a34d7511401987662d8cf62b139471").unwrap();
 
-        let (packet, _auth_data) = Packet::decode(&dst_id, &encoded_ref_packet).unwrap();
+        let (packet, _auth_data) =
+            Packet::decode::<DefaultProtocolId>(&dst_id, &encoded_ref_packet).unwrap();
         assert_eq!(packet, expected_packet);
     }
 
@@ -889,11 +903,11 @@ mod tests {
         let src_id: NodeId = node_key_1().public().into();
 
         let data = [0; MAX_PACKET_SIZE + 1];
-        let result = Packet::decode(&src_id, &data);
+        let result = Packet::decode::<DefaultProtocolId>(&src_id, &data);
         assert_eq!(result, Err(PacketError::TooLarge));
 
         let data = [0; MIN_PACKET_SIZE - 1];
-        let result = Packet::decode(&src_id, &data);
+        let result = Packet::decode::<DefaultProtocolId>(&src_id, &data);
         assert_eq!(result, Err(PacketError::TooSmall));
     }
 }

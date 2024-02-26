@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
     node_info::NodeContact,
-    packet::{ChallengeData, Packet, PacketHeader, PacketKind, MESSAGE_NONCE_LENGTH},
+    packet::{
+        ChallengeData, Packet, PacketHeader, PacketKind, ProtocolIdentity, MESSAGE_NONCE_LENGTH,
+    },
 };
 use enr::{CombinedKey, NodeId};
 use zeroize::Zeroize;
@@ -55,11 +57,11 @@ impl Session {
 
     /// Uses the current `Session` to encrypt a message. Encrypt packets with the current session
     /// key if we are awaiting a response from AuthMessage.
-    pub(crate) fn encrypt_message(
+    pub(crate) fn encrypt_message<P: ProtocolIdentity>(
         &mut self,
         src_id: NodeId,
         message: &[u8],
-    ) -> Result<Packet, Discv5Error> {
+    ) -> Result<Packet, Error> {
         self.counter += 1;
 
         // If the message nonce length is ever set below 4 bytes this will explode. The packet
@@ -77,7 +79,7 @@ impl Session {
         };
 
         let mut authenticated_data = iv.to_be_bytes().to_vec();
-        authenticated_data.extend_from_slice(&header.encode());
+        authenticated_data.extend_from_slice(&header.encode::<P>());
 
         let cipher = crypto::encrypt_message(
             &self.keys.encryption_key,
@@ -102,7 +104,7 @@ impl Session {
         message_nonce: MessageNonce,
         message: &[u8],
         aad: &[u8],
-    ) -> Result<Vec<u8>, Discv5Error> {
+    ) -> Result<Vec<u8>, Error> {
         // First try with the canonical keys.
         let result_canon =
             crypto::decrypt_message(&self.keys.decryption_key, message_nonce, message, aad);
@@ -138,7 +140,7 @@ impl Session {
         id_nonce_sig: &[u8],
         ephem_pubkey: &[u8],
         enr_record: Option<Enr>,
-    ) -> Result<(Session, Enr), Discv5Error> {
+    ) -> Result<(Session, Enr), Error> {
         // check and verify a potential ENR update
 
         // Duplicate code here to avoid cloning an ENR
@@ -158,7 +160,7 @@ impl Session {
                 "Peer did not respond with their ENR. Session could not be established. Node: {}",
                 remote_id
             );
-                    return Err(Discv5Error::SessionNotEstablished);
+                    return Err(Error::SessionNotEstablished);
                 }
             };
             enr.public_key()
@@ -172,7 +174,7 @@ impl Session {
             local_id,
             id_nonce_sig,
         ) {
-            return Err(Discv5Error::InvalidChallengeSignature(challenge));
+            return Err(Error::InvalidChallengeSignature(challenge));
         }
 
         // The keys are derived after the message has been verified to prevent potential extra work
@@ -211,14 +213,14 @@ impl Session {
     }
 
     /// Encrypts a message and produces an AuthMessage.
-    pub(crate) fn encrypt_with_header(
+    pub(crate) fn encrypt_with_header<P: ProtocolIdentity>(
         remote_contact: &NodeContact,
         local_key: Arc<RwLock<CombinedKey>>,
         updated_enr: Option<Enr>,
         local_node_id: &NodeId,
         challenge_data: &ChallengeData,
         message: &[u8],
-    ) -> Result<(Packet, Session), Discv5Error> {
+    ) -> Result<(Packet, Session), Error> {
         // generate the session keys
         let (encryption_key, decryption_key, ephem_pubkey) =
             crypto::generate_session_keys(local_node_id, remote_contact, challenge_data)?;
@@ -235,7 +237,7 @@ impl Session {
             &ephem_pubkey,
             &remote_contact.node_id(),
         )
-        .map_err(|_| Discv5Error::Custom("Could not sign WHOAREYOU nonce"))?;
+        .map_err(|_| Error::Custom("Could not sign WHOAREYOU nonce"))?;
 
         // build an authentication packet
         let message_nonce: MessageNonce = rand::random();
@@ -250,7 +252,7 @@ impl Session {
         // Create the authenticated data for the new packet.
 
         let mut authenticated_data = packet.iv.to_be_bytes().to_vec();
-        authenticated_data.extend_from_slice(&packet.header.encode());
+        authenticated_data.extend_from_slice(&packet.header.encode::<P>());
 
         // encrypt the message
         let message_ciphertext =
@@ -262,4 +264,12 @@ impl Session {
 
         Ok((packet, session))
     }
+}
+
+#[cfg(test)]
+pub(crate) fn build_dummy_session() -> Session {
+    Session::new(Keys {
+        encryption_key: [0; 16],
+        decryption_key: [0; 16],
+    })
 }

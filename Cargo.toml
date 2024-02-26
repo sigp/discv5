@@ -2,7 +2,7 @@
 name = "discv5"
 authors = ["Age Manning <Age@AgeManning.com>"]
 edition = "2018"
-version = "0.1.0"
+version = "0.4.1"
 description = "Implementation of the p2p discv5 discovery protocol"
 license = "Apache-2.0"
 repository = "https://github.com/sigp/discv5"
@@ -12,45 +12,41 @@ categories = ["network-programming", "asynchronous"]
 exclude = [".gitignore", ".github/*"]
 
 [dependencies]
-enr = { version = "0.6.2", features = ["k256", "ed25519"] }
-tokio = { version = "1.15.0", features = ["net", "sync", "macros", "rt"] }
-tokio-stream = "0.1.8"
-tokio-util = { version = "0.6.9", features = ["time"] }
-libp2p-core = { version = "0.36.0", optional = true }
-zeroize = { version = "1.4.3", features = ["zeroize_derive"] }
-futures = "0.3.19"
-uint = { version = "0.9.1", default-features = false }
-rlp = "0.5.1"
+enr = { version = "0.10", features = ["k256", "ed25519"] }
+tokio = { version = "1", features = ["net", "sync", "macros", "rt"] }
+libp2p = { version = "0.53", features = ["ed25519", "secp256k1"], optional = true }
+zeroize = { version = "1", features = ["zeroize_derive"] }
+futures = "0.3"
+uint = { version = "0.9", default-features = false }
+rlp = "0.5"
 # This version must be kept up to date do it uses the same dependencies as ENR
-hkdf = "0.12.3" 
-hex = "0.4.3"
-fnv = "1.0.7"
-arrayvec = "0.7.2"
-rand = { version = "0.8.4", package = "rand" }
-socket2 = "0.4.4"
-smallvec = "1.7.0"
-parking_lot = "0.11.2"
-lazy_static = "1.4.0"
-aes = { version = "0.7.5", features = ["ctr"] }
-aes-gcm = "0.9.4"
-tracing = { version = "0.1.29", features = ["log"] }
-tracing-subscriber = { version = "0.3.3", features = ["env-filter"] }
-lru = "0.7.1"
-hashlink = "0.7.0"
-delay_map = "0.1.1"
-more-asserts = "0.2.2"
+hkdf = "0.12"
+hex = "0.4"
+fnv = "1"
+arrayvec = "0.7"
+rand = { version = "0.8", package = "rand" }
+socket2 = "0.4"
+smallvec = "1"
+parking_lot = "0.11"
+lazy_static = "1"
+aes = { version = "0.7", features = ["ctr"] }
+aes-gcm = "0.9"
+tracing = { version = "0.1", features = ["log"] }
+lru = "0.12"
+hashlink = "0.8"
+delay_map = "0.3"
+more-asserts = "0.3"
 
 [dev-dependencies]
+clap = { version = "4", features = ["derive"] }
+if-addrs = "0.10"
+quickcheck = "0.9"
 rand_07 = { package = "rand", version = "0.7" }
-quickcheck = "0.9.2"
-env_logger = "0.9.0"
-hex-literal = "0.3.4"
-simple_logger = "1.16.0"
-tokio-util = { version = "0.6.9", features = ["time"] }
-tokio = { version = "1.15.0", features = ["full"] }
-rand_xorshift = "0.3.0"
-rand_core = "0.6.3"
-clap = { version = "3.1", features = ["derive"] }
+rand_core = "0.6"
+rand_xorshift = "0.3"
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
-libp2p = ["libp2p-core"]
+libp2p = ["dep:libp2p"]
+serde = ["enr/serde"]

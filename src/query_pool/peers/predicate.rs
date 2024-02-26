@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    config::Discv5Config,
+    config::Config,
     kbucket::{Distance, Key, PredicateKey, MAX_NODES_PER_BUCKET},
 };
 use std::{
@@ -55,7 +55,7 @@ pub(crate) struct PredicateQueryConfig {
 }
 
 impl PredicateQueryConfig {
-    pub(crate) fn new_from_config(config: &Discv5Config) -> Self {
+    pub(crate) fn new_from_config(config: &Config) -> Self {
         Self {
             parallelism: config.query_parallelism,
             num_results: MAX_NODES_PER_BUCKET,

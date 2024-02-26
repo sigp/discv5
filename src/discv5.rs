@@ -2,9 +2,9 @@
 //!
 //! This provides the main struct for running and interfacing with a discovery v5 server.
 //!
-//! A [`Discv5`] struct needs to be created either with an [`crate::executor::Executor`] specified in the
-//! [`Discv5Config`] via the [`crate::Discv5ConfigBuilder`] or in the presence of a tokio runtime that has
-//! timing and io enabled.
+//! A [`Discv5`] struct needs to be created either with an [`crate::executor::Executor`] specified
+//! in the [`Config`] via the [`crate::ConfigBuilder`] or in the presence of a tokio runtime that
+//! has timing and io enabled.
 //!
 //! Once a [`Discv5`] struct has been created the service is started by running the [`Discv5::start`]
 //! functions with a UDP socket. This will start a discv5 server in the background listening on the
@@ -13,19 +13,21 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
-    error::{Discv5Error, QueryError, RequestError},
+    error::{Error, QueryError, RequestError},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
     },
     node_info::NodeContact,
+    packet::ProtocolIdentity,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
-    Discv5Config, Enr,
+    Config, DefaultProtocolId, Enr, IpMode,
 };
 use enr::{CombinedKey, EnrError, EnrKey, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
+    marker::PhantomData,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -34,20 +36,24 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 #[cfg(feature = "libp2p")]
-use libp2p_core::Multiaddr;
+use libp2p::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
-use crate::metrics::{Metrics, METRICS};
+use crate::{
+    metrics::{Metrics, METRICS},
+    service::Pong,
+};
+
 lazy_static! {
     pub static ref PERMIT_BAN_LIST: RwLock<crate::PermitBanList> =
         RwLock::new(crate::PermitBanList::default());
 }
 
-mod test;
+pub(crate) mod test;
 
 /// Events that can be produced by the `Discv5` event stream.
 #[derive(Debug)]
-pub enum Discv5Event {
+pub enum Event {
     /// A node has been discovered from a FINDNODES request.
     ///
     /// The ENR of the node is returned. Various properties can be derived from the ENR.
@@ -71,8 +77,11 @@ pub enum Discv5Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
-pub struct Discv5 {
-    config: Discv5Config,
+pub struct Discv5<P = DefaultProtocolId>
+where
+    P: ProtocolIdentity,
+{
+    config: Config,
     /// The channel to make requests from the main service.
     service_channel: Option<mpsc::Sender<ServiceRequest>>,
     /// The exit channel to shutdown the underlying service.
@@ -83,13 +92,17 @@ pub struct Discv5 {
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
     enr_key: Arc<RwLock<CombinedKey>>,
+    // Type of socket we are using
+    ip_mode: IpMode,
+    /// Phantom for the protocol id.
+    _phantom: PhantomData<P>,
 }
 
-impl Discv5 {
+impl<P: ProtocolIdentity> Discv5<P> {
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
-        mut config: Discv5Config,
+        mut config: Config,
     ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
         if local_enr.public_key() != enr_key.public() {
@@ -126,6 +139,8 @@ impl Discv5 {
         // Update the PermitBan list based on initial configuration
         *PERMIT_BAN_LIST.write() = config.permit_ban_list.clone();
 
+        let ip_mode = IpMode::new_from_listen_config(&config.listen_config);
+
         Ok(Discv5 {
             config,
             service_channel: None,
@@ -133,23 +148,24 @@ impl Discv5 {
             kbuckets,
             local_enr,
             enr_key,
+            ip_mode,
+            _phantom: Default::default(),
         })
     }
 
     /// Starts the required tasks and begins listening on a given UDP SocketAddr.
-    pub async fn start(&mut self, listen_socket: SocketAddr) -> Result<(), Discv5Error> {
+    pub async fn start(&mut self) -> Result<(), Error> {
         if self.service_channel.is_some() {
             warn!("Service is already started");
-            return Err(Discv5Error::ServiceAlreadyStarted);
+            return Err(Error::ServiceAlreadyStarted);
         }
 
         // create the main service
-        let (service_exit, service_channel) = Service::spawn(
+        let (service_exit, service_channel) = Service::spawn::<P>(
             self.local_enr.clone(),
             self.enr_key.clone(),
             self.kbuckets.clone(),
             self.config.clone(),
-            listen_socket,
         )
         .await?;
         self.service_exit = Some(service_exit);
@@ -178,7 +194,7 @@ impl Discv5 {
     /// them upfront.
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
-        if self.config.ip_mode.get_contactable_addr(&enr).is_none() {
+        if self.ip_mode.get_contactable_addr(&enr).is_none() {
             warn!("ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored.");
             return Err("ENR has no compatible UDP socket to connect to");
         }
@@ -285,6 +301,13 @@ impl Discv5 {
         self.local_enr.read().clone()
     }
 
+    /// Identical to `Discv5::local_enr` except that this exposes the `Arc` itself.
+    ///
+    /// This is useful for synchronising views of the local ENR outside of `Discv5`.
+    pub fn external_enr(&self) -> Arc<RwLock<Enr>> {
+        self.local_enr.clone()
+    }
+
     /// Returns the routing table of the discv5 service
     pub fn kbuckets(&self) -> KBucketsTable<NodeId, Enr> {
         self.kbuckets.read().clone()
@@ -298,6 +321,31 @@ impl Discv5 {
             return Some(entry.value().clone());
         }
         None
+    }
+
+    /// Sends a PING request to a node.
+    pub fn send_ping(
+        &self,
+        enr: Enr,
+    ) -> impl Future<Output = Result<Pong, RequestError>> + 'static {
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+
+        async move {
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+            let event = ServiceRequest::Ping(enr, Some(callback_send));
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
     }
 
     /// Bans a node from the server. This will remove the node from the routing table if it exists
@@ -351,39 +399,45 @@ impl Discv5 {
     /// Updates the local ENR TCP/UDP socket.
     pub fn update_local_enr_socket(&self, socket_addr: SocketAddr, is_tcp: bool) -> bool {
         let mut local_enr = self.local_enr.write();
-        let update_socket: Option<SocketAddr> = match socket_addr {
-            SocketAddr::V4(socket_addr) => {
-                if Some(socket_addr) != local_enr.udp4_socket() {
-                    Some(socket_addr.into())
-                } else {
-                    None
+        match (is_tcp, socket_addr) {
+            (false, SocketAddr::V4(specific_socket_addr)) => {
+                if Some(specific_socket_addr) != local_enr.udp4_socket() {
+                    return local_enr
+                        .set_udp_socket(socket_addr, &self.enr_key.read())
+                        .is_ok();
                 }
             }
-            SocketAddr::V6(socket_addr) => {
-                if Some(socket_addr) != local_enr.udp6_socket() {
-                    Some(socket_addr.into())
-                } else {
-                    None
+            (true, SocketAddr::V4(specific_socket_addr)) => {
+                if Some(specific_socket_addr) != local_enr.tcp4_socket() {
+                    return local_enr
+                        .set_tcp_socket(socket_addr, &self.enr_key.read())
+                        .is_ok();
                 }
             }
-        };
-        if let Some(new_socket_addr) = update_socket {
-            if is_tcp {
-                local_enr
-                    .set_tcp_socket(new_socket_addr, &self.enr_key.read())
-                    .is_ok()
-            } else {
-                local_enr
-                    .set_udp_socket(new_socket_addr, &self.enr_key.read())
-                    .is_ok()
+            (false, SocketAddr::V6(specific_socket_addr)) => {
+                if Some(specific_socket_addr) != local_enr.udp6_socket() {
+                    return local_enr
+                        .set_udp_socket(socket_addr, &self.enr_key.read())
+                        .is_ok();
+                }
             }
-        } else {
-            false
+            (true, SocketAddr::V6(specific_socket_addr)) => {
+                if Some(specific_socket_addr) != local_enr.tcp6_socket() {
+                    return local_enr
+                        .set_tcp_socket(socket_addr, &self.enr_key.read())
+                        .is_ok();
+                }
+            }
         }
+        false
     }
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
-    pub fn enr_insert(&self, key: &str, value: &[u8]) -> Result<Option<Vec<u8>>, EnrError> {
+    pub fn enr_insert<T: rlp::Encodable>(
+        &self,
+        key: &str,
+        value: &T,
+    ) -> Result<Option<Vec<u8>>, EnrError> {
         self.local_enr
             .write()
             .insert(key, value, &self.enr_key.read())
@@ -452,14 +506,33 @@ impl Discv5 {
 
             let (callback_send, callback_recv) = oneshot::channel();
 
-            let event = ServiceRequest::FindEnr(node_contact, callback_send);
+            let event =
+                ServiceRequest::FindNodeDesignated(node_contact.clone(), vec![0], callback_send);
+
+            // send the request
             channel
                 .send(event)
                 .await
                 .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
-            callback_recv
+            // await the response
+            match callback_recv
                 .await
                 .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+            {
+                Ok(mut nodes) => {
+                    // This must be for asking for an ENR
+                    if nodes.len() > 1 {
+                        warn!(
+                            "Peer returned more than one ENR for itself. {}",
+                            node_contact
+                        );
+                    }
+                    nodes
+                        .pop()
+                        .ok_or(RequestError::InvalidEnr("Peer did not return an ENR"))
+                }
+                Err(err) => Err(err),
+            }
         }
     }
 
@@ -474,13 +547,42 @@ impl Discv5 {
 
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
-        let ip_mode = self.config.ip_mode;
+        let ip_mode = self.ip_mode;
 
         async move {
             let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;
             let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
 
             let event = ServiceRequest::Talk(node_contact, protocol, request, callback_send);
+
+            // send the request
+            channel
+                .send(event)
+                .await
+                .map_err(|_| RequestError::ChannelFailed("Service channel closed".into()))?;
+            // await the response
+            callback_recv
+                .await
+                .map_err(|e| RequestError::ChannelFailed(e.to_string()))?
+        }
+    }
+
+    /// Send a FINDNODE request for nodes that fall within the given set of distances,
+    /// to the designated peer and wait for a response.
+    pub fn find_node_designated_peer(
+        &self,
+        enr: Enr,
+        distances: Vec<u64>,
+    ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
+        let (callback_send, callback_recv) = oneshot::channel();
+        let channel = self.clone_channel();
+        let ip_mode = self.ip_mode;
+
+        async move {
+            let node_contact = NodeContact::try_from_enr(enr, ip_mode)?;
+            let channel = channel.map_err(|_| RequestError::ServiceNotStarted)?;
+
+            let event = ServiceRequest::FindNodeDesignated(node_contact, distances, callback_send);
 
             // send the request
             channel
@@ -575,7 +677,7 @@ impl Discv5 {
     /// Creates an event stream channel which can be polled to receive Discv5 events.
     pub fn event_stream(
         &self,
-    ) -> impl Future<Output = Result<mpsc::Receiver<Discv5Event>, Discv5Error>> + 'static {
+    ) -> impl Future<Output = Result<mpsc::Receiver<Event>, Error>> + 'static {
         let channel = self.clone_channel();
 
         async move {
@@ -587,25 +689,23 @@ impl Discv5 {
             channel
                 .send(event)
                 .await
-                .map_err(|_| Discv5Error::ServiceChannelClosed)?;
+                .map_err(|_| Error::ServiceChannelClosed)?;
 
-            callback_recv
-                .await
-                .map_err(|_| Discv5Error::ServiceChannelClosed)
+            callback_recv.await.map_err(|_| Error::ServiceChannelClosed)
         }
     }
 
     /// Internal helper function to send events to the Service.
-    fn clone_channel(&self) -> Result<mpsc::Sender<ServiceRequest>, Discv5Error> {
+    fn clone_channel(&self) -> Result<mpsc::Sender<ServiceRequest>, Error> {
         if let Some(channel) = self.service_channel.as_ref() {
             Ok(channel.clone())
         } else {
-            Err(Discv5Error::ServiceNotStarted)
+            Err(Error::ServiceNotStarted)
         }
     }
 }
 
-impl Drop for Discv5 {
+impl<P: ProtocolIdentity> Drop for Discv5<P> {
     fn drop(&mut self) {
         self.shutdown();
     }
