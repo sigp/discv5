@@ -443,7 +443,7 @@ impl Handler {
                     if self.nat.is_behind_nat == Some(false) {
                         // Until ip voting is done and an observed public address is finalised, all nodes act as
                         // if they are behind a NAT.
-                        return;
+                        continue;
                     }
                     if let Err(e) = self.on_hole_punch_expired(peer_socket).await {
                         warn!("Failed to keep hole punched for peer, error: {:?}", e);
