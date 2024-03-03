@@ -1453,8 +1453,7 @@ impl Service {
                             let node_id = active_request.contact.node_id();
                             let addr = active_request.contact.socket_addr();
                             let received = nodes_response.received_nodes.len();
-                            let expected = distances.len();
-                            warn!(%node_id, %addr, %error, %received, %expected, "FINDNODE request failed with partial results");
+                            warn!(%node_id, %addr, %error, %received, requested_distances=?distances, "FINDNODE request failed with partial results");
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
