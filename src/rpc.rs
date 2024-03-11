@@ -251,18 +251,7 @@ impl std::fmt::Display for ResponseBody {
                 write!(f, "PONG: Enr-seq: {enr_seq}, Ip: {ip:?},  Port: {port}")
             }
             ResponseBody::Nodes { total, nodes } => {
-                write!(f, "NODES: total: {total}, Nodes: [")?;
-                let mut first = true;
-                for id in nodes {
-                    if !first {
-                        write!(f, ", {id}")?;
-                    } else {
-                        write!(f, "{id}")?;
-                    }
-                    first = false;
-                }
-
-                write!(f, "]")
+                write!(f, "NODES: total: {total}, Nodes: {}", nodes.len())
             }
             ResponseBody::Talk { response } => {
                 write!(f, "Response: Response {}", hex::encode(response))

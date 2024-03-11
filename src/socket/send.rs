@@ -52,7 +52,6 @@ impl SendHandler {
 
         // start the handler
         executor.spawn(Box::pin(async move {
-            debug!("Send handler starting");
             send_handler.start::<P>().await;
         }));
         (handler_send, exit_send)
