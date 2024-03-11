@@ -846,7 +846,7 @@ impl Handler {
                         .await;
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
-                        warn!(
+                        debug!(
                             "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
                             enr.udp4_socket(),
                             enr.udp6_socket(),
@@ -906,7 +906,7 @@ impl Handler {
                 }
             }
         } else {
-            warn!(
+            debug!(
                 node_id = %node_address.node_id, addr = %node_address.socket_addr,
                 "Received an authenticated header without a matching WHOAREYOU request",
             );
