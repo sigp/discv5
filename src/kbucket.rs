@@ -533,7 +533,7 @@ where
 
     /// Returns an iterator over all the entries in the routing table.
     /// Does not add pending node to kbucket to get an iterator which
-    /// takes a reference instead of a mutable reference.
+    /// takes a mutable reference instead of a reference.
     pub fn iter_ref(&self) -> impl Iterator<Item = EntryRefView<'_, TNodeId, TVal>> {
         self.buckets.iter().flat_map(move |table| {
             table.iter().map(move |n| EntryRefView {
