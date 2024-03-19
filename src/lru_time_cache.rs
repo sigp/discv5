@@ -88,17 +88,11 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
 
     /// Removes expired items from the cache.
     fn remove_expired_values(&mut self, now: Instant) {
-        let mut expired_keys = vec![];
-
-        for (key, (_, time)) in self.map.iter_mut() {
+        while let Some((_front, (_value, time))) = self.map.front() {
             if *time + self.ttl >= now {
                 break;
             }
-            expired_keys.push(key.clone());
-        }
-
-        for k in expired_keys {
-            self.map.remove(&k);
+            self.map.pop_front();
         }
     }
 }
