@@ -53,7 +53,7 @@
 //! A simple example of creating this service is as follows:
 //!
 //! ```rust
-//!    use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, ConfigBuilder};
+//!    use discv5::{enr, enr::{CombinedKey, Enr, NodeId}, TokioExecutor, Discv5, ConfigBuilder};
 //!    use discv5::socket::ListenConfig;
 //!    use std::net::{Ipv4Addr, SocketAddr};
 //!

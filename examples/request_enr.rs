@@ -17,7 +17,7 @@ use discv5::ConfigBuilder;
 #[cfg(feature = "libp2p")]
 use discv5::ListenConfig;
 #[cfg(feature = "libp2p")]
-use discv5::{enr, enr::CombinedKey, Discv5};
+use discv5::{enr::CombinedKey, Discv5};
 #[cfg(feature = "libp2p")]
 use std::net::Ipv4Addr;
 

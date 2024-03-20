@@ -23,7 +23,7 @@ use crate::{
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Config, DefaultProtocolId, Enr, IpMode,
 };
-use enr::{CombinedKey, EnrError, EnrKey, NodeId};
+use enr::{CombinedKey, EnrKey, Error as EnrError, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
@@ -433,7 +433,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 
     /// Allows application layer to insert an arbitrary field into the local ENR.
-    pub fn enr_insert<T: rlp::Encodable>(
+    pub fn enr_insert<T: alloy_rlp::Encodable>(
         &self,
         key: &str,
         value: &T,

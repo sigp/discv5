@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::{socket::ListenConfig, Discv5, *};
+use alloy_rlp::bytes::Bytes;
 use enr::{k256, CombinedKey, Enr, EnrKey, NodeId};
 use rand_core::{RngCore, SeedableRng};
 use std::{
@@ -14,7 +15,7 @@ fn init() {
         .try_init();
 }
 
-fn update_enr<T: rlp::Encodable>(discv5: &mut Discv5, key: &str, value: &T) -> bool {
+fn update_enr<T: alloy_rlp::Encodable>(discv5: &mut Discv5, key: &str, value: &T) -> bool {
     discv5.enr_insert(key, value).is_ok()
 }
 
@@ -675,8 +676,9 @@ async fn test_predicate_search() {
 
     // Update `num_nodes` with the required attnet value
     let num_nodes = total_nodes / 2;
-    let required_attnet_value = vec![1, 0, 0, 0];
-    let unwanted_attnet_value = vec![0, 0, 0, 0];
+
+    let required_attnet_value = Bytes::copy_from_slice(&[1, 0, 0, 0]);
+    let unwanted_attnet_value = Bytes::copy_from_slice(&[0, 0, 0, 0]);
     println!("Bootstrap node: {}", bootstrap_node.local_enr().node_id());
     println!("Target node: {}", target_node.local_enr().node_id());
 
@@ -703,7 +705,7 @@ async fn test_predicate_search() {
     // Predicate function for filtering enrs
     let predicate = move |enr: &Enr<CombinedKey>| {
         if let Some(v) = enr.get("attnets") {
-            v == required_attnet_value.as_slice()
+            v == required_attnet_value.to_vec().as_slice()
         } else {
             false
         }

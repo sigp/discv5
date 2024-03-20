@@ -14,6 +14,7 @@ use aes::{
     cipher::{generic_array::GenericArray, NewCipher, StreamCipher},
     Aes128Ctr,
 };
+use alloy_rlp::Decodable;
 use enr::NodeId;
 use rand::Rng;
 use std::convert::TryInto;
@@ -173,7 +174,7 @@ impl PacketKind {
             } => {
                 let sig_size = id_nonce_sig.len();
                 let pubkey_size = ephem_pubkey.len();
-                let node_record = enr_record.as_ref().map(rlp::encode);
+                let node_record = enr_record.as_ref().map(alloy_rlp::encode);
                 let expected_len = 34
                     + sig_size
                     + pubkey_size
@@ -259,7 +260,7 @@ impl PacketKind {
 
                 let enr_record = if remaining_data.len() > total_size {
                     Some(
-                        rlp::decode::<Enr>(&remaining_data[total_size..])
+                        <Enr>::decode(&mut &remaining_data[total_size..])
                             .map_err(PacketError::InvalidEnr)?,
                     )
                 } else {

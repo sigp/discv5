@@ -1,5 +1,8 @@
+use alloy_rlp::{
+    bytes::{Buf, Bytes, BytesMut},
+    Decodable, Encodable, Error as DecoderError, Header,
+};
 use enr::{CombinedKey, Enr};
-use rlp::{DecoderError, RlpStream};
 use std::{
     convert::TryInto,
     net::{IpAddr, Ipv6Addr},
@@ -126,28 +129,40 @@ impl Request {
         let id = &self.id;
         match self.body {
             RequestBody::Ping { enr_seq } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
-                s.append(&enr_seq);
-                buf.extend_from_slice(&s.out());
+                let mut list = Vec::<u8>::new();
+                id.as_bytes().encode(&mut list);
+                enr_seq.encode(&mut list);
+                let header = Header {
+                    list: true,
+                    payload_length: list.len(),
+                };
+                header.encode(&mut buf);
+                buf.extend_from_slice(&list);
                 buf
             }
             RequestBody::FindNode { distances } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
-                s.append_list(&distances);
-                buf.extend_from_slice(&s.out());
+                let mut list = Vec::<u8>::new();
+                id.as_bytes().encode(&mut list);
+                distances.encode(&mut list);
+                let header = Header {
+                    list: true,
+                    payload_length: list.len(),
+                };
+                header.encode(&mut buf);
+                buf.extend_from_slice(&list);
                 buf
             }
             RequestBody::Talk { protocol, request } => {
-                let mut s = RlpStream::new();
-                s.begin_list(3);
-                s.append(&id.as_bytes());
-                s.append(&protocol);
-                s.append(&request);
-                buf.extend_from_slice(&s.out());
+                let mut list = Vec::<u8>::new();
+                id.as_bytes().encode(&mut list);
+                protocol.encode(&mut list);
+                request.encode(&mut list);
+                let header = Header {
+                    list: true,
+                    payload_length: list.len(),
+                };
+                header.encode(&mut buf);
+                buf.extend_from_slice(&list);
                 buf
             }
         }
@@ -182,41 +197,62 @@ impl Response {
         let id = &self.id;
         match self.body {
             ResponseBody::Pong { enr_seq, ip, port } => {
-                let mut s = RlpStream::new();
-                s.begin_list(4);
-                s.append(&id.as_bytes());
-                s.append(&enr_seq);
+                let mut list = Vec::<u8>::new();
+                id.as_bytes().encode(&mut list);
+                enr_seq.encode(&mut list);
                 match ip {
-                    IpAddr::V4(addr) => s.append(&(&addr.octets() as &[u8])),
-                    IpAddr::V6(addr) => s.append(&(&addr.octets() as &[u8])),
+                    IpAddr::V4(addr) => addr.encode(&mut list),
+                    IpAddr::V6(addr) => addr.encode(&mut list),
                 };
-                s.append(&port.get());
-                buf.extend_from_slice(&s.out());
+                port.get().encode(&mut list);
+                let header = Header {
+                    list: true,
+                    payload_length: list.len(),
+                };
+                header.encode(&mut buf);
+                buf.extend_from_slice(&list);
                 buf
             }
             ResponseBody::Nodes { total, nodes } => {
-                let mut s = RlpStream::new();
-                s.begin_list(3);
-                s.append(&id.as_bytes());
-                s.append(&total);
-
-                if nodes.is_empty() {
-                    s.begin_list(0);
-                } else {
-                    s.begin_list(nodes.len());
-                    for node in nodes {
-                        s.append(&node);
+                let mut list = Vec::<u8>::new();
+                id.as_bytes().encode(&mut list);
+                total.encode(&mut list);
+                if !nodes.is_empty() {
+                    let mut out = BytesMut::new();
+                    for node in nodes.clone() {
+                        node.encode(&mut out);
                     }
+                    let tmp_header = Header {
+                        list: true,
+                        payload_length: out.len(),
+                    };
+                    let mut tmp_out = BytesMut::new();
+                    tmp_header.encode(&mut tmp_out);
+                    tmp_out.extend_from_slice(&out);
+                    list.extend_from_slice(&tmp_out);
+                } else {
+                    let mut out = BytesMut::new();
+                    nodes.encode(&mut out);
+                    list.extend_from_slice(&out);
                 }
-                buf.extend_from_slice(&s.out());
+                let header = Header {
+                    list: true,
+                    payload_length: list.len(),
+                };
+                header.encode(&mut buf);
+                buf.extend_from_slice(&list);
                 buf
             }
             ResponseBody::Talk { response } => {
-                let mut s = RlpStream::new();
-                s.begin_list(2);
-                s.append(&id.as_bytes());
-                s.append(&response);
-                buf.extend_from_slice(&s.out());
+                let mut list = Vec::<u8>::new();
+                id.as_bytes().encode(&mut list);
+                response.as_slice().encode(&mut list);
+                let header = Header {
+                    list: true,
+                    payload_length: list.len(),
+                };
+                header.encode(&mut buf);
+                buf.extend_from_slice(&list);
                 buf
             }
         }
@@ -304,57 +340,41 @@ impl Message {
 
     pub fn decode(data: &[u8]) -> Result<Self, DecoderError> {
         if data.len() < 3 {
-            return Err(DecoderError::RlpIsTooShort);
+            return Err(DecoderError::InputTooShort);
         }
 
         let msg_type = data[0];
-        let data = &data[1..];
 
-        let rlp = rlp::Rlp::new(data);
+        let payload = &mut &data[1..];
 
-        let list_len = rlp.item_count().and_then(|size| {
-            if size < 2 {
-                Err(DecoderError::RlpIncorrectListLen)
-            } else {
-                Ok(size)
-            }
-        })?;
-
-        // verify there is no extra data
-        let payload_info = rlp.payload_info()?;
-        if data.len() != payload_info.header_len + payload_info.value_len {
-            return Err(DecoderError::RlpInconsistentLengthAndData);
+        let header = Header::decode(payload)?;
+        if !header.list {
+            return Err(DecoderError::Custom("Invalid format of header"));
         }
 
-        let id = RequestId::decode(rlp.val_at::<Vec<u8>>(0)?)?;
+        if header.payload_length != payload.len() {
+            return Err(DecoderError::Custom("Reject the extra data"));
+        }
+
+        let id_bytes = Bytes::decode(payload)?;
+        let id = RequestId(id_bytes.to_vec());
 
         let message = match msg_type {
             1 => {
                 // PingRequest
-                if list_len != 2 {
-                    debug!(
-                        "Ping Request has an invalid RLP list length. Expected 2, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
+                let enr_seq = u64::decode(payload)?;
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
                 }
                 Message::Request(Request {
                     id,
-                    body: RequestBody::Ping {
-                        enr_seq: rlp.val_at::<u64>(1)?,
-                    },
+                    body: RequestBody::Ping { enr_seq },
                 })
             }
             2 => {
                 // PingResponse
-                if list_len != 4 {
-                    debug!(
-                        "Ping Response has an invalid RLP list length. Expected 4, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-                let ip_bytes = rlp.val_at::<Vec<u8>>(2)?;
+                let enr_seq = u64::decode(payload)?;
+                let ip_bytes = Bytes::decode(payload)?;
                 let ip = match ip_bytes.len() {
                     4 => {
                         let mut ip = [0u8; 4];
@@ -379,18 +399,17 @@ impl Message {
                     }
                     _ => {
                         debug!("Ping Response has incorrect byte length for IP");
-                        return Err(DecoderError::RlpIncorrectListLen);
+                        return Err(DecoderError::Custom("Incorrect List Length"));
                     }
                 };
-                let raw_port = rlp.val_at::<u16>(3)?;
+                let raw_port = u16::decode(payload)?;
                 if let Ok(port) = raw_port.try_into() {
+                    if !payload.is_empty() {
+                        return Err(DecoderError::Custom("Payload should be empty"));
+                    }
                     Message::Response(Response {
                         id,
-                        body: ResponseBody::Pong {
-                            enr_seq: rlp.val_at::<u64>(1)?,
-                            ip,
-                            port,
-                        },
+                        body: ResponseBody::Pong { enr_seq, ip, port },
                     })
                 } else {
                     debug!("The port number should be non zero: {raw_port}");
@@ -399,14 +418,7 @@ impl Message {
             }
             3 => {
                 // FindNodeRequest
-                if list_len != 2 {
-                    debug!(
-                        "FindNode Request has an invalid RLP list length. Expected 2, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-                let distances = rlp.list_at::<u64>(1)?;
+                let distances = Vec::<u64>::decode(payload)?;
 
                 for distance in distances.iter() {
                     if distance > &256u64 {
@@ -417,7 +429,9 @@ impl Message {
                         return Err(DecoderError::Custom("FINDNODE request distance invalid"));
                     }
                 }
-
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
+                }
                 Message::Request(Request {
                     id,
                     body: RequestBody::FindNode { distances },
@@ -425,42 +439,51 @@ impl Message {
             }
             4 => {
                 // NodesResponse
-                if list_len != 3 {
-                    debug!(
-                        "Nodes Response has an invalid RLP list length. Expected 3, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
-                }
-
+                let total = u64::decode(payload)?;
                 let nodes = {
-                    let enr_list_rlp = rlp.at(2)?;
+                    let header = Header::decode(payload)?;
+                    if !header.list {
+                        return Err(DecoderError::Custom("Invalid format of header"));
+                    }
+                    let mut enr_list_rlp = Vec::<Enr<CombinedKey>>::new();
+                    while !payload.is_empty() {
+                        let node_header = Header::decode(&mut &payload[..])?;
+                        if !node_header.list {
+                            return Err(DecoderError::Custom("Invalid format of header"));
+                        }
+                        if node_header.payload_length + 2 > payload.len() {
+                            return Err(DecoderError::Custom(
+                                "Payload size is smaller than payload_length",
+                            ));
+                        }
+                        let enr_rlp = Enr::<CombinedKey>::decode(
+                            &mut &payload[..node_header.payload_length + 2],
+                        )?;
+                        payload.advance(enr_rlp.size());
+                        enr_list_rlp.append(&mut vec![enr_rlp]);
+                    }
                     if enr_list_rlp.is_empty() {
                         // no records
                         vec![]
                     } else {
-                        enr_list_rlp.as_list::<Enr<CombinedKey>>()?
+                        enr_list_rlp
                     }
                 };
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
+                }
                 Message::Response(Response {
                     id,
-                    body: ResponseBody::Nodes {
-                        total: rlp.val_at::<u64>(1)?,
-                        nodes,
-                    },
+                    body: ResponseBody::Nodes { total, nodes },
                 })
             }
             5 => {
                 // Talk Request
-                if list_len != 3 {
-                    debug!(
-                        "Talk Request has an invalid RLP list length. Expected 3, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
+                let protocol = Vec::<u8>::decode(payload)?;
+                let request = Vec::<u8>::decode(payload)?;
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
                 }
-                let protocol = rlp.val_at::<Vec<u8>>(1)?;
-                let request = rlp.val_at::<Vec<u8>>(2)?;
                 Message::Request(Request {
                     id,
                     body: RequestBody::Talk { protocol, request },
@@ -468,17 +491,15 @@ impl Message {
             }
             6 => {
                 // Talk Response
-                if list_len != 2 {
-                    debug!(
-                        "Talk Response has an invalid RLP list length. Expected 2, found {}",
-                        list_len
-                    );
-                    return Err(DecoderError::RlpIncorrectListLen);
+                let response = Bytes::decode(payload)?;
+                if !payload.is_empty() {
+                    return Err(DecoderError::Custom("Payload should be empty"));
                 }
-                let response = rlp.val_at::<Vec<u8>>(1)?;
                 Message::Response(Response {
                     id,
-                    body: ResponseBody::Talk { response },
+                    body: ResponseBody::Talk {
+                        response: response.to_vec(),
+                    },
                 })
             }
             _ => {
@@ -774,11 +795,21 @@ mod tests {
                 body: ResponseBody::Talk { response: vec![75] }
             })
         );
+        assert_eq!(data.to_vec(), msg.encode());
 
         let data2 = [6, 193, 0, 75, 252];
         Message::decode(&data2).expect_err("should reject extra data");
 
         let data3 = [6, 194, 0, 75, 252];
         Message::decode(&data3).expect_err("should reject extra data");
+
+        let data4 = [6, 193, 0, 63];
+        Message::decode(&data4).expect_err("should reject extra data");
+
+        let data5 = [6, 193, 128, 75];
+        Message::decode(&data5).expect_err("should reject extra data");
+
+        let data6 = [6, 193, 128, 128];
+        Message::decode(&data6).expect_err("should reject extra data");
     }
 }
