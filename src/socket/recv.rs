@@ -160,7 +160,7 @@ impl RecvHandler {
         // Since the Enr has no way to communicate scope ids, we opt for zeroing this data in order
         // to facilitate connectivity for nodes with a link-local address with an only interface.
         //
-        // At the same time, we accept the risk of colission of nodes in a topology where there are
+        // At the same time, we accept the risk of collision of nodes in a topology where there are
         // multiple interfaces and two nodes with the same link-local address. This risk is small
         // based in additional checks to packets.
         if let SocketAddr::V6(ref mut v6_socket_addr) = src_address {

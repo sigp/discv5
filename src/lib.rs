@@ -24,7 +24,7 @@
 //! undergoes a handshake, which results in a `Session`. These are established when needed and get
 //! dropped after a timeout. The creation and maintenance of sessions between nodes and the
 //! encryption/decryption of packets from the socket is realised by the [`handler::Handler`] struct
-//! runnning in its own task.
+//! running in its own task.
 //! - [`service`]: Contains the protocol-level logic. The [`service::Service`] manages the routing
 //! table of known ENR's, and performs parallel queries for peer discovery. It also runs in it's
 //! own task.
