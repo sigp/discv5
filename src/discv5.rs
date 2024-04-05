@@ -656,7 +656,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
 
     /// Starts a `FIND_NODE` request.
     ///
-    /// This will return less than or equal to `num_nodes` ENRs which satisfy the
+    /// This will return less than or equal to `target_peer_no` ENRs which satisfy the
     /// `predicate`.
     ///
     /// The predicate is a boxed function that takes an ENR reference and returns a boolean
