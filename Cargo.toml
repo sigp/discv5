@@ -2,7 +2,7 @@
 name = "discv5"
 authors = ["Age Manning <Age@AgeManning.com>"]
 edition = "2018"
-version = "0.4.1"
+version = "0.5.0"
 description = "Implementation of the p2p discv5 discovery protocol"
 license = "Apache-2.0"
 repository = "https://github.com/sigp/discv5"
