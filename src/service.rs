@@ -886,7 +886,13 @@ impl Service {
                                 };
                                 self.send_rpc_request(active_request);
                             }
-                            self.connection_updated(node_id, ConnectionStatus::PongReceived(enr));
+                            // Only update the routing table if the new ENR is contactable
+                            if self.ip_mode.get_contactable_addr(&enr).is_some() {
+                                self.connection_updated(
+                                    node_id,
+                                    ConnectionStatus::PongReceived(enr),
+                                );
+                            }
                         }
                     }
                 }
@@ -1188,16 +1194,19 @@ impl Service {
                 return false;
             }
 
-            // If any of the discovered nodes are in the routing table, and there contains an older ENR, update it.
             // If there is an event stream send the Discovered event
             if self.config.report_discovered_peers {
                 self.send_event(Event::Discovered(enr.clone()));
             }
 
-            // ignore peers that don't pass the table filter
-            if (self.config.table_filter)(enr) {
-                let key = kbucket::Key::from(enr.node_id());
-
+            // Check that peers are compatible to be included into the routing table. They must:
+            // - Pass the table filter
+            // - Be contactable
+            //
+            // Failing this, they are not added, and if there is an older version of them in our
+            // table, we remove them.
+            let key = kbucket::Key::from(enr.node_id());
+            if (self.config.table_filter)(enr) && self.ip_mode.get_contactable_addr(enr).is_some() {
                 // If the ENR exists in the routing table and the discovered ENR has a greater
                 // sequence number, perform some filter checks before updating the enr.
 
@@ -1221,7 +1230,22 @@ impl Service {
                     }
                 }
             } else {
-                return false; // Didn't pass the table filter remove the peer
+                // Is either non-contactable or didn't pass the table filter. If it exists in the
+                // routing table, remove it.
+                match self.kbuckets.write().entry(&key) {
+                    kbucket::Entry::Present(entry, _) if entry.value().seq() < enr.seq() => {
+                        entry.remove()
+                    }
+                    kbucket::Entry::Pending(mut entry, _) => {
+                        if entry.value().seq() < enr.seq() {
+                            entry.remove()
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Didn't pass the requirements remove the ENR
+                return false;
             }
 
             // The remaining ENRs are used if this request was part of a query. If we are
