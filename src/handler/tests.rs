@@ -82,6 +82,7 @@ async fn build_handler<P: ProtocolIdentity>(
             Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
             Some(ONE_TIME_SESSION_CACHE_CAPACITY),
         ),
+        notify_unverifiable_enr: false,
         active_challenges: HashMapDelay::new(config.request_timeout),
         service_recv,
         service_send,

@@ -196,6 +196,7 @@ async fn main() {
                     Event::EnrAdded { enr, replaced: _ } => info!("Enr added {}", enr),
                     Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
                     Event::SessionEstablished(enr, _) => info!("Session established {}", enr),
+                    Event::InvalidEnr(enr, socket_addr) => info!("Failed session, invalid ENR {enr}, src: {socket_addr}"),
                     Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
                     Event::TalkRequest(_) => info!("Talk request received"),
                 };

@@ -98,6 +98,9 @@ pub struct Config {
 
     /// Configuration for the sockets to listen on.
     pub listen_config: ListenConfig,
+
+    /// Flag that enables notifying the application layer of unverifiable ENRs, peers that are denied sessions. Defaults to `false`.
+    pub notify_unverifiable_enr: bool,
 }
 
 #[derive(Debug)]
@@ -143,6 +146,7 @@ impl ConfigBuilder {
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
             executor: None,
             listen_config,
+            notify_unverifiable_enr: false,
         };
 
         ConfigBuilder { config }
@@ -302,6 +306,13 @@ impl ConfigBuilder {
         self
     }
 
+    /// Enables notifying the application layer of unverifiable ENRs, peers that are denied
+    /// sessions.
+    pub fn notify_unverifiable_enr(&mut self) -> &mut Self {
+        self.config.notify_unverifiable_enr = true;
+        self
+    }
+
     pub fn build(&mut self) -> Config {
         // If an executor is not provided, assume a current tokio runtime is running.
         if self.config.executor.is_none() {
@@ -336,6 +347,7 @@ impl std::fmt::Debug for Config {
             .field("ping_interval", &self.ping_interval)
             .field("ban_duration", &self.ban_duration)
             .field("listen_config", &self.listen_config)
+            .field("notify_unverifiable_enr", &self.notify_unverifiable_enr)
             .finish()
     }
 }

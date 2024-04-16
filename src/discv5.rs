@@ -67,6 +67,12 @@ pub enum Event {
         node_id: NodeId,
         replaced: Option<NodeId>,
     },
+    /// An ENR doesn't verify against the observed socket and node ID of the peer.
+    UnverifiableEnr {
+        enr: Enr,
+        socket: SocketAddr,
+        node_id: NodeId,
+    },
     /// A new session has been established with a node.
     SessionEstablished(Enr, SocketAddr),
     /// Our local ENR IP address has been updated.

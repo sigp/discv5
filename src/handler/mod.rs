@@ -136,6 +136,15 @@ pub enum HandlerOut {
     ///
     /// This returns the request ID and an error indicating why the request failed.
     RequestFailed(RequestId, RequestError),
+
+    /// A peer advertising an ENR that doesn't verify against its observed socket and node ID.
+    ///
+    /// These peers are denied sessions.
+    UnverifiableEnr {
+        enr: Enr,
+        socket: SocketAddr,
+        node_id: NodeId,
+    },
 }
 
 /// How we connected to the node.
@@ -209,6 +218,8 @@ pub struct Handler {
     sessions: LruTimeCache<NodeAddress, Session>,
     /// Established sessions with peers for a specific request, stored just one per node.
     one_time_sessions: LruTimeCache<NodeAddress, (RequestId, Session)>,
+    /// Flag that enables notifying the application layer of unverifiable ENRs.
+    notify_unverifiable_enr: bool,
     /// The channel to receive messages from the application layer.
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
@@ -303,6 +314,7 @@ impl Handler {
                         Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
                         Some(ONE_TIME_SESSION_CACHE_CAPACITY),
                     ),
+                    notify_unverifiable_enr: config.notify_unverifiable_enr,
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
                     service_send,
@@ -782,6 +794,17 @@ impl Handler {
             }
     }
 
+    async fn notify_unverifiable_enr(&self, enr: Enr, socket: SocketAddr, node_id: NodeId) {
+        self.service_send
+            .send(HandlerOut::UnverifiableEnr {
+                enr,
+                socket,
+                node_id,
+            })
+            .await
+            .unwrap_or_else(|e| warn!("Error with sending channel: {}", e))
+    }
+
     /// Handle a message that contains an authentication header.
     #[allow(clippy::too_many_arguments)]
     async fn handle_auth_message<P: ProtocolIdentity>(
@@ -855,6 +878,17 @@ impl Handler {
                         );
                         self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                             .await;
+
+                        // The ENR doesn't verify. Notify application if its
+                        // listening for unverifiable ENRs.
+                        if self.notify_unverifiable_enr {
+                            self.notify_unverifiable_enr(
+                                enr,
+                                node_address.socket_addr,
+                                node_address.node_id,
+                            )
+                            .await;
+                        }
 
                         // Respond to PING request even if the ENR or NodeAddress don't match
                         // so that the source node can notice its external IP address has been changed.
@@ -1103,10 +1137,22 @@ impl Handler {
                                             }
                                             return;
                                         }
+
+                                        // The ENR doesn't verify. Notify application if its
+                                        // listening for unverifiable ENRs.
+                                        if self.notify_unverifiable_enr {
+                                            self.notify_unverifiable_enr(
+                                                enr,
+                                                node_address.socket_addr,
+                                                node_address.node_id,
+                                            )
+                                            .await;
+                                        }
                                     }
                                 }
                                 _ => {}
                             }
+
                             debug!("Session failed invalid ENR response");
                             self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                                 .await;
