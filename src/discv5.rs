@@ -60,8 +60,6 @@ pub enum Event {
     /// This happen spontaneously through queries as nodes return ENR's. These ENR's are not
     /// guaranteed to be live or contactable.
     Discovered(Enr),
-    /// A new ENR was added to the routing table.
-    EnrAdded { enr: Enr, replaced: Option<Enr> },
     /// A new node has been added to the routing table.
     NodeInserted {
         node_id: NodeId,
