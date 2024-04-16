@@ -53,6 +53,7 @@ pub(crate) mod test;
 
 /// Events that can be produced by the `Discv5` event stream.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     /// A node has been discovered from a FINDNODES request.
     ///
