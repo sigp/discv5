@@ -218,8 +218,6 @@ pub struct Handler {
     sessions: LruTimeCache<NodeAddress, Session>,
     /// Established sessions with peers for a specific request, stored just one per node.
     one_time_sessions: LruTimeCache<NodeAddress, (RequestId, Session)>,
-    /// Flag that enables notifying the application layer of unverifiable ENRs.
-    notify_unverifiable_enr: bool,
     /// The channel to receive messages from the application layer.
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
@@ -314,7 +312,6 @@ impl Handler {
                         Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
                         Some(ONE_TIME_SESSION_CACHE_CAPACITY),
                     ),
-                    notify_unverifiable_enr: config.notify_unverifiable_enr,
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
                     service_send,
@@ -879,16 +876,13 @@ impl Handler {
                         self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                             .await;
 
-                        // The ENR doesn't verify. Notify application if its
-                        // listening for unverifiable ENRs.
-                        if self.notify_unverifiable_enr {
-                            self.notify_unverifiable_enr(
-                                enr,
-                                node_address.socket_addr,
-                                node_address.node_id,
-                            )
-                            .await;
-                        }
+                        // The ENR doesn't verify. Notify application.
+                        self.notify_unverifiable_enr(
+                            enr,
+                            node_address.socket_addr,
+                            node_address.node_id,
+                        )
+                        .await;
 
                         // Respond to PING request even if the ENR or NodeAddress don't match
                         // so that the source node can notice its external IP address has been changed.
@@ -1140,14 +1134,12 @@ impl Handler {
 
                                         // The ENR doesn't verify. Notify application if its
                                         // listening for unverifiable ENRs.
-                                        if self.notify_unverifiable_enr {
-                                            self.notify_unverifiable_enr(
-                                                enr,
-                                                node_address.socket_addr,
-                                                node_address.node_id,
-                                            )
-                                            .await;
-                                        }
+                                        self.notify_unverifiable_enr(
+                                            enr,
+                                            node_address.socket_addr,
+                                            node_address.node_id,
+                                        )
+                                        .await;
                                     }
                                 }
                                 _ => {}
