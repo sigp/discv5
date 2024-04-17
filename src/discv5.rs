@@ -53,6 +53,7 @@ pub(crate) mod test;
 
 /// Events that can be produced by the `Discv5` event stream.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     /// A node has been discovered from a FINDNODES request.
     ///
@@ -64,6 +65,12 @@ pub enum Event {
     NodeInserted {
         node_id: NodeId,
         replaced: Option<NodeId>,
+    },
+    /// An ENR doesn't verify against the observed socket and node ID of the peer.
+    UnverifiableEnr {
+        enr: Enr,
+        socket: SocketAddr,
+        node_id: NodeId,
     },
     /// A new session has been established with a node.
     SessionEstablished(Enr, SocketAddr),

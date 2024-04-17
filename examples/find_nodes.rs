@@ -197,6 +197,7 @@ async fn main() {
                     Event::SessionEstablished(enr, _) => info!("Session established {}", enr),
                     Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
                     Event::TalkRequest(_) => info!("Talk request received"),
+                    _ => {}
                 };
             }
         }

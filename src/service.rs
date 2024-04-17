@@ -409,6 +409,9 @@ impl Service {
                             }
                             self.rpc_failure(request_id, error);
                         }
+                        HandlerOut::UnverifiableEnr{enr, socket, node_id} => {
+                            self.send_event(Event::UnverifiableEnr{enr, socket, node_id});
+                        }
                     }
                 }
                 event = Service::bucket_maintenance_poll(&self.kbuckets) => {
