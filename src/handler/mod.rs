@@ -1132,8 +1132,7 @@ impl Handler {
                                             return;
                                         }
 
-                                        // The ENR doesn't verify. Notify application if its
-                                        // listening for unverifiable ENRs.
+                                        // The ENR doesn't verify. Notify application.
                                         self.notify_unverifiable_enr(
                                             enr,
                                             node_address.socket_addr,
