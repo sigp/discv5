@@ -193,7 +193,6 @@ async fn main() {
                 }
                 match discv5_ev {
                     Event::Discovered(enr) => info!("Enr discovered {}", enr),
-                    Event::EnrAdded { enr, replaced: _ } => info!("Enr added {}", enr),
                     Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
                     Event::SessionEstablished(enr, _) => info!("Session established {}", enr),
                     Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
