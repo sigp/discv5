@@ -704,7 +704,7 @@ async fn test_predicate_search() {
 
     // Predicate function for filtering enrs
     let predicate = move |enr: &Enr<CombinedKey>| {
-        if let Some(v) = enr.get("attnets") {
+        if let Some(Ok(v)) = enr.get_decodable::<Bytes>("attnets") {
             v == required_attnet_value.to_vec().as_slice()
         } else {
             false
