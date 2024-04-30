@@ -126,5 +126,11 @@ pub use packet::{DefaultProtocolId, ProtocolIdentity};
 pub use permit_ban::PermitBanList;
 pub use service::TalkRequest;
 pub use socket::{ListenConfig, RateLimiter, RateLimiterBuilder};
-// re-export the ENR crate
+// Re-export the ENR crate
 pub use enr;
+
+// Re-export libp2p-identity and multiaddr
+#[cfg(feature = "libp2p")]
+pub use libp2p_identity;
+#[cfg(feature = "libp2p")]
+pub use multiaddr;
