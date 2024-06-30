@@ -128,11 +128,11 @@ async fn main() {
     info!("Node Id: {}", enr.node_id());
     if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
         // if the ENR is useful print it
-        info!("Base64 ENR: {}", enr.to_base64());
         info!(
-            "Local ENR IpV6 socket: {:?}. Local ENR IpV4 socket: {:?}",
-            enr.udp6_socket(),
-            enr.udp4_socket()
+            base64_enr=&enr.to_base64(),
+            ipv6_socket=?enr.udp6_socket(),
+            ipv4_socket=?enr.udp4_socket(),
+            "Local ENR",
         );
     }
 
@@ -142,14 +142,14 @@ async fn main() {
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {
         info!(
-            "Remote ENR read. udp4 socket: {:?}, udp6 socket: {:?}, tcp4_port {:?}, tcp6_port: {:?}",
-            enr.udp4_socket(),
-            enr.udp6_socket(),
-            enr.tcp4(),
-            enr.tcp6()
+            udp4_socket=?enr.udp4_socket(),
+            udp6_socket=?enr.udp6_socket(),
+            tcp4_port=?enr.tcp4(),
+            tcp6_port=?enr.tcp6(),
+            "Remote ENR read",
         );
         if let Err(e) = discv5.add_enr(enr) {
-            warn!("Failed to add remote ENR {}", e);
+            warn!(error=?e, "Failed to add remote ENR");
             // It's unlikely we want to continue in this example after this
             return;
         };
@@ -171,17 +171,21 @@ async fn main() {
                 // get metrics
                 let metrics = discv5.metrics();
                 let connected_peers = discv5.connected_peers();
-                info!("Connected peers: {}, Active sessions: {}, Unsolicited requests/s: {:.2}", connected_peers, metrics.active_sessions, metrics.unsolicited_requests_per_second);
-                info!("Searching for peers...");
+                info!(
+                    connected_peers,
+                    active_sessions=metrics.active_sessions,
+                    unsolicited_requests_per_second=format_args!("{:.2}", metrics.unsolicited_requests_per_second),
+                    "Searching for peers..."
+                );
                 // execute a FINDNODE query
                 match discv5.find_node(target_random_node_id).await {
-                    Err(e) => warn!("Find Node result failed: {:?}", e),
+                    Err(e) => warn!(error=?e, "Find Node result failed"),
                     Ok(v) => {
                         // found a list of ENR's print their NodeIds
                         let node_ids = v.iter().map(|enr| enr.node_id()).collect::<Vec<_>>();
-                        info!("Nodes found: {}", node_ids.len());
+                        info!(len=node_ids.len(), "Nodes found");
                         for node_id in node_ids {
-                            info!("Node: {}", node_id);
+                            info!(%node_id, "Node");
                         }
                     }
                 }
@@ -192,10 +196,10 @@ async fn main() {
                     continue;
                 }
                 match discv5_ev {
-                    Event::Discovered(enr) => info!("Enr discovered {}", enr),
-                    Event::NodeInserted { node_id, replaced: _ } => info!("Node inserted {}", node_id),
-                    Event::SessionEstablished(enr, _) => info!("Session established {}", enr),
-                    Event::SocketUpdated(addr) => info!("Socket updated {}", addr),
+                    Event::Discovered(enr) => info!(%enr, "Enr discovered"),
+                    Event::NodeInserted { node_id, replaced: _ } => info!(%node_id, "Node inserted"),
+                    Event::SessionEstablished(enr, _) => info!(%enr, "Session established"),
+                    Event::SocketUpdated(addr) => info!(%addr, "Socket updated"),
                     Event::TalkRequest(_) => info!("Talk request received"),
                     _ => {}
                 };

@@ -339,7 +339,7 @@ impl Handler {
                             if let Err(request_error) =  self.send_request::<P>(contact, HandlerReqId::External(id.clone()), request).await {
                                 // If the sending failed report to the application
                                 if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
-                                    warn!("Failed to inform that request failed {}", e)
+                                    warn!(error=%e, "Failed to inform that request failed")
                                 }
                             }
                         }
@@ -449,7 +449,7 @@ impl Handler {
         mut request_call: RequestCall,
     ) {
         if request_call.retries() >= self.request_retries {
-            trace!("Request timed out with {}", node_address);
+            trace!(%node_address, "Request timed out");
             // Remove the request from the awaiting packet_filter
             self.remove_expected_response(node_address.socket_addr);
             // The request has timed out. We keep any established session for future use.
@@ -458,9 +458,9 @@ impl Handler {
         } else {
             // increment the request retry count and restart the timeout
             trace!(
-                "Resending message: {} to {}",
-                request_call.body(),
-                node_address
+                body=%request_call.body(),
+                %node_address,
+                "Resending message",
             );
             self.send(node_address.clone(), request_call.packet().clone())
                 .await;
@@ -488,7 +488,7 @@ impl Handler {
         if self.active_challenges.get(&node_address).is_some()
             || self.is_awaiting_session_to_be_established(&node_address)
         {
-            trace!("Request queued for node: {}", node_address);
+            trace!(%node_address, "Request queued for node");
             self.pending_requests
                 .entry(node_address)
                 .or_default()
@@ -516,8 +516,8 @@ impl Handler {
             } else {
                 // No session exists, start a new handshake initiating a new session
                 trace!(
-                    "Starting session. Sending random packet to: {}",
-                    node_address
+                    %node_address,
+                    "Starting session. Sending random packet",
                 );
                 let packet =
                     Packet::new_random(&self.node_id).map_err(RequestError::EntropyFailure)?;
@@ -556,14 +556,15 @@ impl Handler {
             // Either the session is being established or has expired. We simply drop the
             // response in this case.
             return warn!(
-                "Session is not established. Dropping response {} for node: {}",
-                response, node_address.node_id
+                %response,
+                node=%node_address.node_id,
+                "Session is not established. Dropping response",
             );
         };
 
         match packet {
             Ok(packet) => self.send(node_address, packet).await,
-            Err(e) => warn!("Could not encrypt response: {:?}", e),
+            Err(e) => warn!(error=?e, "Could not encrypt response"),
         }
     }
 
@@ -578,7 +579,7 @@ impl Handler {
         let message_nonce = wru_ref.1;
 
         if self.active_challenges.get(&node_address).is_some() {
-            warn!("WHOAREYOU already sent. {}", node_address);
+            warn!(%node_address, "WHOAREYOU already sent.");
             return;
         }
 
@@ -598,7 +599,7 @@ impl Handler {
         let packet = Packet::new_whoareyou(message_nonce, id_nonce, enr_seq);
         let challenge_data = ChallengeData::try_from(packet.authenticated_data::<P>().as_slice())
             .expect("Must be the correct challenge size");
-        debug!("Sending WHOAREYOU to {}", node_address);
+        debug!(%node_address, "Sending WHOAREYOU");
         self.add_expected_response(node_address.socket_addr);
         self.send(node_address.clone(), packet).await;
         self.active_challenges.insert(
@@ -626,7 +627,12 @@ impl Handler {
             Some((node_address, request_call)) => {
                 // Verify that the src_addresses match
                 if node_address.socket_addr != src_address {
-                    debug!("Received a WHOAREYOU packet for a message with a non-expected source. Source {}, expected_source: {} message_nonce {}", src_address, node_address.socket_addr, hex::encode(request_nonce));
+                    debug!(
+                        source=%src_address,
+                        expected_source=%node_address.socket_addr,
+                        message_nonce=hex::encode(request_nonce),
+                        "Received a WHOAREYOU packet for a message with a non-expected source.",
+                    );
                     // Add the request back if src_address doesn't match
                     self.active_requests.insert(node_address, request_call);
                     return;
@@ -634,7 +640,11 @@ impl Handler {
                 request_call
             }
             None => {
-                trace!("Received a WHOAREYOU packet that references an unknown or expired request. Source {}, message_nonce {}", src_address, hex::encode(request_nonce));
+                trace!(
+                    source = %src_address,
+                    message_nonce = hex::encode(request_nonce),
+                    "Received a WHOAREYOU packet that references an unknown or expired request."
+                );
                 return;
             }
         };
@@ -643,14 +653,19 @@ impl Handler {
         if request_call.packet().message_nonce() != &request_nonce {
             // This could theoretically happen if a peer uses the same node id across
             // different connections.
-            warn!("Received a WHOAREYOU from a non expected source. Source: {}, message_nonce {} , expected_nonce: {}", request_call.contact(), hex::encode(request_call.packet().message_nonce()), hex::encode(request_nonce));
+            warn!(
+                source = %request_call.contact(),
+                message_nonce = hex::encode(request_call.packet().message_nonce()),
+                expected_nonce = hex::encode(request_nonce),
+                "Received a WHOAREYOU from a non expected source."
+            );
             // NOTE: Both mappings are removed in this case.
             return;
         }
 
         trace!(
-            "Received a WHOAREYOU packet response. Source: {}",
-            request_call.contact()
+            source = %request_call.contact(),
+            "Received a WHOAREYOU packet response.",
         );
 
         // We do not allow multiple WHOAREYOU packets for a single challenge request. If we have
@@ -658,8 +673,8 @@ impl Handler {
         // response.
         if request_call.handshake_sent() {
             warn!(
-                "Authentication response already sent. Dropping session. Node: {}",
-                request_call.contact()
+                node = %request_call.contact(),
+                "Authentication response already sent. Dropping session. Node",
             );
             self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                 .await;
@@ -686,7 +701,7 @@ impl Handler {
         ) {
             Ok(v) => v,
             Err(e) => {
-                error!("Could not generate a session. Error: {:?}", e);
+                error!(error=?e, "Could not generate a session");
                 self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                     .await;
                 return;
@@ -722,9 +737,9 @@ impl Handler {
 
                 // We already know the ENR. Send the handshake response packet
                 trace!(
-                    "Sending Authentication response to node: {} ({:?})",
-                    node_address,
-                    request_call.id()
+                    %node_address,
+                    request_call_id=?request_call.id(),
+                    "Sending Authentication response to node",
                 );
                 request_call.update_packet(auth_packet.clone());
                 request_call.set_handshake_sent();
@@ -742,7 +757,7 @@ impl Handler {
                         connection_direction,
                     ))
                     .await
-                    .unwrap_or_else(|e| warn!("Error with sending channel: {}", e));
+                    .unwrap_or_else(|e| warn!(error=%e, "Error with sending channel"));
             }
             None => {
                 // Don't know the ENR. Establish the session, but request an ENR also
@@ -750,9 +765,9 @@ impl Handler {
                 // Send the Auth response
                 let contact = request_call.contact().clone();
                 trace!(
-                    "Sending Authentication response to node: {} ({:?})",
-                    node_address,
-                    request_call.id()
+                    %node_address,
+                    request_call_id=?request_call.id(),
+                    "Sending Authentication response to node",
                 );
                 request_call.update_packet(auth_packet.clone());
                 request_call.set_handshake_sent();
@@ -767,7 +782,7 @@ impl Handler {
                     .send_request::<P>(contact, HandlerReqId::Internal(id), request)
                     .await
                 {
-                    warn!("Failed to send Enr request {}", e)
+                    warn!(error=%e, "Failed to send Enr request")
                 }
             }
         }
@@ -799,7 +814,7 @@ impl Handler {
                 node_id,
             })
             .await
-            .unwrap_or_else(|e| warn!("Error with sending channel: {}", e))
+            .unwrap_or_else(|e| warn!(error=%e, "Error with sending channel"))
     }
 
     /// Handle a message that contains an authentication header.
@@ -818,8 +833,8 @@ impl Handler {
         // This will lead to future outgoing challenges if they proceed to send further encrypted
         // packets.
         trace!(
-            "Received an Authentication header message from: {}",
-            node_address
+            from=%node_address,
+            "Received an Authentication header message",
         );
 
         if let Some(challenge) = self.active_challenges.remove(&node_address) {
@@ -851,7 +866,7 @@ impl Handler {
                             ))
                             .await
                         {
-                            warn!("Failed to inform of established session {}", e)
+                            warn!(error=%e, "Failed to inform of established session")
                         }
                         // When (re-)establishing a session from an outgoing challenge, we do not need
                         // to filter out this request from active requests, so we do not pass
@@ -868,10 +883,10 @@ impl Handler {
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
-                            "Session has invalid ENR. Enr sockets: {:?}, {:?}. Expected: {}",
-                            enr.udp4_socket(),
-                            enr.udp6_socket(),
-                            node_address
+                            udp4_socket=?enr.udp4_socket(),
+                            udp6_socket=?enr.udp6_socket(),
+                            expected=%node_address,
+                            "Session has invalid ENR",
                         );
                         self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
                             .await;
@@ -901,8 +916,8 @@ impl Handler {
                         };
                         if let Some(request) = maybe_ping_request {
                             debug!(
-                                "Responding to a PING request using a one-time session. node_address: {}",
-                                node_address
+                                %node_address,
+                                "Responding to a PING request using a one-time session.",
                             );
                             self.one_time_sessions
                                 .insert(node_address.clone(), (request.id.clone(), session));
@@ -911,7 +926,7 @@ impl Handler {
                                 .send(HandlerOut::Request(node_address.clone(), Box::new(request)))
                                 .await
                             {
-                                warn!("Failed to report request to application {}", e);
+                                warn!(error=%e, "Failed to report request to application");
                                 self.one_time_sessions.remove(&node_address);
                             }
                         }
@@ -919,16 +934,16 @@ impl Handler {
                 }
                 Err(Error::InvalidChallengeSignature(challenge)) => {
                     warn!(
-                        "Authentication header contained invalid signature. Ignoring packet from: {}",
-                        node_address
+                        %node_address,
+                        "Authentication header contained invalid signature. Ignoring packet from node",
                     );
                     // insert back the challenge
                     self.active_challenges.insert(node_address, challenge);
                 }
                 Err(e) => {
                     warn!(
-                        "Invalid Authentication header. Dropping session. Error: {:?}",
-                        e
+                        error=?e,
+                        "Invalid Authentication header. Dropping session",
                     );
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
@@ -951,15 +966,16 @@ impl Handler {
             .unwrap_or_default();
         for req in pending_requests {
             trace!(
-                "Sending pending request {} to {node_address}. {}",
-                RequestId::from(&req.request_id),
-                req.request,
+                request_id=%RequestId::from(&req.request_id),
+                %node_address,
+                request=%req.request,
+                "Sending pending request",
             );
             if let Err(request_error) = self
                 .send_request::<P>(req.contact, req.request_id.clone(), req.request)
                 .await
             {
-                warn!("Failed to send next pending request {request_error}");
+                warn!(error=%request_error, "Failed to send next pending request");
                 // Inform the service that the request failed
                 match req.request_id {
                     HandlerReqId::Internal(_) => {
@@ -972,7 +988,7 @@ impl Handler {
                             .send(HandlerOut::RequestFailed(id, request_error))
                             .await
                         {
-                            warn!("Failed to inform that request failed {e}");
+                            warn!(error=%e, "Failed to inform that request failed");
                         }
                     }
                 }
@@ -990,9 +1006,9 @@ impl Handler {
         message_nonce: Option<MessageNonce>,
     ) {
         trace!(
-            "Replaying active requests. {}, {:?}",
-            node_address,
-            message_nonce
+            %node_address,
+            ?message_nonce,
+            "Replaying active requests",
         );
 
         let packets = if let Some(session) = self.sessions.get_mut(node_address) {
@@ -1018,8 +1034,8 @@ impl Handler {
                     packets.push((*request_call.packet().message_nonce(), new_packet));
                 } else {
                     error!(
-                        "Failed to re-encrypt packet while replaying active request with id: {:?}",
-                        request_call.id()
+                        id=?request_call.id(),
+                        "Failed to re-encrypt packet while replaying active request with id",
                     );
                 }
             }
@@ -1055,7 +1071,7 @@ impl Handler {
                 Ok(m) => match Message::decode(&m) {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!("Failed to decode message. Error: {:?}, {}", e, node_address);
+                        warn!(error=?e, %node_address, "Failed to decode message");
                         return;
                     }
                 },
@@ -1064,10 +1080,10 @@ impl Handler {
                     // sending this message has dropped their session. In this case, this message is a
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
-                    trace!("Decryption failed. Error {}", e);
+                    trace!(error=%e, "Decryption failed");
                     debug!(
-                        "Message from node: {} is not encrypted with known session keys.",
-                        node_address
+                        %node_address,
+                        "Message from node is not encrypted with known session keys.",
                     );
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
                         .await;
@@ -1080,16 +1096,16 @@ impl Handler {
                             .send(HandlerOut::WhoAreYou(whoareyou_ref))
                             .await
                         {
-                            warn!("Failed to send WhoAreYou to the service {}", e)
+                            warn!(error=%e, "Failed to send WhoAreYou to the service")
                         }
                     } else {
-                        trace!("WHOAREYOU packet already sent: {}", node_address);
+                        trace!(%node_address, "WHOAREYOU packet already sent");
                     }
                     return;
                 }
             };
 
-            trace!("Received message from: {}", node_address);
+            trace!(%node_address, "Received message");
 
             // Remove any associated request from pending_request
             match message {
@@ -1100,7 +1116,7 @@ impl Handler {
                         .send(HandlerOut::Request(node_address, Box::new(request)))
                         .await
                     {
-                        warn!("Failed to report request to application {}", e)
+                        warn!(error=%e, "Failed to report request to application")
                     }
                 }
                 Message::Response(response) => {
@@ -1127,7 +1143,7 @@ impl Handler {
                                                 ))
                                                 .await
                                             {
-                                                warn!("Failed to inform established outgoing connection {}", e)
+                                                warn!(error=%e, "Failed to inform established outgoing connection")
                                             }
                                             return;
                                         }
@@ -1156,7 +1172,7 @@ impl Handler {
             }
         } else {
             // no session exists
-            trace!("Received a message without a session. {}", node_address);
+            trace!(%node_address, "Received a message without a session.");
             trace!("Requesting a WHOAREYOU packet to be sent.");
             // spawn a WHOAREYOU event to check for highest known ENR
             let whoareyou_ref = WhoAreYouRef(node_address, message_nonce);
@@ -1166,8 +1182,8 @@ impl Handler {
                 .await
             {
                 warn!(
-                    "Spawn a WHOAREYOU event to check for highest known ENR failed {}",
-                    e
+                    error=%e,
+                    "Spawn a WHOAREYOU event to check for highest known ENR failed",
                 )
             }
         }
@@ -1199,7 +1215,7 @@ impl Handler {
                                 .send(HandlerOut::Response(node_address, Box::new(response)))
                                 .await
                             {
-                                warn!("Failed to inform of response {}", e)
+                                warn!(error=%e, "Failed to inform of response")
                             }
                             return;
                         }
@@ -1214,7 +1230,7 @@ impl Handler {
                             .send(HandlerOut::Response(node_address, Box::new(response)))
                             .await
                         {
-                            warn!("Failed to inform of response {}", e)
+                            warn!(error=%e, "Failed to inform of response")
                         }
                         return;
                     }
@@ -1233,12 +1249,12 @@ impl Handler {
                 ))
                 .await
             {
-                warn!("Failed to inform of response {}", e)
+                warn!(error=%e, "Failed to inform of response")
             }
         } else {
             // This is likely a late response and we have already failed the request. These get
             // dropped here.
-            trace!("Late response from node: {}", node_address);
+            trace!(%node_address, "Late response from node");
         }
     }
 
@@ -1315,7 +1331,7 @@ impl Handler {
                     .send(HandlerOut::RequestFailed(id.clone(), error.clone()))
                     .await
                 {
-                    warn!("Failed to inform request failure {}", e)
+                    warn!(error=%e, "Failed to inform request failure")
                 }
             }
         }
@@ -1351,7 +1367,7 @@ impl Handler {
                             .send(HandlerOut::RequestFailed(id, error.clone()))
                             .await
                         {
-                            warn!("Failed to inform request failure {}", e)
+                            warn!(error=%e, "Failed to inform request failure")
                         }
                     }
                 }
@@ -1373,7 +1389,7 @@ impl Handler {
                         .send(HandlerOut::RequestFailed(id.clone(), error.clone()))
                         .await
                     {
-                        warn!("Failed to inform request failure {e}")
+                        warn!(error=%e, "Failed to inform request failure")
                     }
                 }
             }
@@ -1388,7 +1404,7 @@ impl Handler {
             packet,
         };
         if let Err(e) = self.socket.send.send(outbound_packet).await {
-            warn!("Failed to send outbound packet {}", e)
+            warn!(error=%e, "Failed to send outbound packet")
         }
     }
 

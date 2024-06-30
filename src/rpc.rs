@@ -412,7 +412,7 @@ impl Message {
                         body: ResponseBody::Pong { enr_seq, ip, port },
                     })
                 } else {
-                    debug!("The port number should be non zero: {raw_port}");
+                    debug!(raw_port, "The port number should be non zero");
                     return Err(DecoderError::Custom("PONG response port number invalid"));
                 }
             }
@@ -423,8 +423,8 @@ impl Message {
                 for distance in distances.iter() {
                     if distance > &256u64 {
                         warn!(
-                            "Rejected FindNode request asking for unknown distance {}, maximum 256",
-                            distance
+                            distance,
+                            "Rejected FindNode request asking for unknown distance maximum 256",
                         );
                         return Err(DecoderError::Custom("FINDNODE request distance invalid"));
                     }
