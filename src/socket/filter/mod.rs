@@ -86,11 +86,11 @@ impl Filter {
     /// The first check. This determines if a new UDP packet should be decoded or dropped.
     /// Only unsolicited packets arrive here.
     pub fn initial_pass(&mut self, src: &SocketAddr) -> bool {
-        if PERMIT_BAN_LIST.read().permit_ips.get(&src.ip()).is_some() {
+        if PERMIT_BAN_LIST.read().permit_ips.contains(&src.ip()) {
             return true;
         }
 
-        if PERMIT_BAN_LIST.read().ban_ips.get(&src.ip()).is_some() {
+        if PERMIT_BAN_LIST.read().ban_ips.contains_key(&src.ip()) {
             debug!("Dropped unsolicited packet from banned src: {:?}", src);
             return false;
         }
@@ -135,8 +135,7 @@ impl Filter {
         if PERMIT_BAN_LIST
             .read()
             .permit_nodes
-            .get(&node_address.node_id)
-            .is_some()
+            .contains(&node_address.node_id)
         {
             return true;
         }
@@ -144,8 +143,7 @@ impl Filter {
         if PERMIT_BAN_LIST
             .read()
             .ban_nodes
-            .get(&node_address.node_id)
-            .is_some()
+            .contains_key(&node_address.node_id)
         {
             debug!(
                 "Dropped unsolicited packet from banned node_id: {}",
