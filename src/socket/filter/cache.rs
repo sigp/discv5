@@ -22,14 +22,12 @@ use std::{
 /// cache's `time_window`.
 pub const ENFORCED_SIZE_TIME: u64 = 1;
 
-pub struct ReceivedPacket<T> {
-    /// The source that sent us the packet.
-    pub content: T,
+pub struct ReceivedPacket {
     /// The time the packet was received.
     pub received: Instant,
 }
 
-pub struct ReceivedPacketCache<T> {
+pub struct ReceivedPacketCache {
     /// The target number of entries per ENFORCED_SIZE_TIME before inserting new elements reports
     /// failure. The maximum size of the cache is target*time_window
     target: usize,
@@ -40,10 +38,10 @@ pub struct ReceivedPacketCache<T> {
     /// This stores the current number of messages that are within the `ENFORCED_SIZE_TIME`.
     within_enforced_time: usize,
     /// The underlying data structure.
-    inner: VecDeque<ReceivedPacket<T>>,
+    inner: VecDeque<ReceivedPacket>,
 }
 
-impl<T> ReceivedPacketCache<T> {
+impl ReceivedPacketCache {
     /// Creates a new `ReceivedPacketCache` with a specified size from which no more can enter.
     pub fn new(target: usize, time_window: u64) -> Self {
         Self {
@@ -84,19 +82,18 @@ impl<T> ReceivedPacketCache<T> {
     }
 
     /// Inserts an element into the cache, removing any expired elements.
-    pub fn cache_insert(&mut self, content: T) -> bool {
+    pub fn cache_insert(&mut self) -> bool {
         self.reset();
-        self.internal_insert(content)
+        self.internal_insert()
     }
 
     /// Inserts an element into the cache without removing expired elements.
-    fn internal_insert(&mut self, content: T) -> bool {
+    fn internal_insert(&mut self) -> bool {
         if self.within_enforced_time >= self.target {
             // Reached the target
             false
         } else {
             let received_packet = ReceivedPacket {
-                content,
                 received: Instant::now(),
             };
             self.inner.push_back(received_packet);
@@ -106,15 +103,15 @@ impl<T> ReceivedPacketCache<T> {
     }
 }
 
-impl<T> std::ops::Deref for ReceivedPacketCache<T> {
-    type Target = VecDeque<ReceivedPacket<T>>;
+impl std::ops::Deref for ReceivedPacketCache {
+    type Target = VecDeque<ReceivedPacket>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<T> std::ops::DerefMut for ReceivedPacketCache<T> {
+impl std::ops::DerefMut for ReceivedPacketCache {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
