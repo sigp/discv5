@@ -148,7 +148,7 @@ impl Filter {
             .is_some()
         {
             debug!(
-                node_id = %node_address,
+                node = %node_address,
                 "Dropped unsolicited packet from banned node_id",
             );
             return false;

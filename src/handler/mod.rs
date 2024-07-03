@@ -674,7 +674,7 @@ impl Handler {
         if request_call.handshake_sent() {
             warn!(
                 node = %request_call.contact(),
-                "Authentication response already sent. Dropping session. Node",
+                "Authentication response already sent. Dropping session.",
             );
             self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                 .await;
@@ -738,7 +738,7 @@ impl Handler {
                 // We already know the ENR. Send the handshake response packet
                 trace!(
                     %node_address,
-                    request_call_id=?request_call.id(),
+                    request_call.id=?request_call.id(),
                     "Sending Authentication response to node",
                 );
                 request_call.update_packet(auth_packet.clone());
@@ -766,7 +766,7 @@ impl Handler {
                 let contact = request_call.contact().clone();
                 trace!(
                     %node_address,
-                    request_call_id=?request_call.id(),
+                    request_call.id=?request_call.id(),
                     "Sending Authentication response to node",
                 );
                 request_call.update_packet(auth_packet.clone());

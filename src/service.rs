@@ -698,7 +698,7 @@ impl Service {
                     if let Some(CallbackResponse::Nodes(callback)) = active_request.callback.take()
                     {
                         if let Err(e) = callback.send(Ok(nodes)) {
-                            warn!(error=?e,"Failed to send response in callback")
+                            warn!(error=?e, "Failed to send response in callback")
                         }
                         return;
                     }
@@ -1151,7 +1151,7 @@ impl Service {
                 }
             }
         } else {
-            error!(id = *query_id, "Query requested an unknown ENR");
+            error!(query_id = *query_id, "Query requested an unknown ENR");
         }
 
         // This query request has failed and we must inform the
@@ -1350,10 +1350,10 @@ impl Service {
                 {
                     UpdateResult::Failed(reason) => {
                         self.peers_to_ping.remove(&node_id);
-                        debug!(node=%node_id, ?reason, "Could not update ENR from pong",);
+                        debug!(node=%node_id, ?reason, "Could not update ENR from pong");
                     }
                     update => {
-                        debug!(?update, "Updated")
+                        debug!(update_result = ?update, "ENR has been updated based on the pong")
                     } // Updated ENR successfully.
                 }
             }
