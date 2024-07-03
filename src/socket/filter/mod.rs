@@ -113,7 +113,7 @@ impl Filter {
         // Check rate limits
         if let Some(rate_limiter) = self.rate_limiter.as_mut() {
             if rate_limiter.allows(&LimitKind::Ip(src.ip())).is_err() {
-                warn!(ip=?src.ip(), "Banning IP for excessive requests");
+                warn!(ip = ?src.ip(), "Banning IP for excessive requests");
                 // Ban the IP address
                 let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
                 PERMIT_BAN_LIST
@@ -124,7 +124,7 @@ impl Filter {
             }
 
             if rate_limiter.allows(&LimitKind::Total).is_err() {
-                debug!(ip=?src.ip(), "Dropped unsolicited packet from RPC limit");
+                debug!(ip = ?src.ip(), "Dropped unsolicited packet from RPC limit");
                 return false;
             }
         }

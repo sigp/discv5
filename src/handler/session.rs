@@ -157,7 +157,7 @@ impl Session {
                 (None, Some(known_enr)) => known_enr,
                 (None, None) => {
                     warn!(
-                        node=%remote_id,
+                        node = %remote_id,
                         "Peer did not respond with their ENR. Session could not be established",
                     );
                     return Err(Error::SessionNotEstablished);

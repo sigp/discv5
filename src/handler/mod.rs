@@ -339,7 +339,7 @@ impl Handler {
                             if let Err(request_error) =  self.send_request::<P>(contact, HandlerReqId::External(id.clone()), request).await {
                                 // If the sending failed report to the application
                                 if let Err(e) = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await {
-                                    warn!(error=%e, "Failed to inform that request failed")
+                                    warn!(error = %e, "Failed to inform that request failed")
                                 }
                             }
                         }
@@ -458,7 +458,7 @@ impl Handler {
         } else {
             // increment the request retry count and restart the timeout
             trace!(
-                body=%request_call.body(),
+                body = %request_call.body(),
                 %node_address,
                 "Resending message",
             );
@@ -557,14 +557,14 @@ impl Handler {
             // response in this case.
             return warn!(
                 %response,
-                node=%node_address.node_id,
+                node = %node_address.node_id,
                 "Session is not established. Dropping response",
             );
         };
 
         match packet {
             Ok(packet) => self.send(node_address, packet).await,
-            Err(e) => warn!(error=?e, "Could not encrypt response"),
+            Err(e) => warn!(error = ?e, "Could not encrypt response"),
         }
     }
 
@@ -628,9 +628,9 @@ impl Handler {
                 // Verify that the src_addresses match
                 if node_address.socket_addr != src_address {
                     debug!(
-                        source=%src_address,
-                        expected_source=%node_address.socket_addr,
-                        message_nonce=hex::encode(request_nonce),
+                        source = %src_address,
+                        expected_source = %node_address.socket_addr,
+                        message_nonce = hex::encode(request_nonce),
                         "Received a WHOAREYOU packet for a message with a non-expected source.",
                     );
                     // Add the request back if src_address doesn't match
@@ -701,7 +701,7 @@ impl Handler {
         ) {
             Ok(v) => v,
             Err(e) => {
-                error!(error=?e, "Could not generate a session");
+                error!(error = ?e, "Could not generate a session");
                 self.fail_request(request_call, RequestError::InvalidRemotePacket, true)
                     .await;
                 return;
@@ -738,7 +738,7 @@ impl Handler {
                 // We already know the ENR. Send the handshake response packet
                 trace!(
                     %node_address,
-                    request_call.id=?request_call.id(),
+                    request_call.id = ?request_call.id(),
                     "Sending Authentication response to node",
                 );
                 request_call.update_packet(auth_packet.clone());
@@ -757,7 +757,7 @@ impl Handler {
                         connection_direction,
                     ))
                     .await
-                    .unwrap_or_else(|e| warn!(error=%e, "Error with sending channel"));
+                    .unwrap_or_else(|e| warn!(error = %e, "Error with sending channel"));
             }
             None => {
                 // Don't know the ENR. Establish the session, but request an ENR also
@@ -766,7 +766,7 @@ impl Handler {
                 let contact = request_call.contact().clone();
                 trace!(
                     %node_address,
-                    request_call.id=?request_call.id(),
+                    request_call.id = ?request_call.id(),
                     "Sending Authentication response to node",
                 );
                 request_call.update_packet(auth_packet.clone());
@@ -782,7 +782,7 @@ impl Handler {
                     .send_request::<P>(contact, HandlerReqId::Internal(id), request)
                     .await
                 {
-                    warn!(error=%e, "Failed to send Enr request")
+                    warn!(error = %e, "Failed to send Enr request")
                 }
             }
         }
@@ -814,7 +814,7 @@ impl Handler {
                 node_id,
             })
             .await
-            .unwrap_or_else(|e| warn!(error=%e, "Error with sending channel"))
+            .unwrap_or_else(|e| warn!(error = %e, "Error with sending channel"))
     }
 
     /// Handle a message that contains an authentication header.
@@ -833,7 +833,7 @@ impl Handler {
         // This will lead to future outgoing challenges if they proceed to send further encrypted
         // packets.
         trace!(
-            from=%node_address,
+            from = %node_address,
             "Received an Authentication header message",
         );
 
@@ -866,7 +866,7 @@ impl Handler {
                             ))
                             .await
                         {
-                            warn!(error=%e, "Failed to inform of established session")
+                            warn!(error = %e, "Failed to inform of established session")
                         }
                         // When (re-)establishing a session from an outgoing challenge, we do not need
                         // to filter out this request from active requests, so we do not pass
@@ -883,9 +883,9 @@ impl Handler {
                     } else {
                         // IP's or NodeAddress don't match. Drop the session.
                         warn!(
-                            udp4_socket=?enr.udp4_socket(),
-                            udp6_socket=?enr.udp6_socket(),
-                            expected=%node_address,
+                            udp4_socket = ?enr.udp4_socket(),
+                            udp6_socket = ?enr.udp6_socket(),
+                            expected = %node_address,
                             "Session has invalid ENR",
                         );
                         self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
@@ -926,7 +926,7 @@ impl Handler {
                                 .send(HandlerOut::Request(node_address.clone(), Box::new(request)))
                                 .await
                             {
-                                warn!(error=%e, "Failed to report request to application");
+                                warn!(error = %e, "Failed to report request to application");
                                 self.one_time_sessions.remove(&node_address);
                             }
                         }
@@ -942,7 +942,7 @@ impl Handler {
                 }
                 Err(e) => {
                     warn!(
-                        error=?e,
+                        error = ?e,
                         "Invalid Authentication header. Dropping session",
                     );
                     self.fail_session(&node_address, RequestError::InvalidRemotePacket, true)
@@ -966,16 +966,16 @@ impl Handler {
             .unwrap_or_default();
         for req in pending_requests {
             trace!(
-                request_id=%RequestId::from(&req.request_id),
+                request_id = %RequestId::from(&req.request_id),
                 %node_address,
-                request=%req.request,
+                request = %req.request,
                 "Sending pending request",
             );
             if let Err(request_error) = self
                 .send_request::<P>(req.contact, req.request_id.clone(), req.request)
                 .await
             {
-                warn!(error=%request_error, "Failed to send next pending request");
+                warn!(error = %request_error, "Failed to send next pending request");
                 // Inform the service that the request failed
                 match req.request_id {
                     HandlerReqId::Internal(_) => {
@@ -988,7 +988,7 @@ impl Handler {
                             .send(HandlerOut::RequestFailed(id, request_error))
                             .await
                         {
-                            warn!(error=%e, "Failed to inform that request failed");
+                            warn!(error = %e, "Failed to inform that request failed");
                         }
                     }
                 }
@@ -1034,7 +1034,7 @@ impl Handler {
                     packets.push((*request_call.packet().message_nonce(), new_packet));
                 } else {
                     error!(
-                        id=?request_call.id(),
+                        id = ?request_call.id(),
                         "Failed to re-encrypt packet while replaying active request with id",
                     );
                 }
@@ -1071,7 +1071,7 @@ impl Handler {
                 Ok(m) => match Message::decode(&m) {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!(error=?e, %node_address, "Failed to decode message");
+                        warn!(error = ?e, %node_address, "Failed to decode message");
                         return;
                     }
                 },
@@ -1080,7 +1080,7 @@ impl Handler {
                     // sending this message has dropped their session. In this case, this message is a
                     // Random packet and we should reply with a WHOAREYOU.
                     // This means we need to drop the current session and re-establish.
-                    trace!(error=%e, "Decryption failed");
+                    trace!(error = %e, "Decryption failed");
                     debug!(
                         %node_address,
                         "Message from node is not encrypted with known session keys.",
@@ -1096,7 +1096,7 @@ impl Handler {
                             .send(HandlerOut::WhoAreYou(whoareyou_ref))
                             .await
                         {
-                            warn!(error=%e, "Failed to send WhoAreYou to the service")
+                            warn!(error = %e, "Failed to send WhoAreYou to the service")
                         }
                     } else {
                         trace!(%node_address, "WHOAREYOU packet already sent");
@@ -1116,7 +1116,7 @@ impl Handler {
                         .send(HandlerOut::Request(node_address, Box::new(request)))
                         .await
                     {
-                        warn!(error=%e, "Failed to report request to application")
+                        warn!(error = %e, "Failed to report request to application")
                     }
                 }
                 Message::Response(response) => {
@@ -1143,7 +1143,7 @@ impl Handler {
                                                 ))
                                                 .await
                                             {
-                                                warn!(error=%e, "Failed to inform established outgoing connection")
+                                                warn!(error = %e, "Failed to inform established outgoing connection")
                                             }
                                             return;
                                         }
@@ -1182,7 +1182,7 @@ impl Handler {
                 .await
             {
                 warn!(
-                    error=%e,
+                    error = %e,
                     "Spawn a WHOAREYOU event to check for highest known ENR failed",
                 )
             }
@@ -1215,7 +1215,7 @@ impl Handler {
                                 .send(HandlerOut::Response(node_address, Box::new(response)))
                                 .await
                             {
-                                warn!(error=%e, "Failed to inform of response")
+                                warn!(error = %e, "Failed to inform of response")
                             }
                             return;
                         }
@@ -1230,7 +1230,7 @@ impl Handler {
                             .send(HandlerOut::Response(node_address, Box::new(response)))
                             .await
                         {
-                            warn!(error=%e, "Failed to inform of response")
+                            warn!(error = %e, "Failed to inform of response")
                         }
                         return;
                     }
@@ -1249,7 +1249,7 @@ impl Handler {
                 ))
                 .await
             {
-                warn!(error=%e, "Failed to inform of response")
+                warn!(error = %e, "Failed to inform of response")
             }
         } else {
             // This is likely a late response and we have already failed the request. These get
@@ -1331,7 +1331,7 @@ impl Handler {
                     .send(HandlerOut::RequestFailed(id.clone(), error.clone()))
                     .await
                 {
-                    warn!(error=%e, "Failed to inform request failure")
+                    warn!(error = %e, "Failed to inform request failure")
                 }
             }
         }
@@ -1367,7 +1367,7 @@ impl Handler {
                             .send(HandlerOut::RequestFailed(id, error.clone()))
                             .await
                         {
-                            warn!(error=%e, "Failed to inform request failure")
+                            warn!(error = %e, "Failed to inform request failure")
                         }
                     }
                 }
@@ -1389,7 +1389,7 @@ impl Handler {
                         .send(HandlerOut::RequestFailed(id.clone(), error.clone()))
                         .await
                     {
-                        warn!(error=%e, "Failed to inform request failure")
+                        warn!(error = %e, "Failed to inform request failure")
                     }
                 }
             }
@@ -1404,7 +1404,7 @@ impl Handler {
             packet,
         };
         if let Err(e) = self.socket.send.send(outbound_packet).await {
-            warn!(error=%e, "Failed to send outbound packet")
+            warn!(error = %e, "Failed to send outbound packet")
         }
     }
 

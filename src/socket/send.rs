@@ -66,8 +66,8 @@ impl SendHandler {
                     let encoded_packet = packet.packet.encode::<P>(&packet.node_address.node_id);
                     if encoded_packet.len() > MAX_PACKET_SIZE {
                         warn!(
-                            size=encoded_packet.len(),
-                            max=MAX_PACKET_SIZE,
+                            size = encoded_packet.len(),
+                            max = MAX_PACKET_SIZE,
                             "Sending packet larger than max size"
                         );
                     }
@@ -75,7 +75,7 @@ impl SendHandler {
                     if let Err(e) = self.send(&encoded_packet, addr).await {
                         match e {
                             Error::Io(e) => {
-                                trace!(%addr, error=%e, "Could not send packet.");
+                                trace!(%addr, error = %e, "Could not send packet.");
                             },
                             Error::SocketMismatch => {
                                 error!(%addr, "Socket mismatch attempting to send a packet.")

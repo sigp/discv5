@@ -165,7 +165,7 @@ impl RecvHandler {
         // based in additional checks to packets.
         if let SocketAddr::V6(ref mut v6_socket_addr) = src_address {
             if v6_socket_addr.flowinfo() != 0 || v6_socket_addr.scope_id() != 0 {
-                trace!(original=%v6_socket_addr, "Zeroing out flowinfo and scope_id for v6 socket address");
+                trace!(original = %v6_socket_addr, "Zeroing out flowinfo and scope_id for v6 socket address");
                 v6_socket_addr.set_flowinfo(0);
                 v6_socket_addr.set_scope_id(0);
             }
@@ -185,7 +185,7 @@ impl RecvHandler {
             match Packet::decode::<P>(&self.node_id, &recv_buffer[..length]) {
                 Ok(p) => p,
                 Err(e) => {
-                    debug!(error=?e, "Packet decoding failed"); // could not decode the packet, drop it
+                    debug!(error = ?e, "Packet decoding failed"); // could not decode the packet, drop it
                     return;
                 }
             };
@@ -216,6 +216,6 @@ impl RecvHandler {
         self.handler
             .send(inbound)
             .await
-            .unwrap_or_else(|e| warn!(error=%e,"Could not send packet to handler"));
+            .unwrap_or_else(|e| warn!(error = %e,"Could not send packet to handler"));
     }
 }

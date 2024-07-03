@@ -129,9 +129,9 @@ async fn main() {
     if args.enr_ip6.is_some() || args.enr_ip4.is_some() {
         // if the ENR is useful print it
         info!(
-            base64_enr=&enr.to_base64(),
-            ipv6_socket=?enr.udp6_socket(),
-            ipv4_socket=?enr.udp4_socket(),
+            base64_enr = &enr.to_base64(),
+            ipv6_socket = ?enr.udp6_socket(),
+            ipv4_socket = ?enr.udp4_socket(),
             "Local ENR",
         );
     }
@@ -142,14 +142,14 @@ async fn main() {
     // if we know of another peer's ENR, add it known peers
     for enr in args.remote_peer {
         info!(
-            udp4_socket=?enr.udp4_socket(),
-            udp6_socket=?enr.udp6_socket(),
-            tcp4_port=?enr.tcp4(),
-            tcp6_port=?enr.tcp6(),
+            udp4_socket = ?enr.udp4_socket(),
+            udp6_socket = ?enr.udp6_socket(),
+            tcp4_port = ?enr.tcp4(),
+            tcp6_port = ?enr.tcp6(),
             "Remote ENR read",
         );
         if let Err(e) = discv5.add_enr(enr) {
-            warn!(error=?e, "Failed to add remote ENR");
+            warn!(error = ?e, "Failed to add remote ENR");
             // It's unlikely we want to continue in this example after this
             return;
         };
@@ -173,17 +173,17 @@ async fn main() {
                 let connected_peers = discv5.connected_peers();
                 info!(
                     connected_peers,
-                    active_sessions=metrics.active_sessions,
-                    unsolicited_requests_per_second=format_args!("{:.2}", metrics.unsolicited_requests_per_second),
+                    active_sessions = metrics.active_sessions,
+                    unsolicited_requests_per_second = format_args!("{:.2}", metrics.unsolicited_requests_per_second),
                     "Searching for peers..."
                 );
                 // execute a FINDNODE query
                 match discv5.find_node(target_random_node_id).await {
-                    Err(e) => warn!(error=?e, "Find Node result failed"),
+                    Err(e) => warn!(error = ?e, "Find Node result failed"),
                     Ok(v) => {
                         // found a list of ENR's print their NodeIds
                         let node_ids = v.iter().map(|enr| enr.node_id()).collect::<Vec<_>>();
-                        info!(len=node_ids.len(), "Nodes found");
+                        info!(len = node_ids.len(), "Nodes found");
                         for node_id in node_ids {
                             info!(%node_id, "Node");
                         }

@@ -89,12 +89,12 @@ impl Drop for TalkRequest {
             body: ResponseBody::Talk { response: vec![] },
         };
 
-        debug!(node_address=%self.node_address, "Sending empty TALK response");
+        debug!(node_address = %self.node_address, "Sending empty TALK response");
         if let Err(e) = sender.send(HandlerIn::Response(
             self.node_address.clone(),
             Box::new(response),
         )) {
-            warn!(error=%e,"Failed to send empty talk response")
+            warn!(error = %e,"Failed to send empty talk response")
         }
     }
 }
@@ -117,7 +117,7 @@ impl TalkRequest {
     }
 
     pub fn respond(mut self, response: Vec<u8>) -> Result<(), ResponseError> {
-        debug!(node_address=%self.node_address, "Sending TALK response");
+        debug!(node_address = %self.node_address, "Sending TALK response");
 
         let response = Response {
             id: self.id.clone(),
@@ -391,21 +391,21 @@ impl Service {
                             // check what our latest known ENR is for this node.
                             if let Some(known_enr) = self.find_enr(&whoareyou_ref.0.node_id) {
                                 if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, Some(known_enr))) {
-                                    warn!(error=%e, "Failed to send whoareyou");
+                                    warn!(error = %e, "Failed to send whoareyou");
                                 };
                             } else {
                                 // do not know of this peer
-                                debug!(node_address=%whoareyou_ref.0, "NodeId unknown, requesting ENR.");
+                                debug!(node_address = %whoareyou_ref.0, "NodeId unknown, requesting ENR.");
                                 if let Err(e) = self.handler_send.send(HandlerIn::WhoAreYou(whoareyou_ref, None)) {
-                                    warn!(error=%e, "Failed to send who are you to unknown enr peer");
+                                    warn!(error = %e, "Failed to send who are you to unknown enr peer");
                                 }
                             }
                         }
                         HandlerOut::RequestFailed(request_id, error) => {
                             if let RequestError::Timeout = error {
-                                debug!(id=%request_id, "RPC Request timed out");
+                                debug!(id = %request_id, "RPC Request timed out");
                             } else {
-                                warn!(id=%request_id, ?error, "RPC Request failed");
+                                warn!(id = %request_id, ?error, "RPC Request failed");
                             }
                             self.rpc_failure(request_id, error);
                         }
@@ -442,7 +442,7 @@ impl Service {
                                 }
                             }
                             if result.target.callback.send(found_enrs).is_err() {
-                                warn!(query_id=*id, "Callback dropped for query. Results dropped");
+                                warn!(query_id = *id, "Callback dropped for query. Results dropped");
                             }
                         }
                     }
@@ -623,7 +623,7 @@ impl Service {
                         .handler_send
                         .send(HandlerIn::Response(node_address, Box::new(response)))
                     {
-                        warn!(error=%e, "Failed to send response");
+                        warn!(error = %e, "Failed to send response");
                     }
                 } else {
                     warn!(%src, "The src port number should be non zero");
@@ -650,9 +650,9 @@ impl Service {
 
         if let Some(mut active_request) = self.active_requests.remove(&id) {
             debug!(
-                response=%response.body,
-                request=%active_request.request_body,
-                from=%active_request.contact,
+                response = %response.body,
+                request = %active_request.request_body,
+                from = %active_request.contact,
                 "Received RPC response",
             );
 
@@ -662,9 +662,9 @@ impl Service {
             if expected_node_address != node_address {
                 debug_unreachable!("Handler returned a response not matching the used socket addr");
                 return error!(
-                    expected=%expected_node_address,
-                    received=%node_address,
-                    request_id=%id,
+                    expected = %expected_node_address,
+                    received = %node_address,
+                    request_id = %id,
                     "Received a response from an unexpected address",
                 );
             }
@@ -698,7 +698,7 @@ impl Service {
                     if let Some(CallbackResponse::Nodes(callback)) = active_request.callback.take()
                     {
                         if let Err(e) = callback.send(Ok(nodes)) {
-                            warn!(error=?e, "Failed to send response in callback")
+                            warn!(error = ?e, "Failed to send response in callback")
                         }
                         return;
                     }
@@ -796,7 +796,7 @@ impl Service {
                             port: port.get(),
                         };
                         if let Err(e) = callback.send(Ok(response)) {
-                            warn!(error=?e, "Failed to send callback response")
+                            warn!(error = ?e, "Failed to send callback response")
                         };
                     } else {
                         let socket = SocketAddr::new(ip, port.get());
@@ -852,7 +852,7 @@ impl Service {
                                                 self.send_event(Event::SocketUpdated(new_ip6));
                                             }
                                             Err(e) => {
-                                                warn!(ip6=%new_ip6, error=?e, "Failed to update local UDP ip6 socket.");
+                                                warn!(ip6=%new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
                                             }
                                         }
                                     }
@@ -869,7 +869,7 @@ impl Service {
                                                 self.send_event(Event::SocketUpdated(new_ip4));
                                             }
                                             Err(e) => {
-                                                warn!(ip=%new_ip4, error=?e, "Failed to update local UDP socket.");
+                                                warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
                                             }
                                         }
                                     }
@@ -884,7 +884,7 @@ impl Service {
                         if let Some(enr) = self.find_enr(&node_id) {
                             if enr.seq() < enr_seq {
                                 // request an ENR update
-                                debug!(from=%active_request.contact, "Requesting an ENR update");
+                                debug!(from = %active_request.contact, "Requesting an ENR update");
                                 let request_body = RequestBody::FindNode { distances: vec![0] };
                                 let active_request = ActiveRequest {
                                     contact: active_request.contact,
@@ -909,7 +909,7 @@ impl Service {
                     match active_request.callback {
                         Some(CallbackResponse::Talk(callback)) => {
                             if let Err(e) = callback.send(Ok(response)) {
-                                warn!(error=?e, "Failed to send callback response")
+                                warn!(error = ?e, "Failed to send callback response")
                             };
                         }
                         _ => error!("Invalid callback for response"),
@@ -1050,14 +1050,14 @@ impl Service {
                 },
             };
             trace!(
-                to=%node_address.node_id,
+                to = %node_address.node_id,
                 "Sending empty FINDNODES response",
             );
             if let Err(e) = self
                 .handler_send
                 .send(HandlerIn::Response(node_address, Box::new(response)))
             {
-                warn!(error=%e, "Failed to send empty FINDNODES response")
+                warn!(error = %e, "Failed to send empty FINDNODES response")
             }
         } else {
             // build the NODES response
@@ -1109,7 +1109,7 @@ impl Service {
 
             for response in responses {
                 trace!(
-                    to=%node_address,
+                    to = %node_address,
                     %response,
                     "Sending FINDNODES response",
                 );
@@ -1117,7 +1117,7 @@ impl Service {
                     node_address.clone(),
                     Box::new(response),
                 )) {
-                    warn!(error=%e, "Failed to send FINDNODES response")
+                    warn!(error = %e, "Failed to send FINDNODES response")
                 }
             }
         }
@@ -1147,7 +1147,7 @@ impl Service {
                 Err(NonContactable { enr }) => {
                     // This can happen quite often in ipv6 only nodes
                     debug!("Query {} has a non contactable enr: {}", *query_id, enr);
-                    debug!(query_id=*query_id, %enr, "Query has a non contactable enr");
+                    debug!(query_id = *query_id, %enr, "Query has a non contactable enr");
                 }
             }
         } else {
@@ -1173,7 +1173,7 @@ impl Service {
         };
         let contact = active_request.contact.clone();
 
-        debug!(%request, node=%contact,"Sending RPC to node");
+        debug!(%request, node = %contact,"Sending RPC to node");
         if self
             .handler_send
             .send(HandlerIn::Request(contact, Box::new(request)))
@@ -1227,7 +1227,7 @@ impl Service {
                         self.kbuckets.write().update_node(&key, enr.clone(), None)
                     {
                         self.peers_to_ping.remove(&enr.node_id());
-                        debug!(node=%source, ?reason, "Failed to update discovered ENR.");
+                        debug!(node = %source, ?reason, "Failed to update discovered ENR.");
 
                         return false; // Remove this peer from the discovered list if the update failed
                     }
@@ -1350,7 +1350,7 @@ impl Service {
                 {
                     UpdateResult::Failed(reason) => {
                         self.peers_to_ping.remove(&node_id);
-                        debug!(node=%node_id, ?reason, "Could not update ENR from pong");
+                        debug!(node = %node_id, ?reason, "Could not update ENR from pong");
                     }
                     update => {
                         debug!(update_result = ?update, "ENR has been updated based on the pong")
@@ -1368,8 +1368,8 @@ impl Service {
                         FailureReason::KeyNonExistent => {}
                         others => {
                             warn!(
-                                node=%node_id,
-                                reason=?others,
+                                node = %node_id,
+                                reason = ?others,
                                 "Could not update node to disconnected.",
                             );
                         }
@@ -1428,14 +1428,14 @@ impl Service {
             _ => connection_direction,
         };
 
-        debug!(node=%node_id, %direction, "Session established with Node");
+        debug!(node = %node_id, %direction, "Session established with Node");
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
     }
 
     /// A session could not be established or an RPC request timed-out (after a few retries, if
     /// specified).
     fn rpc_failure(&mut self, id: RequestId, error: RequestError) {
-        trace!(reason=?error, %id, "RPC Error removing request.");
+        trace!(reason = ?error, %id, "RPC Error removing request.");
         if let Some(active_request) = self.active_requests.remove(&id) {
             // If this is initiated by the user, return an error on the callback. All callbacks
             // support a request error.
@@ -1475,7 +1475,7 @@ impl Service {
                             let node_id = active_request.contact.node_id();
                             let addr = active_request.contact.socket_addr();
                             let received = nodes_response.received_nodes.len();
-                            warn!(%node_id, %addr, %error, %received, requested_distances=?distances, "FINDNODE request failed with partial results");
+                            warn!(%node_id, %addr, %error, %received, requested_distances = ?distances, "FINDNODE request failed with partial results");
                             // if it's a query mark it as success, to process the partial
                             // collection of peers
                             self.discovered(
@@ -1493,8 +1493,8 @@ impl Service {
                             }
                         } else {
                             debug!(
-                                request_body=%active_request.request_body,
-                                node=%active_request.contact,
+                                request_body = %active_request.request_body,
+                                node = %active_request.contact,
                                 "Failed RPC request",
                             );
                         }
@@ -1505,18 +1505,18 @@ impl Service {
                     if let Some(query_id) = active_request.query_id {
                         if let Some(query) = self.queries.get_mut(query_id) {
                             debug!(
-                                request_body=%active_request.request_body,
-                                query_id=*query_id,
-                                node=%active_request.contact,
+                                request_body = %active_request.request_body,
+                                query_id = *query_id,
+                                node = %active_request.contact,
                                 "Failed query request",
                             );
                             query.on_failure(&node_id);
                         }
                     } else {
                         debug!(
-                            request_body=%active_request.request_body,
-                            node=%active_request.contact,
-                            error=?error,
+                            request_body = %active_request.request_body,
+                            node = %active_request.contact,
+                            error = ?error,
                             "Failed RPC request",
                         );
                     }
