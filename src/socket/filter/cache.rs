@@ -22,11 +22,6 @@ use std::{
 /// cache's `time_window`.
 pub const ENFORCED_SIZE_TIME: u64 = 1;
 
-pub struct ReceivedPacket {
-    /// The time the packet was received.
-    pub received: Instant,
-}
-
 pub struct ReceivedPacketCache {
     /// The target number of entries per ENFORCED_SIZE_TIME before inserting new elements reports
     /// failure. The maximum size of the cache is target*time_window
@@ -37,8 +32,8 @@ pub struct ReceivedPacketCache {
     time_window: u64,
     /// This stores the current number of messages that are within the `ENFORCED_SIZE_TIME`.
     within_enforced_time: usize,
-    /// The underlying data structure.
-    inner: VecDeque<ReceivedPacket>,
+    /// The underlying data structure. It stores the time when a packet was received.
+    inner: VecDeque<Instant>,
 }
 
 impl ReceivedPacketCache {
@@ -54,21 +49,21 @@ impl ReceivedPacketCache {
 
     /// Remove expired packets. We only keep, `CACHE_TIME` of data in the cache.
     pub fn reset(&mut self) {
-        while let Some(packet) = self.inner.pop_front() {
-            if packet.received
+        while let Some(received_at) = self.inner.pop_front() {
+            if received_at
                 > Instant::now()
                     .checked_sub(Duration::from_secs(self.time_window))
                     .unwrap()
             {
                 // add the packet back and end
-                self.inner.push_front(packet);
+                self.inner.push_front(received_at);
                 break;
             }
         }
         // update the within_enforced_time
         let mut count = 0;
-        for packet in self.inner.iter().rev() {
-            if packet.received
+        for received_at in self.inner.iter().rev() {
+            if *received_at
                 > Instant::now()
                     .checked_sub(Duration::from_secs(ENFORCED_SIZE_TIME))
                     .unwrap()
@@ -93,10 +88,7 @@ impl ReceivedPacketCache {
             // Reached the target
             false
         } else {
-            let received_packet = ReceivedPacket {
-                received: Instant::now(),
-            };
-            self.inner.push_back(received_packet);
+            self.inner.push_back(Instant::now());
             self.within_enforced_time += 1;
             true
         }
@@ -104,7 +96,7 @@ impl ReceivedPacketCache {
 }
 
 impl std::ops::Deref for ReceivedPacketCache {
-    type Target = VecDeque<ReceivedPacket>;
+    type Target = VecDeque<Instant>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
