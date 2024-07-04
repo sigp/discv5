@@ -852,7 +852,7 @@ impl Service {
                                                 self.send_event(Event::SocketUpdated(new_ip6));
                                             }
                                             Err(e) => {
-                                                warn!(ip6=%new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
+                                                warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
                                             }
                                         }
                                     }
