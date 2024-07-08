@@ -43,7 +43,7 @@ pub(crate) struct Filter {
     /// An ordered (by time) collection of recently seen packets by SocketAddr. The packet data is not
     /// stored here. This stores 5 seconds of history to calculate a 5 second moving average for
     /// the metrics.
-    raw_packets_received: ReceivedPacketCache<SocketAddr>,
+    raw_packets_received: ReceivedPacketCache,
     /// The duration that bans by this filter last.
     ban_duration: Option<Duration>,
     /// Keep track of node ids per socket. If someone is using too many node-ids per IP, they can
@@ -86,11 +86,11 @@ impl Filter {
     /// The first check. This determines if a new UDP packet should be decoded or dropped.
     /// Only unsolicited packets arrive here.
     pub fn initial_pass(&mut self, src: &SocketAddr) -> bool {
-        if PERMIT_BAN_LIST.read().permit_ips.get(&src.ip()).is_some() {
+        if PERMIT_BAN_LIST.read().permit_ips.contains(&src.ip()) {
             return true;
         }
 
-        if PERMIT_BAN_LIST.read().ban_ips.get(&src.ip()).is_some() {
+        if PERMIT_BAN_LIST.read().ban_ips.contains_key(&src.ip()) {
             debug!(?src, "Dropped unsolicited packet from banned src");
             return false;
         }
@@ -98,7 +98,7 @@ impl Filter {
         // Add the un-solicited request to the cache
         // If this is over the maximum requests per ENFORCED_SIZE_TIME, it will not be added, we
         // leave the rate limiter to enforce the rate limits..
-        self.raw_packets_received.cache_insert(*src);
+        self.raw_packets_received.cache_insert();
 
         // build the metrics
         METRICS
@@ -135,8 +135,7 @@ impl Filter {
         if PERMIT_BAN_LIST
             .read()
             .permit_nodes
-            .get(&node_address.node_id)
-            .is_some()
+            .contains(&node_address.node_id)
         {
             return true;
         }
@@ -144,8 +143,7 @@ impl Filter {
         if PERMIT_BAN_LIST
             .read()
             .ban_nodes
-            .get(&node_address.node_id)
-            .is_some()
+            .contains_key(&node_address.node_id)
         {
             debug!(
                 node = %node_address,
