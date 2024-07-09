@@ -91,7 +91,7 @@ impl Filter {
         }
 
         if PERMIT_BAN_LIST.read().ban_ips.contains_key(&src.ip()) {
-            debug!("Dropped unsolicited packet from banned src: {:?}", src);
+            debug!(?src, "Dropped unsolicited packet from banned src");
             return false;
         }
 
@@ -113,7 +113,7 @@ impl Filter {
         // Check rate limits
         if let Some(rate_limiter) = self.rate_limiter.as_mut() {
             if rate_limiter.allows(&LimitKind::Ip(src.ip())).is_err() {
-                warn!("Banning IP for excessive requests: {:?}", src.ip());
+                warn!(ip = ?src.ip(), "Banning IP for excessive requests");
                 // Ban the IP address
                 let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
                 PERMIT_BAN_LIST
@@ -124,7 +124,7 @@ impl Filter {
             }
 
             if rate_limiter.allows(&LimitKind::Total).is_err() {
-                debug!("Dropped unsolicited packet from RPC limit: {:?}", src.ip());
+                debug!(ip = ?src.ip(), "Dropped unsolicited packet from RPC limit");
                 return false;
             }
         }
@@ -146,8 +146,8 @@ impl Filter {
             .contains_key(&node_address.node_id)
         {
             debug!(
-                "Dropped unsolicited packet from banned node_id: {}",
-                node_address
+                node = %node_address,
+                "Dropped unsolicited packet from banned node_id",
             );
             return false;
         }
@@ -163,8 +163,8 @@ impl Filter {
                 .is_err()
             {
                 warn!(
-                    "Node has exceeded its request limit and is now banned {}",
-                    node_address.node_id
+                    node_id = %node_address.node_id,
+                    "Node has exceeded its request limit and is now banned",
                 );
 
                 // The node is being banned
@@ -209,7 +209,7 @@ impl Filter {
             };
 
             if known_nodes >= max_nodes_per_ip {
-                warn!("IP has exceeded its node-id limit and is now banned {}", ip);
+                warn!(%ip, "IP has exceeded its node-id limit and is now banned");
                 // The node is being banned
                 let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
                 PERMIT_BAN_LIST.write().ban_ips.insert(ip, ban_timeout);
