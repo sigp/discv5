@@ -11,7 +11,7 @@ use crate::{
     packet::{ChallengeData, MessageNonce},
 };
 use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, NewAead, Payload},
+    aead::{generic_array::GenericArray, Aead, KeyInit, Payload},
     Aes128Gcm,
 };
 use ecdh::ecdh;
