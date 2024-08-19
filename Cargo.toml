@@ -34,7 +34,7 @@ smallvec = "1"
 parking_lot = "0.11"
 lazy_static = "1"
 aes = { version = "0.7", features = ["ctr"] }
-aes-gcm = "0.9"
+aes-gcm = "0.10.3"
 tracing = { version = "0.1", features = ["log"] }
 lru = "0.12"
 hashlink = "0.8"
