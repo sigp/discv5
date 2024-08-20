@@ -33,7 +33,7 @@ socket2 = "0.4"
 smallvec = "1"
 parking_lot = "0.11"
 lazy_static = "1"
-aes = { version = "0.8.4" }
+aes = "0.8.4"
 ctr = "0.9.2"
 aes-gcm = "0.10.3"
 tracing = { version = "0.1", features = ["log"] }
