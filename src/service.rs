@@ -142,7 +142,7 @@ pub enum ServiceRequest {
     /// A request to start a query. There are two types of queries:
     /// - A FindNode Query - Searches for peers using a random target.
     /// - A Predicate Query - Searches for peers closest to a random target that match a specified
-    /// predicate.
+    ///   predicate.
     StartQuery(QueryKind, oneshot::Sender<Vec<Enr>>),
     /// Send a FINDNODE request for nodes that fall within the given set of distances,
     /// to the designated peer and wait for a response.
