@@ -19,17 +19,17 @@
 //! This protocol is split into four main layers:
 //!
 //! - [`socket`]: Responsible for opening the underlying UDP socket. It creates individual tasks
-//! for sending/encoding and receiving/decoding packets from the UDP socket.
+//!   for sending/encoding and receiving/decoding packets from the UDP socket.
 //! - [`handler`]: The protocol's communication is encrypted with `AES_GCM`. All node communication
-//! undergoes a handshake, which results in a `Session`. These are established when needed and get
-//! dropped after a timeout. The creation and maintenance of sessions between nodes and the
-//! encryption/decryption of packets from the socket is realised by the [`handler::Handler`] struct
-//! runnning in its own task.
+//!   undergoes a handshake, which results in a `Session`. These are established when needed and get
+//!   dropped after a timeout. The creation and maintenance of sessions between nodes and the
+//!   encryption/decryption of packets from the socket is realised by the [`handler::Handler`] struct
+//!   runnning in its own task.
 //! - [`service`]: Contains the protocol-level logic. The [`service::Service`] manages the routing
-//! table of known ENR's, and performs parallel queries for peer discovery. It also runs in it's
-//! own task.
+//!   table of known ENR's, and performs parallel queries for peer discovery. It also runs in it's
+//!   own task.
 //! - [`Discv5`]: The application level. Manages the user-facing API. It starts/stops the underlying
-//! tasks, allows initiating queries and obtain metrics about the underlying server.
+//!   tasks, allows initiating queries and obtain metrics about the underlying server.
 //!
 //! ## Event Stream
 //!
