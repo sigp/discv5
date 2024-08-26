@@ -812,4 +812,30 @@ mod tests {
         let data6 = [6, 193, 128, 128];
         Message::decode(&data6).expect_err("should reject extra data");
     }
+
+    #[test]
+    fn unspecified_ip6() {
+        let id = RequestId(vec![1]);
+        let request = Message::Response(Response {
+            id: id.clone(),
+            body: ResponseBody::Pong {
+                enr_seq: 15,
+                ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                port: 80.try_into().unwrap(),
+            },
+        });
+
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(&encoded).unwrap();
+        let expected = Message::Response(Response {
+            id: id.clone(),
+            body: ResponseBody::Pong {
+                enr_seq: 15,
+                ip: IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                port: 80.try_into().unwrap(),
+            },
+        });
+
+        assert_eq!(expected, decoded);
+    }
 }
