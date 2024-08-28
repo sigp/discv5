@@ -10,10 +10,10 @@
 //! [`Packet`]: enum.Packet.html
 
 use crate::{error::PacketError, Enr};
-use aes::{
-    cipher::{generic_array::GenericArray, NewCipher, StreamCipher},
-    Aes128Ctr,
-};
+use aes::cipher::{generic_array::GenericArray, KeyIvInit, StreamCipher};
+
+type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
+
 use alloy_rlp::Decodable;
 use enr::NodeId;
 use rand::Rng;
@@ -411,7 +411,7 @@ impl Packet {
         let mut key = GenericArray::clone_from_slice(&dst_id.raw()[..16]);
         let mut nonce = GenericArray::clone_from_slice(&self.iv.to_be_bytes());
 
-        let mut cipher = Aes128Ctr::new(&key, &nonce);
+        let mut cipher = Aes128Ctr64BE::new(&key, &nonce);
         cipher.apply_keystream(&mut header_bytes);
         key.zeroize();
         nonce.zeroize();
@@ -442,7 +442,7 @@ impl Packet {
          */
         let key = GenericArray::clone_from_slice(&src_id.raw()[..16]);
         let nonce = GenericArray::clone_from_slice(&iv);
-        let mut cipher = Aes128Ctr::new(&key, &nonce);
+        let mut cipher = Aes128Ctr64BE::new(&key, &nonce);
 
         // Take the static header content
         let mut static_header = data[IV_LENGTH..IV_LENGTH + STATIC_HEADER_LENGTH].to_vec();
