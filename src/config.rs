@@ -92,6 +92,13 @@ pub struct Config {
     /// will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
+    /// Allows connections from nodes who have set their ENR to a specific IP address which is not
+    /// the same as the incoming packet. We will respond to requests via the ENR IP address, not
+    /// the address that is sending the packets. This is useful for asymmetric connections
+    /// where a node may send from one IP address but receive traffic on another.
+    /// The default value is false.
+    pub permit_invalid_enr: bool,
+
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
@@ -141,6 +148,7 @@ impl ConfigBuilder {
             filter_max_bans_per_ip: Some(5),
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
+            permit_invalid_enr: false,
             executor: None,
             listen_config,
         };
@@ -295,6 +303,16 @@ impl ConfigBuilder {
         self
     }
 
+    /// Allows connections from nodes who have set their ENR to a specific IP address which is not
+    /// the same as the incoming packet. We will respond to requests via the ENR IP address, not
+    /// the address that is sending the packets. This is useful for asymmetric connections
+    /// where a node may send from one IP address but receive traffic on another.
+    /// The default value is false.
+    pub fn permit_invalid_enr(&mut self) -> &mut Self {
+        self.config.permit_invalid_enr = true;
+        self
+    }
+
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support.
     pub fn executor(&mut self, executor: Box<dyn Executor + Send + Sync>) -> &mut Self {
@@ -334,6 +352,7 @@ impl std::fmt::Debug for Config {
             .field("ip_limit", &self.ip_limit)
             .field("incoming_bucket_limit", &self.incoming_bucket_limit)
             .field("ping_interval", &self.ping_interval)
+            .field("permit_invalid_enr", &self.permit_invalid_enr)
             .field("ban_duration", &self.ban_duration)
             .field("listen_config", &self.listen_config)
             .finish()

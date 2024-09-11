@@ -226,6 +226,9 @@ pub struct Handler {
     listen_sockets: SmallVec<[SocketAddr; 2]>,
     /// The discovery v5 UDP socket tasks.
     socket: Socket,
+    /// Permits connections from nodes that have ENR socket addresses set different from the
+    /// observed address of the packet.
+    permit_invalid_enr: bool,
     /// Exit channel to shutdown the handler.
     exit: oneshot::Receiver<()>,
 }
@@ -317,6 +320,7 @@ impl Handler {
                     service_send,
                     listen_sockets,
                     socket,
+                    permit_invalid_enr: config.permit_invalid_enr,
                     exit,
                 };
                 debug!("Handler Starting");
@@ -852,7 +856,7 @@ impl Handler {
                     self.remove_expected_response(node_address.socket_addr);
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
                     // Verify the ENR is valid
-                    if self.verify_enr(&enr, &node_address) {
+                    if self.permit_invalid_enr || self.verify_enr(&enr, &node_address) {
                         // Session is valid
                         // Notify the application
                         // The session established here are from WHOAREYOU packets that we sent.
@@ -1129,7 +1133,9 @@ impl Handler {
                                 ResponseBody::Nodes { mut nodes, .. } => {
                                     // Received the requested ENR
                                     if let Some(enr) = nodes.pop() {
-                                        if self.verify_enr(&enr, &node_address) {
+                                        if self.permit_invalid_enr
+                                            || self.verify_enr(&enr, &node_address)
+                                        {
                                             // Notify the application
                                             // This can occur when we try to dial a node without an
                                             // ENR. In this case we have attempted to establish the

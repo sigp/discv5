@@ -85,6 +85,7 @@ async fn build_handler<P: ProtocolIdentity>(
         active_challenges: HashMapDelay::new(config.request_timeout),
         service_recv,
         service_send,
+        permit_invalid_enr: false,
         listen_sockets,
         socket,
         exit,
