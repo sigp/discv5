@@ -80,11 +80,6 @@ A simple example of creating this service is as follows:
 
 # Addresses in ENRs 
 
-This protocol will drop messages (i.e not respond to requests) from peers that
-advertise non-contactable address in their ENR (e.g `127.0.0.1` when connecting
-to non-local nodes). This section
-explains the rationale behind this design decision.
-
 An ENR is a signed record which is primarily used in this protocol for
 identifying and connecting to peers. ENRs have **OPTIONAL** `ip` and `port`
 fields.
@@ -127,8 +122,5 @@ This is done in the following way:
 3. If a peer connects to us with an ENR that specifies an IP address that does
    not match the src socket it connects to us on (e.g `127.0.0.1`, or
    potentially some internal subnet IP that is unreachable from our current
-   network) we consider this peer malicious/faulty
-   and drop all packets. This way we can efficiently drop peers that may try to
-   get us to send messages to arbitrary remote IPs, and we can be sure that all
-   ENRs in our routing table are contactable (at least by our local node at
-   some point in time).
+   network) we consider this ENR invalid and will not add it to our routing
+   table. However we will still respond to discovery requests.

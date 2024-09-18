@@ -74,12 +74,6 @@ use session::Session;
 // seconds).
 const BANNED_NODES_CHECK: u64 = 300; // Check every 5 minutes.
 
-// The one-time session timeout.
-const ONE_TIME_SESSION_TIMEOUT: u64 = 30;
-
-// The maximum number of established one-time sessions to maintain.
-const ONE_TIME_SESSION_CACHE_CAPACITY: usize = 100;
-
 /// Messages sent from the application layer to `Handler`.
 #[derive(Debug, Clone, PartialEq)]
 #[allow(clippy::large_enum_variant)]
@@ -216,8 +210,6 @@ pub struct Handler {
     active_challenges: HashMapDelay<NodeAddress, Challenge>,
     /// Established sessions with peers.
     sessions: LruTimeCache<NodeAddress, Session>,
-    /// Established sessions with peers for a specific request, stored just one per node.
-    one_time_sessions: LruTimeCache<NodeAddress, (RequestId, Session)>,
     /// The channel to receive messages from the application layer.
     service_recv: mpsc::UnboundedReceiver<HandlerIn>,
     /// The channel to send messages to the application layer.
@@ -307,10 +299,6 @@ impl Handler {
                     sessions: LruTimeCache::new(
                         config.session_timeout,
                         Some(config.session_cache_capacity),
-                    ),
-                    one_time_sessions: LruTimeCache::new(
-                        Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
-                        Some(ONE_TIME_SESSION_CACHE_CAPACITY),
                     ),
                     active_challenges: HashMapDelay::new(config.request_timeout),
                     service_recv,
@@ -548,9 +536,6 @@ impl Handler {
     ) {
         // Check for an established session
         let packet = if let Some(session) = self.sessions.get_mut(&node_address) {
-            session.encrypt_message::<P>(self.node_id, &response.encode())
-        } else if let Some(mut session) = self.remove_one_time_session(&node_address, &response.id)
-        {
             session.encrypt_message::<P>(self.node_id, &response.encode())
         } else {
             // Either the session is being established or has expired. We simply drop the
@@ -847,7 +832,7 @@ impl Handler {
                 ephem_pubkey,
                 enr_record,
             ) {
-                Ok((mut session, enr)) => {
+                Ok((session, enr)) => {
                     // Remove the expected response for the challenge.
                     self.remove_expected_response(node_address.socket_addr);
                     // Receiving an AuthResponse must give us an up-to-date view of the node ENR.
@@ -868,28 +853,17 @@ impl Handler {
                         {
                             warn!(error = %e, "Failed to inform of established session")
                         }
-                        // When (re-)establishing a session from an outgoing challenge, we do not need
-                        // to filter out this request from active requests, so we do not pass
-                        // the message nonce on to `new_session`.
-                        self.new_session::<P>(node_address.clone(), session, None)
-                            .await;
-                        self.handle_message(
-                            node_address.clone(),
-                            message_nonce,
-                            message,
-                            authenticated_data,
-                        )
-                        .await;
                     } else {
-                        // IP's or NodeAddress don't match. Drop the session.
+                        // IP's or NodeAddress don't match.
+                        //
+                        // We still handle the request, but we do not add the ENR to our routing
+                        // table or consider the ENR valid.
                         warn!(
                             udp4_socket = ?enr.udp4_socket(),
                             udp6_socket = ?enr.udp6_socket(),
                             expected = %node_address,
                             "Session has invalid ENR",
                         );
-                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
-                            .await;
 
                         // The ENR doesn't verify. Notify application.
                         self.notify_unverifiable_enr(
@@ -898,39 +872,20 @@ impl Handler {
                             node_address.node_id,
                         )
                         .await;
-
-                        // Respond to PING request even if the ENR or NodeAddress don't match
-                        // so that the source node can notice its external IP address has been changed.
-                        let maybe_ping_request = match session.decrypt_message(
-                            message_nonce,
-                            message,
-                            authenticated_data,
-                        ) {
-                            Ok(m) => match Message::decode(&m) {
-                                Ok(Message::Request(request)) if request.msg_type() == 1 => {
-                                    Some(request)
-                                }
-                                _ => None,
-                            },
-                            _ => None,
-                        };
-                        if let Some(request) = maybe_ping_request {
-                            debug!(
-                                %node_address,
-                                "Responding to a PING request using a one-time session.",
-                            );
-                            self.one_time_sessions
-                                .insert(node_address.clone(), (request.id.clone(), session));
-                            if let Err(e) = self
-                                .service_send
-                                .send(HandlerOut::Request(node_address.clone(), Box::new(request)))
-                                .await
-                            {
-                                warn!(error = %e, "Failed to report request to application");
-                                self.one_time_sessions.remove(&node_address);
-                            }
-                        }
                     }
+
+                    // When (re-)establishing a session from an outgoing challenge, we do not need
+                    // to filter out this request from active requests, so we do not pass
+                    // the message nonce on to `new_session`.
+                    self.new_session::<P>(node_address.clone(), session, None)
+                        .await;
+                    self.handle_message(
+                        node_address.clone(),
+                        message_nonce,
+                        message,
+                        authenticated_data,
+                    )
+                    .await;
                 }
                 Err(Error::InvalidChallengeSignature(challenge)) => {
                     warn!(
@@ -1291,24 +1246,6 @@ impl Handler {
             // We could have pending messages that were awaiting this session to be
             // established. If so process them.
             self.send_pending_requests::<P>(&node_address).await;
-        }
-    }
-
-    /// Remove one-time session by the given NodeAddress and RequestId if exists.
-    fn remove_one_time_session(
-        &mut self,
-        node_address: &NodeAddress,
-        request_id: &RequestId,
-    ) -> Option<Session> {
-        match self.one_time_sessions.peek(node_address) {
-            Some((id, _)) if id == request_id => {
-                let (_, session) = self
-                    .one_time_sessions
-                    .remove(node_address)
-                    .expect("one-time session must exist");
-                Some(session)
-            }
-            _ => None,
         }
     }
 
