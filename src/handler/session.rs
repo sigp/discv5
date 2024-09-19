@@ -265,11 +265,3 @@ impl Session {
         Ok((packet, session))
     }
 }
-
-#[cfg(test)]
-pub(crate) fn build_dummy_session() -> Session {
-    Session::new(Keys {
-        encryption_key: [0; 16],
-        decryption_key: [0; 16],
-    })
-}
