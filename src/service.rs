@@ -410,6 +410,14 @@ impl Service {
                             self.rpc_failure(request_id, error);
                         }
                         HandlerOut::UnverifiableEnr{enr, socket, node_id} => {
+                            // We have received an ENR that has incorrect socket address fields
+                            // (given the source of the pakcet we received.
+                            // If this node exists in our routing table, remove it, as it may have shifted
+                            // ip addresses and is now no longer contactable.
+                            let key = kbucket::Key::from(node_id);
+                            if self.kbuckets.write().remove(&key) {
+                                debug!(?node_id, "Uncontactable node removed from routing table");
+                            }
                             self.send_event(Event::UnverifiableEnr{enr, socket, node_id});
                         }
                     }
