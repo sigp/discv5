@@ -18,9 +18,17 @@ use crate::{
 use enr::CombinedKey;
 use parking_lot::RwLock;
 use rand;
-use std::{collections::HashMap, net::Ipv4Addr, net::Ipv6Addr, sync::Arc, time::Duration};
-use tokio::sync::mpsc::{Sender, UnboundedReceiver};
-use tokio::sync::{mpsc, oneshot};
+use std::{
+    collections::HashMap,
+    net::{Ipv4Addr, Ipv6Addr},
+    sync::Arc,
+    time::Duration,
+};
+use tokio::sync::{
+    mpsc,
+    mpsc::{Sender, UnboundedReceiver},
+    oneshot,
+};
 
 /// Default UDP port number to use for tests requiring UDP exposure
 pub const DEFAULT_UDP_PORT: u16 = 0;
