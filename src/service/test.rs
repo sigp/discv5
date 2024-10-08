@@ -17,7 +17,9 @@ use crate::{
 };
 use enr::CombinedKey;
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::Ipv4Addr, sync::Arc, time::Duration};
+use rand;
+use std::{collections::HashMap, net::Ipv4Addr, net::Ipv6Addr, sync::Arc, time::Duration};
+use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 use tokio::sync::{mpsc, oneshot};
 
 /// Default UDP port number to use for tests requiring UDP exposure
@@ -100,6 +102,65 @@ async fn build_service<P: ProtocolIdentity>(
         config,
         ip_mode: Default::default(),
     }
+}
+
+fn build_non_handler_service<P: ProtocolIdentity>(
+    local_enr: Arc<RwLock<Enr>>,
+    enr_key: Arc<RwLock<CombinedKey>>,
+    filters: bool,
+) -> (Service, UnboundedReceiver<HandlerIn>, Sender<HandlerOut>) {
+    let listen_config = ListenConfig::Ipv4 {
+        ip: local_enr.read().ip4().unwrap(),
+        port: local_enr.read().udp4().unwrap(),
+    };
+    let config = ConfigBuilder::new(listen_config).build();
+
+    // Fake's the handler with empty channels
+    let (handler_send, handler_recv_fake) = mpsc::unbounded_channel();
+    let (handler_send_fake, handler_recv) = mpsc::channel(1000);
+
+    let (table_filter, bucket_filter) = if filters {
+        (
+            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
+            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+        )
+    } else {
+        (None, None)
+    };
+
+    let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
+        local_enr.read().node_id().into(),
+        Duration::from_secs(60),
+        config.incoming_bucket_limit,
+        table_filter,
+        bucket_filter,
+    )));
+
+    let ip_vote = IpVote::new(10, Duration::from_secs(10000));
+
+    // create the required channels
+    let (_discv5_send, discv5_recv) = mpsc::channel(30);
+    let (_exit_send, exit) = oneshot::channel();
+
+    let service = Service {
+        local_enr,
+        enr_key,
+        kbuckets,
+        queries: QueryPool::new(config.query_timeout),
+        active_requests: Default::default(),
+        active_nodes_responses: HashMap::new(),
+        ip_votes: Some(ip_vote),
+        handler_send,
+        handler_recv,
+        handler_exit: None,
+        peers_to_ping: HashSetDelay::new(config.ping_interval),
+        discv5_recv,
+        event_stream: None,
+        exit,
+        config,
+        ip_mode: IpMode::DualStack,
+    };
+    (service, handler_recv_fake, handler_send_fake)
 }
 
 #[tokio::test]
@@ -340,4 +401,100 @@ async fn test_handling_concurrent_responses() {
     );
     assert!(service.active_requests.is_empty());
     assert!(service.active_nodes_responses.is_empty());
+}
+
+fn generate_rand_ipv4() -> Ipv4Addr {
+    let a: u8 = rand::random();
+    let b: u8 = rand::random();
+    let c: u8 = rand::random();
+    let d: u8 = rand::random();
+    Ipv4Addr::new(a, b, c, d)
+}
+
+fn generate_rand_ipv6() -> Ipv6Addr {
+    let a: u16 = rand::random();
+    let b: u16 = rand::random();
+    let c: u16 = rand::random();
+    let d: u16 = rand::random();
+    let e: u16 = rand::random();
+    let f: u16 = rand::random();
+    let g: u16 = rand::random();
+    let h: u16 = rand::random();
+    Ipv6Addr::new(a, b, c, d, e, f, g, h)
+}
+
+fn random_connection_direction() -> ConnectionDirection {
+    let outgoing: bool = rand::random();
+    if outgoing {
+        ConnectionDirection::Outgoing
+    } else {
+        ConnectionDirection::Incoming
+    }
+}
+
+#[tokio::test]
+async fn test_ipv6_update_amongst_ipv4_dominated_network() {
+    init();
+
+    let enr_key = CombinedKey::generate_secp256k1();
+    let ip = std::net::Ipv4Addr::LOCALHOST;
+    let local_enr = Enr::builder()
+        .ip4(ip)
+        .udp4(DEFAULT_UDP_PORT)
+        .build(&enr_key)
+        .unwrap();
+
+    let (mut service, mut handler_recv, _handler_send) =
+        build_non_handler_service::<DefaultProtocolId>(
+            Arc::new(RwLock::new(local_enr)),
+            Arc::new(RwLock::new(enr_key)),
+            false,
+        );
+
+    // Load up the routing table with 100 random ENRs
+
+    for _ in 0..100 {
+        let key = CombinedKey::generate_secp256k1();
+        let ip = generate_rand_ipv4();
+        let enr = Enr::builder()
+            .ip4(ip)
+            .udp4(DEFAULT_UDP_PORT)
+            .build(&key)
+            .unwrap();
+
+        let direction = random_connection_direction();
+        service.inject_session_established(enr.clone(), direction);
+    }
+
+    // Attempt to add 10 IPv6 nodes and expect that we attempt to send 10 PING's to IPv6 nodes.
+    for _ in 0..10 {
+        let key = CombinedKey::generate_secp256k1();
+        let ip = generate_rand_ipv6();
+        let enr = Enr::builder()
+            .ip6(ip)
+            .udp6(DEFAULT_UDP_PORT)
+            .build(&key)
+            .unwrap();
+
+        let direction = ConnectionDirection::Outgoing;
+        service.inject_session_established(enr.clone(), direction);
+    }
+
+    // Collect all the messages to the handler and count the PING requests for ENR v6 addresses
+    let mut v6_pings = 0;
+    while let Ok(event) = handler_recv.try_recv() {
+        match event {
+            HandlerIn::Request(contact, request) => {
+                if contact.node_address().socket_addr.is_ipv6()
+                    && matches!(request.body, RequestBody::Ping { .. })
+                {
+                    v6_pings += 1
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Should be 10 ipv6 pings
+    assert_eq!(v6_pings, 10)
 }
