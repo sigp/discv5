@@ -15,10 +15,7 @@ use std::{
     ops::Add,
 };
 
-use crate::{
-    handler::{session::build_dummy_session, HandlerOut::RequestFailed},
-    RequestError::SelfRequest,
-};
+use crate::{handler::HandlerOut::RequestFailed, RequestError::SelfRequest};
 use active_requests::ActiveRequests;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -78,10 +75,6 @@ async fn build_handler<P: ProtocolIdentity>(
         pending_requests: HashMap::new(),
         filter_expected_responses,
         sessions: LruTimeCache::new(config.session_timeout, Some(config.session_cache_capacity)),
-        one_time_sessions: LruTimeCache::new(
-            Duration::from_secs(ONE_TIME_SESSION_TIMEOUT),
-            Some(ONE_TIME_SESSION_CACHE_CAPACITY),
-        ),
         active_challenges: HashMapDelay::new(config.request_timeout),
         service_recv,
         service_send,
@@ -578,50 +571,6 @@ async fn test_self_request_ipv6() {
         Some(RequestFailed(RequestId(vec![2]), SelfRequest)),
         handler_out
     );
-}
-
-#[tokio::test]
-async fn remove_one_time_session() {
-    let config = ConfigBuilder::new(ListenConfig::default()).build();
-    let key = CombinedKey::generate_secp256k1();
-    let enr = Enr::builder()
-        .ip4(Ipv4Addr::LOCALHOST)
-        .udp4(9000)
-        .build(&key)
-        .unwrap();
-    let (_, _, _, mut handler) = build_handler::<DefaultProtocolId>(enr, key, config).await;
-
-    let enr = {
-        let key = CombinedKey::generate_secp256k1();
-        Enr::builder()
-            .ip4(Ipv4Addr::LOCALHOST)
-            .udp4(9000)
-            .build(&key)
-            .unwrap()
-    };
-    let node_address = NodeAddress::new("127.0.0.1:9000".parse().unwrap(), enr.node_id());
-    let request_id = RequestId::random();
-    let session = build_dummy_session();
-    handler
-        .one_time_sessions
-        .insert(node_address.clone(), (request_id.clone(), session));
-
-    let other_request_id = RequestId::random();
-    assert!(handler
-        .remove_one_time_session(&node_address, &other_request_id)
-        .is_none());
-    assert_eq!(1, handler.one_time_sessions.len());
-
-    let other_node_address = NodeAddress::new("127.0.0.1:9001".parse().unwrap(), enr.node_id());
-    assert!(handler
-        .remove_one_time_session(&other_node_address, &request_id)
-        .is_none());
-    assert_eq!(1, handler.one_time_sessions.len());
-
-    assert!(handler
-        .remove_one_time_session(&node_address, &request_id)
-        .is_some());
-    assert_eq!(0, handler.one_time_sessions.len());
 }
 
 // Tests replaying active requests.
