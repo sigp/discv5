@@ -491,15 +491,12 @@ async fn test_ipv6_update_amongst_ipv4_dominated_network() {
     // Collect all the messages to the handler and count the PING requests for ENR v6 addresses
     let mut v6_pings = 0;
     while let Ok(event) = handler_recv.try_recv() {
-        match event {
-            HandlerIn::Request(contact, request) => {
-                if contact.node_address().socket_addr.is_ipv6()
-                    && matches!(request.body, RequestBody::Ping { .. })
-                {
-                    v6_pings += 1
-                }
+        if let HandlerIn::Request(contact, request) = event {
+            if contact.node_address().socket_addr.is_ipv6()
+                && matches!(request.body, RequestBody::Ping { .. })
+            {
+                v6_pings += 1
             }
-            _ => {}
         }
     }
 
