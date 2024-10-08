@@ -1356,9 +1356,9 @@ impl Service {
                             if let Some(ip_votes) = self.ip_votes.as_mut() {
                                 match (ip_votes.majority(), enr.udp4_socket(), enr.udp6_socket()) {
                                     // We don't have enough ipv4 votes, but this is an IPv4 node.
-                                    ((None, Some(_)), Some(_), _) |
+                                    ((Some(_), None), Some(_), _) |
                                     // We don't have enough ipv6 votes, but this is an IPv6 node
-                                    ((Some(_), None), _, Some(_)) |
+                                    ((None, Some(_)), _, Some(_)) |
                                     // We don't have enough ipv6 or ipv4 nodes, ping this peer
                                     ((None, None), _, _) => self.send_ping(enr, None),
                                     // We have enough votes do nothing

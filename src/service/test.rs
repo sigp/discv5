@@ -112,7 +112,7 @@ async fn build_service<P: ProtocolIdentity>(
     }
 }
 
-fn build_non_handler_service<P: ProtocolIdentity>(
+fn build_non_handler_service(
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
     filters: bool,
@@ -452,12 +452,11 @@ async fn test_ipv6_update_amongst_ipv4_dominated_network() {
         .build(&enr_key)
         .unwrap();
 
-    let (mut service, mut handler_recv, _handler_send) =
-        build_non_handler_service::<DefaultProtocolId>(
-            Arc::new(RwLock::new(local_enr)),
-            Arc::new(RwLock::new(enr_key)),
-            false,
-        );
+    let (mut service, mut handler_recv, _handler_send) = build_non_handler_service(
+        Arc::new(RwLock::new(local_enr)),
+        Arc::new(RwLock::new(enr_key)),
+        false,
+    );
 
     // Load up the routing table with 100 random ENRs
 
