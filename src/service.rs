@@ -817,7 +817,7 @@ impl Service {
                         kbucket::Entry::Present(_, status)
                             if status.is_connected() && !status.is_incoming());
 
-                        if should_count {
+                        if should_count | self.require_more_ip_votes(socket.is_ipv6()) {
                             // get the advertised local addresses
                             let (local_ip4_socket, local_ip6_socket) = {
                                 let local_enr = self.local_enr.read();
@@ -1352,19 +1352,10 @@ impl Service {
                         // If we are low on votes and we initiated this connection (i.e it was not
                         // forced on us) then lets get a PONG from this node.
 
-                        if direction == ConnectionDirection::Outgoing {
-                            if let Some(ip_votes) = self.ip_votes.as_mut() {
-                                match (ip_votes.majority(), enr.udp4_socket(), enr.udp6_socket()) {
-                                    // We don't have enough ipv4 votes, but this is an IPv4 node.
-                                    ((Some(_), None), Some(_), _) |
-                                    // We don't have enough ipv6 votes, but this is an IPv6 node
-                                    ((None, Some(_)), _, Some(_)) |
-                                    // We don't have enough ipv6 or ipv4 nodes, ping this peer
-                                    ((None, None), _, _) => self.send_ping(enr, None),
-                                    // We have enough votes do nothing
-                                    ((_, _), _, _) =>  {}
-                                }
-                            }
+                        if direction == ConnectionDirection::Outgoing
+                            && self.require_more_ip_votes(enr.udp6_socket().is_some())
+                        {
+                            self.send_ping(enr, None);
                         }
 
                         self.peers_to_ping.remove(&node_id);
@@ -1554,6 +1545,32 @@ impl Service {
             }
 
             self.connection_updated(node_id, ConnectionStatus::Disconnected);
+        }
+    }
+
+    /// This is a helper function that determines if we need more votes for a specific IP
+    /// class.
+    ///
+    /// If we are in dual-stack made and don't have enough votes for either ipv4 or ipv6 and the
+    /// requesting node/vote is what we need, then this will return true
+    fn require_more_ip_votes(&mut self, is_ipv6: bool) -> bool {
+        if !matches!(self.ip_mode, IpMode::DualStack) {
+            return false;
+        }
+
+        if let Some(ip_votes) = self.ip_votes.as_mut() {
+            match (ip_votes.majority(), is_ipv6) {
+                    // We don't have enough ipv4 votes, but this is an IPv4-only node.
+                    ((None, Some(_)), false) |
+                    // We don't have enough ipv6 votes, but this is an IPv6 node
+                    ((Some(_), None), true) |
+                    // We don't have enough ipv6 or ipv4 nodes, ping this peer
+                    ((None, None), _,) => true,
+                    // We have enough votes do nothing
+                    ((_, _), _,) =>  false,
+                }
+        } else {
+            false
         }
     }
 
