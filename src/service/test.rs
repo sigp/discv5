@@ -123,7 +123,7 @@ fn build_non_handler_service(
     };
     let config = ConfigBuilder::new(listen_config).build();
 
-    // Fake's the handler with empty channels
+    // Fake's the handler with empty channels.
     let (handler_send, handler_recv_fake) = mpsc::unbounded_channel();
     let (handler_send_fake, handler_recv) = mpsc::channel(1000);
 
