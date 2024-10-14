@@ -1551,7 +1551,7 @@ impl Service {
     /// Helper function that determines if we need more votes for a specific IP
     /// class.
     ///
-    /// If we are in dual-stack made and don't have enough votes for either ipv4 or ipv6 and the
+    /// If we are in dual-stack mode and don't have enough votes for either ipv4 or ipv6 and the
     /// requesting node/vote is what we need, then this will return true
     fn require_more_ip_votes(&mut self, is_ipv6: bool) -> bool {
         if !matches!(self.ip_mode, IpMode::DualStack) {
