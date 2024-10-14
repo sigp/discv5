@@ -487,7 +487,7 @@ async fn test_ipv6_update_amongst_ipv4_dominated_network() {
         service.inject_session_established(enr.clone(), direction);
     }
 
-    // Collect all the messages to the handler and count the PING requests for ENR v6 addresses
+    // Collect all the messages to the handler and count the PING requests for ENR v6 addresses.
     let mut v6_pings = 0;
     while let Ok(event) = handler_recv.try_recv() {
         if let HandlerIn::Request(contact, request) = event {
