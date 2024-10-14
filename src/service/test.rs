@@ -146,7 +146,7 @@ fn build_non_handler_service(
 
     let ip_vote = IpVote::new(10, Duration::from_secs(10000));
 
-    // create the required channels
+    // create the required channels.
     let (_discv5_send, discv5_recv) = mpsc::channel(30);
     let (_exit_send, exit) = oneshot::channel();
 
