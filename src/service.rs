@@ -1558,10 +1558,10 @@ impl Service {
             return false;
         }
 
-       let Some(ip_votes) = self.ip_votes.as_mut() else {
-           return false;
-       }
-            match (ip_votes.majority(), is_ipv6) {
+        let Some(ip_votes) = self.ip_votes.as_mut() else {
+            return false;
+        };
+        match (ip_votes.majority(), is_ipv6) {
                     // We don't have enough ipv4 votes, but this is an IPv4-only node.
                     ((None, Some(_)), false) |
                     // We don't have enough ipv6 votes, but this is an IPv6 node.
@@ -1570,10 +1570,7 @@ impl Service {
                     ((None, None), _,) => true,
                     // We have enough votes do nothing.
                     ((_, _), _,) =>  false,
-                }
-        } else {
-            false
-        }
+            }
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
