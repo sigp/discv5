@@ -458,7 +458,7 @@ async fn test_ipv6_update_amongst_ipv4_dominated_network() {
         false,
     );
 
-    // Load up the routing table with 100 random ENRs
+    // Load up the routing table with 100 random ENRs.
 
     for _ in 0..100 {
         let key = CombinedKey::generate_secp256k1();
