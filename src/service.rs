@@ -1566,7 +1566,7 @@ impl Service {
                     ((None, Some(_)), false) |
                     // We don't have enough ipv6 votes, but this is an IPv6 node.
                     ((Some(_), None), true) |
-                    // We don't have enough ipv6 or ipv4 nodes, ping this peer
+                    // We don't have enough ipv6 or ipv4 nodes, ping this peer.
                     ((None, None), _,) => true,
                     // We have enough votes do nothing.
                     ((_, _), _,) =>  false,
