@@ -1558,7 +1558,9 @@ impl Service {
             return false;
         }
 
-        if let Some(ip_votes) = self.ip_votes.as_mut() {
+       let Some(ip_votes) = self.ip_votes.as_mut() else {
+           return false;
+       }
             match (ip_votes.majority(), is_ipv6) {
                     // We don't have enough ipv4 votes, but this is an IPv4-only node.
                     ((None, Some(_)), false) |
