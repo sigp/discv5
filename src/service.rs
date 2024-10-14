@@ -1548,7 +1548,7 @@ impl Service {
         }
     }
 
-    /// This is a helper function that determines if we need more votes for a specific IP
+    /// Helper function that determines if we need more votes for a specific IP
     /// class.
     ///
     /// If we are in dual-stack made and don't have enough votes for either ipv4 or ipv6 and the
