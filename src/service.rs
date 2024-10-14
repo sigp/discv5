@@ -817,7 +817,7 @@ impl Service {
                         kbucket::Entry::Present(_, status)
                             if status.is_connected() && !status.is_incoming());
 
-                        if should_count {
+                        if should_count | self.require_more_ip_votes(socket.is_ipv6()) {
                             // get the advertised local addresses
                             let (local_ip4_socket, local_ip6_socket) = {
                                 let local_enr = self.local_enr.read();
@@ -1345,6 +1345,19 @@ impl Service {
                     }
                     InsertResult::ValueUpdated | InsertResult::UpdatedPending => {}
                     InsertResult::Failed(reason) => {
+                        // On large networks with limited IPv6 nodes, it is hard to get enough
+                        // PONG votes in order to estimate our external IP address. Often the
+                        // routing table can be full, and so we reject useful IPv6 here.
+                        //
+                        // If we are low on votes and we initiated this connection (i.e it was not
+                        // forced on us) then lets get a PONG from this node.
+
+                        if direction == ConnectionDirection::Outgoing
+                            && self.require_more_ip_votes(enr.udp6_socket().is_some())
+                        {
+                            self.send_ping(enr, None);
+                        }
+
                         self.peers_to_ping.remove(&node_id);
                         trace!(%node_id, ?reason, "Could not insert node");
                     }
@@ -1533,6 +1546,31 @@ impl Service {
 
             self.connection_updated(node_id, ConnectionStatus::Disconnected);
         }
+    }
+
+    /// Helper function that determines if we need more votes for a specific IP
+    /// class.
+    ///
+    /// If we are in dual-stack mode and don't have enough votes for either ipv4 or ipv6 and the
+    /// requesting node/vote is what we need, then this will return true.
+    fn require_more_ip_votes(&mut self, is_ipv6: bool) -> bool {
+        if !matches!(self.ip_mode, IpMode::DualStack) {
+            return false;
+        }
+
+        let Some(ip_votes) = self.ip_votes.as_mut() else {
+            return false;
+        };
+        match (ip_votes.majority(), is_ipv6) {
+                    // We don't have enough ipv4 votes, but this is an IPv4-only node.
+                    ((None, Some(_)), false) |
+                    // We don't have enough ipv6 votes, but this is an IPv6 node.
+                    ((Some(_), None), true) |
+                    // We don't have enough ipv6 or ipv4 nodes, ping this peer.
+                    ((None, None), _,) => true,
+                    // We have enough votes do nothing.
+                    ((_, _), _,) =>  false,
+            }
     }
 
     /// A future that maintains the routing table and inserts nodes when required. This returns the
