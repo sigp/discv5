@@ -81,8 +81,8 @@ impl<T> Key<T> {
 
     /// Computes the distance of the keys according to the XOR metric.
     pub fn distance<U>(&self, other: &Key<U>) -> Distance {
-        let a = U256::from(self.hash.as_slice());
-        let b = U256::from(other.hash.as_slice());
+        let a = U256::from_big_endian(self.hash.as_slice());
+        let b = U256::from_big_endian(other.hash.as_slice());
         Distance(a ^ b)
     }
 

@@ -21,30 +21,30 @@ libp2p-identity = { version = "0.2", features = [
 multiaddr = { version = "0.18", optional = true }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 futures = "0.3"
-uint = { version = "0.9", default-features = false }
-alloy-rlp = { version = "0.3.4", default-features = true }
+uint = { version = "0.10", default-features = false }
+alloy-rlp = { version = "0.3.8", default-features = true }
 # This version must be kept up to date do it uses the same dependencies as ENR
 hkdf = "0.12"
 hex = "0.4"
 fnv = "1"
 arrayvec = "0.7"
 rand = { version = "0.8", package = "rand" }
-socket2 = "0.4"
+socket2 = "0.5"
 smallvec = "1"
-parking_lot = "0.11"
+parking_lot = "0.12"
 lazy_static = "1"
 aes = "0.8.4"
 ctr = "0.9.2"
 aes-gcm = "0.10.3"
 tracing = { version = "0.1", features = ["log"] }
 lru = "0.12"
-hashlink = "0.8"
-delay_map = "0.3"
+hashlink = "0.9"
+delay_map = "0.4"
 more-asserts = "0.3"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
-if-addrs = "0.10"
+if-addrs = "0.13"
 quickcheck = "0.9"
 rand_07 = { package = "rand", version = "0.7" }
 rand_core = "0.6"
