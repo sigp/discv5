@@ -15,7 +15,7 @@ pub struct Config {
     pub request_timeout: Duration,
 
     /// The interval over which votes are remembered when determining our external IP. A lower
-    /// interval will respond faster to IP changes. Default is 30 seconds.
+    /// interval will respond faster to IP changes. Default is 2 minutes.
     pub vote_duration: Duration,
 
     /// The timeout after which a `QueryPeer` in an ongoing query is marked unresponsive.
@@ -121,7 +121,7 @@ impl ConfigBuilder {
         let config = Config {
             enable_packet_filter: false,
             request_timeout: Duration::from_secs(1),
-            vote_duration: Duration::from_secs(30),
+            vote_duration: Duration::from_secs(120),
             query_peer_timeout: Duration::from_secs(2),
             query_timeout: Duration::from_secs(60),
             request_retries: 1,
