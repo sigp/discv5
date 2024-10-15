@@ -858,7 +858,7 @@ impl Handler {
                         //
                         // We still handle the request, but we do not add the ENR to our routing
                         // table or consider the ENR valid.
-                        warn!(
+                        debug!(
                             udp4_socket = ?enr.udp4_socket(),
                             udp6_socket = ?enr.udp6_socket(),
                             expected = %node_address,
