@@ -92,6 +92,18 @@ pub struct Config {
     /// will last indefinitely. Default is 1 hour.
     pub ban_duration: Option<Duration>,
 
+    /// Auto-discovering our IP address, is only one part in discovering our NAT/firewall
+    /// situation. We need to determine if we are behind a firewall that is preventing incoming
+    /// connections (this is espcially true for IPv6 where all connections will report the same
+    /// external IP). To do this, Discv5 uses a heuristic, which is that after we set an address in
+    /// our ENR, we wait for this duration to see if we have any incoming connections. If we
+    /// receive a single INCOMING connection in this duration, we consider ourselves contactable,
+    /// until we update or change our IP address again. If we fail to receive an incoming
+    /// connection in this duration, we revoke our ENR address advertisement for 6 hours, before
+    /// trying again. This can be set to None, to always advertise and never revoke. The default is
+    /// Some(10 minutes).
+    pub auto_nat_listen_duration: Option<Duration>,
+
     /// A custom executor which can spawn the discv5 tasks. This must be a tokio runtime, with
     /// timing support. By default, the executor that created the discv5 struct will be used.
     pub executor: Option<Box<dyn Executor + Send + Sync>>,
@@ -141,6 +153,7 @@ impl ConfigBuilder {
             filter_max_bans_per_ip: Some(5),
             permit_ban_list: PermitBanList::default(),
             ban_duration: Some(Duration::from_secs(3600)), // 1 hour
+            auto_nat_listen_duration: Some(Duration::from_secs(600)), // 10 minutes
             executor: None,
             listen_config,
         };
@@ -292,6 +305,21 @@ impl ConfigBuilder {
     /// will last indefinitely. Default is 1 hour.
     pub fn ban_duration(&mut self, ban_duration: Option<Duration>) -> &mut Self {
         self.config.ban_duration = ban_duration;
+        self
+    }
+
+    /// Auto-discovering our IP address, is only one part in discovering our NAT/firewall
+    /// situation. We need to determine if we are behind a firewall that is preventing incoming
+    /// connections (this is espcially true for IPv6 where all connections will report the same
+    /// external IP). To do this, Discv5 uses a heuristic, which is that after we set an address in
+    /// our ENR, we wait for this duration to see if we have any incoming connections. If we
+    /// receive a single INCOMING connection in this duration, we consider ourselves contactable,
+    /// until we update or change our IP address again. If we fail to receive an incoming
+    /// connection in this duration, we revoke our ENR address advertisement for 6 hours, before
+    /// trying again. This can be set to None, to always advertise and never revoke. The default is
+    /// Some(10 minutes).
+    pub fn auto_nat_listen_duration(&mut self, auto_nat_listen_duration: Option<Duration>) -> &mut Self {
+        self.config.auto_nat_listen_duration = auto_nat_listen_duration
         self
     }
 
