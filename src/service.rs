@@ -31,8 +31,9 @@ use crate::{
     },
     rpc, Config, Enr, Event, IpMode,
 };
-use connectivity_state::DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
-use connectivity_state::{ConnectivityState, TimerFailure};
+use connectivity_state::{
+    ConnectivityState, TimerFailure, DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT,
+};
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;

@@ -18,12 +18,16 @@
 //! this time, which prevents our ENR from being updated.
 
 use crate::metrics::METRICS;
-use futures::future::{pending, Either};
-use futures::FutureExt;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use futures::{
+    future::{pending, Either},
+    FutureExt,
+};
+use std::{
+    net::SocketAddr,
+    pin::Pin,
+    sync::atomic::Ordering,
+    time::{Duration, Instant},
+};
 use tokio::time::{sleep, Sleep};
 use tracing::info;
 
