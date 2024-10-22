@@ -10,9 +10,9 @@
 //! The process works via the following:
 //! 1. Our ENR socket gets updated
 //! 2. This triggers us to set an incoming wait timer
-//! 3a. If we receive an incoming connection within this time, we consider ourselves contactable
+//! 3. a. If we receive an incoming connection within this time, we consider ourselves contactable
 //! and we remove the timer.
-//! 3b. If we don't receive a connection and the timer expires. If the timer expires, we set our
+//! 3. b. If we don't receive a connection and the timer expires. If the timer expires, we set our
 //! external ENR address to None and set the `next_connectivity_test` to
 //! DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT in the future. This will prevent counting votes until
 //! this time, which prevents our ENR from being updated.
@@ -81,7 +81,7 @@ impl ConnectivityState {
     /// is not None) then we start a timer to await for any kind of incoming connection. This will
     /// verify that we are contactable. If we receive nothing in `duration_for_incoming_connections` then we consider ourselves non-contactable
     pub fn enr_socket_update(&mut self, socket: &SocketAddr) {
-        if let Some(duration_to_wait) = self.duration_for_incoming_connections.clone() {
+        if let Some(duration_to_wait) = self.duration_for_incoming_connections {
             match socket {
                 SocketAddr::V4(_) => {
                     self.ipv4_incoming_wait_time = Some(Box::pin(sleep(duration_to_wait)))
@@ -104,27 +104,32 @@ impl ConnectivityState {
     }
 
     pub async fn poll(&mut self) -> TimerFailure {
-        match (
+        let ipv4_fired = match (
             self.ipv4_incoming_wait_time.as_mut(),
             self.ipv6_incoming_wait_time.as_mut(),
         ) {
             (Some(ipv4_sleep), Some(ipv6_sleep)) => {
                 match futures::future::select(ipv4_sleep, ipv6_sleep).await {
-                    Either::Left(_) => {
-                        self.ipv4_next_connectivity_test =
-                            Instant::now() + DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
-                        TimerFailure::V4
-                    }
-                    Either::Right(_) => {
-                        self.ipv6_next_connectivity_test =
-                            Instant::now() + DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
-                        TimerFailure::V6
-                    }
+                    Either::Left(_) => true,
+                    Either::Right(_) => false, // Ipv6 fired,
                 }
             }
-            (Some(ipv4_sleep), None) => ipv4_sleep.map(|_| TimerFailure::V4).await,
-            (None, Some(ipv6_sleep)) => ipv6_sleep.map(|_| TimerFailure::V6).await,
+            (Some(ipv4_sleep), None) => ipv4_sleep.map(|_| true).await,
+            (None, Some(ipv6_sleep)) => ipv6_sleep.map(|_| false).await,
             (None, None) => pending().await,
+        };
+
+        if ipv4_fired {
+            self.ipv4_next_connectivity_test =
+                Instant::now() + DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
+            self.ipv4_incoming_wait_time = None;
+            TimerFailure::V4
+        } else {
+            // Ipv6 fired
+            self.ipv6_next_connectivity_test =
+                Instant::now() + DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
+            self.ipv6_incoming_wait_time = None;
+            TimerFailure::V6
         }
     }
 }
