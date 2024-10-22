@@ -11,11 +11,11 @@
 //! 1. Our ENR socket gets updated
 //! 2. This triggers us to set an incoming wait timer
 //! 3. a. If we receive an incoming connection within this time, we consider ourselves contactable
-//! and we remove the timer.
+//!     and we remove the timer.
 //! 3. b. If we don't receive a connection and the timer expires. If the timer expires, we set our
-//! external ENR address to None and set the `next_connectivity_test` to
-//! DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT in the future. This will prevent counting votes until
-//! this time, which prevents our ENR from being updated.
+//!     external ENR address to None and set the `next_connectivity_test` to
+//!     DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT in the future. This will prevent counting votes until
+//!     this time, which prevents our ENR from being updated.
 
 use crate::metrics::METRICS;
 use futures::{
