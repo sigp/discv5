@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 lazy_static! {
     pub static ref METRICS: InternalMetrics = InternalMetrics::default();
@@ -16,6 +16,10 @@ pub struct InternalMetrics {
     pub bytes_sent: AtomicUsize,
     /// The number of bytes received.
     pub bytes_recv: AtomicUsize,
+    /// Whether we consider ourselves contactable or not on ipv4.
+    pub ipv4_contactable: AtomicBool,
+    /// Whether we consider ourselves contactable or not on ipv6.
+    pub ipv6_contactable: AtomicBool,
 }
 
 impl Default for InternalMetrics {
@@ -26,6 +30,8 @@ impl Default for InternalMetrics {
             unsolicited_requests_per_window: AtomicUsize::new(0),
             bytes_sent: AtomicUsize::new(0),
             bytes_recv: AtomicUsize::new(0),
+            ipv4_contactable: AtomicBool::new(false),
+            ipv6_contactable: AtomicBool::new(false),
         }
     }
 }
@@ -55,6 +61,10 @@ pub struct Metrics {
     pub bytes_sent: usize,
     /// The number of bytes received.
     pub bytes_recv: usize,
+    /// Whether we consider ourselves contactable or not.
+    pub ipv4_contactable: bool,
+    /// Whether we consider ourselves contactable or not.
+    pub ipv6_contactable: bool,
 }
 
 impl From<&METRICS> for Metrics {
@@ -67,6 +77,8 @@ impl From<&METRICS> for Metrics {
                 / internal_metrics.moving_window as f64,
             bytes_sent: internal_metrics.bytes_sent.load(Ordering::Relaxed),
             bytes_recv: internal_metrics.bytes_recv.load(Ordering::Relaxed),
+            ipv4_contactable: internal_metrics.ipv4_contactable.load(Ordering::Relaxed),
+            ipv6_contactable: internal_metrics.ipv6_contactable.load(Ordering::Relaxed),
         }
     }
 }

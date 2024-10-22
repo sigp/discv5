@@ -885,76 +885,76 @@ impl Service {
             return;
         }
 
-        // get the advertised local addresses
-        let (local_ip4_socket, local_ip6_socket) = {
-            let local_enr = self.local_enr.read();
-            (local_enr.udp4_socket(), local_enr.udp6_socket())
-        };
+        match socket {
+            SocketAddr::V4(_) => {
+                let local_ip4_socket = self.local_enr.read().udp4_socket();
+                if let Some(ip_votes) = self.ip_votes.as_mut() {
+                    ip_votes.insert(node_id, socket);
+                    let maybe_ip4_majority = ip_votes.majority().0;
 
-        if let Some(ref mut ip_votes) = self.ip_votes {
-            ip_votes.insert(node_id, socket);
-            let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
-
-            let new_ip4 = maybe_ip4_majority.and_then(|majority| {
-                if Some(majority) != local_ip4_socket {
-                    Some(majority)
-                } else {
-                    None
-                }
-            });
-            let new_ip6 = maybe_ip6_majority.and_then(|majority| {
-                if Some(majority) != local_ip6_socket {
-                    Some(majority)
-                } else {
-                    None
-                }
-            });
-
-            if new_ip4.is_some() || new_ip6.is_some() {
-                let mut updated = false;
-
-                // Check if our advertised IPV6 address needs to be updated.
-                if let Some(new_ip6) = new_ip6 {
-                    let new_ip6: SocketAddr = new_ip6.into();
-                    let result = self
-                        .local_enr
-                        .write()
-                        .set_udp_socket(new_ip6, &self.enr_key.read());
-                    match result {
-                        Ok(_) => {
-                            updated = true;
-                            // Inform the connectivity state that we have updated our IP advertisement
-                            self.connectivity_state.enr_socket_update(&new_ip6);
-                            info!(%new_ip6, "Local UDP ip6 socket updated");
-                            self.send_event(Event::SocketUpdated(new_ip6));
+                    let new_ip4 = maybe_ip4_majority.and_then(|majority| {
+                        if Some(majority) != local_ip4_socket {
+                            Some(majority)
+                        } else {
+                            None
                         }
-                        Err(e) => {
-                            warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
+                    });
+
+                    // If we have a new ipv4 majority
+                    if let Some(new_ip4) = new_ip4 {
+                        let new_ip4: SocketAddr = new_ip4.into();
+                        let result = self
+                            .local_enr
+                            .write()
+                            .set_udp_socket(new_ip4, &self.enr_key.read());
+                        match result {
+                            Ok(_) => {
+                                // Inform the connectivity state that we have updated our IP advertisement
+                                self.connectivity_state.enr_socket_update(&new_ip4);
+                                info!(ip_version="v4", %new_ip4, "Local UDP socket updated");
+                                self.send_event(Event::SocketUpdated(new_ip4));
+                                self.ping_connected_peers();
+                            }
+                            Err(e) => {
+                                warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
+                            }
                         }
                     }
                 }
-                if let Some(new_ip4) = new_ip4 {
-                    let new_ip4: SocketAddr = new_ip4.into();
-                    let result = self
-                        .local_enr
-                        .write()
-                        .set_udp_socket(new_ip4, &self.enr_key.read());
-                    match result {
-                        Ok(_) => {
-                            updated = true;
-                            // Inform the connectivity state that we have updated our IP advertisement
-                            self.connectivity_state.enr_socket_update(&new_ip4);
-                            info!(%new_ip4, "Local UDP socket updated");
-                            self.send_event(Event::SocketUpdated(new_ip4));
+            }
+            SocketAddr::V6(_) => {
+                let local_ip6_socket = self.local_enr.read().udp6_socket();
+                if let Some(ip_votes) = self.ip_votes.as_mut() {
+                    ip_votes.insert(node_id, socket);
+                    let maybe_ip6_majority = ip_votes.majority().1;
+
+                    let new_ip6 = maybe_ip6_majority.and_then(|majority| {
+                        if Some(majority) != local_ip6_socket {
+                            Some(majority)
+                        } else {
+                            None
                         }
-                        Err(e) => {
-                            warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
+                    });
+                    // Check if our advertised IPV6 address needs to be updated.
+                    if let Some(new_ip6) = new_ip6 {
+                        let new_ip6: SocketAddr = new_ip6.into();
+                        let result = self
+                            .local_enr
+                            .write()
+                            .set_udp_socket(new_ip6, &self.enr_key.read());
+                        match result {
+                            Ok(_) => {
+                                // Inform the connectivity state that we have updated our IP advertisement
+                                self.connectivity_state.enr_socket_update(&new_ip6);
+                                info!(ip_version="v6", %new_ip6, "Local UDP socket updated");
+                                self.send_event(Event::SocketUpdated(new_ip6));
+                                self.ping_connected_peers();
+                            }
+                            Err(e) => {
+                                warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
+                            }
                         }
                     }
-                }
-                if updated {
-                    // Ping our peers to inform them of the ENR update
-                    self.ping_connected_peers();
                 }
             }
         }
@@ -1465,6 +1465,12 @@ impl Service {
         socket: &SocketAddr,
         connection_direction: ConnectionDirection,
     ) {
+        // Inform the connectivity state that an incoming peer has connected to us. This could
+        // establish that our externally advertised address is contactable.
+        if matches!(connection_direction, ConnectionDirection::Incoming) {
+            self.connectivity_state.received_incoming_connection(socket);
+        }
+
         // Ignore sessions with non-contactable ENRs
         if self.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
@@ -1484,12 +1490,6 @@ impl Service {
             Some(Some(node)) => node.status.direction,
             _ => connection_direction,
         };
-
-        // Inform the connectivity state that an incoming peer has connected to us. This could
-        // establish that our externally advertised address is contactable.
-        if matches!(direction, ConnectionDirection::Incoming) {
-            self.connectivity_state.received_incoming_connection(socket);
-        }
 
         debug!(node = %node_id, %direction, "Session established with Node");
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));

@@ -17,15 +17,22 @@
 //! DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT in the future. This will prevent counting votes until
 //! this time, which prevents our ENR from being updated.
 
+use crate::metrics::METRICS;
 use futures::future::{pending, Either};
 use futures::FutureExt;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::time::{sleep, Sleep};
+use tracing::info;
 
-// const DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT: Duration = Duration::from_secs(21600); // 6 hours
-pub const DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT: Duration = Duration::from_secs(100);
+pub const DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT: Duration = Duration::from_secs(21600); // 6 hours
+
+/// The number of incoming connections we need to observe before we consider ourselves contactable.
+/// A previously disconnected node reconnecting back through a temporarily open port can be false
+/// positive. The higher this number, the lower the probability of false positives.
+const NUMBER_OF_INCOMING_CONNECTIONS_REQUIRED_TO_BE_VALID: usize = 2;
 
 /// The error returned from polling the ConnectivityState indicating whether IPv4 or IPv6 has
 /// failed a connectivity check.
@@ -48,6 +55,10 @@ pub(crate) struct ConnectivityState {
     pub ipv4_next_connectivity_test: Instant,
     /// The time that we begin checking connectivity tests for ipv6.
     pub ipv6_next_connectivity_test: Instant,
+    /// The number of incoming ipv4 nodes we have seen during our awaiting window.
+    ipv4_incoming_count: usize,
+    /// The number of incoming ipv6 nodes we have seen during our awaiting window.
+    ipv6_incoming_count: usize,
 }
 
 impl ConnectivityState {
@@ -58,6 +69,8 @@ impl ConnectivityState {
             ipv6_incoming_wait_time: None,
             ipv4_next_connectivity_test: Instant::now(),
             ipv6_next_connectivity_test: Instant::now(),
+            ipv4_incoming_count: 0,
+            ipv6_incoming_count: 0,
         }
     }
 
@@ -85,9 +98,11 @@ impl ConnectivityState {
         if let Some(duration_to_wait) = self.duration_for_incoming_connections {
             match socket {
                 SocketAddr::V4(_) => {
+                    self.ipv4_incoming_count = 0;
                     self.ipv4_incoming_wait_time = Some(Box::pin(sleep(duration_to_wait)))
                 }
                 SocketAddr::V6(_) => {
+                    self.ipv6_incoming_count = 0;
                     self.ipv6_incoming_wait_time = Some(Box::pin(sleep(duration_to_wait)))
                 }
             }
@@ -99,8 +114,30 @@ impl ConnectivityState {
     // to potentially change the IP address if a legitimate change occurs.
     pub fn received_incoming_connection(&mut self, socket: &SocketAddr) {
         match socket {
-            SocketAddr::V4(_) => self.ipv4_incoming_wait_time = None,
-            SocketAddr::V6(_) => self.ipv6_incoming_wait_time = None,
+            SocketAddr::V4(_) => {
+                if self.ipv4_incoming_wait_time.is_none() {
+                    // We are not waiting for any v4 connections
+                    return;
+                }
+                self.ipv4_incoming_count += 1;
+                if self.ipv4_incoming_count >= NUMBER_OF_INCOMING_CONNECTIONS_REQUIRED_TO_BE_VALID {
+                    info!(ip_version = "v4", "We are contactable");
+                    self.ipv4_incoming_wait_time = None;
+                    METRICS.ipv4_contactable.store(true, Ordering::Relaxed);
+                }
+            }
+            SocketAddr::V6(_) => {
+                if self.ipv6_incoming_wait_time.is_none() {
+                    // We are not waiting for any v6 connections
+                    return;
+                }
+                self.ipv6_incoming_count += 1;
+                if self.ipv6_incoming_count >= NUMBER_OF_INCOMING_CONNECTIONS_REQUIRED_TO_BE_VALID {
+                    info!(ip_version = "v6", "We are contactable");
+                    self.ipv6_incoming_wait_time = None;
+                    METRICS.ipv6_contactable.store(true, Ordering::Relaxed);
+                }
+            }
         }
     }
 
@@ -124,12 +161,14 @@ impl ConnectivityState {
             self.ipv4_next_connectivity_test =
                 Instant::now() + DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
             self.ipv4_incoming_wait_time = None;
+            METRICS.ipv4_contactable.store(false, Ordering::Relaxed);
             TimerFailure::V4
         } else {
             // Ipv6 fired
             self.ipv6_next_connectivity_test =
                 Instant::now() + DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
             self.ipv6_incoming_wait_time = None;
+            METRICS.ipv6_contactable.store(false, Ordering::Relaxed);
             TimerFailure::V6
         }
     }
