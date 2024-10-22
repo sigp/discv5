@@ -318,8 +318,11 @@ impl ConfigBuilder {
     /// connection in this duration, we revoke our ENR address advertisement for 6 hours, before
     /// trying again. This can be set to None, to always advertise and never revoke. The default is
     /// Some(10 minutes).
-    pub fn auto_nat_listen_duration(&mut self, auto_nat_listen_duration: Option<Duration>) -> &mut Self {
-        self.config.auto_nat_listen_duration = auto_nat_listen_duration
+    pub fn auto_nat_listen_duration(
+        &mut self,
+        auto_nat_listen_duration: Option<Duration>,
+    ) -> &mut Self {
+        self.config.auto_nat_listen_duration = auto_nat_listen_duration;
         self
     }
 

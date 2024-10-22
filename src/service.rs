@@ -31,7 +31,7 @@ use crate::{
     },
     rpc, Config, Enr, Event, IpMode,
 };
-use connectivity_state::ConnectivityState;
+use connectivity_state::{ConnectivityState, TimerFailure};
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
@@ -372,8 +372,8 @@ impl Service {
                 Some(event) = self.handler_recv.recv() => {
                     match event {
                         HandlerOut::Established(enr, socket_addr, direction) => {
-                            self.send_event(Event::SessionEstablished(enr.clone(), socket_addr));
-                            self.inject_session_established(enr, direction);
+                            self.inject_session_established(enr.clone(), &socket_addr, direction);
+                            self.send_event(Event::SessionEstablished(enr, socket_addr));
                         }
                         HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
@@ -462,6 +462,26 @@ impl Service {
 
                     if let Some(enr) = enr {
                         self.send_ping(enr, None);
+                    }
+                }
+                connectivity_timeout = self.connectivity_state.poll() => {
+                    match connectivity_timeout {
+                        TimerFailure::V4 => {
+                            // We have not received enough incoming connections in the required
+                            // time. Remove our ENR advertisement.
+                            info!(ip_version="v4", next_attempt=?self.connectivity_state.ipv4_next_connectivity_test, "UDP Socket removed from ENR");
+                            if let Err(error) = self.local_enr.write().remove_udp_socket(&self.enr_key.read()) {
+                                error!(?error, "Failed to update the ENR");
+                            }
+                        }
+                        TimerFailure::V6 => {
+                            // We have not received enough incoming connections in the required
+                            // time. Remove our ENR advertisement.
+                            info!(ip_version="v6", next_attempt=?self.connectivity_state.ipv6_next_connectivity_test, "UDP Socket removed from ENR");
+                            if let Err(error) = self.local_enr.write().remove_udp6_socket(&self.enr_key.read()) {
+                                error!(?error, "Failed to update the ENR");
+                            }
+                        }
                     }
                 }
             }
@@ -846,80 +866,94 @@ impl Service {
     // how we should handle this vote and whether or not to update our ENR. This is done on a
     // majority-based voting system, see `IpVote` for more details.
     fn handle_ip_vote_from_pong(&mut self, node_id: NodeId, socket: SocketAddr) {
+        // Check that we are in a state to handle any IP votes
+        if !self.connectivity_state.should_count_ip_vote(&socket) {
+            return;
+        }
+
         // Only count votes that are from peers we have contacted.
         let key: kbucket::Key<NodeId> = node_id.into();
-        let should_count = matches!(
+        let is_connected_and_outgoing = matches!(
                         self.kbuckets.write().entry(&key),
                         kbucket::Entry::Present(_, status)
                             if status.is_connected() && !status.is_incoming());
 
-        if should_count | self.require_more_ip_votes(socket.is_ipv6()) {
-            // get the advertised local addresses
-            let (local_ip4_socket, local_ip6_socket) = {
-                let local_enr = self.local_enr.read();
-                (local_enr.udp4_socket(), local_enr.udp6_socket())
-            };
+        // Check to make sure this is an outgoing peer vote, otherwise if we need the vote due to a
+        // lack of minority, we accept it.
+        if !(is_connected_and_outgoing | self.require_more_ip_votes(socket.is_ipv6())) {
+            return;
+        }
 
-            if let Some(ref mut ip_votes) = self.ip_votes {
-                ip_votes.insert(node_id, socket);
-                let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
+        // get the advertised local addresses
+        let (local_ip4_socket, local_ip6_socket) = {
+            let local_enr = self.local_enr.read();
+            (local_enr.udp4_socket(), local_enr.udp6_socket())
+        };
 
-                let new_ip4 = maybe_ip4_majority.and_then(|majority| {
-                    if Some(majority) != local_ip4_socket {
-                        Some(majority)
-                    } else {
-                        None
-                    }
-                });
-                let new_ip6 = maybe_ip6_majority.and_then(|majority| {
-                    if Some(majority) != local_ip6_socket {
-                        Some(majority)
-                    } else {
-                        None
-                    }
-                });
+        if let Some(ref mut ip_votes) = self.ip_votes {
+            ip_votes.insert(node_id, socket);
+            let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
 
-                if new_ip4.is_some() || new_ip6.is_some() {
-                    let mut updated = false;
+            let new_ip4 = maybe_ip4_majority.and_then(|majority| {
+                if Some(majority) != local_ip4_socket {
+                    Some(majority)
+                } else {
+                    None
+                }
+            });
+            let new_ip6 = maybe_ip6_majority.and_then(|majority| {
+                if Some(majority) != local_ip6_socket {
+                    Some(majority)
+                } else {
+                    None
+                }
+            });
 
-                    // Check if our advertised IPV6 address needs to be updated.
-                    if let Some(new_ip6) = new_ip6 {
-                        let new_ip6: SocketAddr = new_ip6.into();
-                        let result = self
-                            .local_enr
-                            .write()
-                            .set_udp_socket(new_ip6, &self.enr_key.read());
-                        match result {
-                            Ok(_) => {
-                                updated = true;
-                                info!(%new_ip6, "Local UDP ip6 socket updated");
-                                self.send_event(Event::SocketUpdated(new_ip6));
-                            }
-                            Err(e) => {
-                                warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
-                            }
+            if new_ip4.is_some() || new_ip6.is_some() {
+                let mut updated = false;
+
+                // Check if our advertised IPV6 address needs to be updated.
+                if let Some(new_ip6) = new_ip6 {
+                    let new_ip6: SocketAddr = new_ip6.into();
+                    let result = self
+                        .local_enr
+                        .write()
+                        .set_udp_socket(new_ip6, &self.enr_key.read());
+                    match result {
+                        Ok(_) => {
+                            updated = true;
+                            // Inform the connectivity state that we have updated our IP advertisement
+                            self.connectivity_state.enr_socket_update(&new_ip6);
+                            info!(%new_ip6, "Local UDP ip6 socket updated");
+                            self.send_event(Event::SocketUpdated(new_ip6));
+                        }
+                        Err(e) => {
+                            warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
                         }
                     }
-                    if let Some(new_ip4) = new_ip4 {
-                        let new_ip4: SocketAddr = new_ip4.into();
-                        let result = self
-                            .local_enr
-                            .write()
-                            .set_udp_socket(new_ip4, &self.enr_key.read());
-                        match result {
-                            Ok(_) => {
-                                updated = true;
-                                info!(%new_ip4, "Local UDP socket updated");
-                                self.send_event(Event::SocketUpdated(new_ip4));
-                            }
-                            Err(e) => {
-                                warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
-                            }
+                }
+                if let Some(new_ip4) = new_ip4 {
+                    let new_ip4: SocketAddr = new_ip4.into();
+                    let result = self
+                        .local_enr
+                        .write()
+                        .set_udp_socket(new_ip4, &self.enr_key.read());
+                    match result {
+                        Ok(_) => {
+                            updated = true;
+                            // Inform the connectivity state that we have updated our IP advertisement
+                            self.connectivity_state.enr_socket_update(&new_ip4);
+                            info!(%new_ip4, "Local UDP socket updated");
+                            self.send_event(Event::SocketUpdated(new_ip4));
+                        }
+                        Err(e) => {
+                            warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
                         }
                     }
-                    if updated {
-                        self.ping_connected_peers();
-                    }
+                }
+                if updated {
+                    // Ping our peers to inform them of the ENR update
+                    self.ping_connected_peers();
                 }
             }
         }
@@ -1424,7 +1458,12 @@ impl Service {
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr, connection_direction: ConnectionDirection) {
+    fn inject_session_established(
+        &mut self,
+        enr: Enr,
+        socket: &SocketAddr,
+        connection_direction: ConnectionDirection,
+    ) {
         // Ignore sessions with non-contactable ENRs
         if self.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
@@ -1444,6 +1483,12 @@ impl Service {
             Some(Some(node)) => node.status.direction,
             _ => connection_direction,
         };
+
+        // Inform the connectivity state that an incoming peer has connected to us. This could
+        // establish that our externally advertised address is contactable.
+        if matches!(direction, ConnectionDirection::Incoming) {
+            self.connectivity_state.received_incoming_connection(socket);
+        }
 
         debug!(node = %node_id, %direction, "Session established with Node");
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));

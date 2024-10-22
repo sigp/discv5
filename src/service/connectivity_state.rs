@@ -5,36 +5,126 @@
 //! then we know we are externally contactable. If we see nothing for a period of time, we consider
 //! ourselves non-contactable and revoke our advertised IP address. We wait for
 //! DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT before trying again.
+//!
+//!
+//! The process works via the following:
+//! 1. Our ENR socket gets updated
+//! 2. This triggers us to set an incoming wait timer
+//! 3a. If we receive an incoming connection within this time, we consider ourselves contactable
+//! and we remove the timer.
+//! 3b. If we don't receive a connection and the timer expires. If the timer expires, we set our
+//! external ENR address to None and set the `next_connectivity_test` to
+//! DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT in the future. This will prevent counting votes until
+//! this time, which prevents our ENR from being updated.
 
+use futures::future::{pending, Either};
+use futures::FutureExt;
+use std::net::SocketAddr;
+use std::pin::Pin;
 use std::time::{Duration, Instant};
+use tokio::time::{sleep, Sleep};
 
 const DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT: Duration = Duration::from_secs(21600); // 6 hours
 
+/// The error returned from polling the ConnectivityState indicating whether IPv4 or IPv6 has
+/// failed a connectivity check.
+pub enum TimerFailure {
+    /// IPv4 Timer failure
+    V4,
+    /// IPv6 Timer failure
+    V6,
+}
+
 pub(crate) struct ConnectivityState {
-    /// Whether we consider ourselves externally contactable or not.
-    contactable: bool,
     /// The duration we will wait for incoming connections before deciding if we are contactable or
     /// not. If this is None, we consider ourselves always contactable.
     duration_for_incoming_connections: Option<Duration>,
     /// If we are awaiting for incoming connections, this is the instant that we stop waiting.
-    ipv4_incoming_wait_time: Option<Instant>,
+    ipv4_incoming_wait_time: Option<Pin<Box<Sleep>>>,
     /// If we are awaiting for incoming connections, this is the instant that we stop waiting.
-    ipv6_incoming_wait_time: Option<Instant>,
-    /// The time that we being checking connectivity tests for ipv4.
-    ipv4_next_connectivity_test: Instant,
-    /// The time that we being checking connectivity tests for ipv6.
-    ipv6_next_connectivity_test: Instant,
+    ipv6_incoming_wait_time: Option<Pin<Box<Sleep>>>,
+    /// The time that we begin checking connectivity tests for ipv4.
+    pub ipv4_next_connectivity_test: Instant,
+    /// The time that we begin checking connectivity tests for ipv6.
+    pub ipv6_next_connectivity_test: Instant,
 }
 
 impl ConnectivityState {
     pub fn new(duration_for_incoming_connections: Option<Duration>) -> Self {
         ConnectivityState {
-            contactable: false,
             duration_for_incoming_connections,
             ipv4_incoming_wait_time: None,
             ipv6_incoming_wait_time: None,
             ipv4_next_connectivity_test: Instant::now(),
             ipv6_next_connectivity_test: Instant::now(),
+        }
+    }
+
+    /// Checks if we are in a state to handle new IP votes. If we are waiting to do a connectivity
+    /// test for this specific ip kind, this returns false.
+    pub fn should_count_ip_vote(&self, socket: &SocketAddr) -> bool {
+        // If this configuration is not set, we just accept all votes and disable this
+        // functionality.
+        if self.duration_for_incoming_connections.is_none() {
+            return true;
+        }
+
+        // If we have failed a connectivity test, then we wait until the next duration window
+        // before counting new votes.
+        match socket {
+            SocketAddr::V4(_) => Instant::now() >= self.ipv4_next_connectivity_test,
+            SocketAddr::V6(_) => Instant::now() >= self.ipv6_next_connectivity_test,
+        }
+    }
+
+    /// We have updated our external ENR socket. If enabled (i.e duration_for_incoming_connections
+    /// is not None) then we start a timer to await for any kind of incoming connection. This will
+    /// verify that we are contactable. If we receive nothing in `duration_for_incoming_connections` then we consider ourselves non-contactable
+    pub fn enr_socket_update(&mut self, socket: &SocketAddr) {
+        if let Some(duration_to_wait) = self.duration_for_incoming_connections.clone() {
+            match socket {
+                SocketAddr::V4(_) => {
+                    self.ipv4_incoming_wait_time = Some(Box::pin(sleep(duration_to_wait)))
+                }
+                SocketAddr::V6(_) => {
+                    self.ipv6_incoming_wait_time = Some(Box::pin(sleep(duration_to_wait)))
+                }
+            }
+        }
+    }
+
+    // We have received an incoming connection. If we were awaiting for a connection, we remove the
+    // expiry timer and we are done. The ENR will remain advertised and new votes will still count
+    // to potentially change the IP address if a legitimate change occurs.
+    pub fn received_incoming_connection(&mut self, socket: &SocketAddr) {
+        match socket {
+            SocketAddr::V4(_) => self.ipv4_incoming_wait_time = None,
+            SocketAddr::V6(_) => self.ipv6_incoming_wait_time = None,
+        }
+    }
+
+    pub async fn poll(&mut self) -> TimerFailure {
+        match (
+            self.ipv4_incoming_wait_time.as_mut(),
+            self.ipv6_incoming_wait_time.as_mut(),
+        ) {
+            (Some(ipv4_sleep), Some(ipv6_sleep)) => {
+                match futures::future::select(ipv4_sleep, ipv6_sleep).await {
+                    Either::Left(_) => {
+                        self.ipv4_next_connectivity_test =
+                            Instant::now() + DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
+                        TimerFailure::V4
+                    }
+                    Either::Right(_) => {
+                        self.ipv6_next_connectivity_test =
+                            Instant::now() + DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT;
+                        TimerFailure::V6
+                    }
+                }
+            }
+            (Some(ipv4_sleep), None) => ipv4_sleep.map(|_| TimerFailure::V4).await,
+            (None, Some(ipv6_sleep)) => ipv6_sleep.map(|_| TimerFailure::V6).await,
+            (None, None) => pending().await,
         }
     }
 }
