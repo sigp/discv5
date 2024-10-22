@@ -24,7 +24,8 @@ use std::pin::Pin;
 use std::time::{Duration, Instant};
 use tokio::time::{sleep, Sleep};
 
-const DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT: Duration = Duration::from_secs(21600); // 6 hours
+// const DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT: Duration = Duration::from_secs(21600); // 6 hours
+pub const DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT: Duration = Duration::from_secs(100);
 
 /// The error returned from polling the ConnectivityState indicating whether IPv4 or IPv6 has
 /// failed a connectivity check.
