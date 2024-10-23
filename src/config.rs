@@ -161,7 +161,7 @@ impl ConfigBuilder {
     }
 
     /// The interval over which votes are remembered when determining our external IP. A lower
-    /// interval will respond faster to IP changes. Default is 30 seconds.
+    /// interval will respond faster to IP changes. Default is 2 minutes.
     pub fn vote_duration(&mut self, vote_duration: Duration) -> &mut Self {
         self.config.vote_duration = vote_duration;
         self
