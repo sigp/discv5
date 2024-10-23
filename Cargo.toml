@@ -12,11 +12,14 @@ categories = ["network-programming", "asynchronous"]
 exclude = [".gitignore", ".github/*"]
 
 [dependencies]
-enr = { version = "0.12", features = ["k256", "ed25519"] }
+enr = { git = "https://github.com/sigp/enr", branch = "remove-fields", features = [
+  "k256",
+  "ed25519",
+] } # enr = { version = "0.12", features = ["k256", "ed25519"] }
 tokio = { version = "1", features = ["net", "sync", "macros", "rt"] }
 libp2p-identity = { version = "0.2", features = [
-    "ed25519",
-    "secp256k1",
+  "ed25519",
+  "secp256k1",
 ], optional = true }
 multiaddr = { version = "0.18", optional = true }
 zeroize = { version = "1", features = ["zeroize_derive"] }

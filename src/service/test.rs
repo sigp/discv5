@@ -92,6 +92,8 @@ async fn build_service<P: ProtocolIdentity>(
     let (_discv5_send, discv5_recv) = mpsc::channel(30);
     let (_exit_send, exit) = oneshot::channel();
 
+    let connectivity_state = ConnectivityState::new(config.auto_nat_listen_duration);
+
     Service {
         local_enr,
         enr_key,
@@ -109,6 +111,7 @@ async fn build_service<P: ProtocolIdentity>(
         exit,
         config,
         ip_mode: Default::default(),
+        connectivity_state,
     }
 }
 
@@ -150,6 +153,8 @@ fn build_non_handler_service(
     let (_discv5_send, discv5_recv) = mpsc::channel(30);
     let (_exit_send, exit) = oneshot::channel();
 
+    let connectivity_state = ConnectivityState::new(config.auto_nat_listen_duration);
+
     let service = Service {
         local_enr,
         enr_key,
@@ -167,6 +172,7 @@ fn build_non_handler_service(
         exit,
         config,
         ip_mode: IpMode::DualStack,
+        connectivity_state,
     };
     (service, handler_recv_fake, handler_send_fake)
 }
@@ -267,14 +273,15 @@ async fn test_connection_direction_on_inject_session_established() {
 
     let key = &kbucket::Key::from(enr2.node_id());
 
+    let dummy_socket = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 80);
     // Test that the existing connection direction is not updated.
     // Incoming
-    service.inject_session_established(enr2.clone(), ConnectionDirection::Incoming);
+    service.inject_session_established(enr2.clone(), &dummy_socket, ConnectionDirection::Incoming);
     let status = service.kbuckets.read().iter_ref().next().unwrap().status;
     assert!(status.is_connected());
     assert_eq!(ConnectionDirection::Incoming, status.direction);
 
-    service.inject_session_established(enr2.clone(), ConnectionDirection::Outgoing);
+    service.inject_session_established(enr2.clone(), &dummy_socket, ConnectionDirection::Outgoing);
     let status = service.kbuckets.read().iter_ref().next().unwrap().status;
     assert!(status.is_connected());
     assert_eq!(ConnectionDirection::Incoming, status.direction);
@@ -286,7 +293,7 @@ async fn test_connection_direction_on_inject_session_established() {
         Some(ConnectionDirection::Outgoing),
     );
     assert!(matches!(result, UpdateResult::Updated));
-    service.inject_session_established(enr2.clone(), ConnectionDirection::Incoming);
+    service.inject_session_established(enr2.clone(), &dummy_socket, ConnectionDirection::Incoming);
     let status = service.kbuckets.read().iter_ref().next().unwrap().status;
     assert!(status.is_connected());
     assert_eq!(ConnectionDirection::Outgoing, status.direction);
@@ -460,6 +467,8 @@ async fn test_ipv6_update_amongst_ipv4_dominated_network() {
 
     // Load up the routing table with 100 random ENRs.
 
+    let dummy_socket = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 80);
+
     for _ in 0..100 {
         let key = CombinedKey::generate_secp256k1();
         let ip = generate_rand_ipv4();
@@ -470,7 +479,7 @@ async fn test_ipv6_update_amongst_ipv4_dominated_network() {
             .unwrap();
 
         let direction = random_connection_direction();
-        service.inject_session_established(enr.clone(), direction);
+        service.inject_session_established(enr.clone(), &dummy_socket, direction);
     }
 
     // Attempt to add 10 IPv6 nodes and expect that we attempt to send 10 PING's to IPv6 nodes.
@@ -484,7 +493,7 @@ async fn test_ipv6_update_amongst_ipv4_dominated_network() {
             .unwrap();
 
         let direction = ConnectionDirection::Outgoing;
-        service.inject_session_established(enr.clone(), direction);
+        service.inject_session_established(enr.clone(), &dummy_socket, direction);
     }
 
     // Collect all the messages to the handler and count the PING requests for ENR v6 addresses.
