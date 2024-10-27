@@ -82,7 +82,7 @@ pub enum Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
-pub struct Discv5<P = DefaultProtocolId>
+pub struct Discv5<P = DefaultProtocolId, K : EnrKey>
 where
     P: ProtocolIdentity,
 {
@@ -96,17 +96,17 @@ where
     /// The local ENR of the server.
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
-    enr_key: Arc<RwLock<CombinedKey>>,
+    enr_key: Arc<RwLock<K>>,
     // Type of socket we are using
     ip_mode: IpMode,
     /// Phantom for the protocol id.
     _phantom: PhantomData<P>,
 }
 
-impl<P: ProtocolIdentity> Discv5<P> {
+impl<P: ProtocolIdentity, K:EnrKey> Discv5<P,K> {
     pub fn new(
         local_enr: Enr,
-        enr_key: CombinedKey,
+        enr_key: K,
         mut config: Config,
     ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
