@@ -17,6 +17,7 @@ use self::{
     ip_vote::IpVote,
     query_info::{QueryInfo, QueryType},
 };
+use enr::EnrKey;
 use crate::{
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
@@ -268,7 +269,7 @@ impl Default for NodesResponse {
     }
 }
 
-impl Service {
+impl<K> Service {
     /// Builds the `Service` main struct.
     ///
     /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
@@ -276,7 +277,7 @@ impl Service {
     /// mechanism.
     pub async fn spawn<P: ProtocolIdentity>(
         local_enr: Arc<RwLock<Enr>>,
-        enr_key: Arc<RwLock<CombinedKey>>,
+        enr_key: Arc<RwLock<K>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
         config: Config,
     ) -> Result<(oneshot::Sender<()>, mpsc::Sender<ServiceRequest>), std::io::Error> {
