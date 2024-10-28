@@ -467,13 +467,17 @@ impl Service {
                     }
                 }
                 connectivity_timeout = self.connectivity_state.poll() => {
-                    match connectivity_timeout {
+                    let updated_enr = match connectivity_timeout {
                         TimerFailure::V4 => {
                             // We have not received enough incoming connections in the required
                             // time. Remove our ENR advertisement.
                             info!(ip_version="v4", next_attempt_in=%DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT.as_secs(), "UDP Socket removed from ENR");
                             if let Err(error) = self.local_enr.write().remove_udp_socket(&self.enr_key.read()) {
                                 error!(?error, "Failed to update the ENR");
+                                false
+                            } else {
+                                // ENR was updated
+                                true
                             }
                         }
                         TimerFailure::V6 => {
@@ -482,8 +486,16 @@ impl Service {
                             info!(ip_version="v6", next_attempt_in=%DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT.as_secs(), "UDP Socket removed from ENR");
                             if let Err(error) = self.local_enr.write().remove_udp6_socket(&self.enr_key.read()) {
                                 error!(?error, "Failed to update the ENR");
+                                false
+                            } else {
+                                // ENR was updated
+                                true
                             }
                         }
+                    };
+                    if updated_enr {
+                        // Inform our known peers of our updated ENR
+                        self.ping_connected_peers();
                     }
                 }
             }
