@@ -32,6 +32,9 @@ use crate::{
     },
     rpc, Config, Enr, Event, IpMode,
 };
+use connectivity_state::{
+    ConnectivityState, TimerFailure, DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT,
+};
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
 use fnv::FnvHashMap;
@@ -50,6 +53,7 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
+mod connectivity_state;
 mod ip_vote;
 mod query_info;
 mod test;
@@ -171,52 +175,41 @@ use crate::discv5::PERMIT_BAN_LIST;
 pub struct Service {
     /// Configuration parameters.
     config: Config,
-
     /// The local ENR of the server.
     local_enr: Arc<RwLock<Enr>>,
-
     /// The key associated with the local ENR.
     enr_key: Arc<RwLock<CombinedKey>>,
-
     /// Storage of the ENR record for each node.
     kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
-
     /// All the iterative queries we are currently performing.
     queries: QueryPool<QueryInfo, NodeId, Enr>,
-
     /// RPC requests that have been sent and are awaiting a response. Some requests are linked to a
     /// query.
     active_requests: FnvHashMap<RequestId, ActiveRequest>,
-
     /// Keeps track of the number of responses received from a NODES response.
     active_nodes_responses: HashMap<RequestId, NodesResponse>,
-
     /// A map of votes nodes have made about our external IP address. We accept the majority.
     ip_votes: Option<IpVote>,
-
     /// The channel to send messages to the handler.
     handler_send: mpsc::UnboundedSender<HandlerIn>,
-
     /// The channel to receive messages from the handler.
     handler_recv: mpsc::Receiver<HandlerOut>,
-
     /// The exit channel to shutdown the handler.
     handler_exit: Option<oneshot::Sender<()>>,
-
     /// The channel of messages sent by the controlling discv5 wrapper.
     discv5_recv: mpsc::Receiver<ServiceRequest>,
-
     /// The exit channel for the service.
     exit: oneshot::Receiver<()>,
-
     /// A queue of peers that require regular ping to check connectivity.
     peers_to_ping: HashSetDelay<NodeId>,
-
     /// A channel that the service emits events on.
     event_stream: Option<mpsc::Sender<Event>>,
-
-    // Type of socket we are using
+    /// Type of socket we are using
     ip_mode: IpMode,
+    /// This stores information about whether we think we have open ports and if we are externally
+    /// contactable or not. This decides if we should update our ENR or set it to None, if we are
+    /// not contactable.
+    connectivity_state: ConnectivityState,
 }
 
 /// Active RPC request awaiting a response from the handler.
@@ -301,6 +294,8 @@ impl<K> Service {
         let (discv5_send, discv5_recv) = mpsc::channel(30);
         let (exit_send, exit) = oneshot::channel();
 
+        let connectivity_state = ConnectivityState::new(config.auto_nat_listen_duration);
+
         config
             .executor
             .clone()
@@ -323,6 +318,7 @@ impl<K> Service {
                     exit,
                     config: config.clone(),
                     ip_mode,
+                    connectivity_state,
                 };
 
                 info!(mode = ?service.ip_mode, "Discv5 Service started");
@@ -379,8 +375,8 @@ impl<K> Service {
                 Some(event) = self.handler_recv.recv() => {
                     match event {
                         HandlerOut::Established(enr, socket_addr, direction) => {
-                            self.send_event(Event::SessionEstablished(enr.clone(), socket_addr));
-                            self.inject_session_established(enr, direction);
+                            self.inject_session_established(enr.clone(), &socket_addr, direction);
+                            self.send_event(Event::SessionEstablished(enr, socket_addr));
                         }
                         HandlerOut::Request(node_address, request) => {
                                 self.handle_rpc_request(node_address, *request);
@@ -469,6 +465,38 @@ impl<K> Service {
 
                     if let Some(enr) = enr {
                         self.send_ping(enr, None);
+                    }
+                }
+                connectivity_timeout = self.connectivity_state.poll() => {
+                    let updated_enr = match connectivity_timeout {
+                        TimerFailure::V4 => {
+                            // We have not received enough incoming connections in the required
+                            // time. Remove our ENR advertisement.
+                            info!(ip_version="v4", next_attempt_in=%DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT.as_secs(), "UDP Socket removed from ENR");
+                            if let Err(error) = self.local_enr.write().remove_udp_socket(&self.enr_key.read()) {
+                                error!(?error, "Failed to update the ENR");
+                                false
+                            } else {
+                                // ENR was updated
+                                true
+                            }
+                        }
+                        TimerFailure::V6 => {
+                            // We have not received enough incoming connections in the required
+                            // time. Remove our ENR advertisement.
+                            info!(ip_version="v6", next_attempt_in=%DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT.as_secs(), "UDP Socket removed from ENR");
+                            if let Err(error) = self.local_enr.write().remove_udp6_socket(&self.enr_key.read()) {
+                                error!(?error, "Failed to update the ENR");
+                                false
+                            } else {
+                                // ENR was updated
+                                true
+                            }
+                        }
+                    };
+                    if updated_enr {
+                        // Inform our known peers of our updated ENR
+                        self.ping_connected_peers();
                     }
                 }
             }
@@ -657,276 +685,292 @@ impl<K> Service {
         // verify we know of the rpc_id
         let id = response.id.clone();
 
-        if let Some(mut active_request) = self.active_requests.remove(&id) {
-            debug!(
-                response = %response.body,
-                request = %active_request.request_body,
-                from = %active_request.contact,
-                "Received RPC response",
+        let Some(mut active_request) = self.active_requests.remove(&id) else {
+            warn!(%id, "Received an RPC response which doesn't match a request");
+            return;
+        };
+
+        debug!(
+            response = %response.body,
+            request = %active_request.request_body,
+            from = %active_request.contact,
+            "Received RPC response",
+        );
+        // Check that the responder matches the expected request
+
+        let expected_node_address = active_request.contact.node_address();
+        if expected_node_address != node_address {
+            debug_unreachable!("Handler returned a response not matching the used socket addr");
+            return error!(
+                expected = %expected_node_address,
+                received = %node_address,
+                request_id = %id,
+                "Received a response from an unexpected address",
             );
+        }
 
-            // Check that the responder matches the expected request
+        if !response.match_request(&active_request.request_body) {
+            warn!(
+                %node_address,
+                "Node gave an incorrect response type. Ignoring response"
+            );
+            return;
+        }
 
-            let expected_node_address = active_request.contact.node_address();
-            if expected_node_address != node_address {
-                debug_unreachable!("Handler returned a response not matching the used socket addr");
-                return error!(
-                    expected = %expected_node_address,
-                    received = %node_address,
-                    request_id = %id,
-                    "Received a response from an unexpected address",
-                );
-            }
+        let node_id = node_address.node_id;
 
-            if !response.match_request(&active_request.request_body) {
-                warn!(
-                    %node_address,
-                    "Node gave an incorrect response type. Ignoring response"
-                );
-                return;
-            }
+        match response.body {
+            ResponseBody::Nodes { total, mut nodes } => {
+                if total > MAX_NODES_RESPONSES as u64 {
+                    warn!(
+                        total,
+                        "NodesResponse has a total larger than {}, nodes will be truncated",
+                        MAX_NODES_RESPONSES
+                    );
+                }
 
-            let node_id = node_address.node_id;
+                // These are sanitized and ordered
+                let distances_requested = match &active_request.request_body {
+                    RequestBody::FindNode { distances } => distances,
+                    _ => unreachable!(),
+                };
 
-            match response.body {
-                ResponseBody::Nodes { total, mut nodes } => {
-                    if total > MAX_NODES_RESPONSES as u64 {
-                        warn!(
-                            total,
-                            "NodesResponse has a total larger than {}, nodes will be truncated",
-                            MAX_NODES_RESPONSES
-                        );
+                if let Some(CallbackResponse::Nodes(callback)) = active_request.callback.take() {
+                    if let Err(e) = callback.send(Ok(nodes)) {
+                        warn!(error = ?e, "Failed to send response in callback")
                     }
+                    return;
+                }
 
-                    // These are sanitized and ordered
-                    let distances_requested = match &active_request.request_body {
-                        RequestBody::FindNode { distances } => distances,
-                        _ => unreachable!(),
-                    };
+                // Filter out any nodes that are not of the correct distance
+                let peer_key: kbucket::Key<NodeId> = node_id.into();
 
-                    if let Some(CallbackResponse::Nodes(callback)) = active_request.callback.take()
+                // The distances we send are sanitized an ordered.
+                // We never send an ENR request in combination of other requests.
+                if distances_requested.len() == 1 && distances_requested[0] == 0 {
+                    // we requested an ENR update
+                    if nodes.len() > 1 {
+                        warn!(
+                            %node_address,
+                            "Peer returned more than one ENR for itself. Blacklisting",
+                        );
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                        nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
+                    }
+                } else {
+                    let before_len = nodes.len();
+                    nodes.retain(|enr| {
+                        peer_key
+                            .log2_distance(&enr.node_id().into())
+                            .map(|distance| distances_requested.contains(&distance))
+                            .unwrap_or_else(|| false)
+                    });
+
+                    if nodes.len() < before_len {
+                        // Peer sent invalid ENRs. Blacklist the Node
+                        let node_id = active_request.contact.node_id();
+                        let addr = active_request.contact.socket_addr();
+                        warn!(%node_id, %addr, "ENRs received of unsolicited distances. Blacklisting");
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
+                    }
+                }
+
+                // handle the case that there is more than one response
+                if total > 1 {
+                    let mut current_response =
+                        self.active_nodes_responses.remove(&id).unwrap_or_default();
+
+                    debug!(
+                        "Nodes Response: {} of {} received",
+                        current_response.count, total
+                    );
+                    // If there are more requests coming, store the nodes and wait for
+                    // another response
+                    // If we have already received all our required nodes, drop any extra
+                    // rpc messages.
+                    if current_response.received_nodes.len() < self.config.max_nodes_response
+                        && (current_response.count as u64) < total
+                        && current_response.count < MAX_NODES_RESPONSES
                     {
-                        if let Err(e) = callback.send(Ok(nodes)) {
-                            warn!(error = ?e, "Failed to send response in callback")
-                        }
+                        current_response.count += 1;
+
+                        current_response.received_nodes.append(&mut nodes);
+                        self.active_nodes_responses
+                            .insert(id.clone(), current_response);
+                        self.active_requests.insert(id, active_request);
                         return;
                     }
 
-                    // Filter out any nodes that are not of the correct distance
-                    let peer_key: kbucket::Key<NodeId> = node_id.into();
-
-                    // The distances we send are sanitized an ordered.
-                    // We never send an ENR request in combination of other requests.
-                    if distances_requested.len() == 1 && distances_requested[0] == 0 {
-                        // we requested an ENR update
-                        if nodes.len() > 1 {
-                            warn!(
-                                %node_address,
-                                "Peer returned more than one ENR for itself. Blacklisting",
-                            );
-                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                            nodes.retain(|enr| {
-                                peer_key.log2_distance(&enr.node_id().into()).is_none()
-                            });
-                        }
-                    } else {
-                        let before_len = nodes.len();
-                        nodes.retain(|enr| {
-                            peer_key
-                                .log2_distance(&enr.node_id().into())
-                                .map(|distance| distances_requested.contains(&distance))
-                                .unwrap_or_else(|| false)
-                        });
-
-                        if nodes.len() < before_len {
-                            // Peer sent invalid ENRs. Blacklist the Node
-                            let node_id = active_request.contact.node_id();
-                            let addr = active_request.contact.socket_addr();
-                            warn!(%node_id, %addr, "ENRs received of unsolicited distances. Blacklisting");
-                            let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                            PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                        }
-                    }
-
-                    // handle the case that there is more than one response
-                    if total > 1 {
-                        let mut current_response =
-                            self.active_nodes_responses.remove(&id).unwrap_or_default();
-
-                        debug!(
-                            "Nodes Response: {} of {} received",
-                            current_response.count, total
-                        );
-                        // If there are more requests coming, store the nodes and wait for
-                        // another response
-                        // If we have already received all our required nodes, drop any extra
-                        // rpc messages.
-                        if current_response.received_nodes.len() < self.config.max_nodes_response
-                            && (current_response.count as u64) < total
-                            && current_response.count < MAX_NODES_RESPONSES
-                        {
-                            current_response.count += 1;
-
-                            current_response.received_nodes.append(&mut nodes);
-                            self.active_nodes_responses
-                                .insert(id.clone(), current_response);
-                            self.active_requests.insert(id, active_request);
-                            return;
-                        }
-
-                        // have received all the Nodes responses we are willing to accept
-                        // ignore duplicates here as they will be handled when adding
-                        // to the DHT
-                        current_response.received_nodes.append(&mut nodes);
-                        nodes = current_response.received_nodes;
-                    }
-
-                    debug!(
-                        len = nodes.len(),
-                        total,
-                        from = %active_request.contact,
-                        "Received a nodes response",
-                    );
-                    // note: If a peer sends an initial NODES response with a total > 1 then
-                    // in a later response sends a response with a total of 1, all previous nodes
-                    // will be ignored.
-                    // ensure any mapping is removed in this rare case
-                    self.active_nodes_responses.remove(&id);
-
-                    self.discovered(&node_id, nodes, active_request.query_id);
+                    // have received all the Nodes responses we are willing to accept
+                    // ignore duplicates here as they will be handled when adding
+                    // to the DHT
+                    current_response.received_nodes.append(&mut nodes);
+                    nodes = current_response.received_nodes;
                 }
-                ResponseBody::Pong { enr_seq, ip, port } => {
-                    // Send the response to the user, if they are who asked
-                    if let Some(CallbackResponse::Pong(callback)) = active_request.callback {
-                        let response = Pong {
-                            enr_seq,
-                            ip,
-                            port: port.get(),
+
+                debug!(
+                    len = nodes.len(),
+                    total,
+                    from = %active_request.contact,
+                    "Received a nodes response",
+                );
+                // note: If a peer sends an initial NODES response with a total > 1 then
+                // in a later response sends a response with a total of 1, all previous nodes
+                // will be ignored.
+                // ensure any mapping is removed in this rare case
+                self.active_nodes_responses.remove(&id);
+
+                self.discovered(&node_id, nodes, active_request.query_id);
+            }
+            ResponseBody::Pong { enr_seq, ip, port } => {
+                // Send the response to the user, if they are who asked
+                if let Some(CallbackResponse::Pong(callback)) = active_request.callback {
+                    let response = Pong {
+                        enr_seq,
+                        ip,
+                        port: port.get(),
+                    };
+                    if let Err(e) = callback.send(Ok(response)) {
+                        warn!(error = ?e, "Failed to send callback response")
+                    };
+                    return;
+                }
+
+                let socket = SocketAddr::new(ip, port.get());
+                // Register the vote, this counts towards potentially updating the ENR for external
+                // advertisement
+                self.handle_ip_vote_from_pong(node_id, socket);
+
+                // check if we need to request a new ENR
+                if let Some(enr) = self.find_enr(&node_id) {
+                    if enr.seq() < enr_seq {
+                        // request an ENR update
+                        debug!(from = %active_request.contact, "Requesting an ENR update");
+                        let request_body = RequestBody::FindNode { distances: vec![0] };
+                        let active_request = ActiveRequest {
+                            contact: active_request.contact,
+                            request_body,
+                            query_id: None,
+                            callback: None,
                         };
+                        self.send_rpc_request(active_request);
+                    }
+                    // Only update the routing table if the new ENR is contactable
+                    if self.ip_mode.get_contactable_addr(&enr).is_some() {
+                        self.connection_updated(node_id, ConnectionStatus::PongReceived(enr));
+                    }
+                }
+            }
+            ResponseBody::Talk { response } => {
+                // Send the response to the user
+                match active_request.callback {
+                    Some(CallbackResponse::Talk(callback)) => {
                         if let Err(e) = callback.send(Ok(response)) {
                             warn!(error = ?e, "Failed to send callback response")
                         };
-                    } else {
-                        let socket = SocketAddr::new(ip, port.get());
-                        // perform ENR majority-based update if required.
+                    }
+                    _ => error!("Invalid callback for response"),
+                }
+            }
+        }
+    }
 
-                        // Only count votes that from peers we have contacted.
-                        let key: kbucket::Key<NodeId> = node_id.into();
-                        let should_count = matches!(
+    // We have received a PONG which informs us for our external socket. This function decides
+    // how we should handle this vote and whether or not to update our ENR. This is done on a
+    // majority-based voting system, see `IpVote` for more details.
+    fn handle_ip_vote_from_pong(&mut self, node_id: NodeId, socket: SocketAddr) {
+        // Check that we are in a state to handle any IP votes
+        if !self.connectivity_state.should_count_ip_vote(&socket) {
+            return;
+        }
+
+        // Only count votes that are from peers we have contacted.
+        let key: kbucket::Key<NodeId> = node_id.into();
+        let is_connected_and_outgoing = matches!(
                         self.kbuckets.write().entry(&key),
                         kbucket::Entry::Present(_, status)
                             if status.is_connected() && !status.is_incoming());
 
-                        if should_count | self.require_more_ip_votes(socket.is_ipv6()) {
-                            // get the advertised local addresses
-                            let (local_ip4_socket, local_ip6_socket) = {
-                                let local_enr = self.local_enr.read();
-                                (local_enr.udp4_socket(), local_enr.udp6_socket())
-                            };
+        // Check to make sure this is an outgoing peer vote, otherwise if we need the vote due to a
+        // lack of minority, we accept it.
+        if !(is_connected_and_outgoing | self.require_more_ip_votes(socket.is_ipv6())) {
+            return;
+        }
 
-                            if let Some(ref mut ip_votes) = self.ip_votes {
-                                ip_votes.insert(node_id, socket);
-                                let (maybe_ip4_majority, maybe_ip6_majority) = ip_votes.majority();
+        match socket {
+            SocketAddr::V4(_) => {
+                let local_ip4_socket = self.local_enr.read().udp4_socket();
+                if let Some(ip_votes) = self.ip_votes.as_mut() {
+                    ip_votes.insert(node_id, socket);
+                    let maybe_ip4_majority = ip_votes.majority().0;
 
-                                let new_ip4 = maybe_ip4_majority.and_then(|majority| {
-                                    if Some(majority) != local_ip4_socket {
-                                        Some(majority)
-                                    } else {
-                                        None
-                                    }
-                                });
-                                let new_ip6 = maybe_ip6_majority.and_then(|majority| {
-                                    if Some(majority) != local_ip6_socket {
-                                        Some(majority)
-                                    } else {
-                                        None
-                                    }
-                                });
+                    let new_ip4 = maybe_ip4_majority.and_then(|majority| {
+                        if Some(majority) != local_ip4_socket {
+                            Some(majority)
+                        } else {
+                            None
+                        }
+                    });
 
-                                if new_ip4.is_some() || new_ip6.is_some() {
-                                    let mut updated = false;
-
-                                    // Check if our advertised IPV6 address needs to be updated.
-                                    if let Some(new_ip6) = new_ip6 {
-                                        let new_ip6: SocketAddr = new_ip6.into();
-                                        let result = self
-                                            .local_enr
-                                            .write()
-                                            .set_udp_socket(new_ip6, &self.enr_key.read());
-                                        match result {
-                                            Ok(_) => {
-                                                updated = true;
-                                                info!(%new_ip6, "Local UDP ip6 socket updated");
-                                                self.send_event(Event::SocketUpdated(new_ip6));
-                                            }
-                                            Err(e) => {
-                                                warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
-                                            }
-                                        }
-                                    }
-                                    if let Some(new_ip4) = new_ip4 {
-                                        let new_ip4: SocketAddr = new_ip4.into();
-                                        let result = self
-                                            .local_enr
-                                            .write()
-                                            .set_udp_socket(new_ip4, &self.enr_key.read());
-                                        match result {
-                                            Ok(_) => {
-                                                updated = true;
-                                                info!(%new_ip4, "Local UDP socket updated");
-                                                self.send_event(Event::SocketUpdated(new_ip4));
-                                            }
-                                            Err(e) => {
-                                                warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
-                                            }
-                                        }
-                                    }
-                                    if updated {
-                                        self.ping_connected_peers();
-                                    }
-                                }
+                    // If we have a new ipv4 majority
+                    if let Some(new_ip4) = new_ip4 {
+                        let new_ip4: SocketAddr = new_ip4.into();
+                        let result = self
+                            .local_enr
+                            .write()
+                            .set_udp_socket(new_ip4, &self.enr_key.read());
+                        match result {
+                            Ok(_) => {
+                                // Inform the connectivity state that we have updated our IP advertisement
+                                self.connectivity_state.enr_socket_update(&new_ip4);
+                                info!(ip_version="v4", %new_ip4, "Local UDP socket updated");
+                                self.send_event(Event::SocketUpdated(new_ip4));
+                                self.ping_connected_peers();
+                            }
+                            Err(e) => {
+                                warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
                             }
                         }
-
-                        // check if we need to request a new ENR
-                        if let Some(enr) = self.find_enr(&node_id) {
-                            if enr.seq() < enr_seq {
-                                // request an ENR update
-                                debug!(from = %active_request.contact, "Requesting an ENR update");
-                                let request_body = RequestBody::FindNode { distances: vec![0] };
-                                let active_request = ActiveRequest {
-                                    contact: active_request.contact,
-                                    request_body,
-                                    query_id: None,
-                                    callback: None,
-                                };
-                                self.send_rpc_request(active_request);
-                            }
-                            // Only update the routing table if the new ENR is contactable
-                            if self.ip_mode.get_contactable_addr(&enr).is_some() {
-                                self.connection_updated(
-                                    node_id,
-                                    ConnectionStatus::PongReceived(enr),
-                                );
-                            }
-                        }
-                    }
-                }
-                ResponseBody::Talk { response } => {
-                    // Send the response to the user
-                    match active_request.callback {
-                        Some(CallbackResponse::Talk(callback)) => {
-                            if let Err(e) = callback.send(Ok(response)) {
-                                warn!(error = ?e, "Failed to send callback response")
-                            };
-                        }
-                        _ => error!("Invalid callback for response"),
                     }
                 }
             }
-        } else {
-            warn!(%id, "Received an RPC response which doesn't match a request");
+            SocketAddr::V6(_) => {
+                let local_ip6_socket = self.local_enr.read().udp6_socket();
+                if let Some(ip_votes) = self.ip_votes.as_mut() {
+                    ip_votes.insert(node_id, socket);
+                    let maybe_ip6_majority = ip_votes.majority().1;
+
+                    let new_ip6 = maybe_ip6_majority.and_then(|majority| {
+                        if Some(majority) != local_ip6_socket {
+                            Some(majority)
+                        } else {
+                            None
+                        }
+                    });
+                    // Check if our advertised IPV6 address needs to be updated.
+                    if let Some(new_ip6) = new_ip6 {
+                        let new_ip6: SocketAddr = new_ip6.into();
+                        let result = self
+                            .local_enr
+                            .write()
+                            .set_udp_socket(new_ip6, &self.enr_key.read());
+                        match result {
+                            Ok(_) => {
+                                // Inform the connectivity state that we have updated our IP advertisement
+                                self.connectivity_state.enr_socket_update(&new_ip6);
+                                info!(ip_version="v6", %new_ip6, "Local UDP socket updated");
+                                self.send_event(Event::SocketUpdated(new_ip6));
+                                self.ping_connected_peers();
+                            }
+                            Err(e) => {
+                                warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1429,7 +1473,18 @@ impl<K> Service {
 
     /// The equivalent of libp2p `inject_connected()` for a udp session. We have no stream, but a
     /// session key-pair has been negotiated.
-    fn inject_session_established(&mut self, enr: Enr, connection_direction: ConnectionDirection) {
+    fn inject_session_established(
+        &mut self,
+        enr: Enr,
+        socket: &SocketAddr,
+        connection_direction: ConnectionDirection,
+    ) {
+        // Inform the connectivity state that an incoming peer has connected to us. This could
+        // establish that our externally advertised address is contactable.
+        if matches!(connection_direction, ConnectionDirection::Incoming) {
+            self.connectivity_state.received_incoming_connection(socket);
+        }
+
         // Ignore sessions with non-contactable ENRs
         if self.ip_mode.get_contactable_addr(&enr).is_none() {
             return;
