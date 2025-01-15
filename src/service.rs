@@ -1504,7 +1504,7 @@ impl Service {
             _ => connection_direction,
         };
 
-        debug!(node = %node_id, %direction, "Session established with Node");
+        debug!(node = %node_id, %direction, %socket, "Session established with Node");
         self.connection_updated(node_id, ConnectionStatus::Connected(enr, direction));
     }
 
@@ -1616,13 +1616,16 @@ impl Service {
         let Some(ip_votes) = self.ip_votes.as_mut() else {
             return false;
         };
-        match (ip_votes.majority(), is_ipv6) {
+        // Here we check the number of non-expired votes, rather than the majority. As if the
+        // local router is not SNAT'd we can have many votes but none for the same port and we
+        // therefore do excessive pinging.
+        match (ip_votes.less_than_minimum(), is_ipv6) {
                     // We don't have enough ipv4 votes, but this is an IPv4-only node.
-                    ((None, Some(_)), false) |
+                    ((false, true), false) |
                     // We don't have enough ipv6 votes, but this is an IPv6 node.
-                    ((Some(_), None), true) |
+                    ((true, false), true) |
                     // We don't have enough ipv6 or ipv4 nodes, ping this peer.
-                    ((None, None), _,) => true,
+                    ((false, false), _,) => true,
                     // We have enough votes do nothing.
                     ((_, _), _,) =>  false,
             }

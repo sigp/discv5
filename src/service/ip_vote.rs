@@ -8,8 +8,10 @@ use std::{
 
 /// A collection of IP:Ports for our node reported from external peers.
 pub(crate) struct IpVote {
-    /// The current collection of IP:Port votes.
-    votes: HashMap<NodeId, (SocketAddr, Instant)>,
+    /// The current collection of IP:Port votes for ipv4.
+    ipv4_votes: HashMap<NodeId, (SocketAddrV4, Instant)>,
+    /// The current collection of IP:Port votes for ipv6.
+    ipv6_votes: HashMap<NodeId, (SocketAddrV6, Instant)>,
     /// The minimum number of votes required before an IP/PORT is accepted.
     minimum_threshold: usize,
     /// The time votes remain valid.
@@ -23,34 +25,61 @@ impl IpVote {
             panic!("Setting enr_peer_update_min to a value less than 2 will cause issues with discovery with peers behind NAT");
         }
         IpVote {
-            votes: HashMap::new(),
+            ipv4_votes: HashMap::new(),
+            ipv6_votes: HashMap::new(),
             minimum_threshold,
             vote_duration,
         }
     }
 
     pub fn insert(&mut self, key: NodeId, socket: impl Into<SocketAddr>) {
-        self.votes
-            .insert(key, (socket.into(), Instant::now() + self.vote_duration));
+        match socket.into() {
+            SocketAddr::V4(socket) => {
+                self.ipv4_votes
+                    .insert(key, (socket, Instant::now() + self.vote_duration));
+            }
+            SocketAddr::V6(socket) => {
+                self.ipv6_votes
+                    .insert(key, (socket, Instant::now() + self.vote_duration));
+            }
+        }
+    }
+
+    /// Returns true if we have more than the minimum number of non-expired votes for a given ip
+    /// version.
+    pub fn less_than_minimum(&mut self) -> (bool, bool) {
+        let instant = Instant::now();
+        self.ipv4_votes.retain(|_, v| v.1 > instant);
+        self.ipv6_votes.retain(|_, v| v.1 > instant);
+
+        (
+            self.ipv4_votes.len() >= self.minimum_threshold,
+            self.ipv6_votes.len() >= self.minimum_threshold,
+        )
     }
 
     /// Returns the majority `SocketAddr` if it exists. If there are not enough votes to meet the threshold this returns None.
     pub fn majority(&mut self) -> (Option<SocketAddrV4>, Option<SocketAddrV6>) {
         // remove any expired votes
         let instant = Instant::now();
-        self.votes.retain(|_, v| v.1 > instant);
+        self.ipv4_votes.retain(|_, v| v.1 > instant);
+        self.ipv6_votes.retain(|_, v| v.1 > instant);
 
-        // count votes, take majority
-        let mut ip4_count: FnvHashMap<SocketAddrV4, usize> = FnvHashMap::default();
-        let mut ip6_count: FnvHashMap<SocketAddrV6, usize> = FnvHashMap::default();
-        for (socket, _) in self.votes.values() {
-            // NOTE: here we depend on addresses being already cleaned up. No mapped or compat
-            // addresses should be present. This is done in the codec.
-            match socket {
-                SocketAddr::V4(socket) => *ip4_count.entry(*socket).or_insert_with(|| 0) += 1,
-                SocketAddr::V6(socket) => *ip6_count.entry(*socket).or_insert_with(|| 0) += 1,
-            }
-        }
+        // Count all the votes into a hashmap containing (socket, count).
+        let ip4_count =
+            self.ipv4_votes
+                .values()
+                .fold(FnvHashMap::default(), |mut counts, (socket_vote, _)| {
+                    *counts.entry(*socket_vote).or_default() += 1;
+                    counts
+                });
+        let ip6_count =
+            self.ipv6_votes
+                .values()
+                .fold(FnvHashMap::default(), |mut counts, (socket_vote, _)| {
+                    *counts.entry(*socket_vote).or_default() += 1;
+                    counts
+                });
 
         // find the maximum socket addr
         let ip4_majority = majority(ip4_count.into_iter(), &self.minimum_threshold);
