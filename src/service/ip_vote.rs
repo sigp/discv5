@@ -2,6 +2,7 @@ use enr::NodeId;
 use fnv::FnvHashMap;
 use std::{
     collections::HashMap,
+    hash::Hash,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     time::{Duration, Instant},
 };
@@ -58,40 +59,47 @@ impl IpVote {
         )
     }
 
+    /// Filter the stale votes and return the majority `SocketAddr` if it exists.
+    /// If there are not enough votes to meet the threshold this returns None.
+    fn filter_stale_find_most_frequent<K: Copy + Eq + Hash>(
+        &self,
+        votes: &HashMap<NodeId, (K, Instant)>,
+    ) -> (HashMap<NodeId, (K, Instant)>, Option<K>) {
+        let mut updated = HashMap::default();
+        let mut counter: FnvHashMap<K, usize> = FnvHashMap::default();
+        let mut max: Option<(K, usize)> = None;
+        let now = Instant::now();
+
+        for (node_id, (vote, instant)) in votes {
+            // Discard stale votes.
+            if instant <= &now {
+                continue;
+            }
+            updated.insert(*node_id, (*vote, *instant));
+
+            let count = counter.entry(*vote).or_default();
+            *count += 1;
+            let current_max = max.map(|(_v, m)| m).unwrap_or_default();
+            if *count >= current_max && *count >= self.minimum_threshold {
+                max = Some((*vote, *count));
+            }
+        }
+
+        (updated, max.map(|m| m.0))
+    }
+
     /// Returns the majority `SocketAddr` if it exists. If there are not enough votes to meet the threshold this returns None.
     pub fn majority(&mut self) -> (Option<SocketAddrV4>, Option<SocketAddrV6>) {
-        // remove any expired votes
-        let instant = Instant::now();
-        self.ipv4_votes.retain(|_, v| v.1 > instant);
-        self.ipv6_votes.retain(|_, v| v.1 > instant);
+        let (updated_ipv4_votes, ipv4_majority) =
+            self.filter_stale_find_most_frequent::<SocketAddrV4>(&self.ipv4_votes);
+        self.ipv4_votes = updated_ipv4_votes;
 
-        // Count all the votes into a hashmap containing (socket, count).
-        let ip4_count =
-            self.ipv4_votes
-                .values()
-                .fold(FnvHashMap::default(), |mut counts, (socket_vote, _)| {
-                    *counts.entry(*socket_vote).or_default() += 1;
-                    counts
-                });
-        let ip6_count =
-            self.ipv6_votes
-                .values()
-                .fold(FnvHashMap::default(), |mut counts, (socket_vote, _)| {
-                    *counts.entry(*socket_vote).or_default() += 1;
-                    counts
-                });
+        let (updated_ipv6_votes, ipv6_majority) =
+            self.filter_stale_find_most_frequent::<SocketAddrV6>(&self.ipv6_votes);
+        self.ipv6_votes = updated_ipv6_votes;
 
-        // find the maximum socket addr
-        let ip4_majority = majority(ip4_count.into_iter(), &self.minimum_threshold);
-        let ip6_majority = majority(ip6_count.into_iter(), &self.minimum_threshold);
-        (ip4_majority, ip6_majority)
+        (ipv4_majority, ipv6_majority)
     }
-}
-
-fn majority<K>(iter: impl Iterator<Item = (K, usize)>, threshold: &usize) -> Option<K> {
-    iter.filter(|(_k, count)| count >= threshold)
-        .max_by_key(|(_k, count)| *count)
-        .map(|(k, _count)| k)
 }
 
 #[cfg(test)]
