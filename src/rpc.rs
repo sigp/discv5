@@ -155,8 +155,8 @@ impl Request {
             RequestBody::Talk { protocol, request } => {
                 let mut list = Vec::<u8>::new();
                 id.as_bytes().encode(&mut list);
-                protocol.encode(&mut list);
-                request.encode(&mut list);
+                protocol.as_slice().encode(&mut list);
+                request.as_slice().encode(&mut list);
                 let header = Header {
                     list: true,
                     payload_length: list.len(),
@@ -479,8 +479,8 @@ impl Message {
             }
             5 => {
                 // Talk Request
-                let protocol = Vec::<u8>::decode(payload)?;
-                let request = Vec::<u8>::decode(payload)?;
+                let protocol = Bytes::decode(payload)?.to_vec();
+                let request = Bytes::decode(payload)?.to_vec();
                 if !payload.is_empty() {
                     return Err(DecoderError::Custom("Payload should be empty"));
                 }
@@ -811,5 +811,51 @@ mod tests {
 
         let data6 = [6, 193, 128, 128];
         Message::decode(&data6).expect_err("should reject extra data");
+    }
+
+    #[test]
+    fn test_encode_request_talk_request() {
+        // reference input
+        let id = RequestId(vec![113, 236, 255, 66, 31, 191, 221, 86]);
+        let message = Message::Request(Request {
+            id,
+            body: RequestBody::Talk {
+                protocol: hex::decode("757470").unwrap(),
+                request: hex::decode("0100a028839e1549000003ef001000007619dde7").unwrap(),
+            },
+        });
+
+        // expected hex output
+        let expected_output =
+            hex::decode("05e28871ecff421fbfdd5683757470940100a028839e1549000003ef001000007619dde7")
+                .unwrap();
+        dbg!(hex::encode(message.clone().encode()));
+
+        let encoded_message = message.clone().encode();
+        assert_eq!(encoded_message.clone(), expected_output);
+        assert_eq!(Message::decode(&encoded_message).unwrap(), message);
+    }
+
+    #[test]
+    fn test_encode_request_talk_response() {
+        // reference input
+        let id = RequestId(vec![113, 236, 255, 66, 31, 191, 221, 86]);
+        let message = Message::Response(Response {
+            id,
+            body: ResponseBody::Talk {
+                response: hex::decode("0100a028839e1549000003ef001000007619dde7").unwrap(),
+            },
+        });
+
+        // expected hex output
+        let expected_output =
+            hex::decode("06de8871ecff421fbfdd56940100a028839e1549000003ef001000007619dde7")
+                .unwrap();
+
+        dbg!(hex::encode(message.clone().encode()));
+
+        let encoded_message = message.clone().encode();
+        assert_eq!(encoded_message.clone(), expected_output);
+        assert_eq!(Message::decode(&encoded_message).unwrap(), message);
     }
 }
