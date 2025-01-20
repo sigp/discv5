@@ -48,7 +48,7 @@ impl IpVote {
 
     /// Returns true if we have more than the minimum number of non-expired votes for a given ip
     /// version.
-    pub fn less_than_minimum(&mut self) -> (bool, bool) {
+    pub fn has_minimum_threshold(&mut self) -> (bool, bool) {
         let instant = Instant::now();
         self.ipv4_votes.retain(|_, v| v.1 > instant);
         self.ipv6_votes.retain(|_, v| v.1 > instant);
@@ -88,7 +88,7 @@ impl IpVote {
         (updated, max.map(|m| m.0))
     }
 
-    /// Returns the majority `SocketAddr` if it exists. If there are not enough votes to meet the threshold this returns None.
+    /// Returns the majority `SocketAddr`'s of both IPv4 and IPv6 if they exist. If there are not enough votes to meet the threshold this returns None for each stack.
     pub fn majority(&mut self) -> (Option<SocketAddrV4>, Option<SocketAddrV6>) {
         let (updated_ipv4_votes, ipv4_majority) =
             self.filter_stale_find_most_frequent::<SocketAddrV4>(&self.ipv4_votes);

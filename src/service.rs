@@ -1619,7 +1619,7 @@ impl Service {
         // Here we check the number of non-expired votes, rather than the majority. As if the
         // local router is not SNAT'd we can have many votes but none for the same port and we
         // therefore do excessive pinging.
-        match (ip_votes.less_than_minimum(), is_ipv6) {
+        match (ip_votes.has_minimum_threshold(), is_ipv6) {
                     // We don't have enough ipv4 votes, but this is an IPv4-only node.
                     ((false, true), false) |
                     // We don't have enough ipv6 votes, but this is an IPv6 node.
