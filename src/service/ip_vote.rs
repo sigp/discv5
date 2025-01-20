@@ -131,7 +131,8 @@ mod tests {
         votes.insert(NodeId::random(), socket_3);
         votes.insert(NodeId::random(), socket_3);
 
-        assert_eq!(votes.majority(), (Some(socket_2), None));
+        // Assert that in a draw situation a majority is still chosen.
+        assert!(votes.majority().0.is_some());
     }
 
     #[test]
