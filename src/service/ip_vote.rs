@@ -62,8 +62,8 @@ impl IpVote {
     /// Filter the stale votes and return the majority `SocketAddr` if it exists.
     /// If there are not enough votes to meet the threshold this returns None.
     fn filter_stale_find_most_frequent<K: Copy + Eq + Hash>(
-        &self,
         votes: &HashMap<NodeId, (K, Instant)>,
+        minimum_threshold: usize,
     ) -> (HashMap<NodeId, (K, Instant)>, Option<K>) {
         let mut updated = HashMap::default();
         let mut counter: FnvHashMap<K, usize> = FnvHashMap::default();
@@ -80,7 +80,7 @@ impl IpVote {
             let count = counter.entry(*vote).or_default();
             *count += 1;
             let current_max = max.map(|(_v, m)| m).unwrap_or_default();
-            if *count >= current_max && *count >= self.minimum_threshold {
+            if *count >= current_max && *count >= minimum_threshold {
                 max = Some((*vote, *count));
             }
         }
@@ -90,12 +90,18 @@ impl IpVote {
 
     /// Returns the majority `SocketAddr`'s of both IPv4 and IPv6 if they exist. If there are not enough votes to meet the threshold this returns None for each stack.
     pub fn majority(&mut self) -> (Option<SocketAddrV4>, Option<SocketAddrV6>) {
-        let (updated_ipv4_votes, ipv4_majority) =
-            self.filter_stale_find_most_frequent::<SocketAddrV4>(&self.ipv4_votes);
+        let (updated_ipv4_votes, ipv4_majority) = Self::filter_stale_find_most_frequent::<
+            SocketAddrV4,
+        >(
+            &self.ipv4_votes, self.minimum_threshold
+        );
         self.ipv4_votes = updated_ipv4_votes;
 
-        let (updated_ipv6_votes, ipv6_majority) =
-            self.filter_stale_find_most_frequent::<SocketAddrV6>(&self.ipv6_votes);
+        let (updated_ipv6_votes, ipv6_majority) = Self::filter_stale_find_most_frequent::<
+            SocketAddrV6,
+        >(
+            &self.ipv6_votes, self.minimum_threshold
+        );
         self.ipv6_votes = updated_ipv6_votes;
 
         (ipv4_majority, ipv6_majority)
