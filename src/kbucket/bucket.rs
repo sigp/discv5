@@ -410,7 +410,7 @@ where
             // Adjust `first_connected_pos` accordingly.
             match old_status.state {
                 ConnectionState::Connected => {
-                    if (self.first_connected_pos == Some(pos.0)) && pos.0 == self.nodes.len() {
+                    if self.first_connected_pos == Some(pos.0) && pos.0 == self.nodes.len() {
                         // It was the last connected node.
                         self.first_connected_pos = None
                     }
