@@ -27,7 +27,10 @@ pub struct NonContactable {
 
 impl NodeContact {
     pub fn node_id(&self) -> NodeId {
-        self.public_key.clone().into()
+        match self.enr {
+            Some(ref enr) => enr.node_id(),
+            None => self.public_key.clone().into(),
+        }
     }
 
     pub fn seq_no(&self) -> Option<u64> {
