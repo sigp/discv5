@@ -23,7 +23,7 @@ use crate::{
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Config, DefaultProtocolId, Enr, IpMode,
 };
-use enr::{CombinedKey, EnrKey, Error as EnrError, NodeId};
+use enr::{CombinedKey, CombinedPublicKey ,EnrKey, Error as EnrError, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
@@ -82,9 +82,10 @@ pub enum Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
-pub struct Discv5<P = DefaultProtocolId>
+pub struct Discv5<P = DefaultProtocolId, K = CombinedKey> 
 where
     P: ProtocolIdentity,
+    K: EnrKey<PublicKey = CombinedPublicKey>,
 {
     config: Config,
     /// The channel to make requests from the main service.
@@ -96,17 +97,20 @@ where
     /// The local ENR of the server.
     local_enr: Arc<RwLock<Enr>>,
     /// The key associated with the local ENR, required for updating the local ENR.
-    enr_key: Arc<RwLock<CombinedKey>>,
+    enr_key: Arc<RwLock<K>>,
     // Type of socket we are using
     ip_mode: IpMode,
     /// Phantom for the protocol id.
     _phantom: PhantomData<P>,
 }
-
-impl<P: ProtocolIdentity> Discv5<P> {
+impl<P, K> Discv5<P, K>
+where
+    P: ProtocolIdentity,
+    K: EnrKey<PublicKey = CombinedPublicKey>,
+     {
     pub fn new(
         local_enr: Enr,
-        enr_key: CombinedKey,
+        enr_key: K,
         mut config: Config,
     ) -> Result<Self, &'static str> {
         // ensure the keypair matches the one that signed the enr.
@@ -739,7 +743,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 }
 
-impl<P: ProtocolIdentity> Drop for Discv5<P> {
+impl<P: ProtocolIdentity, K:EnrKey<PublicKey = CombinedPublicKey>> Drop for Discv5<P,K> {
     fn drop(&mut self) {
         self.shutdown();
     }
