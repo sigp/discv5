@@ -98,6 +98,10 @@ pub enum ResponseBody {
         /// Our external UDP port as observed by the responder.
         port: NonZeroU16,
     },
+    NodesRaw {
+        total: u64,
+        nodes: Vec<Vec<u8>>,
+    },
     /// A NODES response.
     Nodes {
         /// The total number of responses that make up this response.
@@ -174,6 +178,7 @@ impl Response {
         match &self.body {
             ResponseBody::Pong { .. } => 2,
             ResponseBody::Nodes { .. } => 4,
+            ResponseBody::NodesRaw { .. } => 4,
             ResponseBody::Talk { .. } => 6,
         }
     }
@@ -183,6 +188,9 @@ impl Response {
         match self.body {
             ResponseBody::Pong { .. } => matches!(req, RequestBody::Ping { .. }),
             ResponseBody::Nodes { .. } => {
+                matches!(req, RequestBody::FindNode { .. })
+            }
+            ResponseBody::NodesRaw { .. } => {
                 matches!(req, RequestBody::FindNode { .. })
             }
             ResponseBody::Talk { .. } => matches!(req, RequestBody::Talk { .. }),
@@ -214,6 +222,36 @@ impl Response {
                 buf
             }
             ResponseBody::Nodes { total, nodes } => {
+                let mut list = Vec::<u8>::new();
+                id.as_bytes().encode(&mut list);
+                total.encode(&mut list);
+                if !nodes.is_empty() {
+                    let mut out = BytesMut::new();
+                    for node in nodes.clone() {
+                        node.encode(&mut out);
+                    }
+                    let tmp_header = Header {
+                        list: true,
+                        payload_length: out.len(),
+                    };
+                    let mut tmp_out = BytesMut::new();
+                    tmp_header.encode(&mut tmp_out);
+                    tmp_out.extend_from_slice(&out);
+                    list.extend_from_slice(&tmp_out);
+                } else {
+                    let mut out = BytesMut::new();
+                    nodes.encode(&mut out);
+                    list.extend_from_slice(&out);
+                }
+                let header = Header {
+                    list: true,
+                    payload_length: list.len(),
+                };
+                header.encode(&mut buf);
+                buf.extend_from_slice(&list);
+                buf
+            }
+            ResponseBody::NodesRaw { total, nodes } => {
                 let mut list = Vec::<u8>::new();
                 id.as_bytes().encode(&mut list);
                 total.encode(&mut list);
@@ -294,6 +332,20 @@ impl std::fmt::Display for ResponseBody {
                         write!(f, ", {id}")?;
                     } else {
                         write!(f, "{id}")?;
+                    }
+                    first = false;
+                }
+
+                write!(f, "]")
+            }
+            ResponseBody::NodesRaw { total, nodes } => {
+                write!(f, "NODES: total: {total}, Nodes: [")?;
+                let mut first = true;
+                for id in nodes {
+                    if !first {
+                        write!(f, ", {}", hex::encode(id))?;
+                    } else {
+                        write!(f, "{}", hex::encode(id))?;
                     }
                     first = false;
                 }

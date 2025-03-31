@@ -722,6 +722,7 @@ impl Service {
         let node_id = node_address.node_id;
 
         match response.body {
+            ResponseBody::NodesRaw { .. } => {} // Not real
             ResponseBody::Nodes { total, mut nodes } => {
                 if total > MAX_NODES_RESPONSES as u64 {
                     warn!(

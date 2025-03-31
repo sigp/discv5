@@ -104,6 +104,8 @@ pub enum HandlerIn {
     /// The `WhoAreYouRef` is sent out in the `HandlerOut::WhoAreYou` event and should
     /// be returned here to submit the application's response.
     WhoAreYou(WhoAreYouRef, Option<Enr>),
+    /// Requests without tracking responses which ignore the pending queue.
+    RequestNoPending(NodeContact, Box<Request>),
 }
 
 /// Messages sent between a node on the network and `Handler`.
@@ -339,6 +341,13 @@ impl Handler {
                         }
                         HandlerIn::Response(dst, response) => self.send_response(dst, *response).await,
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
+                        HandlerIn::RequestNoPending(contact, request) => {
+                            let Request { id, body: request } = *request;
+                           if let Err(request_error) =  self.send_request_no_pending(contact, HandlerReqId::External(id.clone()), request).await {
+                               // If the sending failed report to the application
+                               let _ = self.service_send.send(HandlerOut::RequestFailed(id, request_error)).await;
+                           }
+                        }
                     }
                 }
                 Some(inbound_packet) = self.socket.recv.recv() => {
@@ -528,6 +537,48 @@ impl Handler {
         self.send(node_address.clone(), packet).await;
 
         self.active_requests.insert(node_address, call);
+        Ok(())
+    }
+
+    // Sends a request to a node if a session is established, otherwise revert to to normal send
+    // request. This unreliable sends which do not timeout or error.
+    async fn send_request_no_pending(
+        &mut self,
+        contact: NodeContact,
+        request_id: HandlerReqId,
+        request: RequestBody,
+    ) -> Result<(), RequestError> {
+        let node_address = contact.node_address();
+
+        if self.listen_sockets.contains(&node_address.socket_addr) {
+            debug!("Filtered request to self");
+            return Err(RequestError::SelfRequest);
+        }
+
+        let packet = {
+            if let Some(session) = self.sessions.get_mut(&node_address) {
+                let request = match &request_id {
+                    HandlerReqId::Internal(id) | HandlerReqId::External(id) => Request {
+                        id: id.clone(),
+                        body: request.clone(),
+                    },
+                };
+                // Encrypt the message and send
+                session
+                    .encrypt_message(
+                        self.node_id,
+                        &request.clone().encode(),
+                        self.protocol_identity,
+                    )
+                    .map_err(|e| RequestError::EncryptionFailed(format!("{:?}", e)))?
+            } else {
+                return self.send_request(contact, request_id, request).await;
+            }
+        };
+
+        // let the filter know we are expecting a response
+        self.add_expected_response(node_address.socket_addr);
+        self.send(node_address.clone(), packet).await;
         Ok(())
     }
 
