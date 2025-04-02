@@ -416,6 +416,9 @@ impl Service {
                             }
                             self.send_event(Event::UnverifiableEnr{enr, socket, node_id});
                         }
+                        HandlerOut::ExpiredSessions(expired_sessions) => {
+                            self.send_event(Event::SessionsExpired(expired_sessions));
+                        }
                     }
                 }
                 event = Service::bucket_maintenance_poll(&self.kbuckets) => {
