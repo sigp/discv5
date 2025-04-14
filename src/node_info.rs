@@ -115,9 +115,10 @@ impl NodeContact {
         let udp_port = udp_port.ok_or("A UDP port must be specified in the multiaddr")?;
         let ip_addr = ip_addr.ok_or("An IP address must be specified in the multiaddr")?;
         let peer_id = p2p.ok_or("The p2p protocol must be specified in the multiaddr")?;
+        let multihash = peer_id.as_ref();
 
         let public_key: CombinedPublicKey = {
-            let pk = PublicKey::try_decode_protobuf(&peer_id.to_bytes()[2..])
+            let pk = PublicKey::try_decode_protobuf(multihash.digest())
                 .map_err(|_| "Invalid public key")?;
             match pk.key_type() {
                 KeyType::Secp256k1 => enr::k256::ecdsa::VerifyingKey::from_sec1_bytes(
