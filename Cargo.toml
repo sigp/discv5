@@ -16,7 +16,7 @@ name = "discv5"
 path = "src/lib.rs"
 
 [[bin]]
-name = "discv5-server"
+name = "discv5"
 path = "src/bin/main.rs"
 
 [dependencies]
