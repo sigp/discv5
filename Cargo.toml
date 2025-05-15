@@ -11,6 +11,14 @@ keywords = ["peer-to-peer", "libp2p", "networking", "discovery", "discv5"]
 categories = ["network-programming", "asynchronous"]
 exclude = [".gitignore", ".github/*"]
 
+[lib]
+name = "discv5"
+path = "src/lib.rs"
+
+[[bin]]
+name = "discv5-server"
+path = "src/bin/main.rs"
+
 [dependencies]
 enr = { version = "0.13.0", features = [
   "k256",
@@ -44,6 +52,13 @@ lru = "0.12"
 hashlink = "0.9"
 delay_map = "0.4"
 more-asserts = "0.3"
+
+# bin
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+cidr = "0.3.1"
+if-addrs = "0.13"
+eyre = "0.6.12"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }

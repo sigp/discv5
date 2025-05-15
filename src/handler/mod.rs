@@ -778,6 +778,8 @@ impl Handler {
     /// Verifies a Node ENR to it's observed address. If it fails, any associated session is also
     /// considered failed. If it succeeds, we notify the application.
     fn verify_enr(&self, enr: &Enr, node_address: &NodeAddress) -> bool {
+        // TODO Include cidr range acceptance for socket_addr
+
         // If the ENR does not match the observed IP addresses, we consider the Session
         // failed.
         enr.node_id() == node_address.node_id
