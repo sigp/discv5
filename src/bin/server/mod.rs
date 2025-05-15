@@ -4,7 +4,9 @@ use std::error::Error;
 use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, warn};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tracing::{error, info, warn};
 
 use crate::key;
 
@@ -15,6 +17,8 @@ pub mod stats;
 pub async fn run(args: ServerArgs) -> Result<(), Box<dyn Error>> {
     let key = key::read_secp256k1_key_from_file(&args.secp256k1_key_file)?;
     let enr = enr::build(&args, &key)?;
+
+    let enr_str: &'static str = Box::leak(enr.to_string().into_boxed_str());
 
     info!("Node Id: {}", enr.node_id());
     if enr.udp4_socket().is_some() {
@@ -59,7 +63,7 @@ pub async fn run(args: ServerArgs) -> Result<(), Box<dyn Error>> {
     }
 
     info!(
-        "Server listening on {:?}:{:?}",
+        "Discovery server listening on {:?}:{:?}",
         args.listen_ipv4, args.listen_port
     );
     let mut discv5: Discv5<DefaultProtocolId> = Discv5::new(
@@ -75,10 +79,57 @@ pub async fn run(args: ServerArgs) -> Result<(), Box<dyn Error>> {
         .start()
         .await
         .expect("Should be able to start the server");
+
     let server_ref = Arc::new(discv5);
+
     stats::run(Arc::clone(&server_ref), None, 100);
 
-    let mut event_stream = server_ref.event_stream().await.unwrap();
+    tokio::spawn(async move {
+        listen_events(Arc::clone(&server_ref)).await;
+    });
+
+    let addr = format!("{}:{}", args.rpc_addr, args.rpc_port);
+    let listener = TcpListener::bind(&addr)
+        .await
+        .expect("could not bind ENR echo server");
+    info!(
+        "ENR echo server running on {:?}:{:?}",
+        args.rpc_addr, args.rpc_port
+    );
+    loop {
+        if let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = vec![0; 1024];
+
+                match socket.read(&mut buf).await {
+                    Ok(n) if n > 0 => {
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\n\
+                                Content-Type: text/plain\r\n\
+                                Content-Length: {}\r\n\
+                                Connection: close\r\n\
+                                \r\n\
+                                {}",
+                            enr_str.len(),
+                            enr_str
+                        );
+
+                        if let Err(e) = socket.write_all(response.as_bytes()).await {
+                            error!("Failed to write to socket: {}", e);
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("Failed to read from socket: {}", e);
+                    }
+                }
+            });
+        }
+    }
+}
+
+async fn listen_events(server: Arc<Discv5>) {
+    let mut event_stream = server.event_stream().await.unwrap();
     loop {
         match event_stream.recv().await {
             Some(Event::SocketUpdated(addr)) => {
