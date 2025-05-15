@@ -1,26 +1,21 @@
-use std::net::Ipv4Addr;
-
 use discv5::enr;
 
-use super::command::ServerCommand;
+use super::args::ServerArgs;
 
 pub fn build(
-    server: &ServerCommand,
+    args: &ServerArgs,
     enr_key: &enr::CombinedKey,
 ) -> eyre::Result<enr::Enr<enr::CombinedKey>> {
     let mut builder = enr::Builder::default();
 
-    let listen_addr = server.listen_ipv4.parse::<Ipv4Addr>()?;
-    let listen_port = server.listen_port;
-    builder.ip4(listen_addr).udp4(listen_port);
+    builder.ip4(args.listen_ipv4).udp4(args.listen_port);
 
-    if let Some(port) = &server.advertise_port {
+    if let Some(port) = &args.advertise_port {
         builder.udp4(*port);
     }
 
-    if let Some(addr) = &server.advertise_ipv4 {
-        let advertise_ip = addr.parse::<Ipv4Addr>()?;
-        builder.ip4(advertise_ip);
+    if let Some(advertise_ipv4) = &args.advertise_ipv4 {
+        builder.ip4(*advertise_ipv4);
     }
 
     let enr = builder.build(enr_key)?;

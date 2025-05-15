@@ -6,7 +6,7 @@ use std::error::Error;
 
 use clap::{Parser, Subcommand};
 use key::KeyCommand;
-use server::command::ServerCommand;
+use server::args::ServerArgs;
 use tracing::Level;
 
 /// CLI tool for discv5 node and secp256k1 key management
@@ -24,7 +24,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run the discv5 server
-    Server(ServerCommand),
+    Server(ServerArgs),
 
     /// Manage secp256k1 keys
     Key(KeyCommand),
