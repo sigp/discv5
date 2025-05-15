@@ -36,6 +36,7 @@ use crate::{
     socket::{FilterConfig, Socket},
     Enr,
 };
+use cidr::Ipv4Cidr;
 use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
 use futures::prelude::*;
@@ -220,6 +221,8 @@ pub struct Handler {
     socket: Socket,
     /// Exit channel to shutdown the handler.
     exit: oneshot::Receiver<()>,
+    /// Permitted discovery table additions cidr for non-advertise-ip matching source addresses
+    allowed_cidr: Option<Ipv4Cidr>,
 }
 
 type HandlerReturn = (
@@ -282,7 +285,6 @@ impl Handler {
 
         // Attempt to bind to the socket before spinning up the send/recv tasks.
         let socket = Socket::new::<P>(socket_config).await?;
-
         config
             .executor
             .clone()
@@ -306,6 +308,7 @@ impl Handler {
                     listen_sockets,
                     socket,
                     exit,
+                    allowed_cidr: config.allowed_cidr,
                 };
                 debug!("Handler Starting");
                 handler.start::<P>().await;
@@ -778,18 +781,22 @@ impl Handler {
     /// Verifies a Node ENR to it's observed address. If it fails, any associated session is also
     /// considered failed. If it succeeds, we notify the application.
     fn verify_enr(&self, enr: &Enr, node_address: &NodeAddress) -> bool {
-        // TODO Include cidr range acceptance for socket_addr
-
         // If the ENR does not match the observed IP addresses, we consider the Session
         // failed.
         enr.node_id() == node_address.node_id
             && match node_address.socket_addr {
-                SocketAddr::V4(socket_addr) => enr
-                    .udp4_socket()
-                    .map_or(true, |advertized_addr| socket_addr == advertized_addr),
+                SocketAddr::V4(socket_addr) => enr.udp4_socket().map_or(true, |advertised_addr| {
+                    // If we have provided a cidr, treat the advertised address from a node
+                    // within that range as verified or check that the source matches the
+                    // advertised
+                    match self.allowed_cidr {
+                        Some(cidr) if cidr.contains(socket_addr.ip()) => true,
+                        _ => socket_addr == advertised_addr,
+                    }
+                }),
                 SocketAddr::V6(socket_addr) => enr
                     .udp6_socket()
-                    .map_or(true, |advertized_addr| socket_addr == advertized_addr),
+                    .map_or(true, |advertised_addr| socket_addr == advertised_addr),
             }
     }
 

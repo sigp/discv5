@@ -26,4 +26,8 @@ pub struct ServerArgs {
     /// Specifies the UDP port of the ENR record. Not specifying this results in an ENR with no UDP field.
     #[clap(long = "advertise-port")]
     pub advertise_port: Option<u16>,
+
+    /// Specifies an ipv4 network range of addresses, e.g 10.42.0.0/15 is 10.42.0.0 - 10.43.255.255. This allows peers which are advertising on a public IP but within the same subnet to be added to the discovery table
+    #[clap(long = "cidr")]
+    pub cidr: Option<cidr::Ipv4Cidr>,
 }

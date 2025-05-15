@@ -1,7 +1,9 @@
 use args::ServerArgs;
 use discv5::{ConfigBuilder, DefaultProtocolId, Discv5, Event, ListenConfig};
+use std::error::Error;
+use std::net::UdpSocket;
+use std::sync::Arc;
 use std::time::Duration;
-use std::{error::Error, sync::Arc};
 use tracing::{info, warn};
 
 use crate::key;
@@ -31,13 +33,43 @@ pub async fn run(args: ServerArgs) -> Result<(), Box<dyn Error>> {
         port: args.listen_port,
     };
 
-    info!("Server listening on {:?}", listen_config);
-    let config = ConfigBuilder::new(listen_config)
-        .request_timeout(Duration::from_secs(3))
-        .vote_duration(Duration::from_secs(120))
-        .build();
+    let mut config = ConfigBuilder::new(listen_config);
 
-    let mut discv5: Discv5<DefaultProtocolId> = Discv5::new(enr, key, config)?;
+    if let Some(cidr) = &args.cidr {
+        let socket = UdpSocket::bind("0.0.0.0:0")?;
+        socket.connect("8.8.8.8:80")?;
+        let local_addr = socket.local_addr()?;
+
+        match local_addr.ip() {
+            std::net::IpAddr::V4(ip) => {
+                if cidr.contains(&ip) {
+                    info!("Found ip {:?} within cidr: {:?}, allowing automatic discovery table addition for source addresses under this range", ip, cidr);
+                    config.allowed_cidr(cidr);
+                } else {
+                    warn!(
+                        "added --cidr flag but local ip ({:?}) is not contained within range: {:?}",
+                        ip, cidr
+                    )
+                }
+            }
+            std::net::IpAddr::V6(_) => {
+                warn!("allowed cidr only compatible with ipv4")
+            }
+        };
+    }
+
+    info!(
+        "Server listening on {:?}:{:?}",
+        args.listen_ipv4, args.listen_port
+    );
+    let mut discv5: Discv5<DefaultProtocolId> = Discv5::new(
+        enr,
+        key,
+        config
+            .request_timeout(Duration::from_secs(3))
+            .vote_duration(Duration::from_secs(120))
+            .build(),
+    )?;
 
     discv5
         .start()
@@ -82,32 +114,4 @@ pub async fn run(args: ServerArgs) -> Result<(), Box<dyn Error>> {
             _ => {}
         }
     }
-
-    // let server_ref = Arc::new(discv5);
-    // if server.stats > 0 {
-    //     services::stats::run(Arc::clone(&server_ref), None, server.stats);
-    // }
-
-    // if server.no_search {
-    //     log::info!("Running without query service, press CTRL-C to exit.");
-    //     let _ = tokio::signal::ctrl_c().await;
-    //     exit(0);
-    // }
-
-    // // Match on the subcommand and run the appropriate service
-    // match server.service {
-    //     ServerSubcommand::Query => {
-    //         log::info!("Query service running...");
-    //         services::query::run(server_ref, Duration::from_secs(server.break_time)).await;
-    //     }
-    //     ServerSubcommand::Events => {
-    //         log::info!("Events service running...");
-    //         services::events::run(server_ref).await;
-    //     }
-    // }
-
-    // Ok(())
 }
-
-// /// Streams the discv5 server event stream.
-// pub async fn run(discv5: Arc<Discv5>) {}

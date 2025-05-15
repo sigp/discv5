@@ -1,4 +1,6 @@
 //! A set of configuration parameters to tune the discovery protocol.
+use cidr::Ipv4Cidr;
+
 use crate::{
     kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, PermitBanList, RateLimiter,
     RateLimiterBuilder,
@@ -110,6 +112,11 @@ pub struct Config {
 
     /// Configuration for the sockets to listen on.
     pub listen_config: ListenConfig,
+
+    /// Lifts the restrictions on discovery table addition to nodes which have a differing
+    /// source ip from their public advertised ip. Source ip addresses which are part of
+    /// this cidr range will be added to discovery table
+    pub allowed_cidr: Option<Ipv4Cidr>,
 }
 
 #[derive(Debug)]
@@ -156,6 +163,7 @@ impl ConfigBuilder {
             auto_nat_listen_duration: Some(Duration::from_secs(300)), // 5 minutes
             executor: None,
             listen_config,
+            allowed_cidr: None,
         };
 
         ConfigBuilder { config }
@@ -330,6 +338,11 @@ impl ConfigBuilder {
     /// timing support.
     pub fn executor(&mut self, executor: Box<dyn Executor + Send + Sync>) -> &mut Self {
         self.config.executor = Some(executor);
+        self
+    }
+
+    pub fn allowed_cidr(&mut self, allowed_cidr: &Ipv4Cidr) -> &mut Self {
+        self.config.allowed_cidr = Some(allowed_cidr.clone());
         self
     }
 
