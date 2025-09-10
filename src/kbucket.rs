@@ -423,18 +423,18 @@ where
                 let update_value = bucket.update_value(key, value);
 
                 match (update_value, update_status) {
-                    (UpdateResult::Updated { .. }, UpdateResult::Updated) => {
+                    (UpdateResult::Updated, UpdateResult::Updated) => {
                         InsertResult::Updated {
                             promoted_to_connected: false,
                         }
                     }
-                    (UpdateResult::Updated { .. }, UpdateResult::UpdatedAndPromoted) => {
+                    (UpdateResult::Updated, UpdateResult::UpdatedAndPromoted) => {
                         InsertResult::Updated {
                             promoted_to_connected: true,
                         }
                     }
-                    (UpdateResult::Updated { .. }, UpdateResult::NotModified)
-                    | (UpdateResult::Updated { .. }, UpdateResult::UpdatedPending) => {
+                    (UpdateResult::Updated, UpdateResult::NotModified)
+                    | (UpdateResult::Updated, UpdateResult::UpdatedPending) => {
                         InsertResult::ValueUpdated
                     }
                     (UpdateResult::NotModified, UpdateResult::Updated) => {
