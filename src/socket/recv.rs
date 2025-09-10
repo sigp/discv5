@@ -34,6 +34,7 @@ pub struct RecvHandlerConfig {
     pub recv: Arc<UdpSocket>,
     pub second_recv: Option<Arc<UdpSocket>>,
     pub local_node_id: enr::NodeId,
+    pub protocol_identity: ProtocolIdentity,
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
 }
 
@@ -51,6 +52,8 @@ pub(crate) struct RecvHandler {
     filter: Filter,
     /// The local node id used to decrypt headers of messages.
     node_id: enr::NodeId,
+    /// The protocol identity expected in received packets.
+    protocol_identity: ProtocolIdentity,
     /// The channel to send the packet handler.
     handler: mpsc::Sender<InboundPacket>,
     /// Exit channel to shutdown the recv handler.
@@ -59,7 +62,7 @@ pub(crate) struct RecvHandler {
 
 impl RecvHandler {
     /// Spawns the `RecvHandler` on a provided executor.
-    pub(crate) fn spawn<P: ProtocolIdentity>(
+    pub(crate) fn spawn(
         config: RecvHandlerConfig,
     ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
@@ -70,6 +73,7 @@ impl RecvHandler {
             recv,
             second_recv,
             local_node_id,
+            protocol_identity,
             expected_responses,
         } = config;
 
@@ -84,6 +88,7 @@ impl RecvHandler {
             expected_responses,
             filter: Filter::new(filter_config, ban_duration),
             node_id: local_node_id,
+            protocol_identity,
             handler,
             exit,
         };
@@ -91,13 +96,13 @@ impl RecvHandler {
         // start the handler
         executor.spawn(Box::pin(async move {
             debug!("Recv handler starting");
-            recv_handler.start::<P>(filter_enabled).await;
+            recv_handler.start(filter_enabled).await;
         }));
         (handler_recv, exit_sender)
     }
 
     /// The main future driving the recv handler. This will shutdown when the exit future is fired.
-    async fn start<P: ProtocolIdentity>(&mut self, filter_enabled: bool) {
+    async fn start(&mut self, filter_enabled: bool) {
         // Interval to prune to rate limiter.
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         let mut first_buffer = [0; MAX_PACKET_SIZE];
@@ -111,11 +116,11 @@ impl RecvHandler {
             tokio::select! {
                 Ok((length, src)) = self.recv.recv_from(&mut first_buffer) => {
                     METRICS.add_recv_bytes(length);
-                    self.handle_inbound::<P>(src, length, &first_buffer).await;
+                    self.handle_inbound(src, length, &first_buffer).await;
                 }
                 Some(Ok((length, src))) = Into::<OptionFuture<_>>::into(self.second_recv.as_ref().map(|second_recv|second_recv.recv_from(&mut second_buffer))), if check_second_recv => {
                     METRICS.add_recv_bytes(length);
-                    self.handle_inbound::<P>(src, length, &second_buffer).await;
+                    self.handle_inbound(src, length, &second_buffer).await;
                 }
                 _ = interval.tick(), if filter_enabled => {
                     self.filter.prune_limiter();
@@ -130,7 +135,7 @@ impl RecvHandler {
 
     /// Handles in incoming packet. Passes through the filter, decodes and sends to the packet
     /// handler.
-    async fn handle_inbound<P: ProtocolIdentity>(
+    async fn handle_inbound(
         &mut self,
         mut src_address: SocketAddr,
         length: usize,
@@ -181,14 +186,17 @@ impl RecvHandler {
             return;
         }
         // Decodes the packet
-        let (packet, authenticated_data) =
-            match Packet::decode::<P>(&self.node_id, &recv_buffer[..length]) {
-                Ok(p) => p,
-                Err(e) => {
-                    debug!(error = ?e, "Packet decoding failed"); // could not decode the packet, drop it
-                    return;
-                }
-            };
+        let (packet, authenticated_data) = match Packet::decode(
+            &self.node_id,
+            self.protocol_identity,
+            &recv_buffer[..length],
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                debug!(error = ?e, "Packet decoding failed"); // could not decode the packet, drop it
+                return;
+            }
+        };
 
         // If this is not a challenge packet, we immediately know its src_id and so pass it
         // through the second filter.

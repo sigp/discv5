@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::{
-    packet::DefaultProtocolId,
     return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
     ConfigBuilder, IpMode,
@@ -26,7 +25,7 @@ fn init() {
         .try_init();
 }
 
-async fn build_handler<P: ProtocolIdentity>(
+async fn build_handler(
     enr: Enr,
     key: CombinedKey,
     config: Config,
@@ -57,10 +56,11 @@ async fn build_handler<P: ProtocolIdentity>(
                 local_node_id: node_id,
                 expected_responses: filter_expected_responses.clone(),
                 ban_duration: config.ban_duration,
+                protocol_identity: Default::default(),
             }
         };
 
-        Socket::new::<P>(socket_config).await.unwrap()
+        Socket::new(socket_config).await.unwrap()
     };
     let (handler_send, service_recv) = mpsc::unbounded_channel();
     let (service_send, handler_recv) = mpsc::channel(50);
@@ -69,6 +69,7 @@ async fn build_handler<P: ProtocolIdentity>(
     let handler = Handler {
         request_retries: config.request_retries,
         node_id,
+        protocol_identity: Default::default(),
         enr: Arc::new(RwLock::new(enr)),
         key: Arc::new(RwLock::new(key)),
         active_requests: ActiveRequests::new(config.request_timeout),
@@ -121,13 +122,10 @@ async fn simple_session_message() {
     let sender_config = ConfigBuilder::new(sender_listen_config)
         .enable_packet_filter()
         .build();
-    let (_exit_send, sender_send, _sender_recv) = Handler::spawn::<DefaultProtocolId>(
-        arc_rw!(sender_enr.clone()),
-        arc_rw!(key1),
-        sender_config,
-    )
-    .await
-    .unwrap();
+    let (_exit_send, sender_send, _sender_recv) =
+        Handler::spawn(arc_rw!(sender_enr.clone()), arc_rw!(key1), sender_config)
+            .await
+            .unwrap();
 
     let receiver_listen_config = ListenConfig::Ipv4 {
         ip: receiver_enr.ip4().unwrap(),
@@ -136,7 +134,7 @@ async fn simple_session_message() {
     let receiver_config = ConfigBuilder::new(receiver_listen_config)
         .enable_packet_filter()
         .build();
-    let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn::<DefaultProtocolId>(
+    let (_exit_recv, recv_send, mut receiver_recv) = Handler::spawn(
         arc_rw!(receiver_enr.clone()),
         arc_rw!(key2),
         receiver_config,
@@ -209,11 +207,11 @@ async fn multiple_messages() {
             port: sender_enr.udp4().unwrap(),
         };
         let sender_config = ConfigBuilder::new(sender_listen_config).build();
-        build_handler::<DefaultProtocolId>(sender_enr.clone(), key1, sender_config).await
+        build_handler(sender_enr.clone(), key1, sender_config).await
     };
     let sender = async move {
         // Start sender handler.
-        handler.start::<DefaultProtocolId>().await;
+        handler.start().await;
         // After the handler has been terminated test the handler's states.
         assert!(handler.pending_requests.is_empty());
         assert_eq!(0, handler.active_requests.count().await);
@@ -228,11 +226,11 @@ async fn multiple_messages() {
             port: receiver_enr.udp4().unwrap(),
         };
         let receiver_config = ConfigBuilder::new(receiver_listen_config).build();
-        build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await
+        build_handler(receiver_enr.clone(), key2, receiver_config).await
     };
     let receiver = async move {
         // Start receiver handler.
-        handler.start::<DefaultProtocolId>().await;
+        handler.start().await;
         // After the handler has been terminated test the handler's states.
         assert!(handler.pending_requests.is_empty());
         assert_eq!(0, handler.active_requests.count().await);
@@ -338,7 +336,7 @@ fn create_node() -> Enr {
 
 fn create_req_call(node: &Enr) -> (RequestCall, NodeAddress) {
     let node_contact: NodeContact = node.clone().into();
-    let packet = Packet::new_random(&node.node_id()).unwrap();
+    let packet = Packet::new_random(&node.node_id(), ProtocolIdentity::default()).unwrap();
     let id = HandlerReqId::Internal(RequestId::random());
     let request = RequestBody::Ping { enr_seq: 1 };
     let initiating_session = true;
@@ -483,7 +481,7 @@ async fn test_active_requests_update_packet() {
     active_requests.insert(req_3_addr, req_3);
     active_requests.check_invariant();
 
-    let new_packet = Packet::new_random(&node_2.node_id()).unwrap();
+    let new_packet = Packet::new_random(&node_2.node_id(), ProtocolIdentity::default()).unwrap();
     let new_nonce = new_packet.message_nonce();
     active_requests.update_packet(old_nonce, new_packet.clone());
     active_requests.check_invariant();
@@ -513,10 +511,9 @@ async fn test_self_request_ipv4() {
         .enable_packet_filter()
         .build();
 
-    let (_exit_send, send, mut recv) =
-        Handler::spawn::<DefaultProtocolId>(arc_rw!(enr.clone()), arc_rw!(key), config)
-            .await
-            .unwrap();
+    let (_exit_send, send, mut recv) = Handler::spawn(arc_rw!(enr.clone()), arc_rw!(key), config)
+        .await
+        .unwrap();
 
     // self request (IPv4)
     let _ = send.send(HandlerIn::Request(
@@ -553,10 +550,9 @@ async fn test_self_request_ipv6() {
         .enable_packet_filter()
         .build();
 
-    let (_exit_send, send, mut recv) =
-        Handler::spawn::<DefaultProtocolId>(arc_rw!(enr.clone()), arc_rw!(key), config)
-            .await
-            .unwrap();
+    let (_exit_send, send, mut recv) = Handler::spawn(arc_rw!(enr.clone()), arc_rw!(key), config)
+        .await
+        .unwrap();
 
     // self request (IPv6)
     let _ = send.send(HandlerIn::Request(
@@ -657,11 +653,11 @@ async fn test_replay_active_requests() {
             port: sender_enr.udp4().unwrap(),
         };
         let sender_config = ConfigBuilder::new(sender_listen_config).build();
-        build_handler::<DefaultProtocolId>(sender_enr.clone(), key1, sender_config).await
+        build_handler(sender_enr.clone(), key1, sender_config).await
     };
     let sender = async move {
         // Start sender handler.
-        handler.start::<DefaultProtocolId>().await;
+        handler.start().await;
         // After the handler has been terminated test the handler's states.
         assert!(handler.pending_requests.is_empty());
         assert_eq!(0, handler.active_requests.count().await);
@@ -680,11 +676,11 @@ async fn test_replay_active_requests() {
         let receiver_config = ConfigBuilder::new(receiver_listen_config)
             .session_timeout(receiver_session_timeout)
             .build();
-        build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await
+        build_handler(receiver_enr.clone(), key2, receiver_config).await
     };
     let receiver = async move {
         // Start receiver handler.
-        handler.start::<DefaultProtocolId>().await;
+        handler.start().await;
         // After the handler has been terminated test the handler's states.
         assert!(handler.pending_requests.is_empty());
         assert_eq!(0, handler.active_requests.count().await);
@@ -868,11 +864,11 @@ async fn test_send_pending_request() {
             port: sender_enr.udp4().unwrap(),
         };
         let sender_config = ConfigBuilder::new(sender_listen_config).build();
-        build_handler::<DefaultProtocolId>(sender_enr.clone(), key1, sender_config).await
+        build_handler(sender_enr.clone(), key1, sender_config).await
     };
     let sender = async move {
         // Start sender handler.
-        handler.start::<DefaultProtocolId>().await;
+        handler.start().await;
         // After the handler has been terminated test the handler's states.
         assert!(handler.pending_requests.is_empty());
         assert_eq!(0, handler.active_requests.count().await);
@@ -891,11 +887,11 @@ async fn test_send_pending_request() {
         let receiver_config = ConfigBuilder::new(receiver_listen_config)
             .session_timeout(receiver_session_timeout)
             .build();
-        build_handler::<DefaultProtocolId>(receiver_enr.clone(), key2, receiver_config).await
+        build_handler(receiver_enr.clone(), key2, receiver_config).await
     };
     let receiver = async move {
         // Start receiver handler.
-        handler.start::<DefaultProtocolId>().await;
+        handler.start().await;
         // After the handler has been terminated test the handler's states.
         assert!(handler.pending_requests.is_empty());
         assert_eq!(0, handler.active_requests.count().await);
