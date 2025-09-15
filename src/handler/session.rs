@@ -1,9 +1,8 @@
 use super::*;
 use crate::{
     node_info::NodeContact,
-    packet::{
-        ChallengeData, Packet, PacketHeader, PacketKind, ProtocolIdentity, MESSAGE_NONCE_LENGTH,
-    },
+    packet::{ChallengeData, Packet, PacketHeader, PacketKind, MESSAGE_NONCE_LENGTH},
+    ProtocolIdentity,
 };
 use enr::{CombinedKey, NodeId};
 use zeroize::Zeroize;
@@ -57,10 +56,11 @@ impl Session {
 
     /// Uses the current `Session` to encrypt a message. Encrypt packets with the current session
     /// key if we are awaiting a response from AuthMessage.
-    pub(crate) fn encrypt_message<P: ProtocolIdentity>(
+    pub(crate) fn encrypt_message(
         &mut self,
         src_id: NodeId,
         message: &[u8],
+        protocol_identity: ProtocolIdentity,
     ) -> Result<Packet, Error> {
         self.counter += 1;
 
@@ -76,10 +76,11 @@ impl Session {
         let header = PacketHeader {
             message_nonce,
             kind: PacketKind::Message { src_id },
+            protocol_identity,
         };
 
         let mut authenticated_data = iv.to_be_bytes().to_vec();
-        authenticated_data.extend_from_slice(&header.encode::<P>());
+        authenticated_data.extend_from_slice(&header.encode());
 
         let cipher = crypto::encrypt_message(
             &self.keys.encryption_key,
@@ -174,7 +175,7 @@ impl Session {
             local_id,
             id_nonce_sig,
         ) {
-            return Err(Error::InvalidChallengeSignature(challenge));
+            return Err(Error::InvalidChallengeSignature(Box::new(challenge)));
         }
 
         // The keys are derived after the message has been verified to prevent potential extra work
@@ -213,11 +214,12 @@ impl Session {
     }
 
     /// Encrypts a message and produces an AuthMessage.
-    pub(crate) fn encrypt_with_header<P: ProtocolIdentity>(
+    pub(crate) fn encrypt_with_header(
         remote_contact: &NodeContact,
         local_key: Arc<RwLock<CombinedKey>>,
         updated_enr: Option<Enr>,
         local_node_id: &NodeId,
+        protocol_identity: ProtocolIdentity,
         challenge_data: &ChallengeData,
         message: &[u8],
     ) -> Result<(Packet, Session), Error> {
@@ -244,6 +246,7 @@ impl Session {
         let mut packet = Packet::new_authheader(
             *local_node_id,
             message_nonce,
+            protocol_identity,
             sig,
             ephem_pubkey,
             updated_enr,
@@ -252,7 +255,7 @@ impl Session {
         // Create the authenticated data for the new packet.
 
         let mut authenticated_data = packet.iv.to_be_bytes().to_vec();
-        authenticated_data.extend_from_slice(&packet.header.encode::<P>());
+        authenticated_data.extend_from_slice(&packet.header.encode());
 
         // encrypt the message
         let message_ciphertext =

@@ -19,15 +19,13 @@ use crate::{
         NodeStatus, UpdateResult,
     },
     node_info::{NodeAddress, NodeContact},
-    packet::ProtocolIdentity,
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
-    Config, DefaultProtocolId, Enr, IpMode,
+    Config, Enr, IpMode,
 };
 use enr::{CombinedKey, EnrKey, Error as EnrError, NodeId};
 use parking_lot::RwLock;
 use std::{
     future::Future,
-    marker::PhantomData,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -84,10 +82,7 @@ pub enum Event {
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and
 /// interacting with the underlying service.
-pub struct Discv5<P = DefaultProtocolId>
-where
-    P: ProtocolIdentity,
-{
+pub struct Discv5 {
     config: Config,
     /// The channel to make requests from the main service.
     service_channel: Option<mpsc::Sender<ServiceRequest>>,
@@ -101,11 +96,9 @@ where
     enr_key: Arc<RwLock<CombinedKey>>,
     // Type of socket we are using
     ip_mode: IpMode,
-    /// Phantom for the protocol id.
-    _phantom: PhantomData<P>,
 }
 
-impl<P: ProtocolIdentity> Discv5<P> {
+impl Discv5 {
     pub fn new(
         local_enr: Enr,
         enr_key: CombinedKey,
@@ -156,7 +149,6 @@ impl<P: ProtocolIdentity> Discv5<P> {
             local_enr,
             enr_key,
             ip_mode,
-            _phantom: Default::default(),
         })
     }
 
@@ -168,7 +160,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
         }
 
         // create the main service
-        let (service_exit, service_channel) = Service::spawn::<P>(
+        let (service_exit, service_channel) = Service::spawn(
             self.local_enr.clone(),
             self.enr_key.clone(),
             self.kbuckets.clone(),
@@ -741,7 +733,7 @@ impl<P: ProtocolIdentity> Discv5<P> {
     }
 }
 
-impl<P: ProtocolIdentity> Drop for Discv5<P> {
+impl Drop for Discv5 {
     fn drop(&mut self) {
         self.shutdown();
     }
