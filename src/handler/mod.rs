@@ -139,6 +139,8 @@ pub enum HandlerOut {
         socket: SocketAddr,
         node_id: NodeId,
     },
+    /// These sessions have expired from the cache.
+    ExpiredSessions(Vec<NodeAddress>),
 }
 
 /// How we connected to the node.
@@ -1227,6 +1229,9 @@ impl Handler {
         // handshake to re-establish a session, if applicable.
         message_nonce: Option<MessageNonce>,
     ) {
+        // Clear the session cache and report expired elements
+        self.remove_expired_sessions().await;
+
         if let Some(current_session) = self.sessions.get_mut(&node_address) {
             current_session.update(session);
             // If a session is re-established, due to a new handshake during an ongoing
@@ -1282,6 +1287,9 @@ impl Handler {
         remove_session: bool,
     ) {
         if remove_session {
+            // Remove expired sessions
+            self.remove_expired_sessions().await;
+
             self.sessions.remove(node_address);
             METRICS
                 .active_sessions
@@ -1351,6 +1359,22 @@ impl Handler {
             .write()
             .ban_nodes
             .retain(|_, time| time.is_none() || Some(Instant::now()) < *time);
+    }
+
+    /// Removes expired sessions and report them back to the service.
+    async fn remove_expired_sessions(&mut self) {
+        // Purge any expired sessions
+        let expired_sessions = self.sessions.remove_expired_values();
+
+        if !expired_sessions.is_empty() {
+            if let Err(e) = self
+                .service_send
+                .send(HandlerOut::ExpiredSessions(expired_sessions))
+                .await
+            {
+                warn!(error = %e, "Failed to inform app of expired sessions")
+            }
+        }
     }
 
     /// Returns whether a session with this node does not exist and a request that initiates

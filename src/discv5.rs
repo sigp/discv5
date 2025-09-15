@@ -18,7 +18,7 @@ use crate::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
         NodeStatus, UpdateResult,
     },
-    node_info::NodeContact,
+    node_info::{NodeAddress, NodeContact},
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
     Config, Enr, IpMode,
 };
@@ -72,6 +72,8 @@ pub enum Event {
     },
     /// A new session has been established with a node.
     SessionEstablished(Enr, SocketAddr),
+    /// A session has been removed from our cache due to inactivity.
+    SessionsExpired(Vec<NodeAddress>),
     /// Our local ENR IP address has been updated.
     SocketUpdated(SocketAddr),
     /// A node has initiated a talk request.
