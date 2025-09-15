@@ -18,7 +18,7 @@ pub enum Error {
     /// The secret key does not match the provided ENR.
     InvalidSecretKey,
     /// An invalid signature was received for a challenge.
-    InvalidChallengeSignature(Challenge),
+    InvalidChallengeSignature(Box<Challenge>),
     /// The Service channel has been closed early.
     ServiceChannelClosed,
     /// The discv5 service is not running.
