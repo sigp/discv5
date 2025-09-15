@@ -784,10 +784,10 @@ impl Handler {
             && match node_address.socket_addr {
                 SocketAddr::V4(socket_addr) => enr
                     .udp4_socket()
-                    .map_or(true, |advertized_addr| socket_addr == advertized_addr),
+                    .is_none_or(|advertized_addr| socket_addr == advertized_addr),
                 SocketAddr::V6(socket_addr) => enr
                     .udp6_socket()
-                    .map_or(true, |advertized_addr| socket_addr == advertized_addr),
+                    .is_none_or(|advertized_addr| socket_addr == advertized_addr),
             }
     }
 
@@ -893,7 +893,7 @@ impl Handler {
                         "Authentication header contained invalid signature. Ignoring packet from node",
                     );
                     // insert back the challenge
-                    self.active_challenges.insert(node_address, challenge);
+                    self.active_challenges.insert(node_address, *challenge);
                 }
                 Err(e) => {
                     warn!(

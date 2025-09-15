@@ -174,7 +174,7 @@ impl Session {
             local_id,
             id_nonce_sig,
         ) {
-            return Err(Error::InvalidChallengeSignature(challenge));
+            return Err(Error::InvalidChallengeSignature(Box::new(challenge)));
         }
 
         // The keys are derived after the message has been verified to prevent potential extra work
