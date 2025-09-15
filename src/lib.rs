@@ -122,7 +122,7 @@ pub use error::{Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
 pub use ipmode::IpMode;
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};
-pub use packet::{DefaultProtocolId, ProtocolIdentity};
+pub use packet::ProtocolIdentity;
 pub use permit_ban::PermitBanList;
 pub use service::TalkRequest;
 pub use socket::{ListenConfig, RateLimiter, RateLimiterBuilder};
