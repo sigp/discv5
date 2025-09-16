@@ -451,13 +451,13 @@ impl Message {
                         if !node_header.list {
                             return Err(DecoderError::Custom("Invalid format of header"));
                         }
-                        if node_header.payload_length + 2 > payload.len() {
+                        if node_header.length_with_payload() > payload.len() {
                             return Err(DecoderError::Custom(
                                 "Payload size is smaller than payload_length",
                             ));
                         }
                         let enr_rlp = Enr::<CombinedKey>::decode(
-                            &mut &payload[..node_header.payload_length + 2],
+                            &mut &payload[..node_header.length_with_payload()],
                         )?;
                         payload.advance(enr_rlp.size());
                         enr_list_rlp.append(&mut vec![enr_rlp]);
@@ -857,5 +857,16 @@ mod tests {
         let encoded_message = message.clone().encode();
         assert_eq!(encoded_message.clone(), expected_output);
         assert_eq!(Message::decode(&encoded_message).unwrap(), message);
+    }
+
+    #[test]
+    fn test_large_enr_hex_data() {
+        // This is the exact hex data from the logs that was failing to decode
+        let hex_data = "04f9012b88000000000000000001f9011ef9011bb840f986dbbaaf794e76c2dcd945e01686a6566409b4cf6ab2690fcdd347e958d35c2846bf61a001486623b6c805525e73a534212d313021c29b02bd0d85e799b8b9820162876174746e657473880080010000000000836367630986636c69656e74d18a4c69676874686f75736585372e312e30846574683290ce852d7070202361ffffffffffffffff8269648276348269708492be185a83697036902a03b0c0000200f000000000ca96f001836e666484ce852d70847175696382232985717569633682232989736563703235366b31a102463c7e28da88f61941e66ae44dd6d38a27f107ca2106158746b7d7f47eb765278873796e636e6574730f837463708223288474637036822328837564708223288475647036822328";
+
+        let data = hex::decode(hex_data).expect("Valid hex data");
+
+        // This should fail to decode with the current (original) logic
+        Message::decode(&data).expect("This should be decodable");
     }
 }
