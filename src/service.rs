@@ -929,7 +929,6 @@ impl Service {
                                 self.connectivity_state.enr_socket_update(&new_ip4);
                                 info!(ip_version="v4", %new_ip4, "Local UDP socket updated");
                                 self.send_event(Event::SocketUpdated(new_ip4));
-                                self.ping_connected_peers();
                             }
                             Err(e) => {
                                 warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
@@ -964,7 +963,6 @@ impl Service {
                                 self.connectivity_state.enr_socket_update(&new_ip6);
                                 info!(ip_version="v6", %new_ip6, "Local UDP socket updated");
                                 self.send_event(Event::SocketUpdated(new_ip6));
-                                self.ping_connected_peers();
                             }
                             Err(e) => {
                                 warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
