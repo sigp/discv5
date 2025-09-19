@@ -339,6 +339,12 @@ impl ConfigBuilder {
             self.config.executor = Some(Box::<crate::executor::TokioExecutor>::default());
         };
 
+        // If enr-update is set to false, then it is non-intuitive for discv5 to revoke ENR details
+        // when determining NAT status. So we will not do this.
+        if self.config.enr_update {
+            self.config.auto_nat_listen_duration = None;
+        }
+
         assert!(self.config.incoming_bucket_limit <= MAX_NODES_PER_BUCKET);
 
         self.config.clone()

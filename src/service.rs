@@ -885,6 +885,11 @@ impl Service {
             return;
         }
 
+        // We are configured to ignore ENR updates, we therefore ignore PONGs.
+        if self.ip_votes.is_none() {
+            return;
+        }
+
         // Only count votes that are from peers we have contacted.
         let key: kbucket::Key<NodeId> = node_id.into();
         let is_connected_and_outgoing = matches!(
@@ -893,7 +898,7 @@ impl Service {
                             if status.is_connected() && !status.is_incoming());
 
         // Check to make sure this is an outgoing peer vote, otherwise if we need the vote due to a
-        // lack of minority, we accept it.
+        // lack of majority, we accept it.
         if !(is_connected_and_outgoing | self.require_more_ip_votes(socket.is_ipv6())) {
             return;
         }
@@ -1616,15 +1621,16 @@ impl Service {
         let Some(ip_votes) = self.ip_votes.as_mut() else {
             return false;
         };
+
         // Here we check the number of non-expired votes, rather than the majority. As if the
         // local router is not SNAT'd we can have many votes but none for the same port and we
         // therefore do excessive pinging.
         match (ip_votes.has_minimum_threshold(), is_ipv6) {
-                    // We don't have enough ipv4 votes, but this is an IPv4-only node.
+                    // We don't have enough ipv4 votes, and this is an IPv4-only node.
                     ((false, true), false) |
-                    // We don't have enough ipv6 votes, but this is an IPv6 node.
+                    // We don't have enough ipv6 votes, and this is an IPv6 node.
                     ((true, false), true) |
-                    // We don't have enough ipv6 or ipv4 nodes, ping this peer.
+                    // We don't have enough ipv6 or ipv4 nodes, permit this peer's pong.
                     ((false, false), _,) => true,
                     // We have enough votes do nothing.
                     ((_, _), _,) =>  false,
