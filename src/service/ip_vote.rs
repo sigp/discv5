@@ -30,7 +30,7 @@ use tracing::debug;
 
 /// To avoid false winners, the majority vote must win by at least this percentage compared to the next
 /// likely candidate.
-const CLEAR_MAJORITY_PERCENTAGE: f64 = 0.2;
+const CLEAR_MAJORITY_PERCENTAGE: f64 = 0.3;
 
 /// A collection of IP:Ports for our node reported from external peers.
 pub(crate) struct IpVote {
@@ -132,7 +132,7 @@ impl IpVote {
                 ((max_count as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
             // If we have two candidates above the minimum threshold OR the second candidate is
             // within CLEAR_MAJORITY_PERCENTAGE of the max, then there is no winner.
-            if second_max_count >= threshold || second_max_count >= minimum_threshold {
+            if second_max_count >= threshold {
                 debug!(
                     highest_count = max_count,
                     second_highest_count = second_max_count,
@@ -207,12 +207,13 @@ mod tests {
         let mut votes = IpVote::new(2, Duration::from_secs(10));
         let socket_1 = SocketAddrV4::new("127.0.0.1".parse().unwrap(), 1);
         let socket_2 = SocketAddrV4::new("127.0.0.1".parse().unwrap(), 2);
-        let socket_3 = SocketAddrV4::new("127.0.0.1".parse().unwrap(), 3);
 
-        votes.insert(NodeId::random(), socket_1);
-        votes.insert(NodeId::random(), socket_1);
+        // 5 votes for socket_1, 1 vote for socket_2  
+        // 1 < (5 * (1-CLEAR_MAJORITY_PERCENTAGE)) = 3.5, so clear majority
+        for _ in 0..5 {
+            votes.insert(NodeId::random(), socket_1);
+        }
         votes.insert(NodeId::random(), socket_2);
-        votes.insert(NodeId::random(), socket_3);
 
         assert_eq!(votes.majority(), (Some(socket_1), None));
     }
@@ -376,19 +377,17 @@ mod tests {
             let max_count = counts[0];
             let second_max = counts.get(1).copied().unwrap_or(0);
 
-            // Check if we have a clear winner with new conditions
+            // Check if we have a clear winner
             let threshold_margin = ((max_count as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
-            let has_clear_winner = max_count >= scenario.threshold
-                && second_max < threshold_margin
-                && second_max < scenario.threshold;  // New condition
+            let has_clear_winner = max_count >= scenario.threshold && second_max < threshold_margin;
 
             let result = vote_system.majority().0;
 
             if has_clear_winner {
                 // Should return the winning port
                 TestResult::from_bool(result.is_some())
-            } else if max_count >= scenario.threshold && (second_max >= threshold_margin || second_max >= scenario.threshold) {
-                // Should return None due to competition (either within margin OR second meets threshold)
+            } else if max_count >= scenario.threshold && second_max >= threshold_margin {
+                // Should return None due to competition within margin
                 TestResult::from_bool(result.is_none())
             } else {
                 // Below threshold, should be None
@@ -430,14 +429,19 @@ mod tests {
             vote_system.majority().0.is_some()
         }
 
-        /// Property: Second highest meeting threshold should result in no winner
-        fn prop_second_meets_threshold_no_winner(threshold: u8, first_votes: u8, second_votes: u8) -> TestResult {
-            let threshold = threshold.max(2) as usize; // Ensure minimum 2
+        /// Property: Competition within margin should result in no winner
+        fn prop_competition_within_margin_no_winner(threshold: u8, first_votes: u8, second_votes: u8) -> TestResult {
+            let threshold = threshold.max(2) as usize;
             let first_votes = first_votes.max(1) as usize;
             let second_votes = second_votes.max(1) as usize;
 
-            // Only test when first >= threshold, second >= threshold, and first > second
-            if first_votes < threshold || second_votes < threshold || first_votes <= second_votes {
+            // Only test when first meets threshold and second is within margin
+            if first_votes < threshold || first_votes <= second_votes {
+                return TestResult::discard();
+            }
+
+            let threshold_margin = ((first_votes as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
+            if second_votes < threshold_margin {
                 return TestResult::discard();
             }
 
@@ -456,14 +460,14 @@ mod tests {
             TestResult::from_bool(votes.majority().0.is_none())
         }
 
-        /// Property: Clear winner when second highest is below both threshold and margin
-        fn prop_clear_winner_conditions(threshold: u8, first_votes: u8, second_votes: u8) -> TestResult {
-            let threshold = threshold.max(2) as usize; // Ensure minimum 2
+        /// Property: Clear winner when second highest is outside the margin
+        fn prop_clear_winner_outside_margin(threshold: u8, first_votes: u8, second_votes: u8) -> TestResult {
+            let threshold = threshold.max(2) as usize;
             let first_votes = first_votes.max(1) as usize;
             let second_votes = second_votes as usize;
 
-            // Only test when first >= threshold, second < threshold, and margin conditions met
-            if first_votes < threshold || second_votes >= threshold {
+            // Only test when first meets threshold and second is outside margin
+            if first_votes < threshold {
                 return TestResult::discard();
             }
 
@@ -513,12 +517,12 @@ mod tests {
         let socket1 = SocketAddrV4::new(ip, 8080);
         let socket2 = SocketAddrV4::new(ip, 8081);
 
-        // 10 votes for socket1, 9 votes for socket2
-        // 9 >= (10 * 0.8) = 8, so within margin - should return None
+        // 10 votes for socket1, 8 votes for socket2
+        // 8 >= (10 * (1-CLEAR_MAJORITY_PERCENTAGE)) = 7, so within margin - should return None
         for _ in 0..10 {
             votes.insert(NodeId::random(), socket1);
         }
-        for _ in 0..9 {
+        for _ in 0..8 {
             votes.insert(NodeId::random(), socket2);
         }
 
@@ -533,8 +537,7 @@ mod tests {
         let socket2 = SocketAddrV4::new(ip, 8081);
 
         // 10 votes for socket1, 4 votes for socket2
-        // Second highest (4) < minimum_threshold (5), and 4 < (10 * 0.8) = 8
-        // Should return socket1 as clear winner
+        // 4 < (10 * (1-CLEAR_MAJORITY_PERCENTAGE)) = 7, so outside margin - should return socket1 as clear winner
         for _ in 0..10 {
             votes.insert(NodeId::random(), socket1);
         }
