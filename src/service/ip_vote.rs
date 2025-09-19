@@ -208,7 +208,7 @@ mod tests {
         let socket_1 = SocketAddrV4::new("127.0.0.1".parse().unwrap(), 1);
         let socket_2 = SocketAddrV4::new("127.0.0.1".parse().unwrap(), 2);
 
-        // 5 votes for socket_1, 1 vote for socket_2  
+        // 5 votes for socket_1, 1 vote for socket_2
         // 1 < (5 * (1-CLEAR_MAJORITY_PERCENTAGE)) = 3.5, so clear majority
         for _ in 0..5 {
             votes.insert(NodeId::random(), socket_1);
