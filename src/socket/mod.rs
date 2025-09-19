@@ -1,4 +1,4 @@
-use crate::{packet::ProtocolIdentity, Executor};
+use crate::{Executor, ProtocolIdentity};
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
@@ -61,6 +61,8 @@ pub struct SocketConfig {
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// The local node id used to decrypt messages.
     pub local_node_id: enr::NodeId,
+    /// The protocol identity used in sent and received packets.
+    pub protocol_identity: ProtocolIdentity,
 }
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
@@ -90,7 +92,7 @@ impl Socket {
     /// Creates a UDP socket, spawns a send/recv task and returns the channels.
     /// If this struct is dropped, the send/recv tasks will shutdown.
     /// This needs to be run inside of a tokio executor.
-    pub(crate) async fn new<P: ProtocolIdentity>(config: SocketConfig) -> Result<Self, Error> {
+    pub(crate) async fn new(config: SocketConfig) -> Result<Self, Error> {
         let SocketConfig {
             executor,
             filter_config,
@@ -98,6 +100,7 @@ impl Socket {
             ban_duration,
             expected_responses,
             local_node_id,
+            protocol_identity,
         } = config;
 
         // For recv socket, intentionally forgetting which socket is the ipv4 and which is the ipv6 one.
@@ -139,13 +142,14 @@ impl Socket {
             recv: first_recv,
             second_recv,
             local_node_id,
+            protocol_identity,
             expected_responses,
             ban_duration,
         };
 
-        let (recv, recv_exit) = RecvHandler::spawn::<P>(recv_config);
+        let (recv, recv_exit) = RecvHandler::spawn(recv_config);
         // spawn the sender handler
-        let (send, sender_exit) = SendHandler::spawn::<P>(executor, send_ipv4, send_ipv6);
+        let (send, sender_exit) = SendHandler::spawn(executor, send_ipv4, send_ipv6);
 
         Ok(Socket {
             send,

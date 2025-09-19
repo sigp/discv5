@@ -8,7 +8,6 @@ use crate::{
     kbucket,
     kbucket::{BucketInsertResult, KBucketsTable, NodeStatus},
     node_info::NodeContact,
-    packet::{DefaultProtocolId, ProtocolIdentity},
     query_pool::{QueryId, QueryPool},
     rpc::RequestId,
     service::{ActiveRequest, Service},
@@ -53,7 +52,7 @@ fn init() {
         .try_init();
 }
 
-async fn build_service<P: ProtocolIdentity>(
+async fn build_service(
     local_enr: Arc<RwLock<Enr>>,
     enr_key: Arc<RwLock<CombinedKey>>,
     filters: bool,
@@ -67,7 +66,7 @@ async fn build_service<P: ProtocolIdentity>(
         .build();
     // build the session service
     let (_handler_exit, handler_send, handler_recv) =
-        Handler::spawn::<P>(local_enr.clone(), enr_key.clone(), config.clone())
+        Handler::spawn(local_enr.clone(), enr_key.clone(), config.clone())
             .await
             .unwrap();
 
@@ -195,7 +194,7 @@ async fn test_updating_connection_on_ping() {
         .build(&enr_key2)
         .unwrap();
 
-    let mut service = build_service::<DefaultProtocolId>(
+    let mut service = build_service(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
         false,
@@ -264,7 +263,7 @@ async fn test_connection_direction_on_inject_session_established() {
         .build(&enr_key2)
         .unwrap();
 
-    let mut service = build_service::<DefaultProtocolId>(
+    let mut service = build_service(
         Arc::new(RwLock::new(enr)),
         Arc::new(RwLock::new(enr_key1)),
         false,
@@ -314,7 +313,7 @@ async fn test_handling_concurrent_responses() {
             .udp4(10005)
             .build(&enr_key)
             .unwrap();
-        build_service::<DefaultProtocolId>(
+        build_service(
             Arc::new(RwLock::new(enr)),
             Arc::new(RwLock::new(enr_key)),
             false,

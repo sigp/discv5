@@ -25,7 +25,7 @@ use crate::{
         NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
-    packet::{ProtocolIdentity, MAX_PACKET_SIZE},
+    packet::MAX_PACKET_SIZE,
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
@@ -267,7 +267,7 @@ impl Service {
     /// `local_enr` is the `ENR` representing the local node. This contains node identifying information, such
     /// as IP addresses and ports which we wish to broadcast to other nodes via this discovery
     /// mechanism.
-    pub async fn spawn<P: ProtocolIdentity>(
+    pub async fn spawn(
         local_enr: Arc<RwLock<Enr>>,
         enr_key: Arc<RwLock<CombinedKey>>,
         kbuckets: Arc<RwLock<KBucketsTable<NodeId, Enr>>>,
@@ -287,7 +287,7 @@ impl Service {
 
         // build the session service
         let (handler_exit, handler_send, handler_recv) =
-            Handler::spawn::<P>(local_enr.clone(), enr_key.clone(), config.clone()).await?;
+            Handler::spawn(local_enr.clone(), enr_key.clone(), config.clone()).await?;
 
         // create the required channels
         let (discv5_send, discv5_recv) = mpsc::channel(30);
@@ -415,6 +415,9 @@ impl Service {
                                 debug!(?node_id, "Uncontactable node removed from routing table");
                             }
                             self.send_event(Event::UnverifiableEnr{enr, socket, node_id});
+                        }
+                        HandlerOut::ExpiredSessions(expired_sessions) => {
+                            self.send_event(Event::SessionsExpired(expired_sessions));
                         }
                     }
                 }
@@ -858,7 +861,7 @@ impl Service {
                     }
                     // Only update the routing table if the new ENR is contactable
                     if self.ip_mode.get_contactable_addr(&enr).is_some() {
-                        self.connection_updated(node_id, ConnectionStatus::PongReceived(enr));
+                        self.connection_updated(node_id, ConnectionStatus::PongReceived);
                     }
                 }
             }
@@ -1412,19 +1415,19 @@ impl Service {
                     }
                 }
             }
-            ConnectionStatus::PongReceived(enr) => {
-                match self
-                    .kbuckets
-                    .write()
-                    .update_node(&key, enr, Some(ConnectionState::Connected))
-                {
+            ConnectionStatus::PongReceived => {
+                match self.kbuckets.write().update_node_status(
+                    &key,
+                    ConnectionState::Connected,
+                    None,
+                ) {
                     UpdateResult::Failed(reason) => {
                         self.peers_to_ping.remove(&node_id);
-                        debug!(node = %node_id, ?reason, "Could not update ENR from pong");
+                        debug!(node = %node_id, ?reason, "Could not update connection status from pong");
                     }
                     update => {
-                        debug!(update_result = ?update, "ENR has been updated based on the pong")
-                    } // Updated ENR successfully.
+                        trace!(update_result = ?update, "Peer's conenction status has been updated based on the pong")
+                    }
                 }
             }
             ConnectionStatus::Disconnected => {
@@ -1701,7 +1704,7 @@ enum ConnectionStatus {
     /// A node has started a new connection with us.
     Connected(Enr, ConnectionDirection),
     /// We received a Pong from a new node. Do not have the connection direction.
-    PongReceived(Enr),
+    PongReceived,
     /// The node has disconnected
     Disconnected,
 }

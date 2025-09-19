@@ -37,17 +37,13 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
     }
 
     /// Retrieves a reference to the value stored under `key`, or `None` if the key doesn't exist.
-    /// Also removes expired elements and updates the time.
-    #[allow(dead_code)]
     pub fn get(&mut self, key: &K) -> Option<&V> {
         self.get_mut(key).map(|value| &*value)
     }
 
     /// Retrieves a mutable reference to the value stored under `key`, or `None` if the key doesn't exist.
-    /// Also removes expired elements and updates the time.
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         let now = Instant::now();
-        self.remove_expired_values(now);
 
         match self.map.raw_entry_mut().from_key(key) {
             hashlink::linked_hash_map::RawEntryMut::Occupied(mut occupied) => {
@@ -76,7 +72,6 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
 
     /// Returns the size of the cache, i.e. the number of cached non-expired key-value pairs.
     pub fn len(&mut self) -> usize {
-        self.remove_expired_values(Instant::now());
         self.map.len()
     }
 
@@ -87,13 +82,19 @@ impl<K: Clone + Eq + Hash, V> LruTimeCache<K, V> {
     }
 
     /// Removes expired items from the cache.
-    fn remove_expired_values(&mut self, now: Instant) {
+    pub fn remove_expired_values(&mut self) -> Vec<K> {
+        let mut expired_elements = Vec::new();
+        let now = Instant::now();
         while let Some((_front, (_value, time))) = self.map.front() {
             if *time + self.ttl >= now {
                 break;
             }
-            self.map.pop_front();
+            // Store the expired key
+            if let Some((k, _v)) = self.map.pop_front() {
+                expired_elements.push(k);
+            }
         }
+        expired_elements
     }
 }
 
@@ -204,6 +205,7 @@ mod tests {
             assert_eq!(Some(&10), cache.get(&1));
 
             sleep(TTL);
+            cache.remove_expired_values();
             assert_eq!(None, cache.get(&1));
         }
 
@@ -214,6 +216,7 @@ mod tests {
             assert_eq!(Some(&10), cache.peek(&1));
 
             sleep(TTL);
+            cache.remove_expired_values();
             assert_eq!(None, cache.peek(&1));
         }
 
@@ -224,6 +227,7 @@ mod tests {
             assert_eq!(1, cache.len());
 
             sleep(TTL);
+            cache.remove_expired_values();
             assert_eq!(0, cache.len());
         }
 
@@ -232,12 +236,16 @@ mod tests {
             let mut cache = LruTimeCache::new(TTL, None);
             cache.insert(1, 10);
             sleep(TTL / 4);
+            cache.remove_expired_values();
             cache.insert(2, 20);
             sleep(TTL / 4);
+            cache.remove_expired_values();
             cache.insert(3, 30);
             sleep(TTL / 4);
+            cache.remove_expired_values();
             cache.insert(4, 40);
             sleep(TTL / 4);
+            cache.remove_expired_values();
 
             assert_eq!(3, cache.len());
             assert_eq!(None, cache.get(&1));

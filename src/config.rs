@@ -1,7 +1,7 @@
 //! A set of configuration parameters to tune the discovery protocol.
 use crate::{
-    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, PermitBanList, RateLimiter,
-    RateLimiterBuilder,
+    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, PermitBanList,
+    ProtocolIdentity, RateLimiter, RateLimiterBuilder,
 };
 use std::time::Duration;
 
@@ -110,6 +110,9 @@ pub struct Config {
 
     /// Configuration for the sockets to listen on.
     pub listen_config: ListenConfig,
+
+    /// The protocol identity to use in network messages.
+    pub protocol_identity: ProtocolIdentity,
 }
 
 #[derive(Debug)]
@@ -156,6 +159,7 @@ impl ConfigBuilder {
             auto_nat_listen_duration: Some(Duration::from_secs(300)), // 5 minutes
             executor: None,
             listen_config,
+            protocol_identity: ProtocolIdentity::default(),
         };
 
         ConfigBuilder { config }
@@ -330,6 +334,13 @@ impl ConfigBuilder {
     /// timing support.
     pub fn executor(&mut self, executor: Box<dyn Executor + Send + Sync>) -> &mut Self {
         self.config.executor = Some(executor);
+        self
+    }
+
+    /// Configures use of a custom protocol identifier to use in network messages. Any packets not
+    /// matching the configured protocol identity will be ignored.
+    pub fn protocol_identity(&mut self, protocol_identity: ProtocolIdentity) -> &mut Self {
+        self.config.protocol_identity = protocol_identity;
         self
     }
 
