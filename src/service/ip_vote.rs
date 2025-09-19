@@ -15,9 +15,8 @@
 //!       competing IP values. If there are, this is a misconfiguration of the network set-up, and
 //!       we should not advertise an IP. The user can override this via CLI configurations.)
 //!
-//!       The CLEAR_MAJORITY_PERCENTAGE criteria, prevents the case where multiple ports are being cycled, we don't want
-//!       to advertise the first vote that reaches the threshold then switch back to nothing as the
-//!       others catch up.
+//!       The CLEAR_MAJORITY_PERCENTAGE criteria prevents us from advertising the first vote that
+//!       reaches the threshold then reverting back to an empty ENR in the case where multiple ports are being cycled.
 
 use enr::NodeId;
 use fnv::FnvHashMap;
@@ -29,7 +28,7 @@ use std::{
 };
 use tracing::debug;
 
-/// To avoid false winners, the majority vote win by at least this percentage compared to the next
+/// To avoid false winners, the majority vote must win by at least this percentage compared to the next
 /// likely candidate.
 const CLEAR_MAJORITY_PERCENTAGE: f64 = 0.2;
 
@@ -114,7 +113,7 @@ impl IpVote {
             let count = counter.entry(*vote).or_default();
             *count += 1;
 
-            // Update max and second_max in single pass
+            // Update max and second_max
             if *count > max_count {
                 // Only update second_max if the previous max was from a different vote
                 if max_vote.is_some() && max_vote != Some(*vote) {
