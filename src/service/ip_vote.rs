@@ -131,10 +131,14 @@ impl IpVote {
         let result = if max_count >= minimum_threshold {
             let threshold =
                 ((max_count as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
-            if second_max_count >= threshold {
+            // If we have two candidates above the minimum threshold OR the second candidate is
+            // within CLEAR_MAJORITY_PERCENTAGE of the max, then there is no winner.
+            if second_max_count >= threshold || second_max_count >= minimum_threshold {
                 debug!(
                     highest_count = max_count,
                     second_highest_count = second_max_count,
+                    min_threshold = minimum_threshold,
+                    threshold_to_max = threshold,
                     "Competing votes detected. Socket not updated."
                 );
                 None
@@ -373,17 +377,19 @@ mod tests {
             let max_count = counts[0];
             let second_max = counts.get(1).copied().unwrap_or(0);
 
-            // Check if we have a clear winner
+            // Check if we have a clear winner with new conditions
             let threshold_margin = ((max_count as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
-            let has_clear_winner = max_count >= scenario.threshold && second_max < threshold_margin;
+            let has_clear_winner = max_count >= scenario.threshold
+                && second_max < threshold_margin
+                && second_max < scenario.threshold;  // New condition
 
             let result = vote_system.majority().0;
 
             if has_clear_winner {
                 // Should return the winning port
                 TestResult::from_bool(result.is_some())
-            } else if max_count >= scenario.threshold && second_max >= threshold_margin {
-                // Should return None due to competition
+            } else if max_count >= scenario.threshold && (second_max >= threshold_margin || second_max >= scenario.threshold) {
+                // Should return None due to competition (either within margin OR second meets threshold)
                 TestResult::from_bool(result.is_none())
             } else {
                 // Below threshold, should be None
@@ -423,6 +429,63 @@ mod tests {
             // The implementation should count each node only once
             // With threshold=2 and 3 votes, should return Some
             vote_system.majority().0.is_some()
+        }
+
+        /// Property: Second highest meeting threshold should result in no winner
+        fn prop_second_meets_threshold_no_winner(threshold: u8, first_votes: u8, second_votes: u8) -> TestResult {
+            let threshold = threshold.max(2) as usize; // Ensure minimum 2
+            let first_votes = first_votes.max(1) as usize;
+            let second_votes = second_votes.max(1) as usize;
+
+            // Only test when first >= threshold, second >= threshold, and first > second
+            if first_votes < threshold || second_votes < threshold || first_votes <= second_votes {
+                return TestResult::discard();
+            }
+
+            let mut votes = IpVote::new(threshold, Duration::from_secs(10));
+            let ip = "192.168.1.1".parse().unwrap();
+            let socket1 = SocketAddrV4::new(ip, 8080);
+            let socket2 = SocketAddrV4::new(ip, 8081);
+
+            for _ in 0..first_votes {
+                votes.insert(NodeId::random(), socket1);
+            }
+            for _ in 0..second_votes {
+                votes.insert(NodeId::random(), socket2);
+            }
+
+            TestResult::from_bool(votes.majority().0.is_none())
+        }
+
+        /// Property: Clear winner when second highest is below both threshold and margin
+        fn prop_clear_winner_conditions(threshold: u8, first_votes: u8, second_votes: u8) -> TestResult {
+            let threshold = threshold.max(2) as usize; // Ensure minimum 2
+            let first_votes = first_votes.max(1) as usize;
+            let second_votes = second_votes as usize;
+
+            // Only test when first >= threshold, second < threshold, and margin conditions met
+            if first_votes < threshold || second_votes >= threshold {
+                return TestResult::discard();
+            }
+
+            let threshold_margin = ((first_votes as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
+            if second_votes >= threshold_margin {
+                return TestResult::discard();
+            }
+
+            let mut votes = IpVote::new(threshold, Duration::from_secs(10));
+            let ip = "192.168.1.1".parse().unwrap();
+            let socket1 = SocketAddrV4::new(ip, 8080);
+            let socket2 = SocketAddrV4::new(ip, 8081);
+
+            for _ in 0..first_votes {
+                votes.insert(NodeId::random(), socket1);
+            }
+            for _ in 0..second_votes {
+                votes.insert(NodeId::random(), socket2);
+            }
+
+            TestResult::from_bool(votes.majority().0 == Some(socket1))
         }
     }
 
@@ -465,17 +528,18 @@ mod tests {
 
     #[test]
     fn test_clear_majority_outside_margin() {
-        let mut votes = IpVote::new(2, Duration::from_secs(10));
+        let mut votes = IpVote::new(5, Duration::from_secs(10));
         let ip = "192.168.1.1".parse().unwrap();
         let socket1 = SocketAddrV4::new(ip, 8080);
         let socket2 = SocketAddrV4::new(ip, 8081);
 
-        // 10 votes for socket1, 7 votes for socket2
-        // 7 < (10 * 0.8) = 8, so outside margin - should return socket1
+        // 10 votes for socket1, 4 votes for socket2
+        // Second highest (4) < minimum_threshold (5), and 4 < (10 * 0.8) = 8
+        // Should return socket1 as clear winner
         for _ in 0..10 {
             votes.insert(NodeId::random(), socket1);
         }
-        for _ in 0..7 {
+        for _ in 0..4 {
             votes.insert(NodeId::random(), socket2);
         }
 
