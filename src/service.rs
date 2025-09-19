@@ -861,7 +861,7 @@ impl Service {
                     }
                     // Only update the routing table if the new ENR is contactable
                     if self.ip_mode.get_contactable_addr(&enr).is_some() {
-                        self.connection_updated(node_id, ConnectionStatus::PongReceived(enr));
+                        self.connection_updated(node_id, ConnectionStatus::PongReceived);
                     }
                 }
             }
@@ -1408,19 +1408,19 @@ impl Service {
                     }
                 }
             }
-            ConnectionStatus::PongReceived(enr) => {
-                match self
-                    .kbuckets
-                    .write()
-                    .update_node(&key, enr, Some(ConnectionState::Connected))
-                {
+            ConnectionStatus::PongReceived => {
+                match self.kbuckets.write().update_node_status(
+                    &key,
+                    ConnectionState::Connected,
+                    None,
+                ) {
                     UpdateResult::Failed(reason) => {
                         self.peers_to_ping.remove(&node_id);
-                        debug!(node = %node_id, ?reason, "Could not update ENR from pong");
+                        debug!(node = %node_id, ?reason, "Could not update connection status from pong");
                     }
                     update => {
-                        debug!(update_result = ?update, "ENR has been updated based on the pong")
-                    } // Updated ENR successfully.
+                        trace!(update_result = ?update, "Peer's conenction status has been updated based on the pong")
+                    }
                 }
             }
             ConnectionStatus::Disconnected => {
@@ -1696,7 +1696,7 @@ enum ConnectionStatus {
     /// A node has started a new connection with us.
     Connected(Enr, ConnectionDirection),
     /// We received a Pong from a new node. Do not have the connection direction.
-    PongReceived(Enr),
+    PongReceived,
     /// The node has disconnected
     Disconnected,
 }
