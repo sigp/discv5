@@ -1,8 +1,8 @@
-//! This struct keeps track of voting for what our external socket is for both IPv4 and IPv6. 
+//! This struct keeps track of voting for what our external socket is for both IPv4 and IPv6.
 //!
 //! Without correct SNAT routing rules, some routers can use alternating or round-robin ports to
 //! send outbound traffic. Generally speaking, these ports won't be accessible for inbound traffic
-//! from any peers, so they should not be advertised. 
+//! from any peers, so they should not be advertised.
 //!
 //! Therefore the majority function works as follows:
 //! - Keep track of all votes within a defined time period (vote_duration)
@@ -11,14 +11,13 @@
 //!       wrong IP, or having a small group of malicious actors persuade us of the wrong value)
 //!     - There are no other candidates that are also above the threshold or within
 //!       CLEAR_MAJORITY_PERCENTAGE of the
-//!       majority (This prevents multiple candidates from flip-flopping. There should not be 
-//!       competing IP values. If there are, this is a misconfiguration of the network set-up, and 
+//!       majority (This prevents multiple candidates from flip-flopping. There should not be
+//!       competing IP values. If there are, this is a misconfiguration of the network set-up, and
 //!       we should not advertise an IP. The user can override this via CLI configurations.)
 //!
 //!       The CLEAR_MAJORITY_PERCENTAGE criteria, prevents the case where multiple ports are being cycled, we don't want
 //!       to advertise the first vote that reaches the threshold then switch back to nothing as the
-//!       others catch up. 
-
+//!       others catch up.
 
 use enr::NodeId;
 use fnv::FnvHashMap;
@@ -32,7 +31,7 @@ use tracing::debug;
 
 /// To avoid false winners, the majority vote win by at least this percentage compared to the next
 /// likely candidate.
-const CLEAR_MAJORITY_PERCENTAGE:f64 = 0.2; 
+const CLEAR_MAJORITY_PERCENTAGE: f64 = 0.2;
 
 /// A collection of IP:Ports for our node reported from external peers.
 pub(crate) struct IpVote {
@@ -130,10 +129,14 @@ impl IpVote {
 
         // Check if we have a clear winner
         let result = if max_count >= minimum_threshold {
-            let threshold = ((max_count as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
+            let threshold =
+                ((max_count as f64) * (1.0 - CLEAR_MAJORITY_PERCENTAGE)).round() as usize;
             if second_max_count >= threshold {
-                debug!(highest_count = max_count, second_highest_count = second_max_count, 
-                       "Competing votes detected. Socket not updated.");
+                debug!(
+                    highest_count = max_count,
+                    second_highest_count = second_max_count,
+                    "Competing votes detected. Socket not updated."
+                );
                 None
             } else {
                 max_vote
@@ -226,22 +229,21 @@ mod tests {
         assert_eq!(votes.majority(), (None, None));
     }
 
-    
-    #[test] 
+    #[test]
     fn test_snat_fluctuation_multiple_iterations() {
         // Demonstrates how repeated calls with same data can yield different results
         // simulating real-world SNAT fluctuation scenarios
-        
+
         let ip = "10.0.0.1".parse().unwrap();
         let port_1 = SocketAddrV4::new(ip, 50000);
         let port_2 = SocketAddrV4::new(ip, 50001);
-        
+
         let mut results = Vec::new();
-        
+
         // Run multiple iterations with alternating vote insertion order
         for iteration in 0..10 {
             let mut votes = IpVote::new(2, Duration::from_secs(10));
-            
+
             if iteration % 2 == 0 {
                 // Even iterations: port_1 votes first
                 for _ in 0..3 {
@@ -251,7 +253,7 @@ mod tests {
                     votes.insert(NodeId::random(), port_2);
                 }
             } else {
-                // Odd iterations: port_2 votes first  
+                // Odd iterations: port_2 votes first
                 for _ in 0..3 {
                     votes.insert(NodeId::random(), port_2);
                 }
@@ -259,20 +261,20 @@ mod tests {
                     votes.insert(NodeId::random(), port_1);
                 }
             }
-            
+
             let result = votes.majority().0;
             results.push(result);
         }
-        
+
         // Count how many times each port was selected
         let port_1_wins = results.iter().filter(|r| **r == Some(port_1)).count();
         let port_2_wins = results.iter().filter(|r| **r == Some(port_2)).count();
-        
+
         println!("Port 1 wins: {}, Port 2 wins: {}", port_1_wins, port_2_wins);
         println!("Results: {:?}", results);
-        
+
         // We expect no winner when there are competing ports.
-        assert!(port_1_wins == 0 && port_2_wins == 0, 
+        assert!(port_1_wins == 0 && port_2_wins == 0,
                 "Expected both ports to win some iterations due to flip-flop behavior, but got port_1: {}, port_2: {}", 
                 port_1_wins, port_2_wins);
     }
@@ -363,7 +365,7 @@ mod tests {
             // Find max and second max
             let mut counts: Vec<_> = port_counts.values().copied().collect();
             counts.sort_by(|a, b| b.cmp(a));
-            
+
             if counts.is_empty() {
                 return TestResult::discard();
             }
