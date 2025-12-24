@@ -40,8 +40,7 @@ aes = "0.8"
 ctr = "0.9"
 aes-gcm = "0.10.3"
 tracing = { version = "0.1", features = ["log"] }
-lru = "0.12"
-hashlink = "0.9"
+hashlink = "0.11"
 delay_map = "0.4"
 more-asserts = "0.3"
 
