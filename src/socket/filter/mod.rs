@@ -3,11 +3,10 @@
 use crate::{discv5::PERMIT_BAN_LIST, metrics::METRICS, node_info::NodeAddress, packet::Packet};
 use cache::ReceivedPacketCache;
 use enr::NodeId;
-use lru::LruCache;
+use hashlink::LruCache;
 use std::{
     collections::HashSet,
     net::{IpAddr, SocketAddr},
-    num::NonZeroUsize,
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -20,15 +19,9 @@ pub use config::FilterConfig;
 use rate_limiter::{LimitKind, RateLimiter};
 
 /// The maximum number of IPs to retain when calculating the number of nodes per IP.
-const KNOWN_ADDRS_SIZE: NonZeroUsize = match NonZeroUsize::new(500) {
-    Some(non_zero) => non_zero,
-    None => unreachable!(),
-};
+const KNOWN_ADDRS_SIZE: usize = 500;
 /// The number of IPs to retain at any given time that have banned nodes.
-const BANNED_NODES_SIZE: NonZeroUsize = match NonZeroUsize::new(50) {
-    Some(non_zero) => non_zero,
-    None => unreachable!(),
-};
+const BANNED_NODES_SIZE: usize = 50;
 
 /// The maximum number of packets to keep record of for metrics if the rate limiter is not
 /// specified.
@@ -184,7 +177,7 @@ impl Filter {
                             PERMIT_BAN_LIST.write().ban_ips.insert(ip, ban_timeout);
                         }
                     } else {
-                        self.banned_nodes.put(ip, 0);
+                        self.banned_nodes.insert(ip, 0);
                     }
                 }
 
@@ -203,7 +196,7 @@ impl Filter {
                 } else {
                     let mut ids = HashSet::new();
                     ids.insert(node_address.node_id);
-                    self.known_addrs.put(ip, ids);
+                    self.known_addrs.insert(ip, ids);
                     1
                 }
             };
@@ -213,7 +206,7 @@ impl Filter {
                 // The node is being banned
                 let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
                 PERMIT_BAN_LIST.write().ban_ips.insert(ip, ban_timeout);
-                self.known_addrs.pop(&ip);
+                self.known_addrs.remove(&ip);
                 return false;
             }
         }
