@@ -63,3 +63,15 @@ jobs:
       run: cargo install cargo-udeps --locked --force
     - name: Run cargo udeps to identify unused crates in the dependency graph
       run: cargo +nightly udeps --tests --all-targets --release
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    needs: cargo-fmt
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get latest version of stable rust
+        run: rustup update stable
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+      - name: Run cargo deny
+        run: cargo deny check bans sources
