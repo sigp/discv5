@@ -357,7 +357,7 @@ impl Message {
         }
 
         let id_bytes = Bytes::decode(payload)?;
-        let id = RequestId(id_bytes.to_vec());
+        let id = RequestId::decode(id_bytes.to_vec())?;
 
         let message = match msg_type {
             1 => {
@@ -857,6 +857,29 @@ mod tests {
         let encoded_message = message.clone().encode();
         assert_eq!(encoded_message.clone(), expected_output);
         assert_eq!(Message::decode(&encoded_message).unwrap(), message);
+    }
+
+    #[test]
+    fn reject_oversized_request_id() {
+        // A PING request with a 9-byte request ID should be rejected.
+        // The discv5 spec limits request IDs to a maximum of 8 bytes.
+        let id = RequestId(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]); // 9 bytes
+        let request = Request {
+            id,
+            body: RequestBody::Ping { enr_seq: 1 },
+        };
+        let encoded = request.encode();
+        Message::decode(&encoded).expect_err("should reject request ID longer than 8 bytes");
+
+        // An 8-byte request ID should be accepted.
+        let id = RequestId(vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        let request = Message::Request(Request {
+            id,
+            body: RequestBody::Ping { enr_seq: 1 },
+        });
+        let encoded = request.clone().encode();
+        let decoded = Message::decode(&encoded).expect("8-byte request ID should be valid");
+        assert_eq!(request, decoded);
     }
 
     #[test]
