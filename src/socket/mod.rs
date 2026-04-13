@@ -1,4 +1,4 @@
-use crate::{Executor, ProtocolIdentity};
+use crate::{config::OnDecodeFailure, Executor, ProtocolIdentity};
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
@@ -45,6 +45,11 @@ pub enum ListenConfig {
         ipv6: Ipv6Addr,
         ipv6_port: u16,
     },
+    /// Use pre-created UDP sockets. This allows sharing sockets with other protocol handlers.
+    FromSockets {
+        ipv4: Option<Arc<UdpSocket>>,
+        ipv6: Option<Arc<UdpSocket>>,
+    },
 }
 
 /// Convenience objects for setting up the recv handler.
@@ -63,6 +68,8 @@ pub struct SocketConfig {
     pub local_node_id: enr::NodeId,
     /// The protocol identity used in sent and received packets.
     pub protocol_identity: ProtocolIdentity,
+    /// Optional callback for handling packets that fail to decode.
+    pub on_decode_failure: Option<OnDecodeFailure>,
 }
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
@@ -101,6 +108,7 @@ impl Socket {
             expected_responses,
             local_node_id,
             protocol_identity,
+            on_decode_failure,
         } = config;
 
         // For recv socket, intentionally forgetting which socket is the ipv4 and which is the ipv6 one.
@@ -133,6 +141,17 @@ impl Socket {
                     Some(ipv6_socket),
                 )
             }
+            ListenConfig::FromSockets { ipv4, ipv6 } => match (ipv4, ipv6) {
+                (Some(v4), Some(v6)) => (v4.clone(), Some(v6.clone()), Some(v4), Some(v6)),
+                (Some(v4), None) => (v4.clone(), None, Some(v4), None),
+                (None, Some(v6)) => (v6.clone(), None, None, Some(v6)),
+                (None, None) => {
+                    return Err(Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "At least one socket must be provided",
+                    ))
+                }
+            },
         };
 
         // spawn the recv handler
@@ -145,6 +164,7 @@ impl Socket {
             protocol_identity,
             expected_responses,
             ban_duration,
+            on_decode_failure,
         };
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);
@@ -201,7 +221,7 @@ impl ListenConfig {
     /// Sets an ipv4 socket. This will override any past ipv4 configuration and will promote the configuration to dual socket if an ipv6 socket is configured.
     pub fn with_ipv4(self, ip: Ipv4Addr, port: u16) -> ListenConfig {
         match self {
-            ListenConfig::Ipv4 { .. } => ListenConfig::Ipv4 { ip, port },
+            ListenConfig::Ipv4 { .. } | ListenConfig::FromSockets { .. } => ListenConfig::Ipv4 { ip, port },
             ListenConfig::Ipv6 {
                 ip: ipv6,
                 port: ipv6_port,
@@ -227,7 +247,7 @@ impl ListenConfig {
     /// Sets an ipv6 socket. This will override any past ipv6 configuration and will promote the configuration to dual socket if an ipv4 socket is configured.
     pub fn with_ipv6(self, ip: Ipv6Addr, port: u16) -> ListenConfig {
         match self {
-            ListenConfig::Ipv6 { .. } => ListenConfig::Ipv6 { ip, port },
+            ListenConfig::Ipv6 { .. } | ListenConfig::FromSockets { .. } => ListenConfig::Ipv6 { ip, port },
             ListenConfig::Ipv4 {
                 ip: ipv4,
                 port: ipv4_port,

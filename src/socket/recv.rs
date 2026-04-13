@@ -3,7 +3,7 @@
 //! Every UDP packet passes a filter before being processed.
 
 use super::filter::{Filter, FilterConfig};
-use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
+use crate::{config::OnDecodeFailure, metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
 use parking_lot::RwLock;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
@@ -36,6 +36,9 @@ pub struct RecvHandlerConfig {
     pub local_node_id: enr::NodeId,
     pub protocol_identity: ProtocolIdentity,
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
+    /// Optional callback invoked with the raw packet bytes and source address when a packet fails
+    /// to decode. This can be used to forward undecoded packets to another protocol handler.
+    pub on_decode_failure: Option<OnDecodeFailure>,
 }
 
 /// The main task that handles inbound UDP packets.
@@ -56,6 +59,8 @@ pub(crate) struct RecvHandler {
     protocol_identity: ProtocolIdentity,
     /// The channel to send the packet handler.
     handler: mpsc::Sender<InboundPacket>,
+    /// Optional callback for packets that fail to decode.
+    on_decode_failure: Option<OnDecodeFailure>,
     /// Exit channel to shutdown the recv handler.
     exit: oneshot::Receiver<()>,
 }
@@ -75,6 +80,7 @@ impl RecvHandler {
             local_node_id,
             protocol_identity,
             expected_responses,
+            on_decode_failure,
         } = config;
 
         let filter_enabled = filter_config.enabled;
@@ -90,6 +96,7 @@ impl RecvHandler {
             node_id: local_node_id,
             protocol_identity,
             handler,
+            on_decode_failure,
             exit,
         };
 
@@ -193,7 +200,11 @@ impl RecvHandler {
         ) {
             Ok(p) => p,
             Err(e) => {
-                debug!(error = ?e, "Packet decoding failed"); // could not decode the packet, drop it
+                if let Some(cb) = &self.on_decode_failure {
+                    cb(&recv_buffer[..length], src_address).await;
+                } else {
+                    debug!(error = ?e, "Packet decoding failed");
+                }
                 return;
             }
         };

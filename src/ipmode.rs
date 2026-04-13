@@ -29,6 +29,12 @@ impl IpMode {
             ListenConfig::Ipv4 { .. } => Ip4,
             ListenConfig::Ipv6 { .. } => Ip6,
             ListenConfig::DualStack { .. } => DualStack,
+            ListenConfig::FromSockets { ipv4, ipv6 } => match (ipv4, ipv6) {
+                (Some(_), Some(_)) => DualStack,
+                (Some(_), None) => Ip4,
+                (None, Some(_)) => Ip6,
+                (None, None) => Ip4,
+            },
         }
     }
 
