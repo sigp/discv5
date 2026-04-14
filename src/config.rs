@@ -1,16 +1,9 @@
 //! A set of configuration parameters to tune the discovery protocol.
 use crate::{
-    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, PermitBanList,
-    ProtocolIdentity, RateLimiter, RateLimiterBuilder,
+    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, OnDecodeFailure,
+    PermitBanList, ProtocolIdentity, RateLimiter, RateLimiterBuilder,
 };
-use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration};
-
-/// Callback type for handling packets that fail to decode.
-/// The callback receives the raw packet bytes and source address, and returns a future
-/// that is awaited before processing the next packet.
-pub type OnDecodeFailure = Arc<
-    dyn Fn(&[u8], SocketAddr) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> + Send + Sync,
->;
+use std::{sync::Arc, time::Duration};
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
@@ -124,7 +117,7 @@ pub struct Config {
     /// Optional callback for handling packets that fail to decode. This can be used to forward
     /// undecoded packets to another protocol handler. The returned future is awaited, providing
     /// backpressure if the handler is slow.
-    pub on_decode_failure: Option<OnDecodeFailure>,
+    pub on_decode_failure: Option<Arc<dyn OnDecodeFailure>>,
 }
 
 #[derive(Debug)]
@@ -359,10 +352,7 @@ impl ConfigBuilder {
 
     /// Sets a callback invoked with the raw packet bytes and source address when a packet fails
     /// to decode. This can be used to forward undecoded packets to another protocol handler.
-    pub fn on_decode_failure(
-        &mut self,
-        callback: OnDecodeFailure,
-    ) -> &mut Self {
+    pub fn on_decode_failure(&mut self, callback: Arc<dyn OnDecodeFailure>) -> &mut Self {
         self.config.on_decode_failure = Some(callback);
         self
     }

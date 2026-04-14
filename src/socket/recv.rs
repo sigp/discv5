@@ -3,9 +3,11 @@
 //! Every UDP packet passes a filter before being processed.
 
 use super::filter::{Filter, FilterConfig};
-use crate::{config::OnDecodeFailure, metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
+use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
+};
 use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
@@ -38,7 +40,7 @@ pub struct RecvHandlerConfig {
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
     /// Optional callback invoked with the raw packet bytes and source address when a packet fails
     /// to decode. This can be used to forward undecoded packets to another protocol handler.
-    pub on_decode_failure: Option<OnDecodeFailure>,
+    pub on_decode_failure: Option<Arc<dyn OnDecodeFailure>>,
 }
 
 /// The main task that handles inbound UDP packets.
@@ -60,7 +62,7 @@ pub(crate) struct RecvHandler {
     /// The channel to send the packet handler.
     handler: mpsc::Sender<InboundPacket>,
     /// Optional callback for packets that fail to decode.
-    on_decode_failure: Option<OnDecodeFailure>,
+    on_decode_failure: Option<Arc<dyn OnDecodeFailure>>,
     /// Exit channel to shutdown the recv handler.
     exit: oneshot::Receiver<()>,
 }
@@ -201,7 +203,8 @@ impl RecvHandler {
             Ok(p) => p,
             Err(e) => {
                 if let Some(cb) = &self.on_decode_failure {
-                    cb(&recv_buffer[..length], src_address).await;
+                    cb.on_decode_failure(&recv_buffer[..length], src_address)
+                        .await;
                 } else {
                     debug!(error = ?e, "Packet decoding failed");
                 }
@@ -237,4 +240,16 @@ impl RecvHandler {
             .await
             .unwrap_or_else(|e| warn!(error = %e,"Could not send packet to handler"));
     }
+}
+
+/// Trait for handling packets that fail to decode.
+///
+/// The handler receives the raw packet bytes and source address. The returned future is awaited
+/// before processing the next packet, providing backpressure if the handler is slow.
+pub trait OnDecodeFailure: Send + Sync {
+    fn on_decode_failure(
+        &self,
+        data: &[u8],
+        src: SocketAddr,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }

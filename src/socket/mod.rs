@@ -1,4 +1,4 @@
-use crate::{config::OnDecodeFailure, Executor, ProtocolIdentity};
+use crate::{Executor, ProtocolIdentity};
 use parking_lot::RwLock;
 use recv::*;
 use send::*;
@@ -23,7 +23,7 @@ pub use filter::{
     rate_limiter::{RateLimiter, RateLimiterBuilder},
     FilterConfig,
 };
-pub use recv::InboundPacket;
+pub use recv::{InboundPacket, OnDecodeFailure};
 pub use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
@@ -69,7 +69,7 @@ pub struct SocketConfig {
     /// The protocol identity used in sent and received packets.
     pub protocol_identity: ProtocolIdentity,
     /// Optional callback for handling packets that fail to decode.
-    pub on_decode_failure: Option<OnDecodeFailure>,
+    pub on_decode_failure: Option<Arc<dyn OnDecodeFailure>>,
 }
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
@@ -221,7 +221,9 @@ impl ListenConfig {
     /// Sets an ipv4 socket. This will override any past ipv4 configuration and will promote the configuration to dual socket if an ipv6 socket is configured.
     pub fn with_ipv4(self, ip: Ipv4Addr, port: u16) -> ListenConfig {
         match self {
-            ListenConfig::Ipv4 { .. } | ListenConfig::FromSockets { .. } => ListenConfig::Ipv4 { ip, port },
+            ListenConfig::Ipv4 { .. } | ListenConfig::FromSockets { .. } => {
+                ListenConfig::Ipv4 { ip, port }
+            }
             ListenConfig::Ipv6 {
                 ip: ipv6,
                 port: ipv6_port,
@@ -247,7 +249,9 @@ impl ListenConfig {
     /// Sets an ipv6 socket. This will override any past ipv6 configuration and will promote the configuration to dual socket if an ipv4 socket is configured.
     pub fn with_ipv6(self, ip: Ipv6Addr, port: u16) -> ListenConfig {
         match self {
-            ListenConfig::Ipv6 { .. } | ListenConfig::FromSockets { .. } => ListenConfig::Ipv6 { ip, port },
+            ListenConfig::Ipv6 { .. } | ListenConfig::FromSockets { .. } => {
+                ListenConfig::Ipv6 { ip, port }
+            }
             ListenConfig::Ipv4 {
                 ip: ipv4,
                 port: ipv4_port,

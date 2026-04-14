@@ -125,7 +125,7 @@ pub use kbucket::{ConnectionDirection, ConnectionState, Key};
 pub use packet::ProtocolIdentity;
 pub use permit_ban::PermitBanList;
 pub use service::TalkRequest;
-pub use socket::{ListenConfig, RateLimiter, RateLimiterBuilder};
+pub use socket::{ListenConfig, OnDecodeFailure, RateLimiter, RateLimiterBuilder};
 // Re-export the ENR crate
 pub use enr;
 
