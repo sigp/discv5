@@ -221,9 +221,7 @@ impl ListenConfig {
     /// Sets an ipv4 socket. This will override any past ipv4 configuration and will promote the configuration to dual socket if an ipv6 socket is configured.
     pub fn with_ipv4(self, ip: Ipv4Addr, port: u16) -> ListenConfig {
         match self {
-            ListenConfig::Ipv4 { .. } | ListenConfig::FromSockets { .. } => {
-                ListenConfig::Ipv4 { ip, port }
-            }
+            ListenConfig::Ipv4 { .. } => ListenConfig::Ipv4 { ip, port },
             ListenConfig::Ipv6 {
                 ip: ipv6,
                 port: ipv6_port,
@@ -241,6 +239,11 @@ impl ListenConfig {
                 ipv6,
                 ipv6_port,
             },
+            ListenConfig::FromSockets { .. } => {
+                panic!(
+                    "`with_ipv4` cannot be called on `FromSockets`; sockets are already provided"
+                )
+            }
         }
     }
 
@@ -249,9 +252,7 @@ impl ListenConfig {
     /// Sets an ipv6 socket. This will override any past ipv6 configuration and will promote the configuration to dual socket if an ipv4 socket is configured.
     pub fn with_ipv6(self, ip: Ipv6Addr, port: u16) -> ListenConfig {
         match self {
-            ListenConfig::Ipv6 { .. } | ListenConfig::FromSockets { .. } => {
-                ListenConfig::Ipv6 { ip, port }
-            }
+            ListenConfig::Ipv6 { .. } => ListenConfig::Ipv6 { ip, port },
             ListenConfig::Ipv4 {
                 ip: ipv4,
                 port: ipv4_port,
@@ -269,6 +270,11 @@ impl ListenConfig {
                 ipv6: ip,
                 ipv6_port: port,
             },
+            ListenConfig::FromSockets { .. } => {
+                panic!(
+                    "`with_ipv6` cannot be called on `FromSockets`; sockets are already provided"
+                )
+            }
         }
     }
 }

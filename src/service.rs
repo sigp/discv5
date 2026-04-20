@@ -616,11 +616,9 @@ impl Service {
                 // check if we need to update the known ENR
                 let mut to_request_enr = None;
                 match self.kbuckets.write().entry(&node_address.node_id.into()) {
-                    kbucket::Entry::Present(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            let enr = entry.value().clone();
-                            to_request_enr = Some(enr);
-                        }
+                    kbucket::Entry::Present(ref mut entry, _) if entry.value().seq() < enr_seq => {
+                        let enr = entry.value().clone();
+                        to_request_enr = Some(enr);
                     }
                     kbucket::Entry::Pending(ref mut entry, _) => {
                         if entry.value().seq() < enr_seq {

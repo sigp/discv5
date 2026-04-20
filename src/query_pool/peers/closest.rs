@@ -324,8 +324,8 @@ where
     /// Consumes the query, returning the target and the closest peers.
     pub fn into_result(self) -> Vec<TNodeId> {
         self.closest_peers
-            .into_iter()
-            .filter_map(|(_, peer)| {
+            .into_values()
+            .filter_map(|peer| {
                 if let QueryPeerState::Succeeded = peer.state {
                     Some(peer.key.into_preimage())
                 } else {
