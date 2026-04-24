@@ -20,6 +20,7 @@ use crate::{
     },
     node_info::{NodeAddress, NodeContact},
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
+    socket::UnrecognizedFrame,
     Config, Enr, IpMode,
 };
 use enr::{CombinedKey, EnrKey, Error as EnrError, NodeId};
@@ -78,6 +79,8 @@ pub enum Event {
     SocketUpdated(SocketAddr),
     /// A node has initiated a talk request.
     TalkRequest(TalkRequest),
+    /// A received unrecognized frame.
+    UnrecognizedFrame(UnrecognizedFrame),
 }
 
 /// The main Discv5 Service struct. This provides the user-level API for performing queries and

@@ -5,9 +5,7 @@
 use super::filter::{Filter, FilterConfig};
 use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
 use parking_lot::RwLock;
-use std::{
-    collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     net::UdpSocket,
     sync::{mpsc, oneshot},
@@ -16,6 +14,7 @@ use tokio::{
 use tracing::{debug, trace, warn};
 
 /// The object sent back by the Recv handler.
+#[derive(Debug)]
 pub struct InboundPacket {
     /// The originating socket addr.
     pub src_address: SocketAddr,
@@ -25,6 +24,20 @@ pub struct InboundPacket {
     pub message: Vec<u8>,
     /// The authenticated data of the packet.
     pub authenticated_data: Vec<u8>,
+}
+
+/// An unrecognized frame received by the Recv handler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnrecognizedFrame {
+    pub src_address: SocketAddr,
+    pub packet: Vec<u8>,
+}
+
+/// Packet output produced by the recv handler.
+#[derive(Debug)]
+pub enum RecvPacket {
+    Inbound(InboundPacket),
+    UnrecognizedFrame(UnrecognizedFrame),
 }
 
 /// Convenience objects for setting up the recv handler.
@@ -38,9 +51,6 @@ pub struct RecvHandlerConfig {
     pub local_node_id: enr::NodeId,
     pub protocol_identity: ProtocolIdentity,
     pub expected_responses: Arc<RwLock<HashMap<SocketAddr, usize>>>,
-    /// Optional callback invoked with the raw packet bytes and source address when a packet fails
-    /// to decode. This can be used to forward undecoded packets to another protocol handler.
-    pub on_decode_failure: Option<Arc<dyn OnDecodeFailure>>,
 }
 
 /// The main task that handles inbound UDP packets.
@@ -60,9 +70,7 @@ pub(crate) struct RecvHandler {
     /// The protocol identity expected in received packets.
     protocol_identity: ProtocolIdentity,
     /// The channel to send the packet handler.
-    handler: mpsc::Sender<InboundPacket>,
-    /// Optional callback for packets that fail to decode.
-    on_decode_failure: Option<Arc<dyn OnDecodeFailure>>,
+    handler: mpsc::Sender<RecvPacket>,
     /// Exit channel to shutdown the recv handler.
     exit: oneshot::Receiver<()>,
 }
@@ -71,7 +79,7 @@ impl RecvHandler {
     /// Spawns the `RecvHandler` on a provided executor.
     pub(crate) fn spawn(
         config: RecvHandlerConfig,
-    ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
+    ) -> (mpsc::Receiver<RecvPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
         let RecvHandlerConfig {
             filter_config,
@@ -82,7 +90,6 @@ impl RecvHandler {
             local_node_id,
             protocol_identity,
             expected_responses,
-            on_decode_failure,
         } = config;
 
         let filter_enabled = filter_config.enabled;
@@ -98,7 +105,6 @@ impl RecvHandler {
             node_id: local_node_id,
             protocol_identity,
             handler,
-            on_decode_failure,
             exit,
         };
 
@@ -202,12 +208,15 @@ impl RecvHandler {
         ) {
             Ok(p) => p,
             Err(e) => {
-                if let Some(cb) = &self.on_decode_failure {
-                    cb.on_decode_failure(&recv_buffer[..length], src_address)
-                        .await;
-                } else {
-                    debug!(error = ?e, "Packet decoding failed");
-                }
+                debug!(error = ?e, "Packet decoding failed"); // could not decode the packet, drop it
+                let frame = UnrecognizedFrame {
+                    src_address,
+                    packet: recv_buffer[..length].to_vec(),
+                };
+                self.handler
+                    .send(RecvPacket::UnrecognizedFrame(frame))
+                    .await
+                    .unwrap_or_else(|err| warn!(error = %err, "Could not send unrecognized frame to handler"));
                 return;
             }
         };
@@ -236,20 +245,8 @@ impl RecvHandler {
 
         // send the filtered decoded packet to the handler.
         self.handler
-            .send(inbound)
+            .send(RecvPacket::Inbound(inbound))
             .await
             .unwrap_or_else(|e| warn!(error = %e,"Could not send packet to handler"));
     }
-}
-
-/// Trait for handling packets that fail to decode.
-///
-/// The handler receives the raw packet bytes and source address. The returned future is awaited
-/// before processing the next packet, providing backpressure if the handler is slow.
-pub trait OnDecodeFailure: Send + Sync {
-    fn on_decode_failure(
-        &self,
-        data: &[u8],
-        src: SocketAddr,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }

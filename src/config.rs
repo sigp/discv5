@@ -1,9 +1,9 @@
 //! A set of configuration parameters to tune the discovery protocol.
 use crate::{
-    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, OnDecodeFailure,
-    PermitBanList, ProtocolIdentity, RateLimiter, RateLimiterBuilder,
+    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, PermitBanList,
+    ProtocolIdentity, RateLimiter, RateLimiterBuilder,
 };
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone)]
@@ -113,11 +113,6 @@ pub struct Config {
 
     /// The protocol identity to use in network messages.
     pub protocol_identity: ProtocolIdentity,
-
-    /// Optional callback for handling packets that fail to decode. This can be used to forward
-    /// undecoded packets to another protocol handler. The returned future is awaited, providing
-    /// backpressure if the handler is slow.
-    pub on_decode_failure: Option<Arc<dyn OnDecodeFailure>>,
 }
 
 #[derive(Debug)]
@@ -165,7 +160,6 @@ impl ConfigBuilder {
             executor: None,
             listen_config,
             protocol_identity: ProtocolIdentity::default(),
-            on_decode_failure: None,
         };
 
         ConfigBuilder { config }
@@ -347,13 +341,6 @@ impl ConfigBuilder {
     /// matching the configured protocol identity will be ignored.
     pub fn protocol_identity(&mut self, protocol_identity: ProtocolIdentity) -> &mut Self {
         self.config.protocol_identity = protocol_identity;
-        self
-    }
-
-    /// Sets a callback invoked with the raw packet bytes and source address when a packet fails
-    /// to decode. This can be used to forward undecoded packets to another protocol handler.
-    pub fn on_decode_failure(&mut self, callback: Arc<dyn OnDecodeFailure>) -> &mut Self {
-        self.config.on_decode_failure = Some(callback);
         self
     }
 

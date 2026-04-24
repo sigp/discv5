@@ -57,7 +57,6 @@ async fn build_handler(
                 expected_responses: filter_expected_responses.clone(),
                 ban_duration: config.ban_duration,
                 protocol_identity: Default::default(),
-                on_decode_failure: None,
             }
         };
 

@@ -23,7 +23,7 @@ pub use filter::{
     rate_limiter::{RateLimiter, RateLimiterBuilder},
     FilterConfig,
 };
-pub use recv::{InboundPacket, OnDecodeFailure};
+pub use recv::{InboundPacket, RecvPacket, UnrecognizedFrame};
 pub use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
@@ -68,14 +68,12 @@ pub struct SocketConfig {
     pub local_node_id: enr::NodeId,
     /// The protocol identity used in sent and received packets.
     pub protocol_identity: ProtocolIdentity,
-    /// Optional callback for handling packets that fail to decode.
-    pub on_decode_failure: Option<Arc<dyn OnDecodeFailure>>,
 }
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
 pub struct Socket {
     pub send: mpsc::Sender<OutboundPacket>,
-    pub recv: mpsc::Receiver<InboundPacket>,
+    pub recv: mpsc::Receiver<RecvPacket>,
     sender_exit: Option<oneshot::Sender<()>>,
     recv_exit: Option<oneshot::Sender<()>>,
 }
@@ -108,7 +106,6 @@ impl Socket {
             expected_responses,
             local_node_id,
             protocol_identity,
-            on_decode_failure,
         } = config;
 
         // For recv socket, intentionally forgetting which socket is the ipv4 and which is the ipv6 one.
@@ -164,7 +161,6 @@ impl Socket {
             protocol_identity,
             expected_responses,
             ban_duration,
-            on_decode_failure,
         };
 
         let (recv, recv_exit) = RecvHandler::spawn(recv_config);
