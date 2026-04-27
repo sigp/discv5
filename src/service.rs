@@ -1293,10 +1293,8 @@ impl Service {
                     kbucket::Entry::Present(entry, _) if entry.value().seq() < enr.seq() => {
                         entry.remove()
                     }
-                    kbucket::Entry::Pending(entry, _) => {
-                        if entry.value().seq() < enr.seq() {
-                            entry.remove()
-                        }
+                    kbucket::Entry::Pending(entry, _) if entry.value().seq() < enr.seq() => {
+                        entry.remove()
                     }
                     _ => {}
                 }
