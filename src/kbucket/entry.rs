@@ -175,12 +175,12 @@ where
     }
 
     /// Returns the value associated with the key.
-    pub fn value(&mut self) -> &mut TVal {
+    pub fn value(&self) -> &TVal {
         self.0
             .bucket
-            .pending_mut()
+            .pending()
             .expect("We can only build a ConnectedPendingEntry if the entry is pending; QED")
-            .value_mut()
+            .value()
     }
 
     /// Updates the status of the pending entry.

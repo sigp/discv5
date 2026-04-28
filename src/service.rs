@@ -619,15 +619,13 @@ impl Service {
                 // check if we need to update the known ENR
                 let mut to_request_enr = None;
                 match self.kbuckets.write().entry(&node_address.node_id.into()) {
-                    kbucket::Entry::Present(ref mut entry, _) if entry.value().seq() < enr_seq => {
+                    kbucket::Entry::Present(ref entry, _) if entry.value().seq() < enr_seq => {
                         let enr = entry.value().clone();
                         to_request_enr = Some(enr);
                     }
-                    kbucket::Entry::Pending(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            let enr = entry.value().clone();
-                            to_request_enr = Some(enr);
-                        }
+                    kbucket::Entry::Pending(ref entry, _) if entry.value().seq() < enr_seq => {
+                        let enr = entry.value().clone();
+                        to_request_enr = Some(enr);
                     }
                     // don't know the peer, don't request its most recent ENR
                     _ => {}
@@ -1277,7 +1275,7 @@ impl Service {
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
                     kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
-                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                    kbucket::Entry::Pending(entry, _) => entry.value().seq() < enr.seq(),
                     _ => false,
                 };
 
@@ -1298,10 +1296,8 @@ impl Service {
                     kbucket::Entry::Present(entry, _) if entry.value().seq() < enr.seq() => {
                         entry.remove()
                     }
-                    kbucket::Entry::Pending(mut entry, _) => {
-                        if entry.value().seq() < enr.seq() {
-                            entry.remove()
-                        }
+                    kbucket::Entry::Pending(entry, _) if entry.value().seq() < enr.seq() => {
+                        entry.remove()
                     }
                     _ => {}
                 }
