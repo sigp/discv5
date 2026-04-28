@@ -216,7 +216,9 @@ impl RecvHandler {
                 self.handler
                     .send(RecvPacket::UnrecognizedFrame(frame))
                     .await
-                    .unwrap_or_else(|err| warn!(error = %err, "Could not send unrecognized frame to handler"));
+                    .unwrap_or_else(
+                        |err| warn!(error = %err, "Could not send unrecognized frame to handler"),
+                    );
                 return;
             }
         };
