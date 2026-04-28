@@ -263,19 +263,19 @@ impl Handler {
         };
 
         let mut listen_sockets = SmallVec::default();
-        match &config.listen_config {
-            ListenConfig::Ipv4 { ip, port } => listen_sockets.push((*ip, *port).into()),
-            ListenConfig::Ipv6 { ip, port } => listen_sockets.push((*ip, *port).into()),
+        match config.listen_config {
+            ListenConfig::Ipv4 { ip, port } => listen_sockets.push((ip, port).into()),
+            ListenConfig::Ipv6 { ip, port } => listen_sockets.push((ip, port).into()),
             ListenConfig::DualStack {
                 ipv4,
                 ipv4_port,
                 ipv6,
                 ipv6_port,
             } => {
-                listen_sockets.push((*ipv4, *ipv4_port).into());
-                listen_sockets.push((*ipv6, *ipv6_port).into());
+                listen_sockets.push((ipv4, ipv4_port).into());
+                listen_sockets.push((ipv6, ipv6_port).into());
             }
-            ListenConfig::FromSockets { ipv4, ipv6 } => {
+            ListenConfig::FromSockets { ref ipv4, ref ipv6 } => {
                 if let Some(s) = ipv4 {
                     listen_sockets.push(s.local_addr().expect("socket must have local addr"));
                 }
