@@ -94,6 +94,10 @@ impl<TNodeId, TVal: Eq> PendingNode<TNodeId, TVal> {
         &self.node.value
     }
 
+    pub fn value_mut(&mut self) -> &mut TVal {
+        &mut self.node.value
+    }
+
     pub fn set_ready_at(&mut self, t: Instant) {
         self.replace = t;
     }

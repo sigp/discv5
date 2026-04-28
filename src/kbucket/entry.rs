@@ -183,6 +183,14 @@ where
             .value()
     }
 
+    pub fn value_mut(&mut self) -> &mut TVal {
+        self.0
+            .bucket
+            .pending_mut()
+            .expect("We can only build a ConnectedPendingEntry if the entry is pending; QED")
+            .value_mut()
+    }
+
     /// Updates the status of the pending entry.
     pub fn update(self, status: NodeStatus) -> PendingEntry<'a, TPeerId, TVal> {
         self.0.bucket.update_pending(status);
