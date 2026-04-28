@@ -34,6 +34,7 @@ pub struct UnrecognizedFrame {
 }
 
 /// Packet output produced by the recv handler.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum RecvPacket {
     Inbound(InboundPacket),
