@@ -33,7 +33,7 @@ use crate::{
     packet::{ChallengeData, IdNonce, MessageNonce, Packet, PacketKind},
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
-    socket::{FilterConfig, Socket},
+    socket::{FilterConfig, Socket, UnrecognizedFrame},
     Enr, ProtocolIdentity,
 };
 use delay_map::HashMapDelay;
@@ -139,6 +139,8 @@ pub enum HandlerOut {
         socket: SocketAddr,
         node_id: NodeId,
     },
+    /// A frame that could not be decoded as discv5.
+    UnrecognizedFrame(UnrecognizedFrame),
     /// These sessions have expired from the cache.
     ExpiredSessions(Vec<NodeAddress>),
 }
@@ -273,6 +275,14 @@ impl Handler {
                 listen_sockets.push((ipv4, ipv4_port).into());
                 listen_sockets.push((ipv6, ipv6_port).into());
             }
+            ListenConfig::FromSockets { ref ipv4, ref ipv6 } => {
+                if let Some(s) = ipv4 {
+                    listen_sockets.push(s.local_addr().expect("socket must have local addr"));
+                }
+                if let Some(s) = ipv6 {
+                    listen_sockets.push(s.local_addr().expect("socket must have local addr"));
+                }
+            }
         };
 
         let socket_config = socket::SocketConfig {
@@ -341,8 +351,21 @@ impl Handler {
                         HandlerIn::WhoAreYou(wru_ref, enr) => self.send_challenge(wru_ref, enr).await,
                     }
                 }
-                Some(inbound_packet) = self.socket.recv.recv() => {
-                    self.process_inbound_packet(inbound_packet).await;
+                Some(incoming_packet) = self.socket.recv.recv() => {
+                    match incoming_packet {
+                        socket::RecvPacket::Inbound(inbound_packet) => {
+                            self.process_inbound_packet(inbound_packet).await;
+                        }
+                        socket::RecvPacket::UnrecognizedFrame(frame) => {
+                            if let Err(e) = self
+                                .service_send
+                                .send(HandlerOut::UnrecognizedFrame(frame))
+                                .await
+                            {
+                                warn!(error = %e, "Failed to inform of unrecognized frame")
+                            }
+                        }
+                    }
                 }
                 Some(Ok((node_address, active_request))) = self.active_requests.next() => {
                     self.handle_request_timeout(node_address, active_request).await;

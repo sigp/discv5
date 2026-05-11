@@ -14,6 +14,7 @@ use tokio::{
 use tracing::{debug, trace, warn};
 
 /// The object sent back by the Recv handler.
+#[derive(Debug)]
 pub struct InboundPacket {
     /// The originating socket addr.
     pub src_address: SocketAddr,
@@ -23,6 +24,21 @@ pub struct InboundPacket {
     pub message: Vec<u8>,
     /// The authenticated data of the packet.
     pub authenticated_data: Vec<u8>,
+}
+
+/// An unrecognized frame received by the Recv handler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnrecognizedFrame {
+    pub src_address: SocketAddr,
+    pub packet: Vec<u8>,
+}
+
+/// Packet output produced by the recv handler.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum RecvPacket {
+    Inbound(InboundPacket),
+    UnrecognizedFrame(UnrecognizedFrame),
 }
 
 /// Convenience objects for setting up the recv handler.
@@ -55,7 +71,7 @@ pub(crate) struct RecvHandler {
     /// The protocol identity expected in received packets.
     protocol_identity: ProtocolIdentity,
     /// The channel to send the packet handler.
-    handler: mpsc::Sender<InboundPacket>,
+    handler: mpsc::Sender<RecvPacket>,
     /// Exit channel to shutdown the recv handler.
     exit: oneshot::Receiver<()>,
 }
@@ -64,7 +80,7 @@ impl RecvHandler {
     /// Spawns the `RecvHandler` on a provided executor.
     pub(crate) fn spawn(
         config: RecvHandlerConfig,
-    ) -> (mpsc::Receiver<InboundPacket>, oneshot::Sender<()>) {
+    ) -> (mpsc::Receiver<RecvPacket>, oneshot::Sender<()>) {
         let (exit_sender, exit) = oneshot::channel();
         let RecvHandlerConfig {
             filter_config,
@@ -194,6 +210,16 @@ impl RecvHandler {
             Ok(p) => p,
             Err(e) => {
                 debug!(error = ?e, "Packet decoding failed"); // could not decode the packet, drop it
+                let frame = UnrecognizedFrame {
+                    src_address,
+                    packet: recv_buffer[..length].to_vec(),
+                };
+                self.handler
+                    .send(RecvPacket::UnrecognizedFrame(frame))
+                    .await
+                    .unwrap_or_else(
+                        |err| warn!(error = %err, "Could not send unrecognized frame to handler"),
+                    );
                 return;
             }
         };
@@ -222,7 +248,7 @@ impl RecvHandler {
 
         // send the filtered decoded packet to the handler.
         self.handler
-            .send(inbound)
+            .send(RecvPacket::Inbound(inbound))
             .await
             .unwrap_or_else(|e| warn!(error = %e,"Could not send packet to handler"));
     }

@@ -23,7 +23,7 @@ pub use filter::{
     rate_limiter::{RateLimiter, RateLimiterBuilder},
     FilterConfig,
 };
-pub use recv::InboundPacket;
+pub use recv::{InboundPacket, RecvPacket, UnrecognizedFrame};
 pub use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
@@ -44,6 +44,11 @@ pub enum ListenConfig {
         ipv4_port: u16,
         ipv6: Ipv6Addr,
         ipv6_port: u16,
+    },
+    /// Use pre-created UDP sockets. This allows sharing sockets with other protocol handlers.
+    FromSockets {
+        ipv4: Option<Arc<UdpSocket>>,
+        ipv6: Option<Arc<UdpSocket>>,
     },
 }
 
@@ -68,7 +73,7 @@ pub struct SocketConfig {
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
 pub struct Socket {
     pub send: mpsc::Sender<OutboundPacket>,
-    pub recv: mpsc::Receiver<InboundPacket>,
+    pub recv: mpsc::Receiver<RecvPacket>,
     sender_exit: Option<oneshot::Sender<()>>,
     recv_exit: Option<oneshot::Sender<()>>,
 }
@@ -133,6 +138,17 @@ impl Socket {
                     Some(ipv6_socket),
                 )
             }
+            ListenConfig::FromSockets { ipv4, ipv6 } => match (ipv4, ipv6) {
+                (Some(v4), Some(v6)) => (v4.clone(), Some(v6.clone()), Some(v4), Some(v6)),
+                (Some(v4), None) => (v4.clone(), None, Some(v4), None),
+                (None, Some(v6)) => (v6.clone(), None, None, Some(v6)),
+                (None, None) => {
+                    return Err(Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "At least one socket must be provided",
+                    ))
+                }
+            },
         };
 
         // spawn the recv handler
@@ -219,6 +235,11 @@ impl ListenConfig {
                 ipv6,
                 ipv6_port,
             },
+            ListenConfig::FromSockets { .. } => {
+                panic!(
+                    "`with_ipv4` cannot be called on `FromSockets`; sockets are already provided"
+                )
+            }
         }
     }
 
@@ -245,6 +266,11 @@ impl ListenConfig {
                 ipv6: ip,
                 ipv6_port: port,
             },
+            ListenConfig::FromSockets { .. } => {
+                panic!(
+                    "`with_ipv6` cannot be called on `FromSockets`; sockets are already provided"
+                )
+            }
         }
     }
 }

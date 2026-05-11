@@ -90,6 +90,10 @@ impl<TNodeId, TVal: Eq> PendingNode<TNodeId, TVal> {
         self.node.status
     }
 
+    pub fn value(&self) -> &TVal {
+        &self.node.value
+    }
+
     pub fn value_mut(&mut self) -> &mut TVal {
         &mut self.node.value
     }

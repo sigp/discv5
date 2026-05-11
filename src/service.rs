@@ -416,6 +416,9 @@ impl Service {
                             }
                             self.send_event(Event::UnverifiableEnr{enr, socket, node_id});
                         }
+                        HandlerOut::UnrecognizedFrame(frame) => {
+                            self.send_event(Event::UnrecognizedFrame(frame));
+                        }
                         HandlerOut::ExpiredSessions(expired_sessions) => {
                             self.send_event(Event::SessionsExpired(expired_sessions));
                         }
@@ -620,14 +623,9 @@ impl Service {
                         let enr = entry.value().clone();
                         to_request_enr = Some(enr);
                     }
-                    // PendingEntry::value() requires &mut self, so the condition cannot be placed
-                    // in the pattern guard (E0596). The inner `if` is intentional.
-                    #[allow(clippy::collapsible_match)]
-                    kbucket::Entry::Pending(ref mut entry, _) => {
-                        if entry.value().seq() < enr_seq {
-                            let enr = entry.value().clone();
-                            to_request_enr = Some(enr);
-                        }
+                    kbucket::Entry::Pending(ref entry, _) if entry.value().seq() < enr_seq => {
+                        let enr = entry.value().clone();
+                        to_request_enr = Some(enr);
                     }
                     // don't know the peer, don't request its most recent ENR
                     _ => {}
@@ -1277,7 +1275,7 @@ impl Service {
 
                 let must_update_enr = match self.kbuckets.write().entry(&key) {
                     kbucket::Entry::Present(entry, _) => entry.value().seq() < enr.seq(),
-                    kbucket::Entry::Pending(mut entry, _) => entry.value().seq() < enr.seq(),
+                    kbucket::Entry::Pending(entry, _) => entry.value().seq() < enr.seq(),
                     _ => false,
                 };
 
@@ -1298,13 +1296,8 @@ impl Service {
                     kbucket::Entry::Present(entry, _) if entry.value().seq() < enr.seq() => {
                         entry.remove()
                     }
-                    // PendingEntry::value() requires &mut self, so the condition cannot be placed
-                    // in the pattern guard (E0596). The inner `if` is intentional.
-                    #[allow(clippy::collapsible_match)]
-                    kbucket::Entry::Pending(mut entry, _) => {
-                        if entry.value().seq() < enr.seq() {
-                            entry.remove()
-                        }
+                    kbucket::Entry::Pending(entry, _) if entry.value().seq() < enr.seq() => {
+                        entry.remove()
                     }
                     _ => {}
                 }
