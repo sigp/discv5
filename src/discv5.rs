@@ -298,7 +298,7 @@ impl Discv5 {
     }
 
     /// Exposes the raw reference to the underlying internal metrics.
-    pub fn raw_metrics() -> &'static METRICS {
+    pub(crate) fn raw_metrics() -> &'static METRICS {
         &METRICS
     }
 
