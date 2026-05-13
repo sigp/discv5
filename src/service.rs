@@ -142,7 +142,7 @@ impl TalkRequest {
 }
 
 /// The types of requests to send to the Discv5 service.
-pub enum ServiceRequest {
+pub(crate) enum ServiceRequest {
     /// A request to start a query. There are two types of queries:
     /// - A FindNode Query - Searches for peers using a random target.
     /// - A Predicate Query - Searches for peers closest to a random target that match a specified
@@ -171,7 +171,7 @@ pub enum ServiceRequest {
 
 use crate::discv5::PERMIT_BAN_LIST;
 
-pub struct Service {
+pub(crate) struct Service {
     /// Configuration parameters.
     config: Config,
     /// The local ENR of the server.
@@ -234,7 +234,7 @@ pub struct Pong {
 }
 
 /// The kinds of responses we can send back to the discv5 layer.
-pub enum CallbackResponse {
+pub(crate) enum CallbackResponse {
     /// A response to a requested Nodes.
     Nodes(oneshot::Sender<Result<Vec<Enr>, RequestError>>),
     /// A response from a TALK request
@@ -1682,7 +1682,7 @@ enum QueryEvent {
 }
 
 /// The types of queries that can be made.
-pub enum QueryKind {
+pub(crate) enum QueryKind {
     /// A FindNode query. Searches for peers that are closest to a particular target.
     FindNode { target_node: NodeId },
     /// A predicate query. Searches for peers that are close to a target but filtered by a specific
