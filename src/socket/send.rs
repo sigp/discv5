@@ -7,7 +7,7 @@ use tokio::{
 };
 use tracing::{debug, error, trace, warn};
 
-pub struct OutboundPacket {
+pub(crate) struct OutboundPacket {
     /// The destination node address
     pub node_address: NodeAddress,
     /// The packet to be encoded.

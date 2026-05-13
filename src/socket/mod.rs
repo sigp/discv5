@@ -23,8 +23,9 @@ pub use filter::{
     rate_limiter::{RateLimiter, RateLimiterBuilder},
     FilterConfig,
 };
-pub use recv::{InboundPacket, RecvPacket, UnrecognizedFrame};
-pub use send::OutboundPacket;
+pub use recv::UnrecognizedFrame;
+pub(crate) use recv::{InboundPacket, RecvPacket};
+pub(crate) use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
 ///
@@ -53,7 +54,7 @@ pub enum ListenConfig {
 }
 
 /// Convenience objects for setting up the recv handler.
-pub struct SocketConfig {
+pub(crate) struct SocketConfig {
     /// The executor to spawn the tasks.
     pub executor: Box<dyn Executor + Send + Sync>,
     /// Configuration details for the packet filter.
@@ -71,7 +72,7 @@ pub struct SocketConfig {
 }
 
 /// Creates the UDP socket and handles the exit futures for the send/recv UDP handlers.
-pub struct Socket {
+pub(crate) struct Socket {
     pub send: mpsc::Sender<OutboundPacket>,
     pub recv: mpsc::Receiver<RecvPacket>,
     sender_exit: Option<oneshot::Sender<()>>,

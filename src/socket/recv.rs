@@ -15,7 +15,7 @@ use tracing::{debug, trace, warn};
 
 /// The object sent back by the Recv handler.
 #[derive(Debug)]
-pub struct InboundPacket {
+pub(crate) struct InboundPacket {
     /// The originating socket addr.
     pub src_address: SocketAddr,
     /// The packet header.
@@ -36,13 +36,13 @@ pub struct UnrecognizedFrame {
 /// Packet output produced by the recv handler.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
-pub enum RecvPacket {
+pub(crate) enum RecvPacket {
     Inbound(InboundPacket),
     UnrecognizedFrame(UnrecognizedFrame),
 }
 
 /// Convenience objects for setting up the recv handler.
-pub struct RecvHandlerConfig {
+pub(crate) struct RecvHandlerConfig {
     pub filter_config: FilterConfig,
     /// If the filter is enabled this sets the default timeout for bans enacted by the filter.
     pub ban_duration: Option<Duration>,
