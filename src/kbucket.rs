@@ -81,7 +81,7 @@ pub use bucket::{
     ConnectionState, FailureReason, InsertResult as BucketInsertResult, UpdateResult,
     MAX_NODES_PER_BUCKET,
 };
-pub use filter::{Filter, IpBucketFilter, IpTableFilter};
+pub(crate) use filter::{Filter, IpBucketFilter, IpTableFilter};
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
