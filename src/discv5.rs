@@ -297,11 +297,6 @@ impl Discv5 {
         Metrics::from(&METRICS)
     }
 
-    /// Exposes the raw reference to the underlying internal metrics.
-    pub(crate) fn raw_metrics() -> &'static METRICS {
-        &METRICS
-    }
-
     /// Returns the local ENR of the node.
     pub fn local_enr(&self) -> Enr {
         self.local_enr.read().clone()

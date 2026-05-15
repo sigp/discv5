@@ -379,14 +379,6 @@ impl Packet {
         ))
     }
 
-    /// Returns true if the packet is a WHOAREYOU packet.
-    pub fn is_whoareyou(&self) -> bool {
-        match &self.header.kind {
-            PacketKind::WhoAreYou { .. } => true,
-            PacketKind::Message { .. } | PacketKind::Handshake { .. } => false,
-        }
-    }
-
     /// Non-challenge (WHOAREYOU) packets contain the src_id of the node. This function returns the
     /// src_id in this case.
     pub fn src_id(&self) -> Option<NodeId> {
