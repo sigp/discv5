@@ -16,16 +16,14 @@ use tokio::{
 };
 
 mod filter;
-mod recv;
-mod send;
+pub(crate) mod recv;
+pub(crate) mod send;
 
 pub use filter::{
     rate_limiter::{RateLimiter, RateLimiterBuilder},
     FilterConfig,
 };
 pub use recv::UnrecognizedFrame;
-pub(crate) use recv::{InboundPacket, RecvPacket};
-pub(crate) use send::OutboundPacket;
 
 /// Configuration for the sockets to listen on.
 ///

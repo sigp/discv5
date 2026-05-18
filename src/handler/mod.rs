@@ -353,10 +353,10 @@ impl Handler {
                 }
                 Some(incoming_packet) = self.socket.recv.recv() => {
                     match incoming_packet {
-                        socket::RecvPacket::Inbound(inbound_packet) => {
+                        socket::recv::RecvPacket::Inbound(inbound_packet) => {
                             self.process_inbound_packet(inbound_packet).await;
                         }
-                        socket::RecvPacket::UnrecognizedFrame(frame) => {
+                        socket::recv::RecvPacket::UnrecognizedFrame(frame) => {
                             if let Err(e) = self
                                 .service_send
                                 .send(HandlerOut::UnrecognizedFrame(frame))
@@ -384,7 +384,7 @@ impl Handler {
     }
 
     /// Processes an inbound decoded packet.
-    async fn process_inbound_packet(&mut self, inbound_packet: socket::InboundPacket) {
+    async fn process_inbound_packet(&mut self, inbound_packet: socket::recv::InboundPacket) {
         let message_nonce = inbound_packet.header.message_nonce;
         match inbound_packet.header.kind {
             PacketKind::WhoAreYou { enr_seq, .. } => {
@@ -1363,7 +1363,7 @@ impl Handler {
 
     /// Sends a packet to the send handler to be encoded and sent.
     async fn send(&mut self, node_address: NodeAddress, packet: Packet) {
-        let outbound_packet = socket::OutboundPacket {
+        let outbound_packet = socket::send::OutboundPacket {
             node_address,
             packet,
         };
