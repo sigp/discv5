@@ -295,7 +295,7 @@ impl Discv5 {
     }
 
     /// Gets the metrics associated with the Server
-    pub fn metrics(&self) -> Metrics {
+    pub fn metrics() -> Metrics {
         Metrics::from(&METRICS)
     }
 
