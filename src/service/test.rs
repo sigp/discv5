@@ -72,8 +72,8 @@ async fn build_service(
 
     let (table_filter, bucket_filter) = if filters {
         (
-            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            Some(Box::new(kbucket::filter::IpTableFilter) as Box<dyn kbucket::filter::Filter<Enr>>),
+            Some(Box::new(kbucket::filter::IpBucketFilter) as Box<dyn kbucket::filter::Filter<Enr>>),
         )
     } else {
         (None, None)
@@ -131,8 +131,8 @@ fn build_non_handler_service(
 
     let (table_filter, bucket_filter) = if filters {
         (
-            Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-            Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+            Some(Box::new(kbucket::filter::IpTableFilter) as Box<dyn kbucket::filter::Filter<Enr>>),
+            Some(Box::new(kbucket::filter::IpBucketFilter) as Box<dyn kbucket::filter::Filter<Enr>>),
         )
     } else {
         (None, None)
