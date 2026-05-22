@@ -98,7 +98,7 @@ mod config;
 mod discv5;
 mod error;
 mod executor;
-pub mod handler;
+pub(crate) mod handler;
 mod ipmode;
 pub mod kbucket;
 mod lru_time_cache;
@@ -107,7 +107,7 @@ mod node_info;
 pub mod packet;
 pub mod permit_ban;
 mod query_pool;
-pub mod rpc;
+pub(crate) mod rpc;
 pub mod service;
 pub mod socket;
 
@@ -122,8 +122,10 @@ pub use error::{Error, QueryError, RequestError, ResponseError};
 pub use executor::{Executor, TokioExecutor};
 pub use ipmode::IpMode;
 pub use kbucket::{ConnectionDirection, ConnectionState, Key};
+pub use node_info::{NodeAddress, NodeContact};
 pub use packet::ProtocolIdentity;
 pub use permit_ban::PermitBanList;
+pub use rpc::RequestId;
 pub use service::TalkRequest;
 pub use socket::{ListenConfig, RateLimiter, RateLimiterBuilder};
 // Re-export the ENR crate

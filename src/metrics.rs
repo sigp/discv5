@@ -1,11 +1,11 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 lazy_static! {
-    pub static ref METRICS: InternalMetrics = InternalMetrics::default();
+    pub(crate) static ref METRICS: InternalMetrics = InternalMetrics::default();
 }
 
 /// A collection of metrics used throughout the server.
-pub struct InternalMetrics {
+pub(crate) struct InternalMetrics {
     /// The number of active UDP sessions that are currently established.
     pub active_sessions: AtomicUsize,
     /// The number of seconds to store received packets to taking a moving average over.
@@ -37,13 +37,13 @@ impl Default for InternalMetrics {
 }
 
 impl InternalMetrics {
-    pub fn add_recv_bytes(&self, bytes: usize) {
+    pub(crate) fn add_recv_bytes(&self, bytes: usize) {
         let current_bytes_recv = self.bytes_recv.load(Ordering::Relaxed);
         self.bytes_recv
             .store(current_bytes_recv.saturating_add(bytes), Ordering::Relaxed);
     }
 
-    pub fn add_sent_bytes(&self, bytes: usize) {
+    pub(crate) fn add_sent_bytes(&self, bytes: usize) {
         let current_bytes_sent = self.bytes_sent.load(Ordering::Relaxed);
         self.bytes_sent
             .store(current_bytes_sent.saturating_add(bytes), Ordering::Relaxed);

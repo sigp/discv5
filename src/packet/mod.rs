@@ -21,14 +21,14 @@ use std::convert::TryInto;
 use zeroize::Zeroize;
 
 /// The packet IV length (u128).
-pub const IV_LENGTH: usize = 16;
+pub(crate) const IV_LENGTH: usize = 16;
 /// The length of the static header. (6 byte protocol id, 2 bytes version, 1 byte kind, 12 byte
 /// message nonce and a 2 byte authdata-size).
-pub const STATIC_HEADER_LENGTH: usize = 23;
+pub(crate) const STATIC_HEADER_LENGTH: usize = 23;
 /// The message nonce length (in bytes).
-pub const MESSAGE_NONCE_LENGTH: usize = 12;
+pub(crate) const MESSAGE_NONCE_LENGTH: usize = 12;
 /// The Id nonce length (in bytes).
-pub const ID_NONCE_LENGTH: usize = 16;
+pub(crate) const ID_NONCE_LENGTH: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProtocolIdentity {
@@ -56,7 +56,7 @@ pub type MessageNonce = [u8; MESSAGE_NONCE_LENGTH];
 pub type IdNonce = [u8; ID_NONCE_LENGTH];
 
 // This is the WHOAREYOU authenticated data.
-pub struct ChallengeData([u8; 63]);
+pub(crate) struct ChallengeData([u8; 63]);
 
 impl std::fmt::Debug for ChallengeData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -84,7 +84,7 @@ impl AsRef<[u8]> for ChallengeData {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Packet {
+pub(crate) struct Packet {
     /// Random data unique to the packet.
     pub iv: u128,
     /// Protocol header.
@@ -94,7 +94,7 @@ pub struct Packet {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PacketHeader {
+pub(crate) struct PacketHeader {
     /// The nonce of the associated message
     pub message_nonce: MessageNonce,
     /// The protocol identity used
@@ -377,14 +377,6 @@ impl Packet {
             protocol_identity,
             ciphertext.to_vec(),
         ))
-    }
-
-    /// Returns true if the packet is a WHOAREYOU packet.
-    pub fn is_whoareyou(&self) -> bool {
-        match &self.header.kind {
-            PacketKind::WhoAreYou { .. } => true,
-            PacketKind::Message { .. } | PacketKind::Handshake { .. } => false,
-        }
     }
 
     /// Non-challenge (WHOAREYOU) packets contain the src_id of the node. This function returns the

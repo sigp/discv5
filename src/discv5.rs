@@ -122,8 +122,10 @@ impl Discv5 {
         // may expose this functionality to the users if there is demand for it.
         let (table_filter, bucket_filter) = if config.ip_limit {
             (
-                Some(Box::new(kbucket::IpTableFilter) as Box<dyn kbucket::Filter<Enr>>),
-                Some(Box::new(kbucket::IpBucketFilter) as Box<dyn kbucket::Filter<Enr>>),
+                Some(Box::new(kbucket::filter::IpTableFilter)
+                    as Box<dyn kbucket::filter::Filter<Enr>>),
+                Some(Box::new(kbucket::filter::IpBucketFilter)
+                    as Box<dyn kbucket::filter::Filter<Enr>>),
             )
         } else {
             (None, None)
@@ -293,13 +295,8 @@ impl Discv5 {
     }
 
     /// Gets the metrics associated with the Server
-    pub fn metrics(&self) -> Metrics {
+    pub fn metrics() -> Metrics {
         Metrics::from(&METRICS)
-    }
-
-    /// Exposes the raw reference to the underlying internal metrics.
-    pub fn raw_metrics() -> &'static METRICS {
-        &METRICS
     }
 
     /// Returns the local ENR of the node.

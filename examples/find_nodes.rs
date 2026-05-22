@@ -169,7 +169,7 @@ async fn main() {
                 // pick a random node target
                 let target_random_node_id = enr::NodeId::random();
                 // get metrics
-                let metrics = discv5.metrics();
+                let metrics = Discv5::metrics();
                 let connected_peers = discv5.connected_peers();
                 info!(
                     connected_peers,

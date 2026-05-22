@@ -38,7 +38,7 @@ const MAX_NODES_PER_SUBNET_TABLE: usize = 10;
 const MAX_NODES_PER_SUBNET_BUCKET: usize = 2;
 
 #[derive(Clone)]
-pub struct IpTableFilter;
+pub(crate) struct IpTableFilter;
 
 impl Filter<Enr> for IpTableFilter {
     fn filter(
@@ -51,7 +51,7 @@ impl Filter<Enr> for IpTableFilter {
 }
 
 #[derive(Clone)]
-pub struct IpBucketFilter;
+pub(crate) struct IpBucketFilter;
 
 impl Filter<Enr> for IpBucketFilter {
     fn filter(

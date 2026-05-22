@@ -69,7 +69,7 @@
 
 mod bucket;
 mod entry;
-mod filter;
+pub(crate) mod filter;
 mod key;
 
 pub use entry::*;
@@ -81,7 +81,7 @@ pub use bucket::{
     ConnectionState, FailureReason, InsertResult as BucketInsertResult, UpdateResult,
     MAX_NODES_PER_BUCKET,
 };
-pub use filter::{Filter, IpBucketFilter, IpTableFilter};
+use filter::Filter;
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},

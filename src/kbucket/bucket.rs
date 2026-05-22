@@ -31,6 +31,7 @@
 #![allow(dead_code)]
 
 use super::*;
+use filter::Filter;
 use tracing::{debug, error};
 
 /// Maximum number of nodes in a bucket, i.e. the (fixed) `k` parameter.
