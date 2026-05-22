@@ -352,7 +352,7 @@ impl ConfigBuilder {
 
         // If enr-update is set to false, then it is non-intuitive for discv5 to revoke ENR details
         // when determining NAT status. So we will not do this.
-        if self.config.enr_update {
+        if !self.config.enr_update {
             self.config.auto_nat_listen_duration = None;
         }
 
