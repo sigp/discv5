@@ -371,8 +371,11 @@ impl Handler {
                     self.handle_request_timeout(node_address, active_request).await;
                 }
                 Some(Ok((node_address, _challenge))) = self.active_challenges.next() => {
-                    // A challenge has expired. There could be pending requests awaiting this
-                    // challenge. We process them here
+                    // A challenge has expired. Drop the expected-response entry added when the
+                    // WHOAREYOU was sent, otherwise the packet filter permits this address
+                    // indefinitely.
+                    self.remove_expected_response(node_address.socket_addr);
+                    // There could be pending requests awaiting this challenge. We process them here
                     self.send_pending_requests(&node_address).await;
                 }
                 _ = banned_nodes_check.tick() => self.unban_nodes_check(), // Unban nodes that are past the timeout
