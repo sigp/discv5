@@ -162,6 +162,8 @@ pub struct WhoAreYouRef(pub NodeAddress, MessageNonce);
 #[derive(Debug)]
 /// A Challenge (WHOAREYOU) object used to handle and send WHOAREYOU requests.
 pub struct Challenge {
+    /// The WHOAREYOU packet sent to the remote.
+    packet: Packet,
     /// The challenge data received from the node.
     data: ChallengeData,
     /// The remote's ENR if we know it. We can receive a challenge from an unknown node.
@@ -584,8 +586,13 @@ impl Handler {
         let node_address = wru_ref.0;
         let message_nonce = wru_ref.1;
 
-        if self.active_challenges.get(&node_address).is_some() {
-            warn!(%node_address, "WHOAREYOU already sent.");
+        if let Some(packet) = self
+            .active_challenges
+            .get(&node_address)
+            .map(|challenge| challenge.packet.clone())
+        {
+            debug!(%node_address, "Resending WHOAREYOU");
+            self.send(node_address, packet).await;
             return;
         }
 
@@ -608,10 +615,11 @@ impl Handler {
             .expect("Must be the correct challenge size");
         debug!(%node_address, "Sending WHOAREYOU");
         self.add_expected_response(node_address.socket_addr);
-        self.send(node_address.clone(), packet).await;
+        self.send(node_address.clone(), packet.clone()).await;
         self.active_challenges.insert(
             node_address,
             Challenge {
+                packet,
                 data: challenge_data,
                 remote_enr,
             },

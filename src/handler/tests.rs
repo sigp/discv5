@@ -179,6 +179,108 @@ async fn simple_session_message() {
 }
 
 #[tokio::test]
+async fn handshake_resends_active_challenge() {
+    init();
+
+    let receiver_socket = Arc::new(
+        tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap(),
+    );
+    let receiver_addr = receiver_socket.local_addr().unwrap();
+    let sender_socket = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    let sender_addr = sender_socket.local_addr().unwrap();
+
+    let sender_key = CombinedKey::generate_secp256k1();
+    let receiver_key = CombinedKey::generate_secp256k1();
+    let sender_enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(sender_addr.port())
+        .build(&sender_key)
+        .unwrap();
+    let receiver_enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(receiver_addr.port())
+        .build(&receiver_key)
+        .unwrap();
+
+    let config = ConfigBuilder::new(ListenConfig::FromSockets {
+        ipv4: Some(receiver_socket),
+        ipv6: None,
+    })
+    .build();
+    let (exit, receiver_send, mut receiver_recv) =
+        Handler::spawn(arc_rw!(receiver_enr.clone()), arc_rw!(receiver_key), config)
+            .await
+            .unwrap();
+
+    let first_nonce = [1; crate::packet::MESSAGE_NONCE_LENGTH];
+    let mut first_challenge = None;
+    let mut first_challenge_data = None;
+
+    for (request_id, message_nonce) in [
+        (1, first_nonce),
+        (2, [2; crate::packet::MESSAGE_NONCE_LENGTH]),
+    ] {
+        let ping = Packet::new_message(
+            sender_enr.node_id(),
+            message_nonce,
+            ProtocolIdentity::default(),
+            Request {
+                id: RequestId(vec![request_id]),
+                body: RequestBody::Ping { enr_seq: 1 },
+            }
+            .encode(),
+        )
+        .encode(&receiver_enr.node_id());
+        sender_socket.send_to(&ping, receiver_addr).await.unwrap();
+
+        let whoareyou_ref = match tokio::time::timeout(Duration::from_secs(2), receiver_recv.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            HandlerOut::WhoAreYou(whoareyou_ref) => whoareyou_ref,
+            message => panic!("expected WHOAREYOU request, got {:?}", message),
+        };
+        assert_eq!(whoareyou_ref.0.socket_addr, sender_addr);
+        assert_eq!(whoareyou_ref.1, message_nonce);
+        receiver_send
+            .send(HandlerIn::WhoAreYou(whoareyou_ref, None))
+            .unwrap();
+
+        let mut response = [0; crate::packet::MAX_PACKET_SIZE];
+        let (response_len, _) = tokio::time::timeout(
+            Duration::from_secs(2),
+            sender_socket.recv_from(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let response = &response[..response_len];
+        let (challenge, challenge_data) =
+            Packet::decode(&sender_enr.node_id(), ProtocolIdentity::default(), response).unwrap();
+        assert!(matches!(
+            challenge.header.kind,
+            PacketKind::WhoAreYou { .. }
+        ));
+        assert_eq!(challenge.header.message_nonce, first_nonce);
+
+        if let Some(ref expected_challenge) = first_challenge {
+            assert_eq!(response, expected_challenge);
+            assert_eq!(Some(challenge_data), first_challenge_data);
+        } else {
+            first_challenge = Some(response.to_vec());
+            first_challenge_data = Some(challenge_data);
+        }
+    }
+
+    exit.send(()).unwrap();
+}
+
+#[tokio::test]
 // Tests sending multiple messages on an encrypted session
 async fn multiple_messages() {
     init();
