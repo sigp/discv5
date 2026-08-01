@@ -53,13 +53,8 @@ impl IpMode {
         /// it simplifies the logic of matching socket_addr verification. For this we prevent
         /// communications with Ipv4 addresses advertised in the Ipv6 field.
         fn canonical_ipv6_enr_addr(enr: &Enr) -> Option<std::net::SocketAddrV6> {
-            enr.udp6_socket().and_then(|socket_addr| {
-                if to_ipv4_mapped(socket_addr.ip()).is_some() {
-                    None
-                } else {
-                    Some(socket_addr)
-                }
-            })
+            enr.udp6_socket()
+                .filter(|socket_addr| !to_ipv4_mapped(socket_addr.ip()).is_some())
         }
 
         match self {
