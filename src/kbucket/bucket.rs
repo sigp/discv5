@@ -689,7 +689,7 @@ where
                 Some(fcp - 1)
             } else {
                 // FCP is unchanged, unless there are no nodes following the removed node.
-                Some(fcp).filter(|_| fcp < self.nodes.len())
+                (fcp < self.nodes.len()).then_some(fcp)
             }
         });
     }
