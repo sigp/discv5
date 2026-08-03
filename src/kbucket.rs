@@ -850,21 +850,18 @@ where
                     None => self.iter = None,
                 },
                 None => {
-                    if let Some(i) = self.buckets_iter.next() {
-                        let bucket = &mut self.table.buckets[i.get()];
-                        if let Some(applied) = bucket.apply_pending() {
-                            self.table.applied_pending.push_back(applied)
-                        }
-                        let mut v = (self.fmap)(bucket);
-                        v.sort_by(|a, b| {
-                            self.target
-                                .distance(a.as_ref())
-                                .cmp(&self.target.distance(b.as_ref()))
-                        });
-                        self.iter = Some(v.into_iter());
-                    } else {
-                        return None;
+                    let i = self.buckets_iter.next()?;
+                    let bucket = &mut self.table.buckets[i.get()];
+                    if let Some(applied) = bucket.apply_pending() {
+                        self.table.applied_pending.push_back(applied)
                     }
+                    let mut v = (self.fmap)(bucket);
+                    v.sort_by(|a, b| {
+                        self.target
+                            .distance(a.as_ref())
+                            .cmp(&self.target.distance(b.as_ref()))
+                    });
+                    self.iter = Some(v.into_iter());
                 }
             }
         }

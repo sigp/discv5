@@ -912,13 +912,8 @@ impl Service {
                     ip_votes.insert(node_id, socket);
                     let maybe_ip4_majority = ip_votes.majority().0;
 
-                    let new_ip4 = maybe_ip4_majority.and_then(|majority| {
-                        if Some(majority) != local_ip4_socket {
-                            Some(majority)
-                        } else {
-                            None
-                        }
-                    });
+                    let new_ip4 =
+                        maybe_ip4_majority.filter(|&majority| Some(majority) != local_ip4_socket);
 
                     // If we have a new ipv4 majority
                     if let Some(new_ip4) = new_ip4 {
@@ -947,13 +942,8 @@ impl Service {
                     ip_votes.insert(node_id, socket);
                     let maybe_ip6_majority = ip_votes.majority().1;
 
-                    let new_ip6 = maybe_ip6_majority.and_then(|majority| {
-                        if Some(majority) != local_ip6_socket {
-                            Some(majority)
-                        } else {
-                            None
-                        }
-                    });
+                    let new_ip6 =
+                        maybe_ip6_majority.filter(|&majority| Some(majority) != local_ip6_socket);
                     // Check if our advertised IPV6 address needs to be updated.
                     if let Some(new_ip6) = new_ip6 {
                         let new_ip6: SocketAddr = new_ip6.into();
