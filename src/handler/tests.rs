@@ -219,6 +219,7 @@ async fn handshake_resends_active_challenge() {
     let first_nonce = [1; crate::packet::MESSAGE_NONCE_LENGTH];
     let mut first_challenge = None;
     let mut first_challenge_data = None;
+    let mut first_id_nonce = None;
 
     for (request_id, message_nonce) in [
         (1, first_nonce),
@@ -262,18 +263,19 @@ async fn handshake_resends_active_challenge() {
         let response = &response[..response_len];
         let (challenge, challenge_data) =
             Packet::decode(&sender_enr.node_id(), ProtocolIdentity::default(), response).unwrap();
-        assert!(matches!(
-            challenge.header.kind,
-            PacketKind::WhoAreYou { .. }
-        ));
+        let PacketKind::WhoAreYou { id_nonce, .. } = challenge.header.kind else {
+            panic!("expected WHOAREYOU packet, got {:?}", challenge.header.kind);
+        };
         assert_eq!(challenge.header.message_nonce, first_nonce);
 
         if let Some(ref expected_challenge) = first_challenge {
             assert_eq!(response, expected_challenge);
             assert_eq!(Some(challenge_data), first_challenge_data);
+            assert_eq!(Some(id_nonce), first_id_nonce);
         } else {
             first_challenge = Some(response.to_vec());
             first_challenge_data = Some(challenge_data);
+            first_id_nonce = Some(id_nonce);
         }
     }
 
