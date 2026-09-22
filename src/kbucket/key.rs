@@ -23,10 +23,7 @@
 
 #![allow(clippy::all)]
 
-use enr::{
-    k256::sha2::digest::generic_array::{typenum::U32, GenericArray},
-    NodeId,
-};
+use enr::NodeId;
 use uint::construct_uint;
 
 construct_uint! {
@@ -46,7 +43,7 @@ construct_uint! {
 #[derive(Clone, Debug)]
 pub struct Key<T> {
     preimage: T,
-    hash: GenericArray<u8, U32>,
+    hash: [u8; 32],
 }
 
 impl<T> PartialEq for Key<T> {
@@ -65,7 +62,7 @@ impl<TPeerId> AsRef<Key<TPeerId>> for Key<TPeerId> {
 
 impl<T> Key<T> {
     /// Construct a new `Key` by providing the raw 32 byte hash.
-    pub fn new_raw(preimage: T, hash: GenericArray<u8, U32>) -> Key<T> {
+    pub fn new_raw(preimage: T, hash: [u8; 32]) -> Key<T> {
         Key { preimage, hash }
     }
 
@@ -104,7 +101,7 @@ impl From<NodeId> for Key<NodeId> {
     fn from(node_id: NodeId) -> Self {
         Key {
             preimage: node_id,
-            hash: *GenericArray::from_slice(&node_id.raw()),
+            hash: node_id.raw(),
         }
     }
 }
@@ -120,7 +117,7 @@ mod tests {
     use quickcheck::*;
 
     impl Arbitrary for Key<NodeId> {
-        fn arbitrary<G: Gen>(g: &mut G) -> Key<NodeId> {
+        fn arbitrary(g: &mut Gen) -> Key<NodeId> {
             Key::from(arbitrary_node_id(g))
         }
     }

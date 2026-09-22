@@ -10,14 +10,14 @@
 //! [`Packet`]: enum.Packet.html
 
 use crate::{error::PacketError, Enr};
-use aes::cipher::{generic_array::GenericArray, KeyIvInit, StreamCipher};
+use aes::cipher::{Array, KeyIvInit, StreamCipher};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 use alloy_rlp::Decodable;
 use enr::NodeId;
 use rand::Rng;
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use zeroize::Zeroize;
 
 /// The packet IV length (u128).
@@ -365,9 +365,7 @@ impl Packet {
         protocol_identity: ProtocolIdentity,
     ) -> Result<Self, &'static str> {
         let mut ciphertext = [0u8; 44];
-        rand::thread_rng()
-            .try_fill(&mut ciphertext[..])
-            .map_err(|_| "PRNG failed")?;
+        rand::rng().fill_bytes(&mut ciphertext[..]);
 
         let message_nonce: MessageNonce = rand::random();
 
@@ -420,8 +418,8 @@ impl Packet {
          * This was split into its own library, but brought back to allow re-use of the cipher when
          * performing decryption
          */
-        let mut key = GenericArray::clone_from_slice(&dst_id.raw()[..16]);
-        let mut nonce = GenericArray::clone_from_slice(&self.iv.to_be_bytes());
+        let mut key = Array::try_from(&dst_id.raw()[..16]).unwrap();
+        let mut nonce = Array::try_from(&self.iv.to_be_bytes()[..]).unwrap();
 
         let mut cipher = Aes128Ctr64BE::new(&key, &nonce);
         cipher.apply_keystream(&mut header_bytes);
@@ -453,8 +451,8 @@ impl Packet {
          * This was split into its own library, but brought back to allow re-use of the cipher when
          * performing the decryption
          */
-        let key = GenericArray::clone_from_slice(&src_id.raw()[..16]);
-        let nonce = GenericArray::clone_from_slice(&iv);
+        let key = Array::try_from(&src_id.raw()[..16]).unwrap();
+        let nonce = Array::try_from(&iv[..]).unwrap();
         let mut cipher = Aes128Ctr64BE::new(&key, &nonce);
 
         // Take the static header content

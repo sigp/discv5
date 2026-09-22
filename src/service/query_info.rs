@@ -1,5 +1,5 @@
 use crate::{kbucket::Key, rpc::RequestBody, Enr};
-use enr::{k256::sha2::digest::generic_array::GenericArray, NodeId};
+use enr::NodeId;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 
@@ -43,9 +43,7 @@ impl QueryInfo {
 impl crate::query_pool::TargetKey<NodeId> for QueryInfo {
     fn key(&self) -> Key<NodeId> {
         match self.query_type {
-            QueryType::FindNode(ref node_id) => {
-                Key::new_raw(*node_id, *GenericArray::from_slice(&node_id.raw()))
-            }
+            QueryType::FindNode(ref node_id) => Key::new_raw(*node_id, node_id.raw()),
         }
     }
 }

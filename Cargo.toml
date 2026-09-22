@@ -12,7 +12,7 @@ categories = ["network-programming", "asynchronous"]
 exclude = [".gitignore", ".github/*"]
 
 [dependencies]
-enr = { version = "0.13.0", features = [
+enr = { version = "0.14.0", features = [
     "k256",
     "ed25519",
 ] } # enr = { version = "0.12", features = ["k256", "ed25519"] }
@@ -21,36 +21,36 @@ libp2p-identity = { version = "0.3", features = [
     "ed25519",
     "secp256k1",
 ], optional = true }
-multiaddr = { version = "0.18", optional = true }
+multiaddr = { version = "0.19", optional = true }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 futures = "0.3"
 uint = { version = "0.10", default-features = false }
 alloy-rlp = { version = "0.3", default-features = true }
 # This version must be kept up to date do it uses the same dependencies as ENR
-hkdf = "0.12"
+hkdf = "0.13"
 hex = "0.4"
 fnv = "1"
 arrayvec = "0.7"
-rand = { version = "0.8", package = "rand" }
+rand = { version = "0.10", package = "rand" }
 socket2 = "0.6"
 smallvec = "1"
 parking_lot = "0.12"
 lazy_static = "1"
-aes = "0.8"
-ctr = "0.9"
-aes-gcm = "0.10.3"
+aes = "0.9"
+ctr = "0.10"
+aes-gcm = "0.11.1"
 tracing = { version = "0.1", features = ["log"] }
-hashlink = "0.11"
+hashlink = "0.12"
 delay_map = "0.4"
 more-asserts = "0.3"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
-if-addrs = "0.13"
-quickcheck = "0.9"
+if-addrs = "0.15"
+quickcheck = "1.1"
 rand_07 = { package = "rand", version = "0.7" }
-rand_core = "0.6"
-rand_xorshift = "0.3"
+rand_core = "0.10"
+rand_xorshift = "0.5"
 tokio = { version = "1", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

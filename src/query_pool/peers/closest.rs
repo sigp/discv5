@@ -453,15 +453,20 @@ mod tests {
         (0..n).map(|_| NodeId::random())
     }
 
-    fn random_query<G: Rng>(g: &mut G) -> TestQuery {
-        let known_closest_peers = random_nodes(g.gen_range(1, 60)).map(Key::from);
+    fn random_query(g: &mut Gen) -> TestQuery {
+        let known_closest_peers = random_nodes(gen_range(g, 1, 60)).map(Key::from);
         let target = NodeId::random();
         let config = FindNodeQueryConfig {
-            parallelism: g.gen_range(1, 10),
-            num_results: g.gen_range(1, 25),
-            peer_timeout: Duration::from_secs(g.gen_range(10, 30)),
+            parallelism: gen_range(g, 1, 10),
+            num_results: gen_range(g, 1, 25),
+            peer_timeout: Duration::from_secs(gen_range(g, 10, 30) as u64),
         };
         FindNodeQuery::with_config(config, target.into(), known_closest_peers)
+    }
+
+    fn gen_range(g: &mut Gen, low: usize, high: usize) -> usize {
+        assert!(high > low);
+        low + (usize::arbitrary(g) % (high - low))
     }
 
     fn sorted(target: &Key<NodeId>, peers: &[Key<NodeId>]) -> bool {
@@ -471,14 +476,14 @@ mod tests {
     }
 
     impl Arbitrary for TestQuery {
-        fn arbitrary<G: Gen>(g: &mut G) -> TestQuery {
+        fn arbitrary(g: &mut Gen) -> TestQuery {
             random_query(g)
         }
     }
 
     #[test]
     fn new_query() {
-        let query = random_query(&mut thread_rng());
+        let query = random_query(&mut Gen::new(100));
         let target = query.target_key.clone();
 
         let (keys, states): (Vec<_>, Vec<_>) = query
