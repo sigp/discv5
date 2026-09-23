@@ -744,11 +744,7 @@ pub mod tests {
     }
 
     pub fn arbitrary_node_id(g: &mut Gen) -> NodeId {
-        let mut node_id = [0u8; 32];
-        for byte in node_id.iter_mut() {
-            *byte = u8::arbitrary(g);
-        }
-        NodeId::new(&node_id)
+        NodeId::new(&Arbitrary::arbitrary(g))
     }
 
     fn gen_range(g: &mut Gen, low: usize, high: usize) -> usize {
