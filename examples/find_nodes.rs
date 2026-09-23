@@ -16,10 +16,9 @@
 //! For a simple CLI discovery service see [discv5-cli](https://github.com/AgeManning/discv5-cli)
 
 use clap::Parser;
-use discv5::{
-    ConfigBuilder, Discv5, Event, ListenConfig, enr,
-    enr::{CombinedKey, k256},
-};
+use discv5::{ConfigBuilder, Discv5, Event, ListenConfig};
+use enr::{CombinedKey, k256};
+
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     time::Duration,
