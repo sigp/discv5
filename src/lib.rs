@@ -53,7 +53,8 @@
 //! A simple example of creating this service is as follows:
 //!
 //! ```rust
-//!    use discv5::{enr, enr::{CombinedKey, Enr, NodeId}, TokioExecutor, Discv5, ConfigBuilder};
+//!    use discv5::{TokioExecutor, Discv5, ConfigBuilder};
+//!    use enr::{CombinedKey, Enr, NodeId};
 //!    use discv5::socket::ListenConfig;
 //!    use std::net::{Ipv4Addr, SocketAddr};
 //!
@@ -128,14 +129,6 @@ pub use permit_ban::PermitBanList;
 pub use rpc::RequestId;
 pub use service::TalkRequest;
 pub use socket::{ListenConfig, RateLimiter, RateLimiterBuilder};
-// Re-export the ENR crate
-pub use enr;
-
-// Re-export libp2p-identity and multiaddr
-#[cfg(feature = "libp2p")]
-pub use libp2p_identity;
-#[cfg(feature = "libp2p")]
-pub use multiaddr;
 
 #[cfg(test)]
 pub(crate) mod test_util {
