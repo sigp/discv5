@@ -1,7 +1,7 @@
 //! A set of configuration parameters to tune the discovery protocol.
 use crate::{
-    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig, Enr, Executor, PermitBanList,
-    ProtocolIdentity, RateLimiter, RateLimiterBuilder,
+    Enr, Executor, PermitBanList, ProtocolIdentity, RateLimiter, RateLimiterBuilder,
+    kbucket::MAX_NODES_PER_BUCKET, socket::ListenConfig,
 };
 use std::time::Duration;
 
@@ -232,7 +232,9 @@ impl ConfigBuilder {
     /// local ENR.
     pub fn enr_peer_update_min(&mut self, min: usize) -> &mut Self {
         if min < 2 {
-            panic!("Setting enr_peer_update_min to a value less than 2 will cause issues with discovery with peers behind NAT");
+            panic!(
+                "Setting enr_peer_update_min to a value less than 2 will cause issues with discovery with peers behind NAT"
+            );
         }
         self.config.enr_peer_update_min = min;
         self

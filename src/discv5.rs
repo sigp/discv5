@@ -13,6 +13,7 @@
 //! The server can be shutdown using the [`Discv5::shutdown`] function.
 
 use crate::{
+    Config, Enr, IpMode,
     error::{Error, QueryError, RequestError},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
@@ -21,7 +22,6 @@ use crate::{
     node_info::{NodeAddress, NodeContact},
     service::{QueryKind, Service, ServiceRequest, TalkRequest},
     socket::UnrecognizedFrame,
-    Config, Enr, IpMode,
 };
 use enr::{CombinedKey, EnrKey, Error as EnrError, NodeId};
 use parking_lot::RwLock;
@@ -39,7 +39,7 @@ use multiaddr::Multiaddr;
 
 // Create lazy static variable for the global permit/ban list
 use crate::{
-    metrics::{Metrics, METRICS},
+    metrics::{METRICS, Metrics},
     service::Pong,
 };
 
@@ -199,7 +199,9 @@ impl Discv5 {
     pub fn add_enr(&self, enr: Enr) -> Result<(), &'static str> {
         // only add ENR's that have a valid udp socket.
         if self.ip_mode.get_contactable_addr(&enr).is_none() {
-            warn!("ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored.");
+            warn!(
+                "ENR attempted to be added without an UDP socket compatible with configured IpMode has been ignored."
+            );
             return Err("ENR has no compatible UDP socket to connect to");
         }
 
@@ -330,7 +332,7 @@ impl Discv5 {
     pub fn send_ping(
         &self,
         enr: Enr,
-    ) -> impl Future<Output = Result<Pong, RequestError>> + 'static {
+    ) -> impl Future<Output = Result<Pong, RequestError>> + 'static + use<> {
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
 
@@ -515,10 +517,10 @@ impl Discv5 {
     /// underlying sending channel is cloned.
     #[cfg(feature = "libp2p")]
     #[cfg_attr(docsrs, doc(cfg(feature = "libp2p")))]
-    pub fn request_enr(
+    pub fn request_enr<M: std::convert::TryInto<Multiaddr> + 'static>(
         &self,
-        multiaddr: impl std::convert::TryInto<Multiaddr> + 'static,
-    ) -> impl Future<Output = Result<Enr, RequestError>> + 'static {
+        multiaddr: M,
+    ) -> impl Future<Output = Result<Enr, RequestError>> + 'static + use<M> {
         let channel = self.clone_channel();
 
         async move {
@@ -572,7 +574,7 @@ impl Discv5 {
         node_contact: NodeContact,
         protocol: Vec<u8>,
         request: Vec<u8>,
-    ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static {
+    ) -> impl Future<Output = Result<Vec<u8>, RequestError>> + 'static + use<> {
         // convert the ENR to a node_contact.
 
         let (callback_send, callback_recv) = oneshot::channel();
@@ -601,7 +603,7 @@ impl Discv5 {
         &self,
         enr: Enr,
         distances: Vec<u64>,
-    ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static {
+    ) -> impl Future<Output = Result<Vec<Enr>, RequestError>> + 'static + use<> {
         let (callback_send, callback_recv) = oneshot::channel();
         let channel = self.clone_channel();
         let ip_mode = self.ip_mode;
@@ -634,7 +636,7 @@ impl Discv5 {
     pub fn find_node(
         &self,
         target_node: NodeId,
-    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
+    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static + use<> {
         let channel = self.clone_channel();
 
         async move {
@@ -677,7 +679,7 @@ impl Discv5 {
         target_node: NodeId,
         predicate: Box<dyn Fn(&Enr) -> bool + Send>,
         target_peer_no: usize,
-    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static {
+    ) -> impl Future<Output = Result<Vec<Enr>, QueryError>> + 'static + use<> {
         let channel = self.clone_channel();
 
         async move {
@@ -705,7 +707,7 @@ impl Discv5 {
     /// Creates an event stream channel which can be polled to receive Discv5 events.
     pub fn event_stream(
         &self,
-    ) -> impl Future<Output = Result<mpsc::Receiver<Event>, Error>> + 'static {
+    ) -> impl Future<Output = Result<mpsc::Receiver<Event>, Error>> + 'static + use<> {
         let channel = self.clone_channel();
 
         async move {

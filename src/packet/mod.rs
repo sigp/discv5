@@ -9,7 +9,7 @@
 //!
 //! [`Packet`]: enum.Packet.html
 
-use crate::{error::PacketError, Enr};
+use crate::{Enr, error::PacketError};
 use aes::cipher::{Array, KeyIvInit, StreamCipher};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
@@ -858,7 +858,9 @@ mod tests {
         let message_nonce: MessageNonce = hex_decode("ffffffffffffffffffffffff")[..]
             .try_into()
             .unwrap();
-        let id_nonce_sig = hex_decode("c0a04b36f276172afc66a62848eb0769800c670c4edbefab8f26785e7fda6b56506a3f27ca72a75b106edd392a2cbf8a69272f5c1785c36d1de9d98a0894b2db");
+        let id_nonce_sig = hex_decode(
+            "c0a04b36f276172afc66a62848eb0769800c670c4edbefab8f26785e7fda6b56506a3f27ca72a75b106edd392a2cbf8a69272f5c1785c36d1de9d98a0894b2db",
+        );
         let ephem_pubkey =
             hex_decode("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5");
         let enr_record = None;
@@ -896,7 +898,9 @@ mod tests {
         let message_nonce: MessageNonce = hex_decode("ffffffffffffffffffffffff")[..]
             .try_into()
             .unwrap();
-        let id_nonce_sig = hex_decode("a439e69918e3f53f555d8ca4838fbe8abeab56aa55b056a2ac4d49c157ee719240a93f56c9fccfe7742722a92b3f2dfa27a5452f5aca8adeeab8c4d5d87df555");
+        let id_nonce_sig = hex_decode(
+            "a439e69918e3f53f555d8ca4838fbe8abeab56aa55b056a2ac4d49c157ee719240a93f56c9fccfe7742722a92b3f2dfa27a5452f5aca8adeeab8c4d5d87df555",
+        );
         let ephem_pubkey =
             hex_decode("039a003ba6517b473fa0cd74aefe99dadfdb34627f90fec6362df85803908f53a5");
         let enr_record = Some("enr:-H24QBfhsHORjaMtZAZCx2LA4ngWmOSXH4qzmnd0atrYPwHnb_yHTFkkgIu-fFCJCILCuKASh6CwgxLR1ToX1Rf16ycBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQMT0UIR4Ch7I2GhYViQqbUhIIBUbQoleuTP-Wz1NJksuQ".parse::<Enr>().unwrap());

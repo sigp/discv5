@@ -19,8 +19,8 @@
 
 use crate::metrics::METRICS;
 use futures::{
-    future::{pending, Either},
     FutureExt,
+    future::{Either, pending},
 };
 use std::{
     net::SocketAddr,
@@ -28,7 +28,7 @@ use std::{
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
-use tokio::time::{sleep, Sleep};
+use tokio::time::{Sleep, sleep};
 use tracing::info;
 
 pub const DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT: Duration = Duration::from_secs(21600); // 6 hours

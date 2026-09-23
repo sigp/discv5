@@ -1,7 +1,7 @@
 [package]
 name = "discv5"
 authors = ["Sigma Prime <contact@sigmaprime.io>"]
-edition = "2018"
+edition = "2024"
 version = "0.12.0"
 description = "Implementation of the p2p discv5 discovery protocol"
 license = "Apache-2.0"

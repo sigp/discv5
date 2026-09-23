@@ -3,6 +3,7 @@
 use super::*;
 
 use crate::{
+    ConfigBuilder, Enr,
     discv5::test::generate_deterministic_keypair,
     handler::Handler,
     kbucket,
@@ -13,7 +14,6 @@ use crate::{
     rpc::RequestId,
     service::{ActiveRequest, Service},
     socket::ListenConfig,
-    ConfigBuilder, Enr,
 };
 use enr::CombinedKey;
 use parking_lot::RwLock;
@@ -21,7 +21,7 @@ use rand;
 use std::{
     collections::HashMap,
     net::{Ipv4Addr, Ipv6Addr},
-    sync::{atomic::Ordering, Arc},
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 use tokio::sync::{
@@ -521,12 +521,11 @@ async fn test_ipv6_update_amongst_ipv4_dominated_network() {
     // Collect all the messages to the handler and count the PING requests for ENR v6 addresses.
     let mut v6_pings = 0;
     while let Ok(event) = handler_recv.try_recv() {
-        if let HandlerIn::Request(contact, request) = event {
-            if contact.node_address().socket_addr.is_ipv6()
-                && matches!(request.body, RequestBody::Ping { .. })
-            {
-                v6_pings += 1
-            }
+        if let HandlerIn::Request(contact, request) = event
+            && contact.node_address().socket_addr.is_ipv6()
+            && matches!(request.body, RequestBody::Ping { .. })
+        {
+            v6_pings += 1
         }
     }
 

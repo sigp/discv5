@@ -89,11 +89,7 @@ impl<T> Key<T> {
     pub fn log2_distance<U>(&self, other: &Key<U>) -> Option<u64> {
         let xor_dist = self.distance(other);
         let log_dist = u64::from(256 - xor_dist.0.leading_zeros());
-        if log_dist == 0 {
-            None
-        } else {
-            Some(log_dist)
-        }
+        if log_dist == 0 { None } else { Some(log_dist) }
     }
 }
 

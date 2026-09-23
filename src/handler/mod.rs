@@ -27,6 +27,7 @@
 //! Messages from a node on the network come by [`Socket`] and get the form of a [`HandlerOut`]
 //! and can be forwarded to the application layer via the send channel.
 use crate::{
+    Enr, ProtocolIdentity,
     config::Config,
     discv5::PERMIT_BAN_LIST,
     error::{Error, RequestError},
@@ -34,7 +35,6 @@ use crate::{
     rpc::{Message, Request, RequestBody, RequestId, Response, ResponseBody},
     socket,
     socket::{FilterConfig, Socket, UnrecognizedFrame},
-    Enr, ProtocolIdentity,
 };
 use delay_map::HashMapDelay;
 use enr::{CombinedKey, NodeId};
@@ -48,7 +48,7 @@ use std::{
     default::Default,
     net::SocketAddr,
     pin::Pin,
-    sync::{atomic::Ordering, Arc},
+    sync::{Arc, atomic::Ordering},
     task::{Context, Poll},
     time::{Duration, Instant},
 };
@@ -1108,49 +1108,49 @@ impl Handler {
                 Message::Response(response) => {
                     // Sessions could be awaiting an ENR response. Check if this response matches
                     // these
-                    if let Some(request_id) = session.awaiting_enr.as_ref() {
-                        if &response.id == request_id {
-                            session.awaiting_enr = None;
-                            match response.body {
-                                ResponseBody::Nodes { mut nodes, .. } => {
-                                    // Received the requested ENR
-                                    if let Some(enr) = nodes.pop() {
-                                        if self.verify_enr(&enr, &node_address) {
-                                            // Notify the application
-                                            // This can occur when we try to dial a node without an
-                                            // ENR. In this case we have attempted to establish the
-                                            // connection, so this is an outgoing connection.
-                                            if let Err(e) = self
-                                                .service_send
-                                                .send(HandlerOut::Established(
-                                                    enr,
-                                                    node_address.socket_addr,
-                                                    ConnectionDirection::Outgoing,
-                                                ))
-                                                .await
-                                            {
-                                                warn!(error = %e, "Failed to inform established outgoing connection")
-                                            }
-                                            return;
+                    if let Some(request_id) = session.awaiting_enr.as_ref()
+                        && &response.id == request_id
+                    {
+                        session.awaiting_enr = None;
+                        match response.body {
+                            ResponseBody::Nodes { mut nodes, .. } => {
+                                // Received the requested ENR
+                                if let Some(enr) = nodes.pop() {
+                                    if self.verify_enr(&enr, &node_address) {
+                                        // Notify the application
+                                        // This can occur when we try to dial a node without an
+                                        // ENR. In this case we have attempted to establish the
+                                        // connection, so this is an outgoing connection.
+                                        if let Err(e) = self
+                                            .service_send
+                                            .send(HandlerOut::Established(
+                                                enr,
+                                                node_address.socket_addr,
+                                                ConnectionDirection::Outgoing,
+                                            ))
+                                            .await
+                                        {
+                                            warn!(error = %e, "Failed to inform established outgoing connection")
                                         }
-
-                                        // The ENR doesn't verify. Notify application.
-                                        self.notify_unverifiable_enr(
-                                            enr,
-                                            node_address.socket_addr,
-                                            node_address.node_id,
-                                        )
-                                        .await;
+                                        return;
                                     }
-                                }
-                                _ => {}
-                            }
 
-                            debug!("Session failed invalid ENR response");
-                            self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
-                                .await;
-                            return;
+                                    // The ENR doesn't verify. Notify application.
+                                    self.notify_unverifiable_enr(
+                                        enr,
+                                        node_address.socket_addr,
+                                        node_address.node_id,
+                                    )
+                                    .await;
+                                }
+                            }
+                            _ => {}
                         }
+
+                        debug!("Session failed invalid ENR response");
+                        self.fail_session(&node_address, RequestError::InvalidRemoteEnr, true)
+                            .await;
+                        return;
                     }
                     // Handle standard responses
                     self.handle_response(node_address, response).await;
@@ -1186,28 +1186,14 @@ impl Handler {
             // The response matches a request
             // Check to see if this is a Nodes response, in which case we may require to wait for
             // extra responses
-            if let ResponseBody::Nodes { total, .. } = response.body {
-                if total > 1 {
-                    // This is a multi-response Nodes response
-                    if let Some(remaining_responses) = request_call.remaining_responses_mut() {
-                        *remaining_responses -= 1;
-                        if remaining_responses != &0 {
-                            // more responses remaining, add back the request and send the response
-                            // add back the request and send the response
-                            self.active_requests
-                                .insert(node_address.clone(), request_call);
-                            if let Err(e) = self
-                                .service_send
-                                .send(HandlerOut::Response(node_address, Box::new(response)))
-                                .await
-                            {
-                                warn!(error = %e, "Failed to inform of response")
-                            }
-                            return;
-                        }
-                    } else {
-                        // This is the first instance
-                        *request_call.remaining_responses_mut() = Some(total - 1);
+            if let ResponseBody::Nodes { total, .. } = response.body
+                && total > 1
+            {
+                // This is a multi-response Nodes response
+                if let Some(remaining_responses) = request_call.remaining_responses_mut() {
+                    *remaining_responses -= 1;
+                    if remaining_responses != &0 {
+                        // more responses remaining, add back the request and send the response
                         // add back the request and send the response
                         self.active_requests
                             .insert(node_address.clone(), request_call);
@@ -1220,6 +1206,20 @@ impl Handler {
                         }
                         return;
                     }
+                } else {
+                    // This is the first instance
+                    *request_call.remaining_responses_mut() = Some(total - 1);
+                    // add back the request and send the response
+                    self.active_requests
+                        .insert(node_address.clone(), request_call);
+                    if let Err(e) = self
+                        .service_send
+                        .send(HandlerOut::Response(node_address, Box::new(response)))
+                        .await
+                    {
+                        warn!(error = %e, "Failed to inform of response")
+                    }
+                    return;
                 }
             }
 
@@ -1399,14 +1399,13 @@ impl Handler {
         // Purge any expired sessions
         let expired_sessions = self.sessions.remove_expired_values();
 
-        if !expired_sessions.is_empty() {
-            if let Err(e) = self
+        if !expired_sessions.is_empty()
+            && let Err(e) = self
                 .service_send
                 .send(HandlerOut::ExpiredSessions(expired_sessions))
                 .await
-            {
-                warn!(error = %e, "Failed to inform app of expired sessions")
-            }
+        {
+            warn!(error = %e, "Failed to inform app of expired sessions")
         }
     }
 

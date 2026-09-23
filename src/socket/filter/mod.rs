@@ -150,39 +150,38 @@ impl Filter {
             return true;
         }
 
-        if let Some(rate_limiter) = self.rate_limiter.as_mut() {
-            if rate_limiter
+        if let Some(rate_limiter) = self.rate_limiter.as_mut()
+            && rate_limiter
                 .allows(&LimitKind::NodeId(node_address.node_id))
                 .is_err()
-            {
-                warn!(
-                    node_id = %node_address.node_id,
-                    "Node has exceeded its request limit and is now banned",
-                );
+        {
+            warn!(
+                node_id = %node_address.node_id,
+                "Node has exceeded its request limit and is now banned",
+            );
 
-                // The node is being banned
-                let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
-                PERMIT_BAN_LIST
-                    .write()
-                    .ban_nodes
-                    .insert(node_address.node_id, ban_timeout);
+            // The node is being banned
+            let ban_timeout = self.ban_duration.map(|v| Instant::now() + v);
+            PERMIT_BAN_LIST
+                .write()
+                .ban_nodes
+                .insert(node_address.node_id, ban_timeout);
 
-                // If we are tracking banned nodes per IP, add to the count. If the count is higher
-                // than our tolerance, ban the IP.
-                if let Some(max_bans_per_ip) = self.max_bans_per_ip {
-                    let ip = node_address.socket_addr.ip();
-                    if let Some(banned_count) = self.banned_nodes.get_mut(&ip) {
-                        *banned_count += 1;
-                        if *banned_count >= max_bans_per_ip {
-                            PERMIT_BAN_LIST.write().ban_ips.insert(ip, ban_timeout);
-                        }
-                    } else {
-                        self.banned_nodes.insert(ip, 0);
+            // If we are tracking banned nodes per IP, add to the count. If the count is higher
+            // than our tolerance, ban the IP.
+            if let Some(max_bans_per_ip) = self.max_bans_per_ip {
+                let ip = node_address.socket_addr.ip();
+                if let Some(banned_count) = self.banned_nodes.get_mut(&ip) {
+                    *banned_count += 1;
+                    if *banned_count >= max_bans_per_ip {
+                        PERMIT_BAN_LIST.write().ban_ips.insert(ip, ban_timeout);
                     }
+                } else {
+                    self.banned_nodes.insert(ip, 0);
                 }
-
-                return false;
             }
+
+            return false;
         }
 
         // Check the nodes per IP filter configuration

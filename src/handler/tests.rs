@@ -2,9 +2,8 @@
 
 use super::*;
 use crate::{
-    return_if_ipv6_is_not_supported,
+    ConfigBuilder, IpMode, return_if_ipv6_is_not_supported,
     rpc::{Request, Response},
-    ConfigBuilder, IpMode,
 };
 use std::{
     collections::HashSet,
@@ -14,7 +13,7 @@ use std::{
     ops::Add,
 };
 
-use crate::{handler::HandlerOut::RequestFailed, RequestError::SelfRequest};
+use crate::{RequestError::SelfRequest, handler::HandlerOut::RequestFailed};
 use active_requests::ActiveRequests;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -531,9 +530,11 @@ async fn test_active_requests_remove_request() {
         .into();
     assert_eq!(req_id, req_3_id);
     active_requests.check_invariant();
-    assert!(active_requests
-        .remove_request(&req_3_addr, &req_3_id)
-        .is_none());
+    assert!(
+        active_requests
+            .remove_request(&req_3_addr, &req_3_id)
+            .is_none()
+    );
 }
 
 #[tokio::test]

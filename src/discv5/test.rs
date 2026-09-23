@@ -1,8 +1,8 @@
 #![cfg(test)]
 
-use crate::{socket::ListenConfig, Discv5, *};
+use crate::{Discv5, socket::ListenConfig, *};
 use alloy_rlp::bytes::Bytes;
-use enr::{k256, CombinedKey, Enr, EnrKey, NodeId};
+use enr::{CombinedKey, Enr, EnrKey, NodeId, k256};
 use rand_core::{Rng, SeedableRng};
 use std::{
     collections::HashMap,
@@ -655,9 +655,11 @@ async fn test_findnode_query_with_target() {
         nodes.len() - 1
     );
 
-    assert!(found_nodes
-        .iter()
-        .any(|enr| enr.node_id() == target_node_id));
+    assert!(
+        found_nodes
+            .iter()
+            .any(|enr| enr.node_id() == target_node_id)
+    );
 }
 
 #[tokio::test]

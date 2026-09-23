@@ -25,9 +25,9 @@
 //! representing the nodes participating in the Kademlia DHT.
 
 pub use super::{
+    ConnectionDirection,
     bucket::{AppliedPending, ConnectionState, InsertResult, Node, NodeStatus},
     key::*,
-    ConnectionDirection,
 };
 
 use super::*;

@@ -1,8 +1,8 @@
 //! A set of configuration parameters to tune the discovery protocol.
 use crate::{
-    socket::ListenConfig,
     Enr,
     IpMode::{DualStack, Ip4, Ip6},
+    socket::ListenConfig,
 };
 use std::net::SocketAddr;
 
