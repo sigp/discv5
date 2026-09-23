@@ -440,7 +440,7 @@ fn create_node() -> Enr {
 
 fn create_req_call(node: &Enr) -> (RequestCall, NodeAddress) {
     let node_contact: NodeContact = node.clone().into();
-    let packet = Packet::new_random(&node.node_id(), ProtocolIdentity::default()).unwrap();
+    let packet = Packet::new_random(&node.node_id(), ProtocolIdentity::default());
     let id = HandlerReqId::Internal(RequestId::random());
     let request = RequestBody::Ping { enr_seq: 1 };
     let initiating_session = true;
@@ -585,7 +585,7 @@ async fn test_active_requests_update_packet() {
     active_requests.insert(req_3_addr, req_3);
     active_requests.check_invariant();
 
-    let new_packet = Packet::new_random(&node_2.node_id(), ProtocolIdentity::default()).unwrap();
+    let new_packet = Packet::new_random(&node_2.node_id(), ProtocolIdentity::default());
     let new_nonce = new_packet.message_nonce();
     active_requests.update_packet(old_nonce, new_packet.clone());
     active_requests.check_invariant();

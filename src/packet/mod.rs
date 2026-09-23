@@ -360,21 +360,18 @@ impl Packet {
     }
 
     /// Generates a Packet::Random given a `tag`.
-    pub fn new_random(
-        src_id: &NodeId,
-        protocol_identity: ProtocolIdentity,
-    ) -> Result<Self, &'static str> {
+    pub fn new_random(src_id: &NodeId, protocol_identity: ProtocolIdentity) -> Self {
         let mut ciphertext = [0u8; 44];
         rand::rng().fill_bytes(&mut ciphertext[..]);
 
         let message_nonce: MessageNonce = rand::random();
 
-        Ok(Self::new_message(
+        Self::new_message(
             *src_id,
             message_nonce,
             protocol_identity,
             ciphertext.to_vec(),
-        ))
+        )
     }
 
     /// Non-challenge (WHOAREYOU) packets contain the src_id of the node. This function returns the
@@ -419,7 +416,7 @@ impl Packet {
          * performing decryption
          */
         let mut key = Array::try_from(&dst_id.raw()[..16]).unwrap();
-        let mut nonce = Array::try_from(&self.iv.to_be_bytes()[..]).unwrap();
+        let mut nonce = Array::from(self.iv.to_be_bytes());
 
         let mut cipher = Aes128Ctr64BE::new(&key, &nonce);
         cipher.apply_keystream(&mut header_bytes);
@@ -769,7 +766,7 @@ mod tests {
         let src_id: NodeId = node_key_1().public().into();
         let dst_id: NodeId = node_key_2().public().into();
 
-        let packet = Packet::new_random(&src_id, ProtocolIdentity::default()).unwrap();
+        let packet = Packet::new_random(&src_id, ProtocolIdentity::default());
 
         let encoded_packet = packet.clone().encode(&dst_id);
         let (decoded_packet, _authenticated_data) =

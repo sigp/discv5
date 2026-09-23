@@ -445,7 +445,7 @@ mod tests {
     use crate::test_util::GenRange;
     use enr::NodeId;
     use quickcheck::*;
-    use rand_07::{thread_rng, Rng};
+    use rand::RngExt;
     use std::time::Duration;
 
     type TestQuery = FindNodeQuery<NodeId>;
@@ -511,7 +511,7 @@ mod tests {
     fn termination_and_parallelism() {
         fn prop(mut query: TestQuery) {
             let now = Instant::now();
-            let mut rng = thread_rng();
+            let mut rng = rand::rng();
 
             let mut expected = query
                 .closest_peers
@@ -556,8 +556,8 @@ mod tests {
                 // Report results back to the query with a random number of "closer"
                 // peers or an error, thus finishing the "in-flight requests".
                 for (i, k) in expected.iter().enumerate() {
-                    if rng.gen_bool(0.75) {
-                        let num_closer = rng.gen_range(0, query.config.num_results + 1);
+                    if rng.random_bool(0.75) {
+                        let num_closer = rng.random_range(0..query.config.num_results + 1);
                         let closer_peers = random_nodes(num_closer).collect::<Vec<_>>();
                         // let _: () = remaining;
                         remaining.extend(closer_peers.iter().map(|x| Key::from(*x)));

@@ -11,7 +11,7 @@ use crate::{
     packet::{ChallengeData, MessageNonce},
 };
 use aes_gcm::{
-    aead::{array::Array, Aead, KeyInit, Payload},
+    aead::{Aead, KeyInit, Payload},
     Aes128Gcm,
 };
 use ecdh::ecdh;
@@ -205,15 +205,10 @@ pub(crate) fn decrypt_message(
         ));
     }
 
-    let aead = Aes128Gcm::new(
-        &Array::try_from(key.as_slice()).map_err(|e| Error::DecryptionFailed(e.to_string()))?,
-    );
+    let aead = Aes128Gcm::new(key.into());
     let payload = Payload { msg, aad };
-    aead.decrypt(
-        &Array::try_from(&message_nonce[..]).map_err(|e| Error::DecryptionFailed(e.to_string()))?,
-        payload,
-    )
-    .map_err(|e| Error::DecryptionFailed(e.to_string()))
+    aead.decrypt(&message_nonce.into(), payload)
+        .map_err(|e| Error::DecryptionFailed(e.to_string()))
 }
 
 /* Encryption related functions */
@@ -226,15 +221,10 @@ pub(crate) fn encrypt_message(
     msg: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    let aead = Aes128Gcm::new(
-        &Array::try_from(key.as_slice()).map_err(|e| Error::EncryptionFail(e.to_string()))?,
-    );
+    let aead = Aes128Gcm::new(key.into());
     let payload = Payload { msg, aad };
-    aead.encrypt(
-        &Array::try_from(&message_nonce[..]).map_err(|e| Error::EncryptionFail(e.to_string()))?,
-        payload,
-    )
-    .map_err(|e| Error::EncryptionFail(e.to_string()))
+    aead.encrypt(&message_nonce.into(), payload)
+        .map_err(|e| Error::EncryptionFail(e.to_string()))
 }
 
 #[cfg(test)]

@@ -538,8 +538,7 @@ impl Handler {
                     %node_address,
                     "Starting session. Sending random packet",
                 );
-                let packet = Packet::new_random(&self.node_id, self.protocol_identity)
-                    .map_err(RequestError::EntropyFailure)?;
+                let packet = Packet::new_random(&self.node_id, self.protocol_identity);
                 (packet, true)
             }
         };
