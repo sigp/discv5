@@ -517,10 +517,10 @@ impl Discv5 {
     /// underlying sending channel is cloned.
     #[cfg(feature = "libp2p")]
     #[cfg_attr(docsrs, doc(cfg(feature = "libp2p")))]
-    pub fn request_enr(
+    pub fn request_enr<M: std::convert::TryInto<Multiaddr> + 'static>(
         &self,
-        multiaddr: impl std::convert::TryInto<Multiaddr> + 'static,
-    ) -> impl Future<Output = Result<Enr, RequestError>> + 'static {
+        multiaddr: M,
+    ) -> impl Future<Output = Result<Enr, RequestError>> + 'static + use<M> {
         let channel = self.clone_channel();
 
         async move {
