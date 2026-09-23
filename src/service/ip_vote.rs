@@ -48,7 +48,9 @@ impl IpVote {
     pub fn new(minimum_threshold: usize, vote_duration: Duration) -> Self {
         // do not allow minimum thresholds less than 2
         if minimum_threshold < 2 {
-            panic!("Setting enr_peer_update_min to a value less than 2 will cause issues with discovery with peers behind NAT");
+            panic!(
+                "Setting enr_peer_update_min to a value less than 2 will cause issues with discovery with peers behind NAT"
+            );
         }
         IpVote {
             ipv4_votes: HashMap::new(),
@@ -176,8 +178,8 @@ impl IpVote {
 
 #[cfg(test)]
 mod tests {
-    use super::{Duration, IpVote, NodeId, SocketAddrV4, CLEAR_MAJORITY_PERCENTAGE};
-    use quickcheck::{quickcheck, Arbitrary, Gen, TestResult};
+    use super::{CLEAR_MAJORITY_PERCENTAGE, Duration, IpVote, NodeId, SocketAddrV4};
+    use quickcheck::{Arbitrary, Gen, TestResult, quickcheck};
 
     #[test]
     fn test_three_way_vote_draw() {
@@ -278,9 +280,12 @@ mod tests {
         println!("Results: {:?}", results);
 
         // We expect no winner when there are competing ports.
-        assert!(port_1_wins == 0 && port_2_wins == 0,
-                "Expected both ports to win some iterations due to flip-flop behavior, but got port_1: {}, port_2: {}", 
-                port_1_wins, port_2_wins);
+        assert!(
+            port_1_wins == 0 && port_2_wins == 0,
+            "Expected both ports to win some iterations due to flip-flop behavior, but got port_1: {}, port_2: {}",
+            port_1_wins,
+            port_2_wins
+        );
     }
 
     // Property-based test structures

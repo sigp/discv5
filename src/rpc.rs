@@ -1,6 +1,6 @@
 use alloy_rlp::{
-    bytes::{Buf, Bytes, BytesMut},
     Decodable, Encodable, Error as DecoderError, Header,
+    bytes::{Buf, Bytes, BytesMut},
 };
 use enr::{CombinedKey, Enr};
 use std::{

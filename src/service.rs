@@ -18,21 +18,22 @@ use self::{
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
+    Config, Enr, Event, IpMode,
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
         self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        NodeStatus, UpdateResult, MAX_NODES_PER_BUCKET,
+        MAX_NODES_PER_BUCKET, NodeStatus, UpdateResult,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
     packet::MAX_PACKET_SIZE,
     query_pool::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
-    rpc, Config, Enr, Event, IpMode,
+    rpc,
 };
 use connectivity_state::{
-    ConnectivityState, TimerFailure, DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT,
+    ConnectivityState, DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT, TimerFailure,
 };
 use delay_map::HashSetDelay;
 use enr::{CombinedKey, NodeId};
@@ -1231,11 +1232,11 @@ impl Service {
     }
 
     fn send_event(&mut self, event: Event) {
-        if let Some(stream) = self.event_stream.as_mut() {
-            if let Err(mpsc::error::TrySendError::Closed(_)) = stream.try_send(event) {
-                // If the stream has been dropped prevent future attempts to send events
-                self.event_stream = None;
-            }
+        if let Some(stream) = self.event_stream.as_mut()
+            && let Err(mpsc::error::TrySendError::Closed(_)) = stream.try_send(event)
+        {
+            // If the stream has been dropped prevent future attempts to send events
+            self.event_stream = None;
         }
     }
 
@@ -1269,15 +1270,14 @@ impl Service {
                     _ => false,
                 };
 
-                if must_update_enr {
-                    if let UpdateResult::Failed(reason) =
+                if must_update_enr
+                    && let UpdateResult::Failed(reason) =
                         self.kbuckets.write().update_node(&key, enr.clone(), None)
-                    {
-                        self.peers_to_ping.remove(&enr.node_id());
-                        debug!(node = %source, ?reason, "Failed to update discovered ENR.");
+                {
+                    self.peers_to_ping.remove(&enr.node_id());
+                    debug!(node = %source, ?reason, "Failed to update discovered ENR.");
 
-                        return false; // Remove this peer from the discovered list if the update failed
-                    }
+                    return false; // Remove this peer from the discovered list if the update failed
                 }
             } else {
                 // Is either non-contactable or didn't pass the table filter. If it exists in the

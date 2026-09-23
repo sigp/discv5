@@ -17,9 +17,8 @@
 
 use clap::Parser;
 use discv5::{
-    enr,
-    enr::{k256, CombinedKey},
-    ConfigBuilder, Discv5, Event, ListenConfig,
+    ConfigBuilder, Discv5, Event, ListenConfig, enr,
+    enr::{CombinedKey, k256},
 };
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -70,10 +69,12 @@ async fn main() {
     let port = args
         .port
         .unwrap_or_else(|| (rand::random::<u16>() % 1000) + 9000);
-    let port6 = args.port.unwrap_or_else(|| loop {
-        let port6 = (rand::random::<u16>() % 1000) + 9000;
-        if port6 != port {
-            return port6;
+    let port6 = args.port.unwrap_or_else(|| {
+        loop {
+            let port6 = (rand::random::<u16>() % 1000) + 9000;
+            if port6 != port {
+                return port6;
+            }
         }
     });
 

@@ -3,7 +3,7 @@
 //! Every UDP packet passes a filter before being processed.
 
 use super::filter::{Filter, FilterConfig};
-use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
+use crate::{Executor, metrics::METRICS, node_info::NodeAddress, packet::*};
 use parking_lot::RwLock;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
@@ -184,12 +184,12 @@ impl RecvHandler {
         // At the same time, we accept the risk of colission of nodes in a topology where there are
         // multiple interfaces and two nodes with the same link-local address. This risk is small
         // based in additional checks to packets.
-        if let SocketAddr::V6(ref mut v6_socket_addr) = src_address {
-            if v6_socket_addr.flowinfo() != 0 || v6_socket_addr.scope_id() != 0 {
-                trace!(original = %v6_socket_addr, "Zeroing out flowinfo and scope_id for v6 socket address");
-                v6_socket_addr.set_flowinfo(0);
-                v6_socket_addr.set_scope_id(0);
-            }
+        if let SocketAddr::V6(ref mut v6_socket_addr) = src_address
+            && (v6_socket_addr.flowinfo() != 0 || v6_socket_addr.scope_id() != 0)
+        {
+            trace!(original = %v6_socket_addr, "Zeroing out flowinfo and scope_id for v6 socket address");
+            v6_socket_addr.set_flowinfo(0);
+            v6_socket_addr.set_scope_id(0);
         }
 
         // Permit all expected responses

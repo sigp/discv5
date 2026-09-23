@@ -150,7 +150,10 @@ impl ActiveRequests {
         // First check that for every `MessageNonce` there is an associated `NodeAddress`.
         for (nonce, address) in self.active_requests_nonce_mapping.iter() {
             if !self.active_requests_mapping.contains_key(address) {
-                panic!("Nonce {:?} maps to address {}, which does not exist in `active_requests_mapping`", nonce, address);
+                panic!(
+                    "Nonce {:?} maps to address {}, which does not exist in `active_requests_mapping`",
+                    nonce, address
+                );
             }
         }
 
@@ -158,7 +161,10 @@ impl ActiveRequests {
             for req in requests {
                 let nonce = req.packet().message_nonce();
                 if !self.active_requests_nonce_mapping.contains_key(nonce) {
-                    panic!("Address {} maps to request with nonce {:?}, which does not exist in `active_requests_nonce_mapping`", address, nonce);
+                    panic!(
+                        "Address {} maps to request with nonce {:?}, which does not exist in `active_requests_nonce_mapping`",
+                        address, nonce
+                    );
                 }
             }
         }

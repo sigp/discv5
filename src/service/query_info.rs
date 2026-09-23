@@ -1,4 +1,4 @@
-use crate::{kbucket::Key, rpc::RequestBody, Enr};
+use crate::{Enr, kbucket::Key, rpc::RequestBody};
 use enr::NodeId;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
@@ -69,10 +69,10 @@ fn findnode_log2distance(target: NodeId, peer: NodeId, size: usize) -> Option<Ve
         if distance + difference <= 256 {
             result_list.push(distance + difference);
         }
-        if result_list.len() < size {
-            if let Some(d) = distance.checked_sub(difference) {
-                result_list.push(d);
-            }
+        if result_list.len() < size
+            && let Some(d) = distance.checked_sub(difference)
+        {
+            result_list.push(d);
         }
         difference += 1;
     }

@@ -78,8 +78,8 @@ pub use crate::handler::ConnectionDirection;
 use arrayvec::{self, ArrayVec};
 use bucket::KBucket;
 pub use bucket::{
-    ConnectionState, FailureReason, InsertResult as BucketInsertResult, UpdateResult,
-    MAX_NODES_PER_BUCKET,
+    ConnectionState, FailureReason, InsertResult as BucketInsertResult, MAX_NODES_PER_BUCKET,
+    UpdateResult,
 };
 use filter::Filter;
 use std::{

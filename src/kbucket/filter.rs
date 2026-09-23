@@ -81,10 +81,10 @@ fn ip_filter(
             }
 
             // Count the same /24 subnet
-            if let Some(other_ip) = enr.ip4() {
-                if other_ip.octets()[0..3] == ip.octets()[0..3] {
-                    count += 1;
-                }
+            if let Some(other_ip) = enr.ip4()
+                && other_ip.octets()[0..3] == ip.octets()[0..3]
+            {
+                count += 1;
             }
             if count >= limit {
                 return false;

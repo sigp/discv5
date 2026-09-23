@@ -300,15 +300,15 @@ where
                         return None;
                     }
                     // Check the custom filter
-                    if let Some(filter) = self.filter.as_ref() {
-                        if !filter.filter(
+                    if let Some(filter) = self.filter.as_ref()
+                        && !filter.filter(
                             &pending.node.value,
                             &mut self.iter().map(|node| &node.value),
-                        ) {
-                            // The pending node doesn't satisfy the bucket filter. Drop the pending
-                            // node.
-                            return None;
-                        }
+                        )
+                    {
+                        // The pending node doesn't satisfy the bucket filter. Drop the pending
+                        // node.
+                        return None;
                     }
                     // Check the incoming node restriction
                     if pending.status().is_connected() && pending.status().is_incoming() {
@@ -355,7 +355,7 @@ where
                             return Some(AppliedPending {
                                 inserted,
                                 evicted: None,
-                            })
+                            });
                         }
                         InsertResult::Full => unreachable!("Bucket cannot be full"),
                         InsertResult::Pending { .. } | InsertResult::NodeExists => {
@@ -492,13 +492,13 @@ where
                 UpdateResult::NotModified
             } else {
                 // Check bucket filter
-                if let Some(filter) = self.filter.as_ref() {
-                    if !filter.filter(&value, &mut self.iter().map(|node| &node.value)) {
-                        // Node is removed, update the `first_connected_pos` accordingly.
-                        self.update_first_connected_pos_for_removal(pos);
+                if let Some(filter) = self.filter.as_ref()
+                    && !filter.filter(&value, &mut self.iter().map(|node| &node.value))
+                {
+                    // Node is removed, update the `first_connected_pos` accordingly.
+                    self.update_first_connected_pos_for_removal(pos);
 
-                        return UpdateResult::Failed(FailureReason::BucketFilter);
-                    }
+                    return UpdateResult::Failed(FailureReason::BucketFilter);
                 }
                 node.value = value;
                 self.nodes.insert(pos, node);
@@ -544,10 +544,10 @@ where
         }
 
         // check bucket filter
-        if let Some(filter) = self.filter.as_ref() {
-            if !filter.filter(&node.value, &mut self.iter().map(|node| &node.value)) {
-                return InsertResult::FailedFilter;
-            }
+        if let Some(filter) = self.filter.as_ref()
+            && !filter.filter(&node.value, &mut self.iter().map(|node| &node.value))
+        {
+            return InsertResult::FailedFilter;
         }
 
         let inserting_pending = self
@@ -771,12 +771,16 @@ pub mod tests {
         /// Check that disconnected nodes are listed first, follow by connected nodes.
         fn check_status_ordering(&self) {
             let first_connected_pos = self.first_connected_pos.unwrap_or(self.nodes.len());
-            assert!(self.nodes[..first_connected_pos]
-                .iter()
-                .all(|n| !n.status.is_connected()));
-            assert!(self.nodes[first_connected_pos..]
-                .iter()
-                .all(|n| n.status.is_connected()));
+            assert!(
+                self.nodes[..first_connected_pos]
+                    .iter()
+                    .all(|n| !n.status.is_connected())
+            );
+            assert!(
+                self.nodes[first_connected_pos..]
+                    .iter()
+                    .all(|n| n.status.is_connected())
+            );
         }
 
         /// Check that the limit on incoming connections is respected.

@@ -20,8 +20,8 @@ pub(crate) mod recv;
 pub(crate) mod send;
 
 pub use filter::{
-    rate_limiter::{RateLimiter, RateLimiterBuilder},
     FilterConfig,
+    rate_limiter::{RateLimiter, RateLimiterBuilder},
 };
 pub use recv::UnrecognizedFrame;
 
@@ -145,7 +145,7 @@ impl Socket {
                     return Err(Error::new(
                         std::io::ErrorKind::InvalidInput,
                         "At least one socket must be provided",
-                    ))
+                    ));
                 }
             },
         };

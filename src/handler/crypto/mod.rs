@@ -11,21 +11,21 @@ use crate::{
     packet::{ChallengeData, MessageNonce},
 };
 use aes_gcm::{
-    aead::{Aead, KeyInit, Payload},
     Aes128Gcm,
+    aead::{Aead, KeyInit, Payload},
 };
 use ecdh::ecdh;
 use enr::{
+    CombinedKey, CombinedPublicKey, NodeId,
     k256::{
         self,
         ecdsa::{
-            signature::{DigestSigner, DigestVerifier},
             Signature,
+            signature::{DigestSigner, DigestVerifier},
         },
         elliptic_curve::Generate,
-        sha2::{digest::Update, Sha256},
+        sha2::{Sha256, digest::Update},
     },
-    CombinedKey, CombinedPublicKey, NodeId,
 };
 use hkdf::Hkdf;
 use std::convert::TryFrom;

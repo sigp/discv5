@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     config::Config,
-    kbucket::{Distance, Key, PredicateKey, MAX_NODES_PER_BUCKET},
+    kbucket::{Distance, Key, MAX_NODES_PER_BUCKET, PredicateKey},
 };
 use std::{
     collections::btree_map::{BTreeMap, Entry},
@@ -214,12 +214,12 @@ where
         let key: Key<TNodeId> = peer.clone().into();
         let distance = key.distance(&self.target_key);
 
-        if let Entry::Occupied(mut e) = self.closest_peers.entry(distance) {
-            if let QueryPeerState::Waiting(..) = e.get().state {
-                debug_assert!(self.num_waiting > 0);
-                self.num_waiting -= 1;
-                e.get_mut().state = QueryPeerState::Failed
-            }
+        if let Entry::Occupied(mut e) = self.closest_peers.entry(distance)
+            && let QueryPeerState::Waiting(..) = e.get().state
+        {
+            debug_assert!(self.num_waiting > 0);
+            self.num_waiting -= 1;
+            e.get_mut().state = QueryPeerState::Failed
         }
     }
 
@@ -279,15 +279,15 @@ where
                 }
 
                 QueryPeerState::Succeeded => {
-                    if let Some(ref mut cnt) = result_counter {
-                        if peer.predicate_match {
-                            *cnt += 1;
-                            // If `num_results` successful results have been delivered for the
-                            // closest peers, the query is done.
-                            if *cnt >= self.config.num_results {
-                                self.progress = QueryProgress::Finished;
-                                return QueryState::Finished;
-                            }
+                    if let Some(ref mut cnt) = result_counter
+                        && peer.predicate_match
+                    {
+                        *cnt += 1;
+                        // If `num_results` successful results have been delivered for the
+                        // closest peers, the query is done.
+                        if *cnt >= self.config.num_results {
+                            self.progress = QueryProgress::Finished;
+                            return QueryState::Finished;
                         }
                     }
                 }

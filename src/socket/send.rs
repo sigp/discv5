@@ -1,5 +1,5 @@
 //! This is a standalone task that encodes and sends Discv5 UDP packets
-use crate::{metrics::METRICS, node_info::NodeAddress, packet::*, Executor};
+use crate::{Executor, metrics::METRICS, node_info::NodeAddress, packet::*};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     net::UdpSocket,
