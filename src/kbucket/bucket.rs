@@ -722,9 +722,9 @@ impl std::fmt::Display for ConnectionDirection {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::test_util::GenRange;
     use enr::NodeId;
     use quickcheck::*;
-    use rand_07::Rng;
     use std::{
         collections::{HashSet, VecDeque},
         hash::Hash,
@@ -744,10 +744,8 @@ pub mod tests {
         }
     }
 
-    pub fn arbitrary_node_id<G: Gen>(g: &mut G) -> NodeId {
-        let mut node_id = [0u8; 32];
-        g.fill_bytes(&mut node_id);
-        NodeId::new(&node_id)
+    pub fn arbitrary_node_id(g: &mut Gen) -> NodeId {
+        NodeId::new(&Arbitrary::arbitrary(g))
     }
 
     impl<V> KBucket<NodeId, V>
@@ -796,10 +794,10 @@ pub mod tests {
     where
         V: Arbitrary + Eq,
     {
-        fn arbitrary<G: Gen>(g: &mut G) -> KBucket<NodeId, V> {
-            let timeout = Duration::from_secs(g.gen_range(1, g.size() as u64));
+        fn arbitrary(g: &mut Gen) -> KBucket<NodeId, V> {
+            let timeout = Duration::from_secs(g.gen_range(1..g.size()) as u64);
             let mut bucket = KBucket::<NodeId, V>::new(timeout, MAX_NODES_PER_BUCKET, None);
-            let num_nodes = g.gen_range(1, MAX_NODES_PER_BUCKET + 1);
+            let num_nodes = g.gen_range(1..(MAX_NODES_PER_BUCKET + 1));
             for _ in 0..num_nodes {
                 loop {
                     let node = Node::arbitrary(g);
@@ -818,7 +816,7 @@ pub mod tests {
     where
         V: Arbitrary + Eq,
     {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             let key = Key::from(arbitrary_node_id(g));
             Node {
                 key,
@@ -829,8 +827,8 @@ pub mod tests {
     }
 
     impl Arbitrary for NodeStatus {
-        fn arbitrary<G: Gen>(g: &mut G) -> NodeStatus {
-            match g.gen_range(1, 4) {
+        fn arbitrary(g: &mut Gen) -> NodeStatus {
+            match g.gen_range(1..5) {
                 1 => NodeStatus {
                     direction: ConnectionDirection::Incoming,
                     state: ConnectionState::Connected,
@@ -853,8 +851,8 @@ pub mod tests {
     }
 
     impl Arbitrary for Position {
-        fn arbitrary<G: Gen>(g: &mut G) -> Position {
-            Position(g.gen_range(0, MAX_NODES_PER_BUCKET))
+        fn arbitrary(g: &mut Gen) -> Position {
+            Position(g.gen_range(0..MAX_NODES_PER_BUCKET))
         }
     }
 
@@ -906,8 +904,8 @@ pub mod tests {
     where
         V: Arbitrary + Eq,
     {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
-            match g.gen_range(0, 6) {
+        fn arbitrary(g: &mut Gen) -> Self {
+            match g.gen_range(0..6) {
                 0 => Action::Insert(<_>::arbitrary(g)),
                 1 => Action::Remove(<_>::arbitrary(g)),
                 2 => Action::UpdatePending(<_>::arbitrary(g)),

@@ -291,7 +291,7 @@ mod tests {
     }
 
     impl Arbitrary for VoteData {
-        fn arbitrary<G: Gen>(g: &mut G) -> VoteData {
+        fn arbitrary(g: &mut Gen) -> VoteData {
             VoteData {
                 port: u16::arbitrary(g),
                 node_id: NodeId::random(),
@@ -306,7 +306,7 @@ mod tests {
     }
 
     impl Arbitrary for VoteScenario {
-        fn arbitrary<G: Gen>(g: &mut G) -> VoteScenario {
+        fn arbitrary(g: &mut Gen) -> VoteScenario {
             let threshold = (u8::arbitrary(g) % 10 + 2) as usize; // 2-11
             let vote_count = (u8::arbitrary(g) % 20) as usize; // 0-19
             let votes = (0..vote_count).map(|_| VoteData::arbitrary(g)).collect();

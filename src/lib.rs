@@ -136,3 +136,21 @@ pub use enr;
 pub use libp2p_identity;
 #[cfg(feature = "libp2p")]
 pub use multiaddr;
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use core::ops::Range as StdRange;
+    use quickcheck::{Arbitrary, Gen};
+
+    /// Extension trait adding bounded range generation to quickcheck's `Gen`.
+    pub(crate) trait GenRange {
+        fn gen_range(&mut self, range: StdRange<usize>) -> usize;
+    }
+
+    impl GenRange for Gen {
+        fn gen_range(&mut self, range: StdRange<usize>) -> usize {
+            assert!(range.start < range.end, "empty range: {:?}", range);
+            range.start + (usize::arbitrary(self) % (range.end - range.start))
+        }
+    }
+}

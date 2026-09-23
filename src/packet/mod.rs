@@ -10,14 +10,14 @@
 //! [`Packet`]: enum.Packet.html
 
 use crate::{error::PacketError, Enr};
-use aes::cipher::{generic_array::GenericArray, KeyIvInit, StreamCipher};
+use aes::cipher::{Array, KeyIvInit, StreamCipher};
 
 type Aes128Ctr64BE = ctr::Ctr64BE<aes::Aes128>;
 
 use alloy_rlp::Decodable;
 use enr::NodeId;
 use rand::Rng;
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use zeroize::Zeroize;
 
 /// The packet IV length (u128).
@@ -360,23 +360,18 @@ impl Packet {
     }
 
     /// Generates a Packet::Random given a `tag`.
-    pub fn new_random(
-        src_id: &NodeId,
-        protocol_identity: ProtocolIdentity,
-    ) -> Result<Self, &'static str> {
+    pub fn new_random(src_id: &NodeId, protocol_identity: ProtocolIdentity) -> Self {
         let mut ciphertext = [0u8; 44];
-        rand::thread_rng()
-            .try_fill(&mut ciphertext[..])
-            .map_err(|_| "PRNG failed")?;
+        rand::rng().fill_bytes(&mut ciphertext[..]);
 
         let message_nonce: MessageNonce = rand::random();
 
-        Ok(Self::new_message(
+        Self::new_message(
             *src_id,
             message_nonce,
             protocol_identity,
             ciphertext.to_vec(),
-        ))
+        )
     }
 
     /// Non-challenge (WHOAREYOU) packets contain the src_id of the node. This function returns the
@@ -420,8 +415,8 @@ impl Packet {
          * This was split into its own library, but brought back to allow re-use of the cipher when
          * performing decryption
          */
-        let mut key = GenericArray::clone_from_slice(&dst_id.raw()[..16]);
-        let mut nonce = GenericArray::clone_from_slice(&self.iv.to_be_bytes());
+        let mut key = Array::try_from(&dst_id.raw()[..16]).unwrap();
+        let mut nonce = Array::from(self.iv.to_be_bytes());
 
         let mut cipher = Aes128Ctr64BE::new(&key, &nonce);
         cipher.apply_keystream(&mut header_bytes);
@@ -453,8 +448,8 @@ impl Packet {
          * This was split into its own library, but brought back to allow re-use of the cipher when
          * performing the decryption
          */
-        let key = GenericArray::clone_from_slice(&src_id.raw()[..16]);
-        let nonce = GenericArray::clone_from_slice(&iv);
+        let key = Array::try_from(&src_id.raw()[..16]).unwrap();
+        let nonce = Array::try_from(&iv[..]).unwrap();
         let mut cipher = Aes128Ctr64BE::new(&key, &nonce);
 
         // Take the static header content
@@ -771,7 +766,7 @@ mod tests {
         let src_id: NodeId = node_key_1().public().into();
         let dst_id: NodeId = node_key_2().public().into();
 
-        let packet = Packet::new_random(&src_id, ProtocolIdentity::default()).unwrap();
+        let packet = Packet::new_random(&src_id, ProtocolIdentity::default());
 
         let encoded_packet = packet.clone().encode(&dst_id);
         let (decoded_packet, _authenticated_data) =

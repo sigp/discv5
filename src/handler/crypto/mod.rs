@@ -11,7 +11,7 @@ use crate::{
     packet::{ChallengeData, MessageNonce},
 };
 use aes_gcm::{
-    aead::{generic_array::GenericArray, Aead, KeyInit, Payload},
+    aead::{Aead, KeyInit, Payload},
     Aes128Gcm,
 };
 use ecdh::ecdh;
@@ -22,7 +22,8 @@ use enr::{
             signature::{DigestSigner, DigestVerifier},
             Signature,
         },
-        sha2::{Digest, Sha256},
+        elliptic_curve::Generate,
+        sha2::{digest::Update, Sha256},
     },
     CombinedKey, CombinedPublicKey, NodeId,
 };
@@ -52,7 +53,7 @@ pub(crate) fn generate_session_keys(
     let (secret, ephem_pk) = {
         match contact.public_key() {
             CombinedPublicKey::Secp256k1(remote_pk) => {
-                let ephem_sk = k256::ecdsa::SigningKey::random(&mut rand::thread_rng());
+                let ephem_sk = k256::ecdsa::SigningKey::generate_from_rng(&mut rand::rng());
                 let secret = ecdh(&remote_pk, &ephem_sk);
                 let ephem_pk = ephem_sk.verifying_key();
                 (secret, ephem_pk.to_sec1_bytes().to_vec())
@@ -130,9 +131,11 @@ pub(crate) fn sign_nonce(
 
     match signing_key {
         CombinedKey::Secp256k1(key) => {
-            let message = Sha256::new().chain_update(signing_message);
             let signature: Signature = key
-                .try_sign_digest(message)
+                .try_sign_digest(|d: &mut Sha256| {
+                    d.update(&signing_message);
+                    Ok(())
+                })
                 .map_err(|e| Error::Error(format!("Failed to sign message: {e}")))?;
             Ok(signature.to_vec())
         }
@@ -154,7 +157,13 @@ pub(crate) fn verify_authentication_nonce(
         CombinedPublicKey::Secp256k1(key) => {
             if let Ok(sig) = k256::ecdsa::Signature::try_from(sig) {
                 return key
-                    .verify_digest(Sha256::new().chain_update(signing_nonce), &sig)
+                    .verify_digest(
+                        |d: &mut Sha256| {
+                            d.update(&signing_nonce);
+                            Ok(())
+                        },
+                        &sig,
+                    )
                     .is_ok();
             }
             false
@@ -196,9 +205,9 @@ pub(crate) fn decrypt_message(
         ));
     }
 
-    let aead = Aes128Gcm::new(GenericArray::from_slice(key));
+    let aead = Aes128Gcm::new(key.into());
     let payload = Payload { msg, aad };
-    aead.decrypt(GenericArray::from_slice(&message_nonce), payload)
+    aead.decrypt(&message_nonce.into(), payload)
         .map_err(|e| Error::DecryptionFailed(e.to_string()))
 }
 
@@ -212,10 +221,10 @@ pub(crate) fn encrypt_message(
     msg: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    let aead = Aes128Gcm::new(GenericArray::from_slice(key));
+    let aead = Aes128Gcm::new(key.into());
     let payload = Payload { msg, aad };
-    aead.encrypt(GenericArray::from_slice(&message_nonce), payload)
-        .map_err(|e| Error::DecryptionFailed(e.to_string()))
+    aead.encrypt(&message_nonce.into(), payload)
+        .map_err(|e| Error::EncryptionFail(e.to_string()))
 }
 
 #[cfg(test)]
