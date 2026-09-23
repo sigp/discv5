@@ -722,6 +722,7 @@ impl std::fmt::Display for ConnectionDirection {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::test_util::GenRange;
     use enr::NodeId;
     use quickcheck::*;
     use std::{
@@ -745,11 +746,6 @@ pub mod tests {
 
     pub fn arbitrary_node_id(g: &mut Gen) -> NodeId {
         NodeId::new(&Arbitrary::arbitrary(g))
-    }
-
-    fn gen_range(g: &mut Gen, low: usize, high: usize) -> usize {
-        assert!(high > low);
-        low + (usize::arbitrary(g) % (high - low))
     }
 
     impl<V> KBucket<NodeId, V>
@@ -799,9 +795,9 @@ pub mod tests {
         V: Arbitrary + Eq,
     {
         fn arbitrary(g: &mut Gen) -> KBucket<NodeId, V> {
-            let timeout = Duration::from_secs(gen_range(g, 1, g.size()) as u64);
+            let timeout = Duration::from_secs(g.gen_range(1..g.size()) as u64);
             let mut bucket = KBucket::<NodeId, V>::new(timeout, MAX_NODES_PER_BUCKET, None);
-            let num_nodes = gen_range(g, 1, MAX_NODES_PER_BUCKET + 1);
+            let num_nodes = g.gen_range(1..(MAX_NODES_PER_BUCKET + 1));
             for _ in 0..num_nodes {
                 loop {
                     let node = Node::arbitrary(g);
@@ -832,7 +828,7 @@ pub mod tests {
 
     impl Arbitrary for NodeStatus {
         fn arbitrary(g: &mut Gen) -> NodeStatus {
-            match gen_range(g, 1, 5) {
+            match g.gen_range(1..5) {
                 1 => NodeStatus {
                     direction: ConnectionDirection::Incoming,
                     state: ConnectionState::Connected,
@@ -856,7 +852,7 @@ pub mod tests {
 
     impl Arbitrary for Position {
         fn arbitrary(g: &mut Gen) -> Position {
-            Position(gen_range(g, 0, MAX_NODES_PER_BUCKET))
+            Position(g.gen_range(0..MAX_NODES_PER_BUCKET))
         }
     }
 
@@ -909,7 +905,7 @@ pub mod tests {
         V: Arbitrary + Eq,
     {
         fn arbitrary(g: &mut Gen) -> Self {
-            match gen_range(g, 0, 6) {
+            match g.gen_range(0..6) {
                 0 => Action::Insert(<_>::arbitrary(g)),
                 1 => Action::Remove(<_>::arbitrary(g)),
                 2 => Action::UpdatePending(<_>::arbitrary(g)),

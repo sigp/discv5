@@ -442,6 +442,7 @@ enum QueryPeerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::GenRange;
     use enr::NodeId;
     use quickcheck::*;
     use rand_07::{thread_rng, Rng};
@@ -454,19 +455,14 @@ mod tests {
     }
 
     fn random_query(g: &mut Gen) -> TestQuery {
-        let known_closest_peers = random_nodes(gen_range(g, 1, 60)).map(Key::from);
+        let known_closest_peers = random_nodes(g.gen_range(1..60)).map(Key::from);
         let target = NodeId::random();
         let config = FindNodeQueryConfig {
-            parallelism: gen_range(g, 1, 10),
-            num_results: gen_range(g, 1, 25),
-            peer_timeout: Duration::from_secs(gen_range(g, 10, 30) as u64),
+            parallelism: g.gen_range(1..10),
+            num_results: g.gen_range(1..25),
+            peer_timeout: Duration::from_secs(g.gen_range(10..30) as u64),
         };
         FindNodeQuery::with_config(config, target.into(), known_closest_peers)
-    }
-
-    fn gen_range(g: &mut Gen, low: usize, high: usize) -> usize {
-        assert!(high > low);
-        low + (usize::arbitrary(g) % (high - low))
     }
 
     fn sorted(target: &Key<NodeId>, peers: &[Key<NodeId>]) -> bool {
