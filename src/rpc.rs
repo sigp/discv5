@@ -8,7 +8,12 @@ use std::{
     net::{IpAddr, Ipv6Addr},
     num::NonZeroU16,
 };
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
+
+/// The error `enr` returns when a record's `id` is not a scheme it supports.
+/// If `enr` changes this message, `decode_nodes_skips_unknown_identity_scheme`
+/// fails, so the two can't drift apart silently.
+const UNSUPPORTED_IDENTITY_SCHEME: &str = "Unsupported identity scheme";
 
 /// Type to manage the request IDs.
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
@@ -456,11 +461,24 @@ impl Message {
                                 "Payload size is smaller than payload_length",
                             ));
                         }
-                        let enr_rlp = Enr::<CombinedKey>::decode(
+                        match Enr::<CombinedKey>::decode(
                             &mut &payload[..node_header.length_with_payload()],
-                        )?;
-                        payload.advance(enr_rlp.size());
-                        enr_list_rlp.append(&mut vec![enr_rlp]);
+                        ) {
+                            Ok(enr_rlp) => {
+                                payload.advance(enr_rlp.size());
+                                enr_list_rlp.append(&mut vec![enr_rlp]);
+                            }
+                            // We can't verify a record signed with a scheme we don't know,
+                            // but that doesn't make it invalid. Skip it instead of dropping
+                            // the whole response. Any other error still fails the message.
+                            // `enr` stops parsing at the `id` check, so the rest of a skipped
+                            // record is never validated. It is discarded either way.
+                            Err(DecoderError::Custom(UNSUPPORTED_IDENTITY_SCHEME)) => {
+                                trace!("Skipping ENR with an unsupported identity scheme");
+                                payload.advance(node_header.length_with_payload());
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
                     if enr_list_rlp.is_empty() {
                         // no records
@@ -782,6 +800,96 @@ mod tests {
         let decoded = Message::decode(&encoded).unwrap();
 
         assert_eq!(request, decoded);
+    }
+
+    /// Builds a NODES response with one fresh record per port.
+    fn nodes_response(ports: &[u16]) -> (Vec<Enr<CombinedKey>>, Vec<u8>) {
+        let nodes: Vec<_> = ports
+            .iter()
+            .map(|port| {
+                Enr::builder()
+                    .ip4("127.0.0.1".parse().unwrap())
+                    .udp4(*port)
+                    .build(&CombinedKey::generate_secp256k1())
+                    .unwrap()
+            })
+            .collect();
+        let encoded = Message::Response(Response {
+            id: RequestId(vec![1]),
+            body: ResponseBody::Nodes {
+                total: 1,
+                nodes: nodes.clone(),
+            },
+        })
+        .encode();
+        (nodes, encoded)
+    }
+
+    /// Changes the identity scheme of the `n`th record in an encoded message
+    /// from "v4" to "v5". Both are two bytes, so every length prefix stays valid
+    /// and only the scheme changes.
+    fn set_unknown_scheme(encoded: &mut [u8], n: usize) {
+        let id_v4 = [0x82, b'i', b'd', 0x82, b'v', b'4'];
+        let at = encoded
+            .windows(id_v4.len())
+            .enumerate()
+            .filter(|(_, w)| *w == id_v4)
+            .nth(n)
+            .map(|(i, _)| i)
+            .expect("record not found");
+        encoded[at + id_v4.len() - 1] = b'5';
+    }
+
+    #[test]
+    fn decode_nodes_skips_unknown_identity_scheme() {
+        let (nodes, mut encoded) = nodes_response(&[30301, 30302, 30303]);
+        set_unknown_scheme(&mut encoded, 1);
+
+        match Message::decode(&encoded).unwrap() {
+            Message::Response(Response {
+                body: ResponseBody::Nodes { total, nodes: got },
+                ..
+            }) => {
+                assert_eq!(total, 1);
+                assert_eq!(got, vec![nodes[0].clone(), nodes[2].clone()]);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_nodes_with_only_unknown_identity_schemes() {
+        let (_, mut encoded) = nodes_response(&[30301, 30302]);
+        // The first call changes the first record, so the second one finds the next.
+        set_unknown_scheme(&mut encoded, 0);
+        set_unknown_scheme(&mut encoded, 0);
+
+        match Message::decode(&encoded).unwrap() {
+            Message::Response(Response {
+                body: ResponseBody::Nodes { total, nodes },
+                ..
+            }) => {
+                assert_eq!(total, 1);
+                assert!(nodes.is_empty());
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_nodes_still_rejects_invalid_signature() {
+        let (nodes, mut encoded) = nodes_response(&[30301, 30302, 30303]);
+        // Flip a byte inside the second record's signature.
+        let second = encoded
+            .windows(64)
+            .position(|w| w == nodes[1].signature())
+            .expect("signature not found");
+        encoded[second] ^= 0xff;
+
+        assert!(matches!(
+            Message::decode(&encoded),
+            Err(DecoderError::Custom("Invalid Signature"))
+        ));
     }
 
     #[test]

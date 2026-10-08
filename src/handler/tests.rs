@@ -282,6 +282,165 @@ async fn handshake_resends_active_challenge() {
 }
 
 #[tokio::test]
+// A NODES response with a record of an unknown identity scheme still reaches the service,
+// without that record.
+async fn nodes_response_with_unknown_identity_scheme() {
+    init();
+
+    let a_socket = Arc::new(
+        tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap(),
+    );
+    let a_addr = a_socket.local_addr().unwrap();
+    let b_socket = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+
+    let a_key = CombinedKey::generate_secp256k1();
+    let b_key = CombinedKey::generate_secp256k1();
+    let a_enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(a_addr.port())
+        .build(&a_key)
+        .unwrap();
+    let b_enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(b_socket.local_addr().unwrap().port())
+        .build(&b_key)
+        .unwrap();
+
+    let config = ConfigBuilder::new(ListenConfig::FromSockets {
+        ipv4: Some(a_socket),
+        ipv6: None,
+    })
+    .build();
+    let (exit, a_send, mut a_recv) = Handler::spawn(arc_rw!(a_enr.clone()), arc_rw!(a_key), config)
+        .await
+        .unwrap();
+
+    let request = Request {
+        id: RequestId(vec![1]),
+        body: RequestBody::FindNode {
+            distances: vec![256],
+        },
+    };
+    a_send
+        .send(HandlerIn::Request(
+            b_enr.clone().into(),
+            Box::new(request.clone()),
+        ))
+        .unwrap();
+
+    let mut buf = [0; crate::packet::MAX_PACKET_SIZE];
+    let mut recv_packet = async || {
+        let len = tokio::time::timeout(Duration::from_secs(2), b_socket.recv(&mut buf))
+            .await
+            .unwrap()
+            .unwrap();
+        Packet::decode(&b_enr.node_id(), ProtocolIdentity::default(), &buf[..len]).unwrap()
+    };
+
+    // B challenges A's random packet.
+    let (random, _) = recv_packet().await;
+    let whoareyou = Packet::new_whoareyou(
+        random.header.message_nonce,
+        rand::random(),
+        ProtocolIdentity::default(),
+        0,
+    );
+    let challenge = Challenge {
+        data: ChallengeData::try_from(whoareyou.authenticated_data().as_slice()).unwrap(),
+        packet: whoareyou.clone(),
+        remote_enr: None,
+    };
+    b_socket
+        .send_to(&whoareyou.encode(&a_enr.node_id()), a_addr)
+        .await
+        .unwrap();
+
+    // A's handshake carries the FINDNODE.
+    let (handshake, authenticated_data) = recv_packet().await;
+    let PacketKind::Handshake {
+        src_id,
+        id_nonce_sig,
+        ephem_pubkey,
+        enr_record,
+    } = handshake.header.kind
+    else {
+        panic!("expected handshake packet, got {:?}", handshake.header.kind);
+    };
+    let (mut session, _) = Session::establish_from_challenge(
+        arc_rw!(b_key),
+        &b_enr.node_id(),
+        &src_id,
+        challenge,
+        &id_nonce_sig,
+        &ephem_pubkey,
+        enr_record,
+    )
+    .unwrap();
+    let findnode = session
+        .decrypt_message(
+            handshake.header.message_nonce,
+            &handshake.message,
+            &authenticated_data,
+        )
+        .unwrap();
+    let Message::Request(Request { id, .. }) = Message::decode(&findnode).unwrap() else {
+        panic!("expected FINDNODE");
+    };
+
+    let nodes: Vec<_> = (0..3).map(|_| create_node()).collect();
+    let mut response = Message::Response(Response {
+        id,
+        body: ResponseBody::Nodes {
+            total: 1,
+            nodes: nodes.clone(),
+        },
+    })
+    .encode();
+    // Change the middle record's identity scheme from "v4" to "v5".
+    let id_v4 = [0x82, b'i', b'd', 0x82, b'v', b'4'];
+    let (at, _) = response
+        .windows(id_v4.len())
+        .enumerate()
+        .filter(|(_, w)| *w == id_v4)
+        .nth(1)
+        .unwrap();
+    response[at + id_v4.len() - 1] = b'5';
+    let response = session
+        .encrypt_message(b_enr.node_id(), &response, ProtocolIdentity::default())
+        .unwrap();
+    b_socket
+        .send_to(&response.encode(&a_enr.node_id()), a_addr)
+        .await
+        .unwrap();
+
+    let response = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match a_recv.recv().await.unwrap() {
+                HandlerOut::Response(_, response) => return response,
+                HandlerOut::RequestFailed(_, e) => panic!("request failed: {e:?}"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("no NODES response");
+    assert_eq!(response.id, request.id);
+    assert_eq!(
+        response.body,
+        ResponseBody::Nodes {
+            total: 1,
+            nodes: vec![nodes[0].clone(), nodes[2].clone()],
+        }
+    );
+
+    exit.send(()).unwrap();
+}
+
+#[tokio::test]
 // Tests sending multiple messages on an encrypted session
 async fn multiple_messages() {
     init();
