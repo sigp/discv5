@@ -34,12 +34,15 @@ For a simple CLI discovery service see [discv5-cli](https://github.com/AgeMannin
 
 # Usage
 
-A simple example of creating this service is as follows:
+A simple example of creating this service is as follows. Note that `discv5` does not re-export
+the `enr` crate, so `enr` needs to be added as a direct dependency (using the same version that
+`discv5` depends on):
 
 ```rust
-   use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, ConfigBuilder};
+   use discv5::{TokioExecutor, Discv5, ConfigBuilder};
+   use enr::{CombinedKey, NodeId};
    use discv5::socket::ListenConfig;
-   use std::net::SocketAddr;
+   use std::net::{Ipv4Addr, SocketAddr};
 
    // construct a local ENR
    let enr_key = CombinedKey::generate_secp256k1();
