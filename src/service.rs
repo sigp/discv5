@@ -14,7 +14,7 @@
 //! secp256k1 keys are supported currently.
 
 use self::{
-    ip_vote::IpVote,
+    ip_vote::{IpVote, IpVoteOutcome},
     query_info::{QueryInfo, QueryType},
 };
 use crate::{
@@ -31,6 +31,7 @@ use crate::{
         FindNodeQueryConfig, PredicateQueryConfig, QueryId, QueryPool, QueryPoolState, TargetKey,
     },
     rpc,
+    socket::ListenConfig,
 };
 use connectivity_state::{
     ConnectivityState, DURATION_UNTIL_NEXT_CONNECTIVITY_ATTEMPT, TimerFailure,
@@ -260,6 +261,12 @@ impl Default for NodesResponse {
             received_nodes: Vec::new(),
         }
     }
+}
+
+/// A vote majority resolved to a socket or IP for applying to the local ENR.
+enum ResolvedIpVote {
+    Socket(SocketAddr),
+    IpOnly(IpAddr),
 }
 
 impl Service {
@@ -879,6 +886,67 @@ impl Service {
         }
     }
 
+    /// UDP port to advertise with an IP-only majority: ENR UDP port if set, else the listen port.
+    fn discovery_udp_port(&self, is_ipv6: bool) -> Option<u16> {
+        if is_ipv6 {
+            if let Some(port) = self.local_enr.read().udp6() {
+                return Some(port);
+            }
+        } else if let Some(port) = self.local_enr.read().udp4() {
+            return Some(port);
+        }
+
+        match &self.config.listen_config {
+            ListenConfig::Ipv4 { port, .. } if !is_ipv6 => Some(*port),
+            ListenConfig::Ipv6 { port, .. } if is_ipv6 => Some(*port),
+            ListenConfig::DualStack {
+                ipv4_port,
+                ipv6_port,
+                ..
+            } => {
+                if is_ipv6 {
+                    Some(*ipv6_port)
+                } else {
+                    Some(*ipv4_port)
+                }
+            }
+            ListenConfig::FromSockets { ipv4, ipv6 } => {
+                let socket = if is_ipv6 { ipv6.as_ref() } else { ipv4.as_ref() };
+                socket.and_then(|socket| socket.local_addr().ok().map(|addr| addr.port()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Updates the local ENR UDP socket when it differs from `new_socket`.
+    fn apply_ip_vote_outcome(&mut self, new_socket: SocketAddr, is_ipv6: bool) {
+        let local_socket = if is_ipv6 {
+            self.local_enr.read().udp6_socket().map(SocketAddr::V6)
+        } else {
+            self.local_enr.read().udp4_socket().map(SocketAddr::V4)
+        };
+
+        if Some(new_socket) == local_socket {
+            return;
+        }
+
+        let result = self
+            .local_enr
+            .write()
+            .set_udp_socket(new_socket, &self.enr_key.read());
+        match result {
+            Ok(_) => {
+                self.connectivity_state.enr_socket_update(&new_socket);
+                let ip_version = if is_ipv6 { "v6" } else { "v4" };
+                info!(ip_version, %new_socket, "Local UDP socket updated");
+                self.send_event(Event::SocketUpdated(new_socket));
+            }
+            Err(e) => {
+                warn!(socket = %new_socket, error = ?e, "Failed to update local UDP socket.");
+            }
+        }
+    }
+
     // We have received a PONG which informs us for our external socket. This function decides
     // how we should handle this vote and whether or not to update our ENR. This is done on a
     // majority-based voting system, see `IpVote` for more details.
@@ -906,66 +974,50 @@ impl Service {
             return;
         }
 
-        match socket {
-            SocketAddr::V4(_) => {
-                let local_ip4_socket = self.local_enr.read().udp4_socket();
-                if let Some(ip_votes) = self.ip_votes.as_mut() {
-                    ip_votes.insert(node_id, socket);
-                    let maybe_ip4_majority = ip_votes.majority().0;
-
-                    let new_ip4 =
-                        maybe_ip4_majority.filter(|&majority| Some(majority) != local_ip4_socket);
-
-                    // If we have a new ipv4 majority
-                    if let Some(new_ip4) = new_ip4 {
-                        let new_ip4: SocketAddr = new_ip4.into();
-                        let result = self
-                            .local_enr
-                            .write()
-                            .set_udp_socket(new_ip4, &self.enr_key.read());
-                        match result {
-                            Ok(_) => {
-                                // Inform the connectivity state that we have updated our IP advertisement
-                                self.connectivity_state.enr_socket_update(&new_ip4);
-                                info!(ip_version="v4", %new_ip4, "Local UDP socket updated");
-                                self.send_event(Event::SocketUpdated(new_ip4));
-                            }
-                            Err(e) => {
-                                warn!(ip = %new_ip4, error = ?e, "Failed to update local UDP socket.");
-                            }
-                        }
+        let resolved = {
+            let Some(ip_votes) = self.ip_votes.as_mut() else {
+                return;
+            };
+            ip_votes.insert(node_id, socket);
+            let (v4, v6) = ip_votes.majority();
+            match socket {
+                SocketAddr::V4(_) => match v4 {
+                    Some(IpVoteOutcome::Socket(addr)) => {
+                        Some(ResolvedIpVote::Socket(SocketAddr::V4(addr)))
                     }
-                }
-            }
-            SocketAddr::V6(_) => {
-                let local_ip6_socket = self.local_enr.read().udp6_socket();
-                if let Some(ip_votes) = self.ip_votes.as_mut() {
-                    ip_votes.insert(node_id, socket);
-                    let maybe_ip6_majority = ip_votes.majority().1;
-
-                    let new_ip6 =
-                        maybe_ip6_majority.filter(|&majority| Some(majority) != local_ip6_socket);
-                    // Check if our advertised IPV6 address needs to be updated.
-                    if let Some(new_ip6) = new_ip6 {
-                        let new_ip6: SocketAddr = new_ip6.into();
-                        let result = self
-                            .local_enr
-                            .write()
-                            .set_udp_socket(new_ip6, &self.enr_key.read());
-                        match result {
-                            Ok(_) => {
-                                // Inform the connectivity state that we have updated our IP advertisement
-                                self.connectivity_state.enr_socket_update(&new_ip6);
-                                info!(ip_version="v6", %new_ip6, "Local UDP socket updated");
-                                self.send_event(Event::SocketUpdated(new_ip6));
-                            }
-                            Err(e) => {
-                                warn!(ip6 = %new_ip6, error = ?e, "Failed to update local UDP ip6 socket.");
-                            }
-                        }
+                    Some(IpVoteOutcome::IpOnly(ip)) => {
+                        Some(ResolvedIpVote::IpOnly(IpAddr::V4(ip)))
                     }
-                }
+                    None => None,
+                },
+                SocketAddr::V6(_) => match v6 {
+                    Some(IpVoteOutcome::Socket(addr)) => {
+                        Some(ResolvedIpVote::Socket(SocketAddr::V6(addr)))
+                    }
+                    Some(IpVoteOutcome::IpOnly(ip)) => {
+                        Some(ResolvedIpVote::IpOnly(IpAddr::V6(ip)))
+                    }
+                    None => None,
+                },
             }
+        };
+
+        match resolved {
+            Some(ResolvedIpVote::Socket(addr)) => {
+                self.apply_ip_vote_outcome(addr, addr.is_ipv6());
+            }
+            Some(ResolvedIpVote::IpOnly(ip)) => {
+                let is_ipv6 = ip.is_ipv6();
+                let Some(port) = self.discovery_udp_port(is_ipv6) else {
+                    warn!(
+                        %ip,
+                        "IP majority found but no local discovery port available to advertise"
+                    );
+                    return;
+                };
+                self.apply_ip_vote_outcome(SocketAddr::new(ip, port), is_ipv6);
+            }
+            None => {}
         }
     }
 

@@ -54,7 +54,7 @@ impl IpMode {
         /// communications with Ipv4 addresses advertised in the Ipv6 field.
         fn canonical_ipv6_enr_addr(enr: &Enr) -> Option<std::net::SocketAddrV6> {
             enr.udp6_socket()
-                .filter(|socket_addr| !to_ipv4_mapped(socket_addr.ip()).is_some())
+                .filter(|socket_addr| to_ipv4_mapped(socket_addr.ip()).is_none())
         }
 
         match self {
