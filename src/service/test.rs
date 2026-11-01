@@ -20,7 +20,7 @@ use parking_lot::RwLock;
 use rand;
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
@@ -650,4 +650,315 @@ async fn test_connectivity_metrics_updated_on_incoming_connections_ipv6() {
 
     // Clean up to avoid affecting other tests.
     METRICS.ipv6_contactable.store(false, Ordering::Relaxed);
+}
+
+fn build_service_for_ip_vote(
+    local_enr: Arc<RwLock<Enr>>,
+    enr_key: Arc<RwLock<CombinedKey>>,
+    listen_port: u16,
+    vote_threshold: usize,
+) -> Service {
+    let listen_config = ListenConfig::Ipv4 {
+        ip: Ipv4Addr::UNSPECIFIED,
+        port: listen_port,
+    };
+    let config = ConfigBuilder::new(listen_config)
+        .enr_peer_update_min(vote_threshold)
+        .auto_nat_listen_duration(None)
+        .build();
+
+    let (handler_send, _handler_recv_fake) = mpsc::unbounded_channel();
+    let (_handler_send_fake, handler_recv) = mpsc::channel(1000);
+    let (_discv5_send, discv5_recv) = mpsc::channel(30);
+    let (_exit_send, exit) = oneshot::channel();
+
+    let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
+        local_enr.read().node_id().into(),
+        Duration::from_secs(60),
+        config.incoming_bucket_limit,
+        None,
+        None,
+    )));
+
+    Service {
+        local_enr,
+        enr_key,
+        kbuckets,
+        queries: QueryPool::new(config.query_timeout),
+        active_requests: Default::default(),
+        active_nodes_responses: HashMap::new(),
+        ip_votes: Some(IpVote::new(vote_threshold, Duration::from_secs(10000))),
+        handler_send,
+        handler_recv,
+        handler_exit: None,
+        peers_to_ping: HashSetDelay::new(config.ping_interval),
+        discv5_recv,
+        event_stream: None,
+        exit,
+        config,
+        ip_mode: IpMode::Ip4,
+        connectivity_state: ConnectivityState::new(None),
+    }
+}
+
+#[test]
+fn test_discovery_udp_port_prefers_enr_then_listen() {
+    init();
+
+    let enr_key = CombinedKey::generate_secp256k1();
+    let enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(9010)
+        .build(&enr_key)
+        .unwrap();
+    let service = build_service_for_ip_vote(
+        Arc::new(RwLock::new(enr)),
+        Arc::new(RwLock::new(enr_key)),
+        9020,
+        2,
+    );
+
+    assert_eq!(service.discovery_udp_port(false), Some(9010));
+
+    service
+        .local_enr
+        .write()
+        .remove_udp_socket(&service.enr_key.read())
+        .unwrap();
+
+    assert_eq!(service.discovery_udp_port(false), Some(9020));
+}
+
+#[test]
+fn test_ip_only_majority_updates_enr_with_enr_port() {
+    init();
+
+    let enr_key = CombinedKey::generate_secp256k1();
+    let enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(9010)
+        .build(&enr_key)
+        .unwrap();
+    let mut service = build_service_for_ip_vote(
+        Arc::new(RwLock::new(enr)),
+        Arc::new(RwLock::new(enr_key)),
+        9010,
+        2,
+    );
+
+    let public_ip: Ipv4Addr = "1.2.3.4".parse().unwrap();
+    for i in 0..2 {
+        let peer_key = CombinedKey::generate_secp256k1();
+        let peer_enr = Enr::builder()
+            .ip4(Ipv4Addr::new(10, 0, 0, i + 1))
+            .udp4(9000)
+            .build(&peer_key)
+            .unwrap();
+        let key = kbucket::Key::from(peer_enr.node_id());
+        if let kbucket::Entry::Absent(entry) = service.kbuckets.write().entry(&key) {
+            assert!(matches!(
+                entry.insert(peer_enr.clone(), _connected_state()),
+                BucketInsertResult::Inserted | BucketInsertResult::Pending { .. }
+            ));
+        }
+        service.handle_ip_vote_from_pong(
+            peer_enr.node_id(),
+            SocketAddr::from((public_ip, 50000 + i as u16)),
+        );
+    }
+
+    let updated = service.local_enr.read().clone();
+    assert_eq!(updated.ip4(), Some(public_ip));
+    assert_eq!(updated.udp4(), Some(9010));
+    assert_eq!(
+        updated.udp4_socket(),
+        Some(std::net::SocketAddrV4::new(public_ip, 9010))
+    );
+}
+
+#[test]
+fn test_ip_only_majority_after_udp_removed_uses_listen_port() {
+    init();
+
+    let enr_key = CombinedKey::generate_secp256k1();
+    let enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(9010)
+        .build(&enr_key)
+        .unwrap();
+    let mut service = build_service_for_ip_vote(
+        Arc::new(RwLock::new(enr)),
+        Arc::new(RwLock::new(enr_key)),
+        9030,
+        2,
+    );
+
+    service
+        .local_enr
+        .write()
+        .remove_udp_socket(&service.enr_key.read())
+        .unwrap();
+    assert!(service.local_enr.read().udp4().is_none());
+    assert!(service.local_enr.read().ip4().is_none());
+
+    let public_ip: Ipv4Addr = "5.6.7.8".parse().unwrap();
+    for i in 0..2 {
+        let peer_key = CombinedKey::generate_secp256k1();
+        let peer_enr = Enr::builder()
+            .ip4(Ipv4Addr::new(10, 0, 1, i + 1))
+            .udp4(9000)
+            .build(&peer_key)
+            .unwrap();
+        let key = kbucket::Key::from(peer_enr.node_id());
+        if let kbucket::Entry::Absent(entry) = service.kbuckets.write().entry(&key) {
+            assert!(matches!(
+                entry.insert(peer_enr.clone(), _connected_state()),
+                BucketInsertResult::Inserted | BucketInsertResult::Pending { .. }
+            ));
+        }
+        service.handle_ip_vote_from_pong(
+            peer_enr.node_id(),
+            SocketAddr::from((public_ip, 51000 + i as u16)),
+        );
+    }
+
+    let updated = service.local_enr.read().clone();
+    assert_eq!(updated.ip4(), Some(public_ip));
+    assert_eq!(updated.udp4(), Some(9030));
+}
+
+#[test]
+fn test_socket_majority_still_uses_voted_port() {
+    init();
+
+    let enr_key = CombinedKey::generate_secp256k1();
+    let enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(9010)
+        .build(&enr_key)
+        .unwrap();
+    let mut service = build_service_for_ip_vote(
+        Arc::new(RwLock::new(enr)),
+        Arc::new(RwLock::new(enr_key)),
+        9010,
+        2,
+    );
+
+    let public_ip: Ipv4Addr = "9.9.9.9".parse().unwrap();
+    let voted_port = 7777u16;
+    for i in 0..3 {
+        let peer_key = CombinedKey::generate_secp256k1();
+        let peer_enr = Enr::builder()
+            .ip4(Ipv4Addr::new(10, 0, 2, i + 1))
+            .udp4(9000)
+            .build(&peer_key)
+            .unwrap();
+        let key = kbucket::Key::from(peer_enr.node_id());
+        if let kbucket::Entry::Absent(entry) = service.kbuckets.write().entry(&key) {
+            assert!(matches!(
+                entry.insert(peer_enr.clone(), _connected_state()),
+                BucketInsertResult::Inserted | BucketInsertResult::Pending { .. }
+            ));
+        }
+        service.handle_ip_vote_from_pong(
+            peer_enr.node_id(),
+            SocketAddr::from((public_ip, voted_port)),
+        );
+    }
+
+    let updated = service.local_enr.read().clone();
+    assert_eq!(updated.ip4(), Some(public_ip));
+    assert_eq!(updated.udp4(), Some(voted_port));
+}
+
+fn build_service_for_ip_vote_v6(
+    local_enr: Arc<RwLock<Enr>>,
+    enr_key: Arc<RwLock<CombinedKey>>,
+    listen_port: u16,
+    vote_threshold: usize,
+) -> Service {
+    let listen_config = ListenConfig::Ipv6 {
+        ip: Ipv6Addr::UNSPECIFIED,
+        port: listen_port,
+    };
+    let config = ConfigBuilder::new(listen_config)
+        .enr_peer_update_min(vote_threshold)
+        .auto_nat_listen_duration(None)
+        .build();
+
+    let (handler_send, _handler_recv_fake) = mpsc::unbounded_channel();
+    let (_handler_send_fake, handler_recv) = mpsc::channel(1000);
+    let (_discv5_send, discv5_recv) = mpsc::channel(30);
+    let (_exit_send, exit) = oneshot::channel();
+
+    let kbuckets = Arc::new(RwLock::new(KBucketsTable::new(
+        local_enr.read().node_id().into(),
+        Duration::from_secs(60),
+        config.incoming_bucket_limit,
+        None,
+        None,
+    )));
+
+    Service {
+        local_enr,
+        enr_key,
+        kbuckets,
+        queries: QueryPool::new(config.query_timeout),
+        active_requests: Default::default(),
+        active_nodes_responses: HashMap::new(),
+        ip_votes: Some(IpVote::new(vote_threshold, Duration::from_secs(10000))),
+        handler_send,
+        handler_recv,
+        handler_exit: None,
+        peers_to_ping: HashSetDelay::new(config.ping_interval),
+        discv5_recv,
+        event_stream: None,
+        exit,
+        config,
+        ip_mode: IpMode::Ip6,
+        connectivity_state: ConnectivityState::new(None),
+    }
+}
+
+#[test]
+fn test_ip_only_majority_updates_enr_with_enr_port_ipv6() {
+    init();
+
+    let enr_key = CombinedKey::generate_secp256k1();
+    let enr = Enr::builder()
+        .ip6(Ipv6Addr::LOCALHOST)
+        .udp6(9010)
+        .build(&enr_key)
+        .unwrap();
+    let mut service = build_service_for_ip_vote_v6(
+        Arc::new(RwLock::new(enr)),
+        Arc::new(RwLock::new(enr_key)),
+        9010,
+        2,
+    );
+
+    let public_ip: Ipv6Addr = "2001:db8::1".parse().unwrap();
+    for i in 0..2 {
+        let peer_key = CombinedKey::generate_secp256k1();
+        let peer_enr = Enr::builder()
+            .ip6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, (i + 2) as u16))
+            .udp6(9000)
+            .build(&peer_key)
+            .unwrap();
+        let key = kbucket::Key::from(peer_enr.node_id());
+        if let kbucket::Entry::Absent(entry) = service.kbuckets.write().entry(&key) {
+            assert!(matches!(
+                entry.insert(peer_enr.clone(), _connected_state()),
+                BucketInsertResult::Inserted | BucketInsertResult::Pending { .. }
+            ));
+        }
+        service.handle_ip_vote_from_pong(
+            peer_enr.node_id(),
+            SocketAddr::from((public_ip, 50000 + i as u16)),
+        );
+    }
+
+    let updated = service.local_enr.read().clone();
+    assert_eq!(updated.ip6(), Some(public_ip));
+    assert_eq!(updated.udp6(), Some(9010));
 }
