@@ -193,9 +193,8 @@ impl IpVote {
             return (updated_votes, Some(IpVoteOutcome::Socket(socket)));
         }
 
-        let ip_majority =
-            Self::find_majority_by_key(&updated_votes, minimum_threshold, ip_of)
-                .map(IpVoteOutcome::IpOnly);
+        let ip_majority = Self::find_majority_by_key(&updated_votes, minimum_threshold, ip_of)
+            .map(IpVoteOutcome::IpOnly);
 
         (updated_votes, ip_majority)
     }
@@ -223,9 +222,7 @@ impl IpVote {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CLEAR_MAJORITY_PERCENTAGE, Duration, IpVote, IpVoteOutcome, NodeId, SocketAddrV4,
-    };
+    use super::{CLEAR_MAJORITY_PERCENTAGE, Duration, IpVote, IpVoteOutcome, NodeId, SocketAddrV4};
     use quickcheck::{Arbitrary, Gen, TestResult, quickcheck};
     use std::net::Ipv4Addr;
 
@@ -322,10 +319,7 @@ mod tests {
         let ip: Ipv4Addr = "1.2.3.4".parse().unwrap();
 
         for i in 0..THRESHOLD {
-            votes.insert(
-                NodeId::random(),
-                SocketAddrV4::new(ip, 1000 + i as u16),
-            );
+            votes.insert(NodeId::random(), SocketAddrV4::new(ip, 1000 + i as u16));
         }
 
         assert_eq!(votes.majority().0, Some(IpVoteOutcome::IpOnly(ip)));
@@ -339,10 +333,7 @@ mod tests {
         let ip2: Ipv4Addr = "5.6.7.8".parse().unwrap();
 
         for i in 0..(THRESHOLD - 1) {
-            votes.insert(
-                NodeId::random(),
-                SocketAddrV4::new(ip1, 1000 + i as u16),
-            );
+            votes.insert(NodeId::random(), SocketAddrV4::new(ip1, 1000 + i as u16));
         }
         votes.insert(NodeId::random(), SocketAddrV4::new(ip2, 9000));
 
@@ -356,10 +347,7 @@ mod tests {
         let ip2: Ipv4Addr = "5.6.7.8".parse().unwrap();
 
         for i in 0..5 {
-            votes.insert(
-                NodeId::random(),
-                SocketAddrV4::new(ip1, 1000 + i as u16),
-            );
+            votes.insert(NodeId::random(), SocketAddrV4::new(ip1, 1000 + i as u16));
         }
         votes.insert(NodeId::random(), SocketAddrV4::new(ip2, 1002));
 
@@ -375,10 +363,7 @@ mod tests {
 
         // More votes for ip1 overall, but only ip2 has a repeated port.
         for i in 0..3 {
-            votes.insert(
-                NodeId::random(),
-                SocketAddrV4::new(ip1, 1000 + i as u16),
-            );
+            votes.insert(NodeId::random(), SocketAddrV4::new(ip1, 1000 + i as u16));
         }
         for _ in 0..5 {
             votes.insert(NodeId::random(), winning_socket);
@@ -397,14 +382,8 @@ mod tests {
         let ip2: Ipv4Addr = "5.6.7.8".parse().unwrap();
 
         for i in 0..5 {
-            votes.insert(
-                NodeId::random(),
-                SocketAddrV4::new(ip1, 1000 + i as u16),
-            );
-            votes.insert(
-                NodeId::random(),
-                SocketAddrV4::new(ip2, 2000 + i as u16),
-            );
+            votes.insert(NodeId::random(), SocketAddrV4::new(ip1, 1000 + i as u16));
+            votes.insert(NodeId::random(), SocketAddrV4::new(ip2, 2000 + i as u16));
         }
 
         assert_eq!(votes.majority(), (None, None));
@@ -625,10 +604,7 @@ mod tests {
         }
         votes.insert(NodeId::random(), socket2);
 
-        assert_eq!(
-            votes.majority().0,
-            Some(IpVoteOutcome::Socket(socket1))
-        );
+        assert_eq!(votes.majority().0, Some(IpVoteOutcome::Socket(socket1)));
     }
 
     #[test]
@@ -664,10 +640,7 @@ mod tests {
             votes.insert(NodeId::random(), socket2);
         }
 
-        assert_eq!(
-            votes.majority().0,
-            Some(IpVoteOutcome::Socket(socket1))
-        );
+        assert_eq!(votes.majority().0, Some(IpVoteOutcome::Socket(socket1)));
     }
 
     #[test]

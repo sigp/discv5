@@ -911,7 +911,11 @@ impl Service {
                 }
             }
             ListenConfig::FromSockets { ipv4, ipv6 } => {
-                let socket = if is_ipv6 { ipv6.as_ref() } else { ipv4.as_ref() };
+                let socket = if is_ipv6 {
+                    ipv6.as_ref()
+                } else {
+                    ipv4.as_ref()
+                };
                 socket.and_then(|socket| socket.local_addr().ok().map(|addr| addr.port()))
             }
             _ => None,
@@ -985,18 +989,14 @@ impl Service {
                     Some(IpVoteOutcome::Socket(addr)) => {
                         Some(ResolvedIpVote::Socket(SocketAddr::V4(addr)))
                     }
-                    Some(IpVoteOutcome::IpOnly(ip)) => {
-                        Some(ResolvedIpVote::IpOnly(IpAddr::V4(ip)))
-                    }
+                    Some(IpVoteOutcome::IpOnly(ip)) => Some(ResolvedIpVote::IpOnly(IpAddr::V4(ip))),
                     None => None,
                 },
                 SocketAddr::V6(_) => match v6 {
                     Some(IpVoteOutcome::Socket(addr)) => {
                         Some(ResolvedIpVote::Socket(SocketAddr::V6(addr)))
                     }
-                    Some(IpVoteOutcome::IpOnly(ip)) => {
-                        Some(ResolvedIpVote::IpOnly(IpAddr::V6(ip)))
-                    }
+                    Some(IpVoteOutcome::IpOnly(ip)) => Some(ResolvedIpVote::IpOnly(IpAddr::V6(ip))),
                     None => None,
                 },
             }
