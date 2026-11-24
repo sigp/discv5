@@ -651,3 +651,84 @@ async fn test_connectivity_metrics_updated_on_incoming_connections_ipv6() {
     // Clean up to avoid affecting other tests.
     METRICS.ipv6_contactable.store(false, Ordering::Relaxed);
 }
+
+/// A FINDNODE request for distance 0 asks for the peer's own record, so a record with another
+/// node id is dropped, including for a designated request such as `request_enr`.
+#[tokio::test]
+async fn test_enr_request_drops_records_of_other_nodes() {
+    init();
+
+    let seed = 1652;
+    let mut keypairs = generate_deterministic_keypair(4, seed);
+
+    let mut service = {
+        let enr_key = keypairs.pop().unwrap();
+        let enr = Enr::builder()
+            .ip4(Ipv4Addr::LOCALHOST)
+            .udp4(10105)
+            .build(&enr_key)
+            .unwrap();
+        build_service(
+            Arc::new(RwLock::new(enr)),
+            Arc::new(RwLock::new(enr_key)),
+            false,
+        )
+        .await
+    };
+
+    let peer_enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(10106)
+        .build(&keypairs.remove(0))
+        .unwrap();
+    let other_enr = Enr::builder()
+        .ip4(Ipv4Addr::LOCALHOST)
+        .udp4(10107)
+        .build(&keypairs.remove(0))
+        .unwrap();
+    let node_contact: NodeContact = peer_enr.clone().into();
+    let node_address = node_contact.node_address();
+
+    let mut send_enr_request = |id: u8| {
+        let (callback_send, callback_recv) = oneshot::channel();
+        service.active_requests.insert(
+            RequestId(vec![id]),
+            ActiveRequest {
+                contact: node_contact.clone(),
+                request_body: RequestBody::FindNode { distances: vec![0] },
+                query_id: None,
+                callback: Some(CallbackResponse::Nodes(callback_send)),
+            },
+        );
+        callback_recv
+    };
+
+    // The peer answers with its own record: the caller receives it.
+    let own_reply = send_enr_request(1);
+    // The peer answers with another node's record: the caller receives nothing.
+    let other_reply = send_enr_request(2);
+
+    service.handle_rpc_response(
+        node_address.clone(),
+        Response {
+            id: RequestId(vec![1]),
+            body: ResponseBody::Nodes {
+                total: 1,
+                nodes: vec![peer_enr.clone()],
+            },
+        },
+    );
+    service.handle_rpc_response(
+        node_address,
+        Response {
+            id: RequestId(vec![2]),
+            body: ResponseBody::Nodes {
+                total: 1,
+                nodes: vec![other_enr],
+            },
+        },
+    );
+
+    assert_eq!(own_reply.await.unwrap().unwrap(), vec![peer_enr]);
+    assert!(other_reply.await.unwrap().unwrap().is_empty());
+}
