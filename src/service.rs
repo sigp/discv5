@@ -737,6 +737,29 @@ impl Service {
                     _ => unreachable!(),
                 };
 
+                let peer_key: kbucket::Key<NodeId> = node_id.into();
+
+                // The distances we send are sanitized an ordered.
+                // We never send an ENR request in combination of other requests.
+                let enr_request = distances_requested.len() == 1 && distances_requested[0] == 0;
+
+                if enr_request {
+                    // We requested the peer's own ENR, so every record must have its node id.
+                    // This also applies to designated requests, such as `request_enr`.
+                    let before_len = nodes.len();
+                    nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
+                    if before_len > 1 || nodes.len() < before_len {
+                        warn!(
+                            %node_address,
+                            "Peer returned more than one ENR or an ENR other than its own. Blacklisting",
+                        );
+                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
+                        PERMIT_BAN_LIST
+                            .write()
+                            .ban(node_address.clone(), ban_timeout);
+                    }
+                }
+
                 if let Some(CallbackResponse::Nodes(callback)) = active_request.callback.take() {
                     if let Err(e) = callback.send(Ok(nodes)) {
                         warn!(error = ?e, "Failed to send response in callback")
@@ -745,22 +768,7 @@ impl Service {
                 }
 
                 // Filter out any nodes that are not of the correct distance
-                let peer_key: kbucket::Key<NodeId> = node_id.into();
-
-                // The distances we send are sanitized an ordered.
-                // We never send an ENR request in combination of other requests.
-                if distances_requested.len() == 1 && distances_requested[0] == 0 {
-                    // we requested an ENR update
-                    if nodes.len() > 1 {
-                        warn!(
-                            %node_address,
-                            "Peer returned more than one ENR for itself. Blacklisting",
-                        );
-                        let ban_timeout = self.config.ban_duration.map(|v| Instant::now() + v);
-                        PERMIT_BAN_LIST.write().ban(node_address, ban_timeout);
-                        nodes.retain(|enr| peer_key.log2_distance(&enr.node_id().into()).is_none());
-                    }
-                } else {
+                if !enr_request {
                     let before_len = nodes.len();
                     nodes.retain(|enr| {
                         peer_key
