@@ -263,12 +263,6 @@ impl Default for NodesResponse {
     }
 }
 
-/// A vote majority resolved to a socket or IP for applying to the local ENR.
-enum ResolvedIpVote {
-    Socket(SocketAddr),
-    IpOnly(IpAddr),
-}
-
 impl Service {
     /// Builds the `Service` main struct.
     ///
@@ -978,35 +972,23 @@ impl Service {
             return;
         }
 
-        let resolved = {
+        let outcome = {
             let Some(ip_votes) = self.ip_votes.as_mut() else {
                 return;
             };
             ip_votes.insert(node_id, socket);
             let (v4, v6) = ip_votes.majority();
             match socket {
-                SocketAddr::V4(_) => match v4 {
-                    Some(IpVoteOutcome::Socket(addr)) => {
-                        Some(ResolvedIpVote::Socket(SocketAddr::V4(addr)))
-                    }
-                    Some(IpVoteOutcome::IpOnly(ip)) => Some(ResolvedIpVote::IpOnly(IpAddr::V4(ip))),
-                    None => None,
-                },
-                SocketAddr::V6(_) => match v6 {
-                    Some(IpVoteOutcome::Socket(addr)) => {
-                        Some(ResolvedIpVote::Socket(SocketAddr::V6(addr)))
-                    }
-                    Some(IpVoteOutcome::IpOnly(ip)) => Some(ResolvedIpVote::IpOnly(IpAddr::V6(ip))),
-                    None => None,
-                },
+                SocketAddr::V4(_) => v4.map(IpVoteOutcome::into_generic),
+                SocketAddr::V6(_) => v6.map(IpVoteOutcome::into_generic),
             }
         };
 
-        match resolved {
-            Some(ResolvedIpVote::Socket(addr)) => {
+        match outcome {
+            Some(IpVoteOutcome::Socket(addr)) => {
                 self.apply_ip_vote_outcome(addr, addr.is_ipv6());
             }
-            Some(ResolvedIpVote::IpOnly(ip)) => {
+            Some(IpVoteOutcome::IpOnly(ip)) => {
                 let is_ipv6 = ip.is_ipv6();
                 let Some(port) = self.discovery_udp_port(is_ipv6) else {
                     warn!(

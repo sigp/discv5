@@ -17,7 +17,7 @@ use fnv::FnvHashMap;
 use std::{
     collections::HashMap,
     hash::Hash,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     time::{Duration, Instant},
 };
 use tracing::debug;
@@ -33,6 +33,15 @@ pub(crate) enum IpVoteOutcome<S, I> {
     Socket(S),
     /// Clear majority on the IP, without a clear IP:port majority.
     IpOnly(I),
+}
+
+impl<S: Into<SocketAddr>, I: Into<IpAddr>> IpVoteOutcome<S, I> {
+    pub(crate) fn into_generic(self) -> IpVoteOutcome<SocketAddr, IpAddr> {
+        match self {
+            IpVoteOutcome::Socket(socket) => IpVoteOutcome::Socket(socket.into()),
+            IpVoteOutcome::IpOnly(ip) => IpVoteOutcome::IpOnly(ip.into()),
+        }
+    }
 }
 
 type Ipv4VoteOutcome = IpVoteOutcome<SocketAddrV4, Ipv4Addr>;
@@ -271,9 +280,9 @@ mod tests {
     #[test]
     fn test_below_threshold() {
         let mut votes = IpVote::new(3, Duration::from_secs(10));
-        let socket_1 = SocketAddrV4::new("1.1.1.1".parse().unwrap(), 1);
-        let socket_2 = SocketAddrV4::new("2.2.2.2".parse().unwrap(), 2);
-        let socket_3 = SocketAddrV4::new("3.3.3.3".parse().unwrap(), 3);
+        let socket_1 = SocketAddrV4::new("127.0.0.1".parse().unwrap(), 1);
+        let socket_2 = SocketAddrV4::new("127.0.0.2".parse().unwrap(), 2);
+        let socket_3 = SocketAddrV4::new("127.0.0.3".parse().unwrap(), 3);
 
         votes.insert(NodeId::random(), socket_1);
         votes.insert(NodeId::random(), socket_1);
@@ -285,7 +294,10 @@ mod tests {
 
     #[test]
     fn test_snat_fluctuation_multiple_iterations() {
-        let ip: Ipv4Addr = "10.0.0.1".parse().unwrap();
+        // Simulates SNAT port fluctuation: the same IP is reported with two competing ports.
+        // Regardless of the vote insertion order, neither port wins and the result is always the
+        // IP-only majority.
+        let ip: Ipv4Addr = "192.0.2.1".parse().unwrap();
         let port_1 = SocketAddrV4::new(ip, 50000);
         let port_2 = SocketAddrV4::new(ip, 50001);
 
@@ -316,7 +328,7 @@ mod tests {
     fn test_ip_majority_without_port_majority() {
         const THRESHOLD: usize = 10;
         let mut votes = IpVote::new(THRESHOLD, Duration::from_secs(10));
-        let ip: Ipv4Addr = "1.2.3.4".parse().unwrap();
+        let ip: Ipv4Addr = "192.0.2.1".parse().unwrap();
 
         for i in 0..THRESHOLD {
             votes.insert(NodeId::random(), SocketAddrV4::new(ip, 1000 + i as u16));
@@ -329,8 +341,8 @@ mod tests {
     fn test_ip_majority_below_threshold() {
         const THRESHOLD: usize = 10;
         let mut votes = IpVote::new(THRESHOLD, Duration::from_secs(10));
-        let ip1: Ipv4Addr = "1.2.3.4".parse().unwrap();
-        let ip2: Ipv4Addr = "5.6.7.8".parse().unwrap();
+        let ip1: Ipv4Addr = "192.0.2.1".parse().unwrap();
+        let ip2: Ipv4Addr = "198.51.100.1".parse().unwrap();
 
         for i in 0..(THRESHOLD - 1) {
             votes.insert(NodeId::random(), SocketAddrV4::new(ip1, 1000 + i as u16));
@@ -343,8 +355,8 @@ mod tests {
     #[test]
     fn test_ip_majority_with_different_ips() {
         let mut votes = IpVote::new(2, Duration::from_secs(10));
-        let ip1: Ipv4Addr = "1.2.3.4".parse().unwrap();
-        let ip2: Ipv4Addr = "5.6.7.8".parse().unwrap();
+        let ip1: Ipv4Addr = "192.0.2.1".parse().unwrap();
+        let ip2: Ipv4Addr = "198.51.100.1".parse().unwrap();
 
         for i in 0..5 {
             votes.insert(NodeId::random(), SocketAddrV4::new(ip1, 1000 + i as u16));
@@ -357,8 +369,8 @@ mod tests {
     #[test]
     fn test_socket_majority_wins_over_ip_majority() {
         let mut votes = IpVote::new(2, Duration::from_secs(10));
-        let ip1: Ipv4Addr = "1.2.3.4".parse().unwrap();
-        let ip2: Ipv4Addr = "5.6.7.8".parse().unwrap();
+        let ip1: Ipv4Addr = "192.0.2.1".parse().unwrap();
+        let ip2: Ipv4Addr = "198.51.100.1".parse().unwrap();
         let winning_socket = SocketAddrV4::new(ip2, 9000);
 
         // More votes for ip1 overall, but only ip2 has a repeated port.
@@ -378,8 +390,8 @@ mod tests {
     #[test]
     fn test_competing_ips_return_none() {
         let mut votes = IpVote::new(2, Duration::from_secs(10));
-        let ip1: Ipv4Addr = "1.2.3.4".parse().unwrap();
-        let ip2: Ipv4Addr = "5.6.7.8".parse().unwrap();
+        let ip1: Ipv4Addr = "192.0.2.1".parse().unwrap();
+        let ip2: Ipv4Addr = "198.51.100.1".parse().unwrap();
 
         for i in 0..5 {
             votes.insert(NodeId::random(), SocketAddrV4::new(ip1, 1000 + i as u16));
@@ -421,7 +433,7 @@ mod tests {
     }
 
     quickcheck! {
-        /// Below threshold on both socket and IP counts returns None.
+        /// Property: Below threshold on both socket and IP counts returns None.
         fn prop_below_threshold_returns_none(scenario: VoteScenario) -> TestResult {
             if scenario.votes.is_empty() {
                 return TestResult::discard();
@@ -450,7 +462,7 @@ mod tests {
             }
         }
 
-        /// Clear socket majorities return Socket; otherwise same-IP votes return IpOnly.
+        /// Property: Clear socket majorities return Socket; otherwise same-IP votes return IpOnly if they meet the threshold, else None.
         fn prop_clear_socket_winner_selected(scenario: VoteScenario) -> TestResult {
             if scenario.votes.len() < 2 {
                 return TestResult::discard();
@@ -492,7 +504,7 @@ mod tests {
             }
         }
 
-        /// Inserting the same node vote repeatedly is idempotent.
+        /// Property: Adding the same vote multiple times should be idempotent.
         fn prop_same_vote_idempotent(port: u16) -> bool {
             let mut vote_system = IpVote::new(2, Duration::from_secs(10));
             let ip = "192.168.1.1".parse().unwrap();
@@ -508,7 +520,7 @@ mod tests {
             result1 == result2
         }
 
-        /// Each NodeId contributes at most one vote.
+        /// Property: Votes from distinct nodes for the same socket yield a `Socket` majority once the threshold is met.
         fn prop_vote_count_bounded_by_nodes() -> bool {
             let mut vote_system = IpVote::new(2, Duration::from_secs(10));
             let ip = "192.168.1.1".parse().unwrap();
@@ -525,7 +537,7 @@ mod tests {
             )
         }
 
-        /// Competing ports within the margin yield IpOnly for a shared IP.
+        /// Property: Competing ports within the margin yield IpOnly for a shared IP.
         fn prop_competition_within_margin_no_socket_winner(threshold: u8, first_votes: u8, second_votes: u8) -> TestResult {
             let threshold = threshold.max(2) as usize;
             let first_votes = first_votes.max(1) as usize;
@@ -561,7 +573,7 @@ mod tests {
             }
         }
 
-        /// Clear socket winner when the runner-up is outside the margin.
+        /// Property: Clear socket winner when the runner-up is outside the margin.
         fn prop_clear_winner_outside_margin(threshold: u8, first_votes: u8, second_votes: u8) -> TestResult {
             let threshold = threshold.max(2) as usize;
             let first_votes = first_votes.max(1) as usize;
